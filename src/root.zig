@@ -4410,6 +4410,67 @@ test "root.getAccount wrappers return decoded account info" {
     try std.testing.expectEqual(@as(u64, 1234), account_3.lamports);
 }
 
+test "root.requestAirdropWithBlockhash returns signature copy" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":"Sig111111111111111111111111111111111111111111111111111111111111111111","id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const signature = try client.requestAirdropWithBlockhash(
+        "7xKXtg2CWqQm6VfQn2Yf5q3r8JwM6n2vB8z8w1sT8k6",
+        9001,
+        "RecentBlockhash1111111111111111111111111111",
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "Sig111111111111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+}
+
+test "root.getTokenAccount returns parsed ui account" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":14},"value":{"data":{"program":"spl-token","parsed":{"type":"account","info":{"mint":"Mint1111111111111111111111111111111111"}}},"executable":false,"lamports":99,"owner":"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA","rentEpoch":42,"space":165}},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const token_account = try client.getTokenAccount(
+        "TokenAccount1111111111111111111111111111111111",
+        .confirmed,
+    );
+    defer client.allocator.free(token_account.owner);
+    defer client.allocator.free(token_account.data_json);
+
+    try std.testing.expectEqual(@as(u64, 99), token_account.lamports);
+    try std.testing.expectEqual(@as(bool, false), token_account.executable);
+    try std.testing.expectEqualStrings("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", token_account.owner);
+}
+
 test "root.getBalanceResponse preserves context slot" {
     const allocator = std.testing.allocator;
     var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
