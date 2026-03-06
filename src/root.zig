@@ -8,6 +8,8 @@ const poll_for_signature_confirmation_timeout_ms: u64 = 20_000;
 const signature_poll_interval_ms: u64 = 250;
 pub const default_balance_poll_timeout_ms: u64 = 1_000;
 pub const default_balance_poll_interval_ms: u64 = 100;
+const get_new_latest_blockhash_timeout_ms: u64 = 5_000;
+const get_new_latest_blockhash_interval_ms: u64 = 400;
 const wait_for_balance_error_retries: usize = 30;
 
 pub const RpcError = error{
@@ -20,6 +22,12 @@ pub const RpcError = error{
     TransactionFailed,
     TransactionNotConfirmed,
     TransactionNotFound,
+};
+
+pub const TransportStats = struct {
+    request_count: usize = 0,
+    elapsed_time_ms: u64 = 0,
+    rate_limited_time_ms: u64 = 0,
 };
 
 pub const Commitment = enum {
@@ -596,6 +604,7 @@ pub const RpcClient = struct {
     http_client: std.http.Client,
     request_id: u64,
     last_error: ?RpcErrorDetail,
+    transport_stats: TransportStats,
 
     pub fn init(allocator: Allocator, endpoint: []const u8) !RpcClient {
         return RpcClient{
@@ -604,6 +613,7 @@ pub const RpcClient = struct {
             .http_client = .{ .allocator = allocator },
             .request_id = 1,
             .last_error = null,
+            .transport_stats = .{},
         };
     }
 
@@ -689,6 +699,10 @@ pub const RpcClient = struct {
         return self.last_error;
     }
 
+    pub fn getTransportStats(self: *const RpcClient) TransportStats {
+        return self.transport_stats;
+    }
+
     fn clearLastError(self: *RpcClient) void {
         if (self.last_error) |last| {
             self.allocator.free(last.message);
@@ -717,30 +731,44 @@ pub const RpcClient = struct {
             .{ .name = "accept", .value = "application/json" },
         };
 
-        const response = self.http_client.fetch(.{
-            .location = .{ .url = self.endpoint },
-            .method = .POST,
-            .payload = request_body,
-            .extra_headers = &headers,
-            .response_writer = &response_writer.writer,
-        }) catch |err| switch (err) {
-            error.HttpConnectionClosing => retry: {
-                response_writer.deinit();
-                response_writer = std.io.Writer.Allocating.init(self.allocator);
+        var response: std.http.Client.FetchResult = undefined;
+        var attempts: usize = 0;
 
-                self.http_client.deinit();
-                self.http_client = .{ .allocator = self.allocator };
+        while (true) {
+            attempts += 1;
+            const request_start = std.time.milliTimestamp();
 
-                break :retry try self.http_client.fetch(.{
-                    .location = .{ .url = self.endpoint },
-                    .method = .POST,
-                    .payload = request_body,
-                    .extra_headers = &headers,
-                    .response_writer = &response_writer.writer,
-                });
-            },
-            else => return err,
-        };
+            response = self.http_client.fetch(.{
+                .location = .{ .url = self.endpoint },
+                .method = .POST,
+                .payload = request_body,
+                .extra_headers = &headers,
+                .response_writer = &response_writer.writer,
+            }) catch |err| switch (err) {
+                error.HttpConnectionClosing => {
+                    response_writer.deinit();
+                    response_writer = std.io.Writer.Allocating.init(self.allocator);
+
+                    self.http_client.deinit();
+                    self.http_client = .{ .allocator = self.allocator };
+
+                    continue;
+                },
+                else => return err,
+            };
+
+            const elapsed_ms = std.time.milliTimestamp() - request_start;
+            if (elapsed_ms > 0) {
+                self.transport_stats.elapsed_time_ms += @intCast(@max(elapsed_ms, 0));
+                if (response.status == .too_many_requests) {
+                    self.transport_stats.rate_limited_time_ms += @intCast(@max(elapsed_ms, 0));
+                }
+            }
+
+            break;
+        }
+
+        self.transport_stats.request_count += attempts;
 
         self.allocator.free(request_body);
 
@@ -1024,6 +1052,22 @@ pub const RpcClient = struct {
     pub fn getLatestBlockhash(self: *RpcClient, commitment: ?Commitment) !LatestBlockhash {
         const response = try self.getLatestBlockhashResponse(commitment);
         return response.value;
+    }
+
+    pub fn getNewLatestBlockhash(self: *RpcClient, blockhash: []const u8) ![]const u8 {
+        const deadline = std.time.milliTimestamp() + @as(i64, @intCast(get_new_latest_blockhash_timeout_ms));
+
+        while (std.time.milliTimestamp() < deadline) {
+            const latest = try self.getLatestBlockhash(null);
+            if (!std.mem.eql(u8, latest.blockhash, blockhash)) {
+                return latest.blockhash;
+            }
+
+            self.allocator.free(latest.blockhash);
+            std.Thread.sleep(get_new_latest_blockhash_interval_ms * std.time.ns_per_ms);
+        }
+
+        return error.Timeout;
     }
 
     pub fn getFeatureActivationSlot(self: *RpcClient, feature_pubkey: []const u8, commitment: ?Commitment) !?u64 {
@@ -2813,6 +2857,19 @@ pub const RpcClient = struct {
         return try self.getBlockWithOptions(slot, options);
     }
 
+    pub fn getBlockWithEncoding(
+        self: *RpcClient,
+        slot: u64,
+        encoding: TransactionEncoding,
+    ) !?[]const u8 {
+        return try self.getBlockWithOptions(
+            slot,
+            BlockQueryOptions{
+                .encoding = encoding,
+            },
+        );
+    }
+
     pub fn getBlock(self: *RpcClient, slot: u64, commitment: ?Commitment) !?[]const u8 {
         const params = if (commitment) |value| blk: {
             const params = .{ slot, .{ .commitment = commitmentToString(value) } };
@@ -2919,6 +2976,14 @@ pub const RpcClient = struct {
         defer self.allocator.free(response);
 
         return try self.parseGetTransactionResponse(response);
+    }
+
+    pub fn getTransactionWithConfig(
+        self: *RpcClient,
+        signature: []const u8,
+        options: ?TransactionQueryOptions,
+    ) !?[]const u8 {
+        return try self.getTransaction(signature, options);
     }
 
     fn parseGetTransactionResponse(self: *RpcClient, response: []const u8) !?[]const u8 {
@@ -3761,6 +3826,22 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn sendAndConfirmTransactionWithCommitmentAndConfig(
+        self: *RpcClient,
+        signed_tx_base64: []const u8,
+        commitment: Commitment,
+        options: ?SendTransactionOptions,
+    ) ![]const u8 {
+        return try self.sendTransactionAndConfirm(
+            signed_tx_base64,
+            options,
+            commitment,
+            false,
+            poll_for_signature_confirmation_timeout_ms,
+            signature_poll_interval_ms,
+        );
+    }
+
     pub fn sendTransaction(self: *RpcClient, signed_tx_base64: []const u8, options: ?SendTransactionOptions) ![]const u8 {
         const params_json = try self.serializeSendTransactionParams(signed_tx_base64, options);
         defer self.allocator.free(params_json);
@@ -3877,6 +3958,14 @@ pub const RpcClient = struct {
             null;
 
         return simulation;
+    }
+
+    pub fn simulateTransactionWithConfig(
+        self: *RpcClient,
+        signed_tx_base64: []const u8,
+        options: ?SimulateTransactionOptions,
+    ) !SimulatedTransaction {
+        return try self.simulateTransaction(signed_tx_base64, options);
     }
 
     const SignatureStatusEntry = struct {
@@ -4281,6 +4370,7 @@ pub const RpcClient = struct {
         search_transaction_history: bool,
         timeout_ms: u64,
         poll_interval_ms: u64,
+        strict: bool,
     ) !void {
         const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
 
@@ -4309,8 +4399,11 @@ pub const RpcClient = struct {
                 }
             }
 
-            if (status.has_error) return error.TransactionFailed;
+            if (strict and status.has_error) return error.TransactionFailed;
             if (confirmationSatisfiesCommitment(status.confirmation_status, commitment)) {
+                return;
+            }
+            if (!strict and status.has_error and commitment == null) {
                 return;
             }
 
@@ -4327,6 +4420,7 @@ pub const RpcClient = struct {
             search_transaction_history,
             poll_for_signature_timeout_ms,
             signature_poll_interval_ms,
+            false,
         );
     }
 
@@ -4358,6 +4452,7 @@ pub const RpcClient = struct {
         poll_interval_ms: u64,
     ) !u64 {
         const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
+        var confirmed_blocks: ?u64 = null;
 
         while (std.time.milliTimestamp() < deadline) {
             const status = self.getSignatureStatusWithOptions(
@@ -4378,18 +4473,21 @@ pub const RpcClient = struct {
             };
             defer if (status.confirmation_status) |value| self.allocator.free(value);
 
-            if (status.has_error) return error.TransactionFailed;
             if (commitment != null and !confirmationSatisfiesCommitment(status.confirmation_status, commitment)) {
                 std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
                 continue;
             }
 
-            const confirmed_blocks = status.confirmations orelse max_lockout_history + 1;
-            if (confirmed_blocks >= min_confirmed_blocks) return confirmed_blocks;
+            const current_confirmed_blocks = status.confirmations orelse max_lockout_history + 1;
+            confirmed_blocks = current_confirmed_blocks;
+            if (current_confirmed_blocks >= min_confirmed_blocks) return current_confirmed_blocks;
 
             std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
         }
 
+        if (confirmed_blocks) |value| {
+            return value;
+        }
         return error.TransactionNotConfirmed;
     }
 
@@ -4420,7 +4518,14 @@ pub const RpcClient = struct {
         const signature = try self.sendTransaction(signed_tx_base64, options);
         errdefer self.allocator.free(signature);
 
-        try self.waitForSignatureStatus(signature, commitment, search_transaction_history, timeout_ms, poll_interval_ms);
+        try self.waitForSignatureStatus(
+            signature,
+            commitment,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+            true,
+        );
 
         return signature;
     }
@@ -4524,6 +4629,33 @@ test "root.getLatestBlockhashResponse preserves context slot" {
     try std.testing.expectEqual(@as(u64, 55), blockhash_response.value.last_valid_block_height);
 }
 
+test "root.getNewLatestBlockhash waits for updated blockhash" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":1},"value":{"blockhash":"Blockhash111111111111111111111111111111111111","lastValidBlockHeight":55}},"id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":2},"value":{"blockhash":"UpdatedBlockhash11111111111111111111111111111111","lastValidBlockHeight":56}},"id":2}
+    };
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const latest = try client.getNewLatestBlockhash("Blockhash111111111111111111111111111111111111");
+    defer allocator.free(latest);
+
+    try std.testing.expectEqualStrings("UpdatedBlockhash11111111111111111111111111111111", latest);
+}
+
 test "root.balance params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
@@ -4590,6 +4722,34 @@ test "root.new constructors initialize endpoint" {
     var socket_timeout_client = try RpcClient.newSocketWithTimeout(allocator, endpoint, 5_000);
     defer socket_timeout_client.deinit();
     try std.testing.expectEqualStrings(endpoint, socket_timeout_client.url());
+}
+
+test "root.getTransportStats tracks request metrics" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":123,"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const before = client.getTransportStats();
+    try std.testing.expectEqual(@as(usize, 0), before.request_count);
+
+    _ = try client.getSlot(.confirmed);
+
+    const after = client.getTransportStats();
+    try std.testing.expect(after.request_count > before.request_count);
+    try std.testing.expect(after.elapsed_time_ms >= before.elapsed_time_ms);
 }
 
 test "root.send delegates to sendTransaction" {
@@ -4822,6 +4982,40 @@ test "root.sendAndConfirmTransactionWithConfig supports send options" {
 
     try std.testing.expectEqualStrings(
         "Sig222222222222222222222222222222222222222222222222222222222222222222",
+        signature,
+    );
+}
+
+test "root.sendAndConfirmTransactionWithCommitmentAndConfig supports both commitment and send options" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":"Sig333333333333333333333333333333333333333333333333333333333333333333","id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":[{"slot":12,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":2}
+    };
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const signature = try client.sendAndConfirmTransactionWithCommitmentAndConfig(
+        "SignedTransactionBase64==",
+        .confirmed,
+        .{ .skip_preflight = true },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "Sig333333333333333333333333333333333333333333333333333333333333333333",
         signature,
     );
 }
@@ -5061,6 +5255,60 @@ test "root.pollForSignatureConfirmationWithCommitmentAndTimeouts waits for commi
     try std.testing.expectEqual(@as(u64, 10), confirmed_blocks);
 }
 
+test "root.pollForSignature returns on failed signature" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":41},"value":[{"slot":41,"confirmations":1,"confirmationStatus":"processed","err":{"InstructionError":"GenericError"}}]},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    try client.pollForSignature(
+        "Sig111111111111111111111111111111111111",
+        null,
+        false,
+    );
+}
+
+test "root.pollForSignatureConfirmation returns partial confirmations on timeout" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":41},"value":[{"slot":41,"confirmations":3,"confirmationStatus":"processed","err":null}]},"id":1}
+    ;
+    const response_bodies: [20][]const u8 = .{response_body} ** 20;
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const confirmed_blocks = try client.pollForSignatureConfirmationWithTimeouts(
+        "Sig111111111111111111111111111111111111",
+        10,
+        false,
+        100,
+        10,
+    );
+    try std.testing.expectEqual(@as(u64, 3), confirmed_blocks);
+}
+
 test "root.getNumBlocksSinceSignatureConfirmation returns lockout fallback when confirmations missing" {
     const allocator = std.testing.allocator;
     var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
@@ -5107,6 +5355,56 @@ test "root.getNumBlocksSinceSignatureConfirmationWithCommitment passes commitmen
         false,
     );
     try std.testing.expectEqual(@as(u64, max_lockout_history + 1), confirmed_blocks);
+}
+
+test "root.getTransactionWithConfig returns decoded transaction json" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":{"transaction":"abc","meta":{"err":null}}},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const tx_json = try client.getTransactionWithConfig(
+        "Sig111111111111111111111111111111111111",
+        .{ .commitment = .confirmed },
+    );
+    defer allocator.free(tx_json.?);
+
+    try std.testing.expect(std.mem.indexOf(u8, tx_json.?, "abc") != null);
+}
+
+test "root.simulateTransactionWithConfig delegates to simulateTransaction" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":{"accounts":[],"err":null,"fee":120,"unitsConsumed":42}},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const result = try client.simulateTransactionWithConfig("signed-transaction-base64", null);
+    try std.testing.expectEqual(@as(u64, 120), result.fee.?);
+    try std.testing.expectEqual(@as(u64, 42), result.units_consumed.?);
 }
 
 test "root.getAccountInfo params serialization" {
