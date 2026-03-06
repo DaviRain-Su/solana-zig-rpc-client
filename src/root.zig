@@ -82,6 +82,11 @@ pub const LargestAccount = struct {
     lamports: u64 = 0,
 };
 
+pub const BlockCommitment = struct {
+    commitment: ?[]u64 = null,
+    total_stake: u64 = 0,
+};
+
 pub const JsonParsedAccountInfo = struct {
     lamports: u64 = 0,
     owner: []const u8 = "",
@@ -515,6 +520,12 @@ pub const RpcClient = struct {
             copied_len += 1;
         }
 
+        return copied;
+    }
+
+    fn cloneU64List(self: *RpcClient, source: []const u64) ![]u64 {
+        const copied = try self.allocator.alloc(u64, source.len);
+        @memcpy(copied, source);
         return copied;
     }
 
@@ -1209,6 +1220,26 @@ pub const RpcClient = struct {
         return try self.parseResponse(response, ?i64);
     }
 
+    pub fn getBlockCommitment(self: *RpcClient, slot: u64) !BlockCommitment {
+        const params = .{slot};
+        const params_json = try self.serializeParams(params);
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest("getBlockCommitment", params_json);
+        defer self.allocator.free(response);
+
+        const BlockCommitmentResult = struct {
+            commitment: ?[]u64 = null,
+            totalStake: u64 = 0,
+        };
+
+        const result = try self.parseResponse(response, BlockCommitmentResult);
+        return BlockCommitment{
+            .commitment = if (result.commitment) |value| try self.cloneU64List(value) else null,
+            .total_stake = result.totalStake,
+        };
+    }
+
     pub fn getBlockWithOptions(self: *RpcClient, slot: u64, options: ?BlockQueryOptions) !?[]const u8 {
         const BlockConfig = struct {
             commitment: ?[]const u8 = null,
@@ -1474,6 +1505,23 @@ pub const RpcClient = struct {
         }
 
         return copied;
+    }
+
+    pub fn getSlotLeader(self: *RpcClient, commitment: ?Commitment) ![]const u8 {
+        const params_json = if (commitment) |value| blk: {
+            const params = .{.{ .commitment = commitmentToString(value) }};
+            break :blk try self.serializeParams(params);
+        } else blk: {
+            const params = .{};
+            break :blk try self.serializeParams(params);
+        };
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest("getSlotLeader", params_json);
+        defer self.allocator.free(response);
+
+        const leader = try self.parseResponse(response, []const u8);
+        return try self.allocator.dupe(u8, leader);
     }
 
     pub fn getRecentPrioritizationFees(self: *RpcClient) ![]RecentPrioritizationFee {
@@ -2509,6 +2557,18 @@ test "root.getBlock params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"finalized\"") != null);
 }
 
+test "root.getBlockCommitment params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const params = .{321};
+    const params_json = try client.serializeParams(params);
+    defer allocator.free(params_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "321") != null);
+}
+
 test "root.getBlockWithOptions params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
@@ -2751,6 +2811,22 @@ test "root.getSlotLeaders params serialization" {
 
     try std.testing.expect(std.mem.indexOf(u8, params_json, "789") != null);
     try std.testing.expect(std.mem.indexOf(u8, params_json, "5") != null);
+}
+
+test "root.getSlotLeader params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const no_commitment = .{};
+    const no_commitment_json = try client.serializeParams(no_commitment);
+    defer allocator.free(no_commitment_json);
+    try std.testing.expect(std.mem.eql(u8, no_commitment_json, "[]"));
+
+    const with_commitment = .{.{ .commitment = commitmentToString(.processed) }};
+    const with_commitment_json = try client.serializeParams(with_commitment);
+    defer allocator.free(with_commitment_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"processed\"") != null);
 }
 
 test "root.getRecentPrioritizationFees params serialization" {

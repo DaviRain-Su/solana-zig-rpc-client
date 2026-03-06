@@ -35,6 +35,7 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] epoch-schedule\n" ++
     "  solana_client_zig [--rpc <url>] inflation-rate\n" ++
     "  solana_client_zig [--rpc <url>] block-time <slot>\n" ++
+    "  solana_client_zig [--rpc <url>] block-commitment <slot>\n" ++
     "  solana_client_zig [--rpc <url>] block <slot>\n" ++
     "  solana_client_zig [--rpc <url>] blocks-with-limit <start-slot> <limit>\n" ++
     "  solana_client_zig [--rpc <url>] signatures-for-address <address> [--before <signature>] [--until <signature>] [--limit <count>]\n" ++
@@ -50,6 +51,7 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] recent-performance-samples [limit]\n" ++
     "  solana_client_zig [--rpc <url>] highest-snapshot-slot\n" ++
     "  solana_client_zig [--rpc <url>] blocks <start-slot> [end-slot]\n" ++
+    "  solana_client_zig [--rpc <url>] slot-leader\n" ++
     "  solana_client_zig [--rpc <url>] slot-leaders <start-slot> <limit>\n" ++
     "  solana_client_zig [--rpc <url>] recent-prioritization-fees\n" ++
     "  solana_client_zig [--rpc <url>] cluster-nodes\n" ++
@@ -466,6 +468,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "block-commitment")) {
+                parsed.command = .block_commitment;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "block")) {
                 parsed.command = .block;
                 parsed.has_command = true;
@@ -492,6 +500,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
 
             if (std.mem.eql(u8, arg, "blocks-with-limit")) {
                 parsed.command = .blocks_with_limit;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "slot-leader")) {
+                parsed.command = .slot_leader;
                 parsed.has_command = true;
                 continue;
             }
@@ -642,7 +656,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         }
 
         switch (parsed.command) {
-            .latest_blockhash, .slot, .block_height, .transaction_count, .version, .epoch_info, .health, .genesis_hash, .supply, .epoch_schedule, .inflation_rate, .highest_snapshot_slot, .first_available_block, .recent_prioritization_fees, .identity, .cluster_nodes, .vote_accounts, .block_production, .inflation_governor, .minimum_ledger_slot, .max_retransmit_slot, .max_shred_insert_slot, .largest_accounts => return error.InvalidCli,
+            .latest_blockhash, .slot, .block_height, .transaction_count, .version, .epoch_info, .health, .genesis_hash, .supply, .epoch_schedule, .inflation_rate, .highest_snapshot_slot, .first_available_block, .recent_prioritization_fees, .identity, .cluster_nodes, .vote_accounts, .block_production, .inflation_governor, .minimum_ledger_slot, .max_retransmit_slot, .max_shred_insert_slot, .largest_accounts, .slot_leader => return error.InvalidCli,
 
             .stake_minimum_delegation => return error.InvalidCli,
 
@@ -717,6 +731,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
             },
 
             .block_time => if (parsed.slot_arg == null) {
+                parsed.slot_arg = arg;
+            } else {
+                return error.InvalidCli;
+            },
+
+            .block_commitment => if (parsed.slot_arg == null) {
                 parsed.slot_arg = arg;
             } else {
                 return error.InvalidCli;
@@ -812,10 +832,12 @@ pub const Command = enum {
     supply,
     epoch_schedule,
     inflation_rate,
+    block_commitment,
     block,
     block_time,
     blocks,
     blocks_with_limit,
+    slot_leader,
     slot_leaders,
     recent_prioritization_fees,
     cluster_nodes,
@@ -856,7 +878,9 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "signature-status") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "feature-activation-slot <feature-pubkey>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "signatures-for-address <address>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "block-commitment <slot>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "block <slot>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "slot-leader") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "stake-minimum-delegation") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "account-info <account>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "multiple-accounts <account-1> [account-2 ...]") != null);
@@ -1014,6 +1038,18 @@ test "cli.parseCliArgs parses blocks-with-limit with commitment" {
     try std.testing.expectEqualStrings("25", parsed.blocks_limit_arg orelse "");
 }
 
+test "cli.parseCliArgs parses slot leader with commitment" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "slot-leader",
+        "--commitment",
+        "confirmed",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.slot_leader, parsed.command);
+    try std.testing.expectEqual(Commitment.confirmed, parsed.commitment orelse .processed);
+}
+
 test "cli.parseCliArgs parses block" {
     var parsed = try parseCliArgs(std.testing.allocator, &.{
         "block",
@@ -1023,6 +1059,17 @@ test "cli.parseCliArgs parses block" {
 
     try std.testing.expectEqual(Command.block, parsed.command);
     try std.testing.expectEqualStrings("123", parsed.slot_arg orelse "");
+}
+
+test "cli.parseCliArgs parses block commitment" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "block-commitment",
+        "456",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.block_commitment, parsed.command);
+    try std.testing.expectEqualStrings("456", parsed.slot_arg orelse "");
 }
 
 test "cli.parseCliArgs parses block with commitment" {

@@ -471,6 +471,23 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             }
         },
 
+        .block_commitment => {
+            const slot_text = slot_arg orelse return error.InvalidCli;
+            const slot = std.fmt.parseInt(u64, slot_text, 10) catch return error.InvalidCli;
+            const result = try rpc.getBlockCommitment(slot);
+            defer freeBlockCommitment(allocator, result);
+
+            std.debug.print("block commitment for slot {}: total_stake={}\n", .{ slot, result.total_stake });
+            if (result.commitment) |commitment_values| {
+                std.debug.print("commitment entries: {}\n", .{commitment_values.len});
+                for (commitment_values, 0..) |value, index| {
+                    std.debug.print("  [{}] {}\n", .{ index, value });
+                }
+            } else {
+                std.debug.print("commitment entries: unavailable\n", .{});
+            }
+        },
+
         .block => {
             const slot_text = slot_arg orelse return error.InvalidCli;
             const slot = std.fmt.parseInt(u64, slot_text, 10) catch return error.InvalidCli;
@@ -497,6 +514,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             } else {
                 std.debug.print("block {}: not found\n", .{slot});
             }
+        },
+
+        .slot_leader => {
+            const leader = try rpc.getSlotLeader(commitment);
+            defer allocator.free(leader);
+            std.debug.print("slot leader: {s}\n", .{leader});
         },
 
         .blocks => {
@@ -1031,6 +1054,10 @@ fn freeSimulatedTransaction(allocator: Allocator, simulation: client.SimulatedTr
     if (simulation.replacement_blockhash) |value| allocator.free(value.blockhash);
 }
 
+fn freeBlockCommitment(allocator: Allocator, commitment: client.BlockCommitment) void {
+    if (commitment.commitment) |values| allocator.free(values);
+}
+
 fn toTokenAccountsFilter(mint_arg: ?[]const u8, token_program_id_arg: ?[]const u8) ?client.TokenAccountsFilter {
     if (mint_arg) |mint| {
         return .{ .mint = mint };
@@ -1513,6 +1540,33 @@ test "runCommand validates block requires slot" {
 
     var parsed = try cli.parseCliArgs(allocator, &.{
         "block",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates block-commitment requires slot" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block-commitment",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates block-commitment slot int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block-commitment",
+        "not-a-slot",
     });
     defer parsed.deinit(allocator);
 
