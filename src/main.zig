@@ -6,6 +6,7 @@ fn printUsage(out: *std.Io.Writer) !void {
         "Usage:\n" ++
             "  solana_client_zig [--rpc <url>] latest-blockhash\n" ++
             "  solana_client_zig [--rpc <url>] status <signature>\n" ++
+            "  solana_client_zig [--rpc <url>] signature-status <signature>\n" ++
             "  solana_client_zig [--rpc <url>] slot\n" ++
             "  solana_client_zig [--rpc <url>] block-height\n" ++
             "  solana_client_zig [--rpc <url>] transaction-count\n" ++
@@ -57,6 +58,7 @@ fn parseCommitment(value: []const u8) ?client.Commitment {
 const Command = enum {
     latest_blockhash,
     status,
+    signature_status,
     slot,
     block_height,
     transaction_count,
@@ -147,6 +149,11 @@ pub fn main() !void {
 
         if (std.mem.eql(u8, arg, "status")) {
             command = .status;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "signature-status")) {
+            command = .signature_status;
             continue;
         }
 
@@ -308,7 +315,7 @@ pub fn main() !void {
         switch (command) {
             .latest_blockhash, .slot, .block_height, .transaction_count, .version, .epoch_info, .health, .genesis_hash, .supply, .epoch_schedule, .inflation_rate, .highest_snapshot_slot, .first_available_block, .recent_prioritization_fees, .identity, .leader_schedule, .cluster_nodes, .vote_accounts, .block_production, .inflation_governor, .minimum_ledger_slot, .max_retransmit_slot, .max_shred_insert_slot => return error.InvalidCli,
 
-            .status => if (signature == null) {
+            .status, .signature_status => if (signature == null) {
                 signature = arg;
                 continue;
             } else {
@@ -416,6 +423,21 @@ pub fn main() !void {
         const signature_value = signature orelse return error.InvalidCli;
         try rpc.waitForSignatureStatus(signature_value, commitment, status_timeout_ms, status_poll_ms);
         std.debug.print("signature confirmed\n", .{});
+        return;
+    }
+
+    if (command == .signature_status) {
+        const signature_value = signature orelse return error.InvalidCli;
+        const status_info = try rpc.getSignatureStatus(signature_value, commitment);
+        defer if (status_info.confirmation_status) |value| allocator.free(value);
+
+        std.debug.print(
+            "signature status: has_error={} confirmation={s}\n",
+            .{
+                if (status_info.has_error) "true" else "false",
+                if (status_info.confirmation_status) |value| value else "unknown",
+            },
+        );
         return;
     }
 
@@ -871,8 +893,10 @@ test "printUsage includes new commands" {
     try printUsage(&out.writer);
 
     const usage = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, usage, "signature-status <signature>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "cluster-nodes") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "leader-schedule [slot] [identity]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "vote-accounts") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "block-production") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "signature-status") != null);
 }

@@ -1356,6 +1356,31 @@ test "getInflationGovernor params serialization" {
     try std.testing.expect(std.mem.eql(u8, params_json, "[]"));
 }
 
+test "getSignatureStatus params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const required = .{
+        [_][]const u8{"signature"},
+        .{ .searchTransactionHistory = true },
+    };
+    const required_json = try client.serializeParams(required);
+    defer allocator.free(required_json);
+    try std.testing.expect(std.mem.indexOf(u8, required_json, "\"signature\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, required_json, "searchTransactionHistory") != null);
+    try std.testing.expect(std.mem.indexOf(u8, required_json, "true") != null);
+
+    const committed = .{
+        [_][]const u8{"signature"},
+        .{ .searchTransactionHistory = true, .commitment = commitmentToString(.confirmed) },
+    };
+    const committed_json = try client.serializeParams(committed);
+    defer allocator.free(committed_json);
+    try std.testing.expect(std.mem.indexOf(u8, committed_json, "\"signature\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, committed_json, "\"commitment\":\"confirmed\"") != null);
+}
+
 test "rpc error detail is captured" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
