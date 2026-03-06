@@ -122,8 +122,37 @@ pub fn build(b: *std.Build) void {
         .root_module = mod,
     });
 
-    // A run step that will run the test executable.
+    // A run step that will run the root module tests.
     const run_mod_tests = b.addRunArtifact(mod_tests);
+
+    const cli_tests_module = b.createModule(.{
+        .root_source_file = b.path("src/cli.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const cli_tests = b.addTest(.{
+        .root_module = cli_tests_module,
+    });
+
+    // A run step that will run CLI-only tests.
+    const run_cli_tests = b.addRunArtifact(cli_tests);
+
+    const commands_tests_module = b.createModule(.{
+        .root_source_file = b.path("src/commands.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "solana_client_zig", .module = mod },
+        },
+    });
+
+    const commands_tests = b.addTest(.{
+        .root_module = commands_tests_module,
+    });
+
+    // A run step that will run command layer tests.
+    const run_commands_tests = b.addRunArtifact(commands_tests);
 
     // Creates an executable that will run `test` blocks from the executable's
     // root module. Note that test executables only test one module at a time,
@@ -141,6 +170,16 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(&run_commands_tests.step);
+
+    const test_root_step = b.step("test-root", "Run root module tests");
+    test_root_step.dependOn(&run_mod_tests.step);
+
+    const test_cli_step = b.step("test-cli", "Run CLI tests");
+    test_cli_step.dependOn(&run_cli_tests.step);
+
+    const test_commands_step = b.step("test-commands", "Run command tests");
+    test_commands_step.dependOn(&run_commands_tests.step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //

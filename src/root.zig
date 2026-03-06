@@ -32,6 +32,8 @@ pub const LatestBlockhash = struct {
 pub const SignatureStatus = struct {
     confirmation_status: ?[]const u8 = null,
     has_error: bool = false,
+    slot: ?u64 = null,
+    confirmations: ?u64 = null,
 };
 
 pub const EpochInfo = struct {
@@ -1070,7 +1072,7 @@ pub const RpcClient = struct {
     const SignatureStatusEntry = struct {
         confirmationStatus: ?[]const u8 = null,
         err: ?json.Value = null,
-        slot: u64 = 0,
+        slot: ?u64 = null,
         confirmations: ?u64 = null,
     };
 
@@ -1108,6 +1110,8 @@ pub const RpcClient = struct {
         return SignatureStatus{
             .confirmation_status = if (first.confirmationStatus) |value| try self.allocator.dupe(u8, value) else null,
             .has_error = first.err != null,
+            .slot = first.slot,
+            .confirmations = first.confirmations,
         };
     }
 
@@ -1140,6 +1144,8 @@ pub const RpcClient = struct {
                 copied[index] = SignatureStatus{
                     .confirmation_status = if (status.confirmationStatus) |value| try self.allocator.dupe(u8, value) else null,
                     .has_error = status.err != null,
+                    .slot = status.slot,
+                    .confirmations = status.confirmations,
                 };
             } else {
                 copied[index] = null;
@@ -1197,7 +1203,7 @@ pub const RpcClient = struct {
     }
 };
 
-test "getLatestBlockhash params serialization" {
+test "root.getLatestBlockhash params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1210,7 +1216,7 @@ test "getLatestBlockhash params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"finalized\"") != null);
 }
 
-test "balance params serialization" {
+test "root.balance params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1226,7 +1232,7 @@ test "balance params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"finalized\"") != null);
 }
 
-test "requestAirdrop params serialization" {
+test "root.requestAirdrop params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1243,7 +1249,7 @@ test "requestAirdrop params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"processed\"") != null);
 }
 
-test "minimumBalanceForRentExemption params serialization" {
+test "root.minimumBalanceForRentExemption params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1259,7 +1265,7 @@ test "minimumBalanceForRentExemption params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"confirmed\"") != null);
 }
 
-test "firstAvailableBlock params serialization" {
+test "root.firstAvailableBlock params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1271,7 +1277,7 @@ test "firstAvailableBlock params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"processed\"") != null);
 }
 
-test "epochInfo params serialization" {
+test "root.epochInfo params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1283,7 +1289,7 @@ test "epochInfo params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"finalized\"") != null);
 }
 
-test "getSupply params serialization" {
+test "root.getSupply params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1295,7 +1301,7 @@ test "getSupply params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"processed\"") != null);
 }
 
-test "blockTime params serialization" {
+test "root.blockTime params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1307,7 +1313,7 @@ test "blockTime params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "123456") != null);
 }
 
-test "getFeeForMessage params serialization" {
+test "root.getFeeForMessage params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1320,7 +1326,7 @@ test "getFeeForMessage params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"finalized\"") != null);
 }
 
-test "recentPerformanceSamples params serialization" {
+test "root.recentPerformanceSamples params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1332,7 +1338,7 @@ test "recentPerformanceSamples params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "999") != null);
 }
 
-test "getBlocks params serialization" {
+test "root.getBlocks params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1345,7 +1351,7 @@ test "getBlocks params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "456") != null);
 }
 
-test "getSlotLeaders params serialization" {
+test "root.getSlotLeaders params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1358,7 +1364,7 @@ test "getSlotLeaders params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "5") != null);
 }
 
-test "getRecentPrioritizationFees params serialization" {
+test "root.getRecentPrioritizationFees params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1370,7 +1376,7 @@ test "getRecentPrioritizationFees params serialization" {
     try std.testing.expect(std.mem.eql(u8, params_json, "[]"));
 }
 
-test "getIdentity params serialization" {
+test "root.getIdentity params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1382,7 +1388,7 @@ test "getIdentity params serialization" {
     try std.testing.expect(std.mem.eql(u8, params_json, "[]"));
 }
 
-test "getInflationGovernor params serialization" {
+test "root.getInflationGovernor params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1394,7 +1400,7 @@ test "getInflationGovernor params serialization" {
     try std.testing.expect(std.mem.eql(u8, params_json, "[]"));
 }
 
-test "getSignatureStatus params serialization" {
+test "root.getSignatureStatus params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1419,7 +1425,7 @@ test "getSignatureStatus params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, committed_json, "\"commitment\":\"confirmed\"") != null);
 }
 
-test "getSignatureStatuses params serialization" {
+test "root.getSignatureStatuses params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1445,7 +1451,7 @@ test "getSignatureStatuses params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"finalized\"") != null);
 }
 
-test "rpc error detail is captured" {
+test "root.rpc error detail is captured" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1461,7 +1467,7 @@ test "rpc error detail is captured" {
     try std.testing.expect(std.mem.eql(u8, last_error.message, "invalid request"));
 }
 
-test "getClusterNodes params serialization" {
+test "root.getClusterNodes params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1473,7 +1479,7 @@ test "getClusterNodes params serialization" {
     try std.testing.expect(std.mem.eql(u8, params_json, "[]"));
 }
 
-test "getLeaderSchedule params serialization" {
+test "root.getLeaderSchedule params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1502,7 +1508,7 @@ test "getLeaderSchedule params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, identity_only_json, "\"commitment\":\"confirmed\"") != null);
 }
 
-test "getVoteAccounts params serialization" {
+test "root.getVoteAccounts params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
@@ -1514,7 +1520,7 @@ test "getVoteAccounts params serialization" {
     try std.testing.expect(std.mem.eql(u8, params_json, "[]"));
 }
 
-test "getBlockProduction params serialization" {
+test "root.getBlockProduction params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
