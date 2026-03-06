@@ -236,6 +236,61 @@ test "root.buildLegacyTransferTransaction builds valid signed transfer payload" 
     try std.testing.expectEqual(@as(u8, 0), message[instruction_data_len_offset + 8]);
 }
 
+test "root.buildLegacyMessageBytes and base64 match manual legacy message construction" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const writable_raw = try Ed25519.KeyPair.generateDeterministic(.{3} ** 32);
+    const program_raw = try Ed25519.KeyPair.generateDeterministic(.{8} ** 32);
+    const recent_blockhash = [_]u8{0x19} ** 32;
+
+    const payer = client.Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const extra_signer = client.Pubkey.fromBytes(extra_signer_raw.public_key.toBytes());
+    const writable = client.Pubkey.fromBytes(writable_raw.public_key.toBytes());
+    const program_id = client.Pubkey.fromBytes(program_raw.public_key.toBytes());
+    const instruction_accounts = [_]client.AccountMeta{
+        client.AccountMeta.init(payer, true, true),
+        client.AccountMeta.init(extra_signer, true, false),
+        client.AccountMeta.init(writable, false, true),
+    };
+    const instruction_data = [_]u8{ 0xaa, 0xbb, 0xcc };
+    const instructions = [_]client.Instruction{
+        .{
+            .program_id = program_id,
+            .accounts = instruction_accounts[0..],
+            .data = instruction_data[0..],
+        },
+    };
+    const message = client.LegacyMessage{
+        .payer = payer,
+        .recent_blockhash = client.Hash.fromBytes(recent_blockhash),
+        .instructions = instructions[0..],
+    };
+
+    const expected_bytes = try message.serialize(allocator);
+    defer allocator.free(expected_bytes);
+    const actual_bytes = try client.buildLegacyMessageBytes(
+        allocator,
+        payer,
+        client.Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+    );
+    defer allocator.free(actual_bytes);
+    try std.testing.expectEqualSlices(u8, expected_bytes, actual_bytes);
+
+    const expected_base64 = try message.toBase64(allocator);
+    defer allocator.free(expected_base64);
+    const actual_base64 = try client.buildLegacyMessageBase64(
+        allocator,
+        payer,
+        client.Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+    );
+    defer allocator.free(actual_base64);
+    try std.testing.expectEqualSlices(u8, expected_base64, actual_base64);
+}
+
 test "root.SystemProgram.advanceNonceAccount builds durable nonce instruction" {
     const allocator = std.testing.allocator;
 
@@ -425,6 +480,80 @@ test "root.buildSignedLegacyTransactionWithNonceInstructions matches transfer-sp
     defer allocator.free(expected);
 
     try std.testing.expectEqualSlices(u8, expected, actual);
+}
+
+test "root.buildSignedLegacyTransaction and base64 match manual multi-signer legacy flow" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const writable_raw = try Ed25519.KeyPair.generateDeterministic(.{3} ** 32);
+    const readonly_raw = try Ed25519.KeyPair.generateDeterministic(.{4} ** 32);
+    const program_raw = try Ed25519.KeyPair.generateDeterministic(.{8} ** 32);
+    const recent_blockhash = [_]u8{0x23} ** 32;
+
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const extra_signer = try client.Keypair.fromSecretKeyBytes(extra_signer_raw.secret_key.toBytes());
+    const writable = client.Pubkey.fromBytes(writable_raw.public_key.toBytes());
+    const readonly = client.Pubkey.fromBytes(readonly_raw.public_key.toBytes());
+    const program_id = client.Pubkey.fromBytes(program_raw.public_key.toBytes());
+    const instruction_accounts = [_]client.AccountMeta{
+        client.AccountMeta.init(payer.public_key, true, true),
+        client.AccountMeta.init(extra_signer.public_key, true, false),
+        client.AccountMeta.init(writable, false, true),
+        client.AccountMeta.init(readonly, false, false),
+    };
+    const instruction_data = [_]u8{ 0x10, 0x20, 0x30 };
+    const instructions = [_]client.Instruction{
+        .{
+            .program_id = program_id,
+            .accounts = instruction_accounts[0..],
+            .data = instruction_data[0..],
+        },
+    };
+    const transaction = client.LegacyTransaction{
+        .message = .{
+            .payer = payer.public_key,
+            .recent_blockhash = client.Hash.fromBytes(recent_blockhash),
+            .instructions = instructions[0..],
+        },
+    };
+
+    var expected_signed = try transaction.sign(allocator, &.{ payer, extra_signer });
+    defer expected_signed.deinit(allocator);
+    var actual_signed = try client.buildSignedLegacyTransaction(
+        allocator,
+        payer.public_key,
+        client.Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+        &.{ payer, extra_signer },
+    );
+    defer actual_signed.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, expected_signed.signatures.len), actual_signed.signatures.len);
+    try std.testing.expectEqualSlices(u8, expected_signed.message_bytes, actual_signed.message_bytes);
+    try std.testing.expectEqualSlices(
+        u8,
+        expected_signed.signatures[0].bytes[0..],
+        actual_signed.signatures[0].bytes[0..],
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        expected_signed.signatures[1].bytes[0..],
+        actual_signed.signatures[1].bytes[0..],
+    );
+
+    const expected_base64 = try transaction.toBase64(allocator, &.{ payer, extra_signer });
+    defer allocator.free(expected_base64);
+    const actual_base64 = try client.buildLegacyTransactionBase64(
+        allocator,
+        payer.public_key,
+        client.Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+        &.{ payer, extra_signer },
+    );
+    defer allocator.free(actual_base64);
+    try std.testing.expectEqualSlices(u8, expected_base64, actual_base64);
 }
 
 test "root.VersionedMessageV0 serializes system transfer with lookup table references" {
@@ -707,6 +836,59 @@ test "root.buildSignedVersionedTransactionV0 matches compile-and-sign flow" {
         expected_signed.signatures[0].bytes[0..],
         actual_signed.signatures[0].bytes[0..],
     );
+}
+
+test "root.buildVersionedMessageV0Bytes and base64 match compile flow" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const lookup_table_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const recent_blockhash = [_]u8{0x34} ** 32;
+
+    const payer = client.Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const destination = client.Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer_instruction = client.SystemProgram.transfer(payer, destination, 1_000);
+    const instructions = [_]client.Instruction{transfer_instruction.instruction()};
+    const lookup_tables = [_]client.AddressLookupTableAccount{
+        .{
+            .account_key = client.Pubkey.fromBytes(lookup_table_raw.public_key.toBytes()),
+            .addresses = &.{destination},
+        },
+    };
+
+    var compiled = try client.compileVersionedMessageV0(
+        allocator,
+        payer,
+        client.Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+        lookup_tables[0..],
+    );
+    defer compiled.deinit(allocator);
+
+    const expected_bytes = try compiled.serialize(allocator);
+    defer allocator.free(expected_bytes);
+    const actual_bytes = try client.buildVersionedMessageV0Bytes(
+        allocator,
+        payer,
+        client.Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+        lookup_tables[0..],
+    );
+    defer allocator.free(actual_bytes);
+    try std.testing.expectEqualSlices(u8, expected_bytes, actual_bytes);
+
+    const expected_base64 = try compiled.toBase64(allocator);
+    defer allocator.free(expected_base64);
+    const actual_base64 = try client.buildVersionedMessageV0Base64(
+        allocator,
+        payer,
+        client.Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+        lookup_tables[0..],
+    );
+    defer allocator.free(actual_base64);
+    try std.testing.expectEqualSlices(u8, expected_base64, actual_base64);
 }
 
 test "root.VersionedTransaction signs system transfer" {

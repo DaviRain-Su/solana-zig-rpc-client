@@ -1141,6 +1141,38 @@ pub fn buildLegacyTransferMessage(
     return try message.serialize(allocator);
 }
 
+pub fn buildLegacyMessageBytes(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+) ![]u8 {
+    const message = LegacyMessage{
+        .payer = payer,
+        .recent_blockhash = recent_blockhash,
+        .instructions = instructions,
+    };
+
+    return try message.serialize(allocator);
+}
+
+pub fn buildLegacyMessageBase64(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+) ![]u8 {
+    const message_bytes = try buildLegacyMessageBytes(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+    );
+    defer allocator.free(message_bytes);
+
+    return try encodeBase64(allocator, message_bytes);
+}
+
 pub fn buildLegacyMessageWithNonceInstructions(
     allocator: Allocator,
     payer: Pubkey,
@@ -1188,6 +1220,43 @@ pub fn buildLegacyTransferTransaction(
     };
 
     var signed = try transaction.sign(allocator, &.{keypair});
+    defer signed.deinit(allocator);
+
+    return try signed.toBase64(allocator);
+}
+
+pub fn buildSignedLegacyTransaction(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+) !SignedLegacyTransaction {
+    const transaction = LegacyTransaction{
+        .message = .{
+            .payer = payer,
+            .recent_blockhash = recent_blockhash,
+            .instructions = instructions,
+        },
+    };
+
+    return try transaction.sign(allocator, signers);
+}
+
+pub fn buildLegacyTransactionBase64(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+) ![]u8 {
+    var signed = try buildSignedLegacyTransaction(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        signers,
+    );
     defer signed.deinit(allocator);
 
     return try signed.toBase64(allocator);
@@ -1294,6 +1363,44 @@ pub fn buildSignedVersionedTransactionV0(
     defer compiled.deinit(allocator);
 
     return try compiled.sign(allocator, signers);
+}
+
+pub fn buildVersionedMessageV0Bytes(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    var compiled = try compileVersionedMessageV0(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+    );
+    defer compiled.deinit(allocator);
+
+    return try compiled.serialize(allocator);
+}
+
+pub fn buildVersionedMessageV0Base64(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    const message_bytes = try buildVersionedMessageV0Bytes(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+    );
+    defer allocator.free(message_bytes);
+
+    return try encodeBase64(allocator, message_bytes);
 }
 
 pub fn buildVersionedTransactionV0Base64(

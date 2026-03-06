@@ -70,7 +70,7 @@ So "feature parity with Rust client" should be read in two layers:
 | `getNewLatestBlockhash` | Implemented | Library and CLI both expose it now. |
 | Send / simulate / send-and-confirm for encoded tx | Implemented | Base64 signed transaction path is available. |
 | Constructor semantic parity | Mostly implemented | Default commitment and HTTP request timeout constructor args now persist and affect transport behavior; `confirm_transaction_initial_timeout` now extends the initial "transaction not found" window for send-and-confirm convenience flows. |
-| Typed legacy transaction/message API | Implemented | Legacy typed SDK, signing, serialization, and typed send/simulate/fee wrappers now exist. |
+| Typed legacy transaction/message API | Implemented | Legacy typed SDK, signing, serialization, generic builder conveniences, and typed send/simulate/fee wrappers now exist. |
 | Versioned transaction / v0 / ALT support | Mostly implemented | Minimal v0 typed support exists, a higher-level compiler from `Instruction` + ALT account input now exists, and SDK convenience builders can now directly sign v0 transactions; broader ergonomics are still incomplete. |
 | Public raw RPC escape hatch | Mostly implemented | Public `sendRequest(method, params_json)`, `sendRaw`, `sendJsonRpc`, `sendTyped`, and `RpcRequest` helpers now exist, though the request identifier surface is still lighter than Rust's full module layout. |
 | Spinner variants | Mostly implemented | High-level send-and-confirm spinner convenience methods and blockhash-aware `confirmTransactionWithSpinner` now exist; broader Rust spinner surface is still lighter than upstream. |
@@ -266,5 +266,8 @@ If work resumes from here, the best sequence is:
 - SDK convenience helpers now cover generic nonce-instruction prepending,
   generic legacy durable-nonce message/sign flows, and direct v0 compile+sign
   convenience for callers that do not want to wire those steps manually.
+- SDK convenience helpers now also cover generic legacy message/signed-tx/base64
+  builders and generic v0 message bytes/base64 builders, reducing the amount of
+  struct assembly callers need to do by hand.
 - Prefer preserving the current project direction: blocking HTTP RPC first,
   minimal SDK second, heavy transport features last.
