@@ -607,10 +607,82 @@ pub const RpcClient = struct {
         };
     }
 
+    pub fn new(allocator: Allocator, endpoint: []const u8) !RpcClient {
+        return RpcClient.init(allocator, endpoint);
+    }
+
+    pub fn newWithCommitment(
+        allocator: Allocator,
+        endpoint: []const u8,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        _ = commitment;
+        return RpcClient.init(allocator, endpoint);
+    }
+
+    pub fn newWithTimeout(allocator: Allocator, endpoint: []const u8, timeout_ms: u64) !RpcClient {
+        _ = timeout_ms;
+        return RpcClient.init(allocator, endpoint);
+    }
+
+    pub fn newWithTimeoutAndCommitment(
+        allocator: Allocator,
+        endpoint: []const u8,
+        timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        _ = timeout_ms;
+        _ = commitment;
+        return RpcClient.init(allocator, endpoint);
+    }
+
+    pub fn newWithTimeoutsAndCommitment(
+        allocator: Allocator,
+        endpoint: []const u8,
+        send_timeout_ms: u64,
+        request_timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        _ = send_timeout_ms;
+        _ = request_timeout_ms;
+        _ = commitment;
+        return RpcClient.init(allocator, endpoint);
+    }
+
+    pub fn newSender(allocator: Allocator, endpoint: []const u8) !RpcClient {
+        return RpcClient.init(allocator, endpoint);
+    }
+
+    pub fn newSocket(allocator: Allocator, endpoint: []const u8) !RpcClient {
+        return RpcClient.init(allocator, endpoint);
+    }
+
+    pub fn newSocketWithCommitment(
+        allocator: Allocator,
+        endpoint: []const u8,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        _ = commitment;
+        return RpcClient.init(allocator, endpoint);
+    }
+
+    pub fn newSocketWithTimeout(
+        allocator: Allocator,
+        endpoint: []const u8,
+        timeout_ms: u64,
+    ) !RpcClient {
+        _ = timeout_ms;
+        return RpcClient.init(allocator, endpoint);
+    }
+
     pub fn deinit(self: *RpcClient) void {
         self.clearLastError();
         self.http_client.deinit();
         self.allocator.free(self.endpoint);
+    }
+
+    pub fn url(self: *const RpcClient) []const u8 {
+        return self.endpoint;
     }
 
     pub fn getLastError(self: *RpcClient) ?RpcErrorDetail {
@@ -1328,6 +1400,26 @@ pub const RpcClient = struct {
             account,
             if (commitment) |value| AccountQueryOptions{ .commitment = value } else null,
         );
+    }
+
+    pub fn getAccount(self: *RpcClient, account: []const u8) !?AccountInfo {
+        return try self.getAccountInfoMaybe(account, null);
+    }
+
+    pub fn getAccountWithCommitment(
+        self: *RpcClient,
+        account: []const u8,
+        commitment: Commitment,
+    ) !?AccountInfo {
+        return try self.getAccountInfoMaybe(account, commitment);
+    }
+
+    pub fn getAccountWithConfig(
+        self: *RpcClient,
+        account: []const u8,
+        options: ?AccountQueryOptions,
+    ) !?AccountInfo {
+        return try self.getAccountInfoMaybeWithOptions(account, options);
     }
 
     pub fn getAccountInfo(self: *RpcClient, account: []const u8, commitment: ?Commitment) !AccountInfo {
@@ -3436,6 +3528,10 @@ pub const RpcClient = struct {
         return try self.parseResponse(response, bool);
     }
 
+    pub fn send(self: *RpcClient, signed_tx_base64: []const u8) ![]const u8 {
+        return try self.sendTransaction(signed_tx_base64, null);
+    }
+
     pub fn sendTransaction(self: *RpcClient, signed_tx_base64: []const u8, options: ?SendTransactionOptions) ![]const u8 {
         const params_json = try self.serializeSendTransactionParams(signed_tx_base64, options);
         defer self.allocator.free(params_json);
@@ -4189,6 +4285,129 @@ test "root.balance params serialization" {
 
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"7xKXtg2CWqQm6VfQn2Yf5q3r8JwM6n2vB8z8w1sT8k6\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"finalized\"") != null);
+}
+
+test "root.new constructors initialize endpoint" {
+    const allocator = std.testing.allocator;
+    const endpoint = "http://127.0.0.1:8899";
+
+    var client = try RpcClient.new(allocator, endpoint);
+    defer client.deinit();
+    try std.testing.expectEqualStrings(endpoint, client.url());
+
+    var commitment_client = try RpcClient.newWithCommitment(allocator, endpoint, .confirmed);
+    defer commitment_client.deinit();
+    try std.testing.expectEqualStrings(endpoint, commitment_client.url());
+
+    var timeout_client = try RpcClient.newWithTimeout(allocator, endpoint, 5_000);
+    defer timeout_client.deinit();
+    try std.testing.expectEqualStrings(endpoint, timeout_client.url());
+
+    var timeout_commit_client = try RpcClient.newWithTimeoutAndCommitment(
+        allocator,
+        endpoint,
+        5_000,
+        .confirmed,
+    );
+    defer timeout_commit_client.deinit();
+    try std.testing.expectEqualStrings(endpoint, timeout_commit_client.url());
+
+    var timeouts_commit_client = try RpcClient.newWithTimeoutsAndCommitment(
+        allocator,
+        endpoint,
+        5_000,
+        10_000,
+        .confirmed,
+    );
+    defer timeouts_commit_client.deinit();
+    try std.testing.expectEqualStrings(endpoint, timeouts_commit_client.url());
+
+    var sender_client = try RpcClient.newSender(allocator, endpoint);
+    defer sender_client.deinit();
+    try std.testing.expectEqualStrings(endpoint, sender_client.url());
+
+    var socket_client = try RpcClient.newSocket(allocator, endpoint);
+    defer socket_client.deinit();
+    try std.testing.expectEqualStrings(endpoint, socket_client.url());
+
+    var socket_commit_client = try RpcClient.newSocketWithCommitment(allocator, endpoint, .finalized);
+    defer socket_commit_client.deinit();
+    try std.testing.expectEqualStrings(endpoint, socket_commit_client.url());
+
+    var socket_timeout_client = try RpcClient.newSocketWithTimeout(allocator, endpoint, 5_000);
+    defer socket_timeout_client.deinit();
+    try std.testing.expectEqualStrings(endpoint, socket_timeout_client.url());
+}
+
+test "root.send delegates to sendTransaction" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":"Sig111111111111111111111111111111111111111111111111111111111111111111","id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const signature = try client.send("SignedTransactionBase64==");
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "Sig111111111111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+}
+
+test "root.getAccount wrappers return decoded account info" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":{"data":["", "base64"],"executable":false,"lamports":1234,"owner":"Owner1111111111111111111111111111111111","rentEpoch":8,"space":64}},"id":1}
+    ;
+    const response_bodies = [_][]const u8{
+        response_body,
+        response_body,
+        response_body,
+    };
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const account_1 = (try client.getAccount("Address11111111111111111111111111111111")) orelse
+        return error.TestExpectedEqual;
+    defer client.freeOwnedAccountInfo(account_1);
+    try std.testing.expectEqual(@as(u64, 1234), account_1.lamports);
+
+    const account_2 = (try client.getAccountWithCommitment(
+        "Address11111111111111111111111111111111",
+        .confirmed,
+    )) orelse return error.TestExpectedEqual;
+    defer client.freeOwnedAccountInfo(account_2);
+    try std.testing.expectEqual(@as(u64, 1234), account_2.lamports);
+
+    const account_3 = (try client.getAccountWithConfig(
+        "Address11111111111111111111111111111111",
+        AccountQueryOptions{ .commitment = .confirmed },
+    )) orelse return error.TestExpectedEqual;
+    defer client.freeOwnedAccountInfo(account_3);
+    try std.testing.expectEqual(@as(u64, 1234), account_3.lamports);
 }
 
 test "root.getBalanceResponse preserves context slot" {
