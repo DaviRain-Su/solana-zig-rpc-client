@@ -1379,13 +1379,37 @@ pub const RpcClient = struct {
         };
     }
 
+    pub fn getAccountInfoResponseWithConfig(
+        self: *RpcClient,
+        account: []const u8,
+        options: ?AccountQueryOptions,
+    ) !AccountInfoResponse {
+        return try self.getAccountInfoResponseWithOptions(account, options);
+    }
+
     pub fn getAccountInfoMaybeWithOptions(self: *RpcClient, account: []const u8, options: ?AccountQueryOptions) !?AccountInfo {
         const response = try self.getAccountInfoResponseWithOptions(account, options);
         return response.account;
     }
 
+    pub fn getAccountInfoMaybeWithConfig(
+        self: *RpcClient,
+        account: []const u8,
+        options: ?AccountQueryOptions,
+    ) !?AccountInfo {
+        return try self.getAccountInfoMaybeWithOptions(account, options);
+    }
+
     pub fn getAccountInfoWithOptions(self: *RpcClient, account: []const u8, options: ?AccountQueryOptions) !AccountInfo {
         return (try self.getAccountInfoMaybeWithOptions(account, options)) orelse error.AccountNotFound;
+    }
+
+    pub fn getAccountInfoWithConfig(
+        self: *RpcClient,
+        account: []const u8,
+        options: ?AccountQueryOptions,
+    ) !AccountInfo {
+        return try self.getAccountInfoWithOptions(account, options);
     }
 
     pub fn getAccountInfoResponse(self: *RpcClient, account: []const u8, commitment: ?Commitment) !AccountInfoResponse {
@@ -1449,6 +1473,14 @@ pub const RpcClient = struct {
         return decoded;
     }
 
+    pub fn getAccountDataWithConfig(
+        self: *RpcClient,
+        account: []const u8,
+        options: ?AccountQueryOptions,
+    ) ![]const u8 {
+        return try self.getAccountDataWithOptions(account, options);
+    }
+
     pub fn getAccountData(self: *RpcClient, account: []const u8, commitment: ?Commitment) ![]const u8 {
         return try self.getAccountDataWithOptions(
             account,
@@ -1486,9 +1518,25 @@ pub const RpcClient = struct {
         };
     }
 
+    pub fn getUiAccountResponseWithConfig(
+        self: *RpcClient,
+        account: []const u8,
+        options: ?UiAccountQueryOptions,
+    ) !UiAccountResponse {
+        return try self.getUiAccountResponseWithOptions(account, options);
+    }
+
     pub fn getUiAccountMaybeWithOptions(self: *RpcClient, account: []const u8, options: ?UiAccountQueryOptions) !?JsonParsedAccountInfo {
         const response = try self.getUiAccountResponseWithOptions(account, options);
         return response.account;
+    }
+
+    pub fn getUiAccountMaybeWithConfig(
+        self: *RpcClient,
+        account: []const u8,
+        options: ?UiAccountQueryOptions,
+    ) !?JsonParsedAccountInfo {
+        return try self.getUiAccountMaybeWithOptions(account, options);
     }
 
     pub fn getUiAccountWithOptions(self: *RpcClient, account: []const u8, options: ?UiAccountQueryOptions) !JsonParsedAccountInfo {
@@ -1547,9 +1595,25 @@ pub const RpcClient = struct {
         };
     }
 
+    pub fn getMultipleAccountsResponseWithConfig(
+        self: *RpcClient,
+        accounts: []const []const u8,
+        options: ?AccountQueryOptions,
+    ) !MultipleAccountsResponse {
+        return try self.getMultipleAccountsResponseWithOptions(accounts, options);
+    }
+
     pub fn getMultipleAccountsWithOptions(self: *RpcClient, accounts: []const []const u8, options: ?AccountQueryOptions) ![]?AccountInfo {
         const response = try self.getMultipleAccountsResponseWithOptions(accounts, options);
         return response.accounts;
+    }
+
+    pub fn getMultipleAccountsWithConfig(
+        self: *RpcClient,
+        accounts: []const []const u8,
+        options: ?AccountQueryOptions,
+    ) ![]?AccountInfo {
+        return try self.getMultipleAccountsWithOptions(accounts, options);
     }
 
     pub fn getMultipleAccounts(self: *RpcClient, accounts: []const []const u8, commitment: ?Commitment) ![]?AccountInfo {
@@ -1596,9 +1660,25 @@ pub const RpcClient = struct {
         };
     }
 
+    pub fn getMultipleUiAccountsResponseWithConfig(
+        self: *RpcClient,
+        accounts: []const []const u8,
+        options: ?UiAccountQueryOptions,
+    ) !MultipleUiAccountsResponse {
+        return try self.getMultipleUiAccountsResponseWithOptions(accounts, options);
+    }
+
     pub fn getMultipleUiAccountsWithOptions(self: *RpcClient, accounts: []const []const u8, options: ?UiAccountQueryOptions) ![]?JsonParsedAccountInfo {
         const response = try self.getMultipleUiAccountsResponseWithOptions(accounts, options);
         return response.accounts;
+    }
+
+    pub fn getMultipleUiAccountsWithConfig(
+        self: *RpcClient,
+        accounts: []const []const u8,
+        options: ?UiAccountQueryOptions,
+    ) ![]?JsonParsedAccountInfo {
+        return try self.getMultipleUiAccountsWithOptions(accounts, options);
     }
 
     pub fn getMultipleUiAccounts(self: *RpcClient, accounts: []const []const u8, commitment: ?Commitment) ![]?JsonParsedAccountInfo {
@@ -1986,9 +2066,25 @@ pub const RpcClient = struct {
         };
     }
 
+    pub fn getProgramAccountsResponseWithConfig(
+        self: *RpcClient,
+        program_id: []const u8,
+        options: ?ProgramAccountsQueryOptions,
+    ) !ProgramAccountsResponse {
+        return try self.getProgramAccountsResponseWithOptions(program_id, options);
+    }
+
     pub fn getProgramAccountsWithOptions(self: *RpcClient, program_id: []const u8, options: ?ProgramAccountsQueryOptions) ![]ProgramAccount {
         const response = try self.getProgramAccountsResponseWithOptions(program_id, options);
         return response.accounts;
+    }
+
+    pub fn getProgramAccountsWithConfig(
+        self: *RpcClient,
+        program_id: []const u8,
+        options: ?ProgramAccountsQueryOptions,
+    ) ![]ProgramAccount {
+        return try self.getProgramAccountsWithOptions(program_id, options);
     }
 
     pub fn getProgramAccounts(self: *RpcClient, program_id: []const u8, commitment: ?Commitment) ![]ProgramAccount {
@@ -2048,6 +2144,14 @@ pub const RpcClient = struct {
             .context_slot = null,
             .accounts = copied,
         };
+    }
+
+    pub fn getProgramUiAccountsResponseWithConfig(
+        self: *RpcClient,
+        program_id: []const u8,
+        options: ?ProgramAccountsQueryOptions,
+    ) !JsonParsedProgramAccountsResponse {
+        return try self.getProgramUiAccountsResponseWithOptions(program_id, options);
     }
 
     pub fn getProgramUiAccountsWithOptions(self: *RpcClient, program_id: []const u8, options: ?ProgramAccountsQueryOptions) ![]JsonParsedProgramAccount {
@@ -2277,6 +2381,13 @@ pub const RpcClient = struct {
         };
     }
 
+    pub fn getSupplyWithConfig(
+        self: *RpcClient,
+        options: ?SupplyQueryOptions,
+    ) !Supply {
+        return try self.getSupplyWithOptions(options);
+    }
+
     pub fn getLargestAccountsWithOptions(self: *RpcClient, options: ?LargestAccountsQueryOptions) ![]LargestAccount {
         const LargestAccountsConfig = struct {
             commitment: ?[]const u8 = null,
@@ -2327,6 +2438,13 @@ pub const RpcClient = struct {
         }
 
         return copied;
+    }
+
+    pub fn getLargestAccountsWithConfig(
+        self: *RpcClient,
+        options: ?LargestAccountsQueryOptions,
+    ) ![]LargestAccount {
+        return try self.getLargestAccountsWithOptions(options);
     }
 
     pub fn getLargestAccounts(self: *RpcClient, commitment: ?Commitment) ![]LargestAccount {
@@ -2687,6 +2805,14 @@ pub const RpcClient = struct {
         return try self.parseGetBlockResponse(response);
     }
 
+    pub fn getBlockWithConfig(
+        self: *RpcClient,
+        slot: u64,
+        options: ?BlockQueryOptions,
+    ) !?[]const u8 {
+        return try self.getBlockWithOptions(slot, options);
+    }
+
     pub fn getBlock(self: *RpcClient, slot: u64, commitment: ?Commitment) !?[]const u8 {
         const params = if (commitment) |value| blk: {
             const params = .{ slot, .{ .commitment = commitmentToString(value) } };
@@ -2746,6 +2872,14 @@ pub const RpcClient = struct {
         }
 
         return null;
+    }
+
+    pub fn getBlockSummaryWithConfig(
+        self: *RpcClient,
+        slot: u64,
+        options: ?BlockQueryOptions,
+    ) !?BlockSummary {
+        return try self.getBlockSummaryWithOptions(slot, options);
     }
 
     pub fn getBlockSummary(self: *RpcClient, slot: u64, commitment: ?Commitment) !?BlockSummary {
@@ -2858,6 +2992,14 @@ pub const RpcClient = struct {
         }
 
         return null;
+    }
+
+    pub fn getTransactionSummaryWithConfig(
+        self: *RpcClient,
+        signature: []const u8,
+        options: ?TransactionQueryOptions,
+    ) !?TransactionSummary {
+        return try self.getTransactionSummaryWithOptions(signature, options);
     }
 
     pub fn getTransactionSummary(self: *RpcClient, signature: []const u8, commitment: ?Commitment) !?TransactionSummary {
@@ -3444,6 +3586,13 @@ pub const RpcClient = struct {
         return VoteAccounts{ .current = current, .delinquent = delinquent };
     }
 
+    pub fn getVoteAccountsWithConfig(
+        self: *RpcClient,
+        options: ?VoteAccountsQueryOptions,
+    ) !VoteAccounts {
+        return try self.getVoteAccountsWithOptions(options);
+    }
+
     pub fn getVoteAccounts(self: *RpcClient) !VoteAccounts {
         return try self.getVoteAccountsWithOptions(null);
     }
@@ -3529,6 +3678,13 @@ pub const RpcClient = struct {
             .last_slot = range.lastSlot,
             .by_identity = by_identity,
         };
+    }
+
+    pub fn getBlockProductionWithConfig(
+        self: *RpcClient,
+        options: ?BlockProductionQueryOptions,
+    ) !BlockProduction {
+        return try self.getBlockProductionWithOptions(options);
     }
 
     pub fn getBlockProduction(self: *RpcClient, commitment: ?Commitment) !BlockProduction {
@@ -3781,6 +3937,14 @@ pub const RpcClient = struct {
         };
     }
 
+    pub fn getSignatureStatusWithConfig(
+        self: *RpcClient,
+        signature: []const u8,
+        options: ?SignatureStatusesQueryOptions,
+    ) !SignatureStatus {
+        return try self.getSignatureStatusWithOptions(signature, options);
+    }
+
     pub fn getSignatureStatus(self: *RpcClient, signature: []const u8, commitment: ?Commitment) !SignatureStatus {
         return try self.getSignatureStatusWithOptions(
             signature,
@@ -3855,6 +4019,14 @@ pub const RpcClient = struct {
         }
 
         return copied;
+    }
+
+    pub fn getSignatureStatusesWithConfig(
+        self: *RpcClient,
+        signatures: []const []const u8,
+        options: ?SignatureStatusesQueryOptions,
+    ) ![]?SignatureStatus {
+        return try self.getSignatureStatusesWithOptions(signatures, options);
     }
 
     pub fn getSignatureStatuses(self: *RpcClient, signatures: []const []const u8, commitment: ?Commitment) ![]?SignatureStatus {
@@ -3968,6 +4140,14 @@ pub const RpcClient = struct {
                 .commitment = commitment,
             },
         );
+    }
+
+    pub fn getSignaturesForAddressWithConfig(
+        self: *RpcClient,
+        address: []const u8,
+        options: ?SignaturesForAddressOptions,
+    ) ![]SignatureForAddress {
+        return try self.getSignaturesForAddressWithOptions(address, options);
     }
 
     pub fn getSignaturesForAddressWithOptions(
