@@ -169,6 +169,7 @@ pub fn build(b: *std.Build) void {
         "tests/root/sdk.zig",
         "tests/root/ledger.zig",
         "tests/root/network.zig",
+        "tests/root/nonce.zig",
         "tests/root/assets.zig",
         "tests/root/accounts.zig",
         "tests/root/smoke.zig",

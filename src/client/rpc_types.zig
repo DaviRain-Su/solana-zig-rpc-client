@@ -176,6 +176,17 @@ pub const UiAccountResponse = struct {
     account: ?JsonParsedAccountInfo = null,
 };
 
+pub const NonceAccount = struct {
+    authority: []const u8 = "",
+    blockhash: []const u8 = "",
+    lamports_per_signature: ?u64 = null,
+};
+
+pub const NonceAccountResponse = struct {
+    context_slot: u64 = 0,
+    account: ?NonceAccount = null,
+};
+
 pub const JsonParsedProgramAccount = struct {
     pubkey: []const u8 = "",
     account: JsonParsedAccountInfo = .{},
@@ -227,6 +238,30 @@ pub const FeeForMessage = struct {
 pub const FeeForMessageResponse = struct {
     context_slot: u64 = 0,
     value: ?u64 = null,
+};
+
+pub const BlockhashQuerySource = enum {
+    cluster,
+    fixed,
+    nonce_account,
+};
+
+pub const ResolvedBlockhash = struct {
+    blockhash: []const u8 = "",
+    source: BlockhashQuerySource = .cluster,
+    context_slot: ?u64 = null,
+    last_valid_block_height: ?u64 = null,
+};
+
+pub const BlockhashQuery = union(enum) {
+    cluster: struct {
+        commitment: ?Commitment = null,
+    },
+    fixed: []const u8,
+    nonce_account: struct {
+        pubkey: []const u8,
+        commitment: ?Commitment = null,
+    },
 };
 
 pub const EpochSchedule = struct {

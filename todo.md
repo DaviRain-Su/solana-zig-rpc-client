@@ -49,8 +49,8 @@ So "feature parity with Rust client" should be read in two layers:
 | --- | --- | --- |
 | `rpc_client` | Mostly implemented | Core blocking RPC surface is largely present and now split across `src/client/rpc_client/*.zig`. |
 | `rpc_config` / `rpc_filter` / `rpc_request` / `rpc_response` / `rpc_custom_error` | Partially implemented | Zig has many equivalent structs/options, but not a full Rust-style public module layout. |
-| `blockhash_query` | Not implemented | No durable-nonce-oriented blockhash query helper layer yet. |
-| `nonce_utils` | Not implemented | Durable nonce helpers are still missing. |
+| `blockhash_query` | Partially implemented | Minimal `BlockhashQuery` / `resolveBlockhashQuery` support now exists, but the broader Rust helper surface is still incomplete. |
+| `nonce_utils` | Partially implemented | Nonce account parsing and nonce blockhash lookup now exist, but nonce-aware builders/instructions/utilities are still missing. |
 | `pubsub_client` | Not implemented | No websocket subscription client. |
 | `nonblocking` | Not implemented | No async RPC client surface. |
 | `connection_cache` | Not implemented | No QUIC/UDP connection cache abstraction. |
@@ -202,7 +202,8 @@ Why this phase is second:
   - [ ] `sendRaw`
   - [ ] or `sendJsonRpc`
   - [ ] or `sendTyped(request, params, ResultType)`
-- [ ] Add minimal nonce/blockhash query helpers once typed message support exists.
+- [x] Add minimal nonce/blockhash query helpers once typed message support exists.
+- [ ] Extend nonce support into higher-level transaction/message builders.
 
 Why this phase is third:
 
@@ -234,9 +235,10 @@ If work resumes from here, the best sequence is:
 
 1. Add durable nonce / blockhash query helpers.
 2. Add a higher-level v0 / ALT message builder from instruction input.
-3. Add a more typed raw RPC escape hatch above `sendRequest`.
-4. Reassess real transport timeout support in the current Zig HTTP stack.
-5. Only then decide whether pubsub / async is worth starting before TPU/QUIC.
+3. Extend nonce support into nonce-aware builders and convenience flows.
+4. Add a more typed raw RPC escape hatch above `sendRequest`.
+5. Reassess real transport timeout support in the current Zig HTTP stack.
+6. Only then decide whether pubsub / async is worth starting before TPU/QUIC.
 
 ## Notes
 
@@ -244,5 +246,7 @@ If work resumes from here, the best sequence is:
 - Do not treat `_with_timeout` naming alone as parity; actual transport behavior
   still matters.
 - The project now has a real minimal SDK and a cleaner test layout under `tests/`.
+- The project now also has a minimal nonce/blockhash query foundation, but not
+  yet full durable-nonce transaction ergonomics.
 - Prefer preserving the current project direction: blocking HTTP RPC first,
   minimal SDK second, heavy transport features last.
