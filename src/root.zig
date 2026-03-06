@@ -166,6 +166,14 @@ pub const RecentPrioritizationFee = struct {
     prioritization_fee: u64 = 0,
 };
 
+pub const InflationReward = struct {
+    epoch: u64 = 0,
+    effective_slot: u64 = 0,
+    amount: u64 = 0,
+    post_balance: u64 = 0,
+    commission: ?u8 = null,
+};
+
 pub const InflationGovernor = struct {
     foundation: f64 = 0,
     foundation_term: f64 = 0,
@@ -1410,6 +1418,74 @@ pub const RpcClient = struct {
         return copied;
     }
 
+    pub fn getInflationReward(
+        self: *RpcClient,
+        addresses: []const []const u8,
+        epoch: ?u64,
+        commitment: ?Commitment,
+    ) ![]?InflationReward {
+        const InflationRewardConfig = struct {
+            commitment: ?[]const u8 = null,
+            epoch: ?u64 = null,
+        };
+
+        const params_json = if (epoch != null or commitment != null) blk: {
+            const params = .{
+                addresses,
+                InflationRewardConfig{
+                    .commitment = if (commitment) |value| commitmentToString(value) else null,
+                    .epoch = epoch,
+                },
+            };
+            break :blk try self.serializeParams(params);
+        } else blk: {
+            const params = .{addresses};
+            break :blk try self.serializeParams(params);
+        };
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest("getInflationReward", params_json);
+        defer self.allocator.free(response);
+
+        try self.captureRpcError(response);
+
+        const InflationRewardResult = struct {
+            epoch: u64 = 0,
+            effectiveSlot: u64 = 0,
+            amount: u64 = 0,
+            postBalance: u64 = 0,
+            commission: ?u8 = null,
+        };
+
+        const ParsedEnvelope = struct {
+            jsonrpc: []const u8 = "",
+            id: u64 = 0,
+            result: ?[]?InflationRewardResult = null,
+        };
+
+        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        const source = parsed.value.result orelse return error.InvalidResponse;
+        const copied = try self.allocator.alloc(?InflationReward, source.len);
+
+        for (source, 0..) |entry, idx| {
+            if (entry) |value| {
+                copied[idx] = InflationReward{
+                    .epoch = value.epoch,
+                    .effective_slot = value.effectiveSlot,
+                    .amount = value.amount,
+                    .post_balance = value.postBalance,
+                    .commission = value.commission,
+                };
+            } else {
+                copied[idx] = null;
+            }
+        }
+
+        return copied;
+    }
+
     pub fn getBlocks(self: *RpcClient, start_slot: u64, end_slot: ?u64, commitment: ?Commitment) ![]u64 {
         const params_json = if (end_slot) |value| blk: {
             if (commitment) |value_commitment| {
@@ -1524,8 +1600,13 @@ pub const RpcClient = struct {
         return try self.allocator.dupe(u8, leader);
     }
 
-    pub fn getRecentPrioritizationFees(self: *RpcClient) ![]RecentPrioritizationFee {
-        const response = try self.sendNoParamsRequest("getRecentPrioritizationFees");
+    pub fn getRecentPrioritizationFees(self: *RpcClient, addresses: ?[]const []const u8) ![]RecentPrioritizationFee {
+        const response = if (addresses) |value| blk: {
+            const params = .{value};
+            const params_json = try self.serializeParams(params);
+            defer self.allocator.free(params_json);
+            break :blk try self.sendRequest("getRecentPrioritizationFees", params_json);
+        } else try self.sendNoParamsRequest("getRecentPrioritizationFees");
         defer self.allocator.free(response);
 
         try self.captureRpcError(response);
@@ -2800,6 +2881,35 @@ test "root.getBlocksWithLimit params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"finalized\"") != null);
 }
 
+test "root.getInflationReward params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const addresses = [_][]const u8{
+        "Address11111111111111111111111111111111",
+        "Address22222222222222222222222222222222",
+    };
+
+    const no_config = .{addresses};
+    const no_config_json = try client.serializeParams(no_config);
+    defer allocator.free(no_config_json);
+    try std.testing.expect(std.mem.indexOf(u8, no_config_json, "\"Address11111111111111111111111111111111\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, no_config_json, "\"Address22222222222222222222222222222222\"") != null);
+
+    const with_config = .{
+        addresses,
+        .{
+            .commitment = commitmentToString(.confirmed),
+            .epoch = @as(u64, 42),
+        },
+    };
+    const with_config_json = try client.serializeParams(with_config);
+    defer allocator.free(with_config_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_config_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_config_json, "\"epoch\":42") != null);
+}
+
 test "root.getSlotLeaders params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
@@ -2839,6 +2949,17 @@ test "root.getRecentPrioritizationFees params serialization" {
     defer allocator.free(params_json);
 
     try std.testing.expect(std.mem.eql(u8, params_json, "[]"));
+
+    const accounts = [_][]const u8{
+        "Address11111111111111111111111111111111",
+        "Address22222222222222222222222222222222",
+    };
+    const filtered_params = .{accounts};
+    const filtered_params_json = try client.serializeParams(filtered_params);
+    defer allocator.free(filtered_params_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, filtered_params_json, "\"Address11111111111111111111111111111111\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, filtered_params_json, "\"Address22222222222222222222222222222222\"") != null);
 }
 
 test "root.getIdentity params serialization" {

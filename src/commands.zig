@@ -10,6 +10,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const account = args.account;
     const blockhash_arg = args.blockhash_arg;
     const encoding_arg = args.encoding_arg;
+    const epoch_arg = args.epoch_arg;
     const feature_key_arg = args.feature_key_arg;
     const max_supported_transaction_version_arg = args.max_supported_transaction_version_arg;
     const signatures_for_address_arg = args.signatures_for_address_arg;
@@ -92,6 +93,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
     if ((transaction_details_arg != null or rewards_arg != null) and command != .block) {
         std.debug.print("error: --transaction-details and --rewards require block\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (epoch_arg != null and command != .inflation_reward) {
+        std.debug.print("error: --epoch requires inflation-reward\n", .{});
         return error.InvalidCli;
     }
 
@@ -433,6 +439,30 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             std.debug.print("genesis hash: {s}\n", .{genesis_hash});
         },
 
+        .inflation_reward => {
+            if (multiple_accounts.items.len == 0) {
+                std.debug.print("error: inflation-reward requires at least one address\n", .{});
+                return error.InvalidCli;
+            }
+
+            const epoch = if (epoch_arg) |value| std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli else null;
+            const rewards = try rpc.getInflationReward(multiple_accounts.items, epoch, commitment);
+            defer allocator.free(rewards);
+
+            std.debug.print("inflation rewards: {}\n", .{rewards.len});
+            for (rewards, 0..) |maybe_reward, index| {
+                const address = multiple_accounts.items[index];
+                if (maybe_reward) |reward| {
+                    std.debug.print(
+                        "  [{}] {s}: epoch={} effective_slot={} amount={} post_balance={} commission={?d}\n",
+                        .{ index, address, reward.epoch, reward.effective_slot, reward.amount, reward.post_balance, reward.commission },
+                    );
+                } else {
+                    std.debug.print("  [{}] {s}: unavailable\n", .{ index, address });
+                }
+            }
+        },
+
         .first_available_block => {
             const first_block = try rpc.getFirstAvailableBlock(commitment);
             std.debug.print("first available block: {}\n", .{first_block});
@@ -586,7 +616,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .recent_prioritization_fees => {
-            const fees = try rpc.getRecentPrioritizationFees();
+            const fees = try rpc.getRecentPrioritizationFees(if (multiple_accounts.items.len > 0) multiple_accounts.items else null);
             defer allocator.free(fees);
 
             if (fees.len == 0) {
@@ -594,7 +624,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return;
             }
 
-            std.debug.print("recent prioritization fees: {}\n", .{fees.len});
+            if (multiple_accounts.items.len > 0) {
+                std.debug.print("recent prioritization fees for {} accounts: {}\n", .{ multiple_accounts.items.len, fees.len });
+            } else {
+                std.debug.print("recent prioritization fees: {}\n", .{fees.len});
+            }
             for (fees, 0..) |fee, index| {
                 std.debug.print("  [{}] slot={} fee={}\n", .{ index, fee.slot, fee.prioritization_fee });
             }
@@ -1757,6 +1791,21 @@ test "runCommand rejects transaction query flags on unsupported commands" {
     try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
 }
 
+test "runCommand rejects epoch flag on unsupported commands" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--epoch",
+        "42",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
 test "runCommand rejects block-only flags on transaction command" {
     const allocator = std.testing.allocator;
     var rpc = try client.RpcClient.init(allocator, "https://example.com");
@@ -1780,6 +1829,35 @@ test "runCommand validates transaction requires signature" {
 
     var parsed = try cli.parseCliArgs(allocator, &.{
         "transaction",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates inflation reward requires address" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inflation-reward",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates inflation reward epoch int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inflation-reward",
+        "--epoch",
+        "not-a-number",
+        "Address11111111111111111111111111111111",
     });
     defer parsed.deinit(allocator);
 

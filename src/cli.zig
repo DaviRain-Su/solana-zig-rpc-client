@@ -31,6 +31,7 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] epoch-info\n" ++
     "  solana_client_zig [--rpc <url>] health\n" ++
     "  solana_client_zig [--rpc <url>] genesis-hash\n" ++
+    "  solana_client_zig [--rpc <url>] inflation-reward <address-1> [address-2 ...] [--epoch <epoch>]\n" ++
     "  solana_client_zig [--rpc <url>] supply\n" ++
     "  solana_client_zig [--rpc <url>] epoch-schedule\n" ++
     "  solana_client_zig [--rpc <url>] inflation-rate\n" ++
@@ -53,7 +54,7 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] blocks <start-slot> [end-slot]\n" ++
     "  solana_client_zig [--rpc <url>] slot-leader\n" ++
     "  solana_client_zig [--rpc <url>] slot-leaders <start-slot> <limit>\n" ++
-    "  solana_client_zig [--rpc <url>] recent-prioritization-fees\n" ++
+    "  solana_client_zig [--rpc <url>] recent-prioritization-fees [account-1 ...]\n" ++
     "  solana_client_zig [--rpc <url>] cluster-nodes\n" ++
     "  solana_client_zig [--rpc <url>] leader-schedule [slot] [identity]\n" ++
     "  solana_client_zig [--rpc <url>] identity\n" ++
@@ -79,6 +80,7 @@ pub const usage_text =
     "  --replace-recent-blockhash  Replace recent blockhash during simulation\n" ++
     "  --max-retries <count>    Max tx retries before giving up\n" ++
     "  --preflight-commitment <level>  Commitment for tx preflight checks\n" ++
+    "  --epoch <epoch>          Epoch override for inflation-reward\n" ++
     "  --encoding <mode>        json|jsonParsed|base58|base64 (block and transaction)\n" ++
     "  --max-supported-transaction-version <n>  Max supported tx version (block and transaction)\n" ++
     "  --transaction-details <mode>  full|accounts|signatures|none (block)\n" ++
@@ -106,6 +108,7 @@ pub const ParsedArgs = struct {
     account: ?[]const u8,
     blockhash_arg: ?[]const u8,
     encoding_arg: ?[]const u8,
+    epoch_arg: ?[]const u8,
     feature_key_arg: ?[]const u8,
     max_supported_transaction_version_arg: ?[]const u8,
     signatures_for_address_arg: ?[]const u8,
@@ -154,6 +157,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .account = null,
         .blockhash_arg = null,
         .encoding_arg = null,
+        .epoch_arg = null,
         .feature_key_arg = null,
         .max_supported_transaction_version_arg = null,
         .signatures_for_address_arg = null,
@@ -243,6 +247,13 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         if (std.mem.eql(u8, arg, "--max-retries")) {
             if (index >= args.len) return error.InvalidCli;
             parsed.send_max_retries = std.fmt.parseInt(u32, args[index], 10) catch return error.InvalidCli;
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--epoch")) {
+            if (index >= args.len or parsed.epoch_arg != null) return error.InvalidCli;
+            parsed.epoch_arg = args[index];
             index += 1;
             continue;
         }
@@ -440,6 +451,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
 
             if (std.mem.eql(u8, arg, "genesis-hash")) {
                 parsed.command = .genesis_hash;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "inflation-reward")) {
+                parsed.command = .inflation_reward;
                 parsed.has_command = true;
                 continue;
             }
@@ -656,7 +673,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         }
 
         switch (parsed.command) {
-            .latest_blockhash, .slot, .block_height, .transaction_count, .version, .epoch_info, .health, .genesis_hash, .supply, .epoch_schedule, .inflation_rate, .highest_snapshot_slot, .first_available_block, .recent_prioritization_fees, .identity, .cluster_nodes, .vote_accounts, .block_production, .inflation_governor, .minimum_ledger_slot, .max_retransmit_slot, .max_shred_insert_slot, .largest_accounts, .slot_leader => return error.InvalidCli,
+            .latest_blockhash, .slot, .block_height, .transaction_count, .version, .epoch_info, .health, .genesis_hash, .supply, .epoch_schedule, .inflation_rate, .highest_snapshot_slot, .first_available_block, .identity, .cluster_nodes, .vote_accounts, .block_production, .inflation_governor, .minimum_ledger_slot, .max_retransmit_slot, .max_shred_insert_slot, .largest_accounts, .slot_leader => return error.InvalidCli,
 
             .stake_minimum_delegation => return error.InvalidCli,
 
@@ -702,7 +719,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 return error.InvalidCli;
             },
 
-            .multiple_accounts => {
+            .multiple_accounts, .inflation_reward, .recent_prioritization_fees => {
                 parsed.multiple_accounts.append(allocator, arg) catch return error.InvalidCli;
             },
 
@@ -829,6 +846,7 @@ pub const Command = enum {
     epoch_info,
     health,
     genesis_hash,
+    inflation_reward,
     supply,
     epoch_schedule,
     inflation_rate,
@@ -889,6 +907,7 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "token-account-balance <token-account>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "token-supply <mint>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "token-largest-accounts <mint>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "inflation-reward <address-1> [address-2 ...] [--epoch <epoch>]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transaction <signature>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-transaction <signed-tx-base64>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "token-accounts-by-owner <owner>") != null);
@@ -900,6 +919,7 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "--replace-recent-blockhash") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--max-retries <count>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--preflight-commitment") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--epoch <epoch>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--encoding <mode>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--max-supported-transaction-version <n>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--transaction-details <mode>") != null);
@@ -1009,6 +1029,21 @@ test "cli.parseCliArgs parses transaction with config flags" {
     try std.testing.expectEqual(Commitment.finalized, parsed.commitment orelse .processed);
 }
 
+test "cli.parseCliArgs parses inflation reward with epoch" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "inflation-reward",
+        "--epoch",
+        "42",
+        "Address11111111111111111111111111111111",
+        "Address22222222222222222222222222222222",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.inflation_reward, parsed.command);
+    try std.testing.expectEqualStrings("42", parsed.epoch_arg orelse "");
+    try std.testing.expectEqual(@as(usize, 2), parsed.multiple_accounts.items.len);
+}
+
 test "cli.parseCliArgs parses blocks-with-limit" {
     var parsed = try parseCliArgs(std.testing.allocator, &.{
         "blocks-with-limit",
@@ -1036,6 +1071,18 @@ test "cli.parseCliArgs parses blocks-with-limit with commitment" {
     try std.testing.expectEqual(Commitment.finalized, parsed.commitment orelse .processed);
     try std.testing.expectEqualStrings("123", parsed.slot_arg orelse "");
     try std.testing.expectEqualStrings("25", parsed.blocks_limit_arg orelse "");
+}
+
+test "cli.parseCliArgs parses recent prioritization fees with accounts" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "recent-prioritization-fees",
+        "Address11111111111111111111111111111111",
+        "Address22222222222222222222222222222222",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.recent_prioritization_fees, parsed.command);
+    try std.testing.expectEqual(@as(usize, 2), parsed.multiple_accounts.items.len);
 }
 
 test "cli.parseCliArgs parses slot leader with commitment" {
