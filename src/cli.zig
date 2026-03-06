@@ -16,6 +16,7 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] signature-statuses <signature-1> [signature-2 ...]\n" ++
     "  solana_client_zig [--rpc <url>] send-transaction <signed-tx-base64>\n" ++
     "  solana_client_zig [--rpc <url>] send-transaction-and-confirm <signed-tx-base64>\n" ++
+    "  solana_client_zig [--rpc <url>] simulate-transaction <signed-tx-base64>\n" ++
     "  solana_client_zig [--rpc <url>] slot\n" ++
     "  solana_client_zig [--rpc <url>] block-height\n" ++
     "  solana_client_zig [--rpc <url>] transaction-count\n" ++
@@ -42,6 +43,8 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] token-account-balance <token-account>\n" ++
     "  solana_client_zig [--rpc <url>] token-supply <mint>\n" ++
     "  solana_client_zig [--rpc <url>] token-largest-accounts <mint>\n" ++
+    "  solana_client_zig [--rpc <url>] token-accounts-by-owner <owner> (--mint <mint> | --token-program-id <program-id>)\n" ++
+    "  solana_client_zig [--rpc <url>] token-accounts-by-delegate <delegate> (--mint <mint> | --token-program-id <program-id>)\n" ++
     "  solana_client_zig [--rpc <url>] fee-for-message <base64-message>\n" ++
     "  solana_client_zig [--rpc <url>] recent-performance-samples [limit]\n" ++
     "  solana_client_zig [--rpc <url>] highest-snapshot-slot\n" ++
@@ -69,8 +72,12 @@ pub const usage_text =
     "  --until <signature>      Stop at this oldest signature (signatures-for-address)\n" ++
     "  --limit <count>          Maximum results to return (signatures-for-address)\n" ++
     "  --skip-preflight         Skip tx preflight checks (send commands)\n" ++
+    "  --sig-verify             Verify signatures during simulation (simulate-transaction)\n" ++
+    "  --replace-recent-blockhash  Replace recent blockhash during simulation\n" ++
     "  --max-retries <count>    Max tx retries before giving up\n" ++
-    "  --preflight-commitment <level>  Commitment for tx preflight checks\n";
+    "  --preflight-commitment <level>  Commitment for tx preflight checks\n" ++
+    "  --mint <mint>            Token account filter by mint (token-accounts-by-*)\n" ++
+    "  --token-program-id <program-id> Token account filter by token program (token-accounts-by-*)\n";
 
 pub fn printUsage(out: *std.Io.Writer) !void {
     try out.print("{s}", .{usage_text});
@@ -105,14 +112,18 @@ pub const ParsedArgs = struct {
     leader_schedule_slot_arg: ?[]const u8,
     leader_schedule_identity_arg: ?[]const u8,
     lamports_arg: ?[]const u8,
+    mint_arg: ?[]const u8,
     rent_bytes_arg: ?[]const u8,
     signed_tx_arg: ?[]const u8,
+    token_program_id_arg: ?[]const u8,
     signature_statuses: std.ArrayListUnmanaged([]const u8),
     multiple_accounts: std.ArrayListUnmanaged([]const u8),
     commitment: ?Commitment,
     status_timeout_ms: u64,
     status_poll_ms: u64,
     send_skip_preflight: bool,
+    simulate_replace_recent_blockhash: bool,
+    simulate_sig_verify: bool,
     send_max_retries: ?u32,
     send_preflight_commitment: ?Commitment,
 
@@ -145,14 +156,18 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .leader_schedule_slot_arg = null,
         .leader_schedule_identity_arg = null,
         .lamports_arg = null,
+        .mint_arg = null,
         .rent_bytes_arg = null,
         .signed_tx_arg = null,
+        .token_program_id_arg = null,
         .signature_statuses = .{},
         .multiple_accounts = .{},
         .commitment = null,
         .status_timeout_ms = 30_000,
         .status_poll_ms = 500,
         .send_skip_preflight = false,
+        .simulate_replace_recent_blockhash = false,
+        .simulate_sig_verify = false,
         .send_max_retries = null,
         .send_preflight_commitment = null,
     };
@@ -200,6 +215,16 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
             continue;
         }
 
+        if (std.mem.eql(u8, arg, "--sig-verify")) {
+            parsed.simulate_sig_verify = true;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--replace-recent-blockhash")) {
+            parsed.simulate_replace_recent_blockhash = true;
+            continue;
+        }
+
         if (std.mem.eql(u8, arg, "--max-retries")) {
             if (index >= args.len) return error.InvalidCli;
             parsed.send_max_retries = std.fmt.parseInt(u32, args[index], 10) catch return error.InvalidCli;
@@ -231,6 +256,20 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         if (std.mem.eql(u8, arg, "--limit")) {
             if (index >= args.len or parsed.signatures_for_address_limit_arg != null) return error.InvalidCli;
             parsed.signatures_for_address_limit_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--mint")) {
+            if (index >= args.len or parsed.mint_arg != null) return error.InvalidCli;
+            parsed.mint_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--token-program-id")) {
+            if (index >= args.len or parsed.token_program_id_arg != null) return error.InvalidCli;
+            parsed.token_program_id_arg = args[index];
             index += 1;
             continue;
         }
@@ -268,6 +307,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
 
             if (std.mem.eql(u8, arg, "send-transaction-and-confirm")) {
                 parsed.command = .send_transaction_and_confirm;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "simulate-transaction")) {
+                parsed.command = .simulate_transaction;
                 parsed.has_command = true;
                 continue;
             }
@@ -530,6 +575,18 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "token-accounts-by-owner")) {
+                parsed.command = .token_accounts_by_owner;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "token-accounts-by-delegate")) {
+                parsed.command = .token_accounts_by_delegate;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "help")) {
                 parsed.show_usage = true;
                 parsed.has_command = true;
@@ -558,7 +615,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 parsed.signature_statuses.append(allocator, arg) catch return error.InvalidCli;
             },
 
-            .send_transaction, .send_transaction_and_confirm => if (parsed.signed_tx_arg == null) {
+            .send_transaction, .send_transaction_and_confirm, .simulate_transaction => if (parsed.signed_tx_arg == null) {
                 parsed.signed_tx_arg = arg;
             } else {
                 return error.InvalidCli;
@@ -588,7 +645,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 parsed.multiple_accounts.append(allocator, arg) catch return error.InvalidCli;
             },
 
-            .program_accounts, .token_account_balance, .token_supply, .token_largest_accounts => if (parsed.account == null) {
+            .program_accounts, .token_account_balance, .token_supply, .token_largest_accounts, .token_accounts_by_owner, .token_accounts_by_delegate => if (parsed.account == null) {
                 parsed.account = arg;
             } else {
                 return error.InvalidCli;
@@ -684,6 +741,7 @@ pub const Command = enum {
     signature_statuses,
     send_transaction,
     send_transaction_and_confirm,
+    simulate_transaction,
     slot,
     block_height,
     transaction_count,
@@ -698,6 +756,8 @@ pub const Command = enum {
     token_account_balance,
     token_supply,
     token_largest_accounts,
+    token_accounts_by_owner,
+    token_accounts_by_delegate,
     epoch_info,
     health,
     genesis_hash,
@@ -757,11 +817,18 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "token-account-balance <token-account>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "token-supply <mint>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "token-largest-accounts <mint>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-transaction <signed-tx-base64>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "token-accounts-by-owner <owner>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "token-accounts-by-delegate <delegate>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-transaction <signed-tx-base64>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-transaction-and-confirm <signed-tx-base64>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--skip-preflight") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--sig-verify") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--replace-recent-blockhash") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--max-retries <count>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--preflight-commitment") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--mint <mint>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--token-program-id <program-id>") != null);
 }
 
 test "cli.parseCliArgs leaves command unset for empty args" {
@@ -808,6 +875,24 @@ test "cli.parseCliArgs parses send-transaction with preflight options" {
     try std.testing.expectEqual(true, parsed.send_skip_preflight);
     try std.testing.expectEqual(@as(u32, 3), parsed.send_max_retries orelse 0);
     try std.testing.expectEqual(Commitment.confirmed, parsed.send_preflight_commitment orelse .processed);
+}
+
+test "cli.parseCliArgs parses simulate-transaction with simulation options" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "simulate-transaction",
+        "--sig-verify",
+        "--replace-recent-blockhash",
+        "--commitment",
+        "processed",
+        "signed-raw-transaction",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.simulate_transaction, parsed.command);
+    try std.testing.expectEqualStrings("signed-raw-transaction", parsed.signed_tx_arg orelse "");
+    try std.testing.expect(parsed.simulate_sig_verify);
+    try std.testing.expect(parsed.simulate_replace_recent_blockhash);
+    try std.testing.expectEqual(Commitment.processed, parsed.commitment orelse .confirmed);
 }
 
 test "cli.parseCliArgs parses status timeout flags" {
@@ -1057,6 +1142,34 @@ test "cli.parseCliArgs parses token largest accounts" {
 
     try std.testing.expectEqual(Command.token_largest_accounts, parsed.command);
     try std.testing.expectEqualStrings("Mint111111111111111111111111111111111111", parsed.account orelse "");
+}
+
+test "cli.parseCliArgs parses token accounts by owner with mint filter" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "token-accounts-by-owner",
+        "Owner1111111111111111111111111111111111111",
+        "--mint",
+        "Mint111111111111111111111111111111111111",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.token_accounts_by_owner, parsed.command);
+    try std.testing.expectEqualStrings("Owner1111111111111111111111111111111111111", parsed.account orelse "");
+    try std.testing.expectEqualStrings("Mint111111111111111111111111111111111111", parsed.mint_arg orelse "");
+}
+
+test "cli.parseCliArgs parses token accounts by delegate with program filter" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "token-accounts-by-delegate",
+        "--token-program-id",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "Delegate11111111111111111111111111111111111",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.token_accounts_by_delegate, parsed.command);
+    try std.testing.expectEqualStrings("Delegate11111111111111111111111111111111111", parsed.account orelse "");
+    try std.testing.expectEqualStrings("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", parsed.token_program_id_arg orelse "");
 }
 
 test "cli.parseCliArgs parses signatures for address" {

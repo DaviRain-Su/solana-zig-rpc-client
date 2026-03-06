@@ -68,6 +68,25 @@ pub const LargestAccount = struct {
     lamports: u64 = 0,
 };
 
+pub const JsonParsedAccountInfo = struct {
+    lamports: u64 = 0,
+    owner: []const u8 = "",
+    executable: bool = false,
+    rent_epoch: ?u64 = null,
+    space: ?u64 = null,
+    data_json: []const u8 = "",
+};
+
+pub const JsonParsedProgramAccount = struct {
+    pubkey: []const u8 = "",
+    account: JsonParsedAccountInfo = .{},
+};
+
+pub const TokenAccountsFilter = union(enum) {
+    mint: []const u8,
+    program_id: []const u8,
+};
+
 pub const SignatureForAddress = struct {
     signature: []const u8 = "",
     slot: u64 = 0,
@@ -163,6 +182,36 @@ const RpcTokenAmountResult = struct {
     uiAmountString: []const u8 = "",
 };
 
+const RpcProgramAccountResult = struct {
+    pubkey: []const u8 = "",
+    account: RpcAccountInfoResult = .{},
+};
+
+const RpcJsonParsedAccountInfoResult = struct {
+    data: json.Value = .null,
+    executable: bool = false,
+    lamports: u64 = 0,
+    owner: []const u8 = "",
+    rentEpoch: ?u64 = null,
+    space: ?u64 = null,
+};
+
+const RpcJsonParsedProgramAccountResult = struct {
+    pubkey: []const u8 = "",
+    account: RpcJsonParsedAccountInfoResult = .{},
+};
+
+const RpcSimulatedTransactionResult = struct {
+    err: ?json.Value = null,
+    logs: ?[]const []const u8 = null,
+    loadedAccountsDataSize: ?u32 = null,
+    replacementBlockhash: ?struct {
+        blockhash: []const u8 = "",
+        lastValidBlockHeight: u64 = 0,
+    } = null,
+    unitsConsumed: ?u64 = null,
+};
+
 pub const ClusterNode = struct {
     feature_set: u64 = 0,
     gossip: ?[]const u8 = null,
@@ -218,6 +267,25 @@ pub const SendTransactionOptions = struct {
     max_retries: ?u32 = null,
 };
 
+pub const SimulateTransactionOptions = struct {
+    sig_verify: bool = false,
+    replace_recent_blockhash: bool = false,
+    commitment: ?Commitment = null,
+};
+
+pub const SimulatedTransaction = struct {
+    err_json: ?[]const u8 = null,
+    logs: ?[][]const u8 = null,
+    loaded_accounts_data_size: ?u32 = null,
+    replacement_blockhash: ?LatestBlockhash = null,
+    units_consumed: ?u64 = null,
+};
+
+const TokenAccountsFilterParams = struct {
+    mint: ?[]const u8 = null,
+    programId: ?[]const u8 = null,
+};
+
 fn commitmentParams(commitment: ?Commitment) struct { commitment: ?[]const u8 = null } {
     return .{ .commitment = if (commitment) |value| commitmentToString(value) else null };
 }
@@ -227,6 +295,13 @@ fn commitmentToString(c: Commitment) []const u8 {
         .processed => "processed",
         .confirmed => "confirmed",
         .finalized => "finalized",
+    };
+}
+
+fn tokenAccountsFilterParams(filter: TokenAccountsFilter) TokenAccountsFilterParams {
+    return switch (filter) {
+        .mint => |value| .{ .mint = value },
+        .program_id => |value| .{ .programId = value },
     };
 }
 
@@ -377,6 +452,85 @@ pub const RpcClient = struct {
             .ui_amount = source.uiAmount,
             .ui_amount_string = try self.allocator.dupe(u8, source.uiAmountString),
         };
+    }
+
+    fn cloneStringList(self: *RpcClient, source: []const []const u8) ![][]const u8 {
+        const copied = try self.allocator.alloc([]const u8, source.len);
+        var copied_len: usize = 0;
+        errdefer {
+            for (copied[0..copied_len]) |entry| {
+                self.allocator.free(entry);
+            }
+            self.allocator.free(copied);
+        }
+
+        for (source, 0..) |entry, index| {
+            copied[index] = try self.allocator.dupe(u8, entry);
+            copied_len += 1;
+        }
+
+        return copied;
+    }
+
+    fn cloneJsonParsedAccountInfo(self: *RpcClient, source: RpcJsonParsedAccountInfoResult) !JsonParsedAccountInfo {
+        return JsonParsedAccountInfo{
+            .lamports = source.lamports,
+            .owner = try self.allocator.dupe(u8, source.owner),
+            .executable = source.executable,
+            .rent_epoch = source.rentEpoch,
+            .space = source.space,
+            .data_json = try json.Stringify.valueAlloc(self.allocator, source.data, .{}),
+        };
+    }
+
+    fn cloneProgramAccounts(self: *RpcClient, source: []const RpcProgramAccountResult) ![]ProgramAccount {
+        const copied = try self.allocator.alloc(ProgramAccount, source.len);
+        var copied_len: usize = 0;
+        errdefer {
+            for (copied[0..copied_len]) |entry| {
+                self.allocator.free(entry.pubkey);
+                self.allocator.free(entry.account.owner);
+                if (entry.account.data) |value| self.allocator.free(value);
+                if (entry.account.data_encoding) |value| self.allocator.free(value);
+            }
+            self.allocator.free(copied);
+        }
+
+        for (source, 0..) |entry, index| {
+            copied[index] = ProgramAccount{
+                .pubkey = try self.allocator.dupe(u8, entry.pubkey),
+                .account = try self.cloneAccountInfo(entry.account),
+            };
+            copied_len += 1;
+        }
+
+        return copied;
+    }
+
+    fn cloneJsonParsedProgramAccounts(
+        self: *RpcClient,
+        source: []const RpcJsonParsedProgramAccountResult,
+    ) ![]JsonParsedProgramAccount {
+        const copied = try self.allocator.alloc(JsonParsedProgramAccount, source.len);
+        var copied_len: usize = 0;
+        errdefer {
+            for (copied[0..copied_len]) |entry| {
+                self.allocator.free(entry.pubkey);
+                self.allocator.free(entry.account.owner);
+                self.allocator.free(entry.account.data_json);
+            }
+            self.allocator.free(copied);
+        }
+
+        for (source, 0..) |entry, index| {
+            copied[index] = JsonParsedProgramAccount{
+                .pubkey = try self.allocator.dupe(u8, entry.pubkey),
+                .account = try self.cloneJsonParsedAccountInfo(entry.account),
+            };
+            copied_len += 1;
+        }
+
+        return copied;
     }
 
     pub fn getLatestBlockhash(self: *RpcClient, commitment: ?Commitment) !LatestBlockhash {
@@ -564,31 +718,17 @@ pub const RpcClient = struct {
 
         try self.captureRpcError(response);
 
-        const ProgramAccountResult = struct {
-            pubkey: []const u8 = "",
-            account: RpcAccountInfoResult = .{},
-        };
-
         const ParsedEnvelope = struct {
             jsonrpc: []const u8 = "",
             id: u64 = 0,
-            result: ?[]ProgramAccountResult = null,
+            result: ?[]RpcProgramAccountResult = null,
         };
 
         const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
         defer parsed.deinit();
 
         const source = parsed.value.result orelse return error.InvalidResponse;
-        const copied = try self.allocator.alloc(ProgramAccount, source.len);
-
-        for (source, 0..) |entry, index| {
-            copied[index] = ProgramAccount{
-                .pubkey = try self.allocator.dupe(u8, entry.pubkey),
-                .account = try self.cloneAccountInfo(entry.account),
-            };
-        }
-
-        return copied;
+        return try self.cloneProgramAccounts(source);
     }
 
     pub fn getGenesisHash(self: *RpcClient) ![]const u8 {
@@ -889,6 +1029,69 @@ pub const RpcClient = struct {
         }
 
         return copied;
+    }
+
+    fn getTokenAccounts(
+        self: *RpcClient,
+        method: []const u8,
+        authority: []const u8,
+        filter: TokenAccountsFilter,
+        commitment: ?Commitment,
+    ) ![]JsonParsedProgramAccount {
+        const TokenAccountsConfig = struct {
+            commitment: ?[]const u8 = null,
+            encoding: []const u8 = "jsonParsed",
+        };
+
+        const params = .{
+            authority,
+            tokenAccountsFilterParams(filter),
+            TokenAccountsConfig{
+                .commitment = if (commitment) |value| commitmentToString(value) else null,
+            },
+        };
+        const params_json = try self.serializeParams(params);
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest(method, params_json);
+        defer self.allocator.free(response);
+
+        try self.captureRpcError(response);
+
+        const ParsedEnvelope = struct {
+            jsonrpc: []const u8 = "",
+            id: u64 = 0,
+            result: ?struct {
+                context: struct {
+                    slot: u64 = 0,
+                } = .{ .slot = 0 },
+                value: []RpcJsonParsedProgramAccountResult = &.{},
+            } = null,
+        };
+
+        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        const result = parsed.value.result orelse return error.InvalidResponse;
+        return try self.cloneJsonParsedProgramAccounts(result.value);
+    }
+
+    pub fn getTokenAccountsByOwner(
+        self: *RpcClient,
+        owner: []const u8,
+        filter: TokenAccountsFilter,
+        commitment: ?Commitment,
+    ) ![]JsonParsedProgramAccount {
+        return try self.getTokenAccounts("getTokenAccountsByOwner", owner, filter, commitment);
+    }
+
+    pub fn getTokenAccountsByDelegate(
+        self: *RpcClient,
+        delegate: []const u8,
+        filter: TokenAccountsFilter,
+        commitment: ?Commitment,
+    ) ![]JsonParsedProgramAccount {
+        return try self.getTokenAccounts("getTokenAccountsByDelegate", delegate, filter, commitment);
     }
 
     pub fn getEpochSchedule(self: *RpcClient) !EpochSchedule {
@@ -1538,6 +1741,89 @@ pub const RpcClient = struct {
         return try self.allocator.dupe(u8, signature);
     }
 
+    pub fn simulateTransaction(
+        self: *RpcClient,
+        signed_tx_base64: []const u8,
+        options: ?SimulateTransactionOptions,
+    ) !SimulatedTransaction {
+        const encoded_commitment = if (options) |opts| if (opts.commitment) |value|
+            commitmentToString(value)
+        else
+            null else null;
+
+        const SimulateOptions = struct {
+            commitment: ?[]const u8 = null,
+            encoding: []const u8 = "base64",
+            replaceRecentBlockhash: bool = false,
+            sigVerify: bool = false,
+        };
+
+        const params = .{
+            signed_tx_base64,
+            SimulateOptions{
+                .commitment = encoded_commitment,
+                .replaceRecentBlockhash = if (options) |opts| opts.replace_recent_blockhash else false,
+                .sigVerify = if (options) |opts| opts.sig_verify else false,
+            },
+        };
+        const params_json = try self.serializeParams(params);
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest("simulateTransaction", params_json);
+        defer self.allocator.free(response);
+
+        try self.captureRpcError(response);
+
+        const ParsedEnvelope = struct {
+            jsonrpc: []const u8 = "",
+            id: u64 = 0,
+            result: ?struct {
+                context: struct {
+                    slot: u64 = 0,
+                } = .{ .slot = 0 },
+                value: RpcSimulatedTransactionResult = .{},
+            } = null,
+        };
+
+        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        const result = parsed.value.result orelse return error.InvalidResponse;
+        var simulation = SimulatedTransaction{};
+        errdefer {
+            if (simulation.err_json) |value| self.allocator.free(value);
+            if (simulation.logs) |logs| {
+                for (logs) |entry| self.allocator.free(entry);
+                self.allocator.free(logs);
+            }
+            if (simulation.replacement_blockhash) |value| self.allocator.free(value.blockhash);
+        }
+
+        if (result.value.err) |value| {
+            simulation.err_json = switch (value) {
+                .null => null,
+                .string => |text| try self.allocator.dupe(u8, text),
+                else => try json.Stringify.valueAlloc(self.allocator, value, .{}),
+            };
+        }
+
+        if (result.value.logs) |logs| {
+            simulation.logs = try self.cloneStringList(logs);
+        }
+
+        simulation.loaded_accounts_data_size = result.value.loadedAccountsDataSize;
+        simulation.units_consumed = result.value.unitsConsumed;
+        simulation.replacement_blockhash = if (result.value.replacementBlockhash) |value|
+            LatestBlockhash{
+                .blockhash = try self.allocator.dupe(u8, value.blockhash),
+                .last_valid_block_height = value.lastValidBlockHeight,
+            }
+        else
+            null;
+
+        return simulation;
+    }
+
     const SignatureStatusEntry = struct {
         confirmationStatus: ?[]const u8 = null,
         err: ?json.Value = null,
@@ -1997,6 +2283,83 @@ test "root.getTokenLargestAccounts params serialization" {
     const with_commitment_json = try client.serializeParams(with_commitment);
     defer allocator.free(with_commitment_json);
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"confirmed\"") != null);
+}
+
+test "root.getTokenAccountsByOwner params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const mint_filter = tokenAccountsFilterParams(.{ .mint = "Mint111111111111111111111111111111111111" });
+    const mint_params = .{
+        "Owner1111111111111111111111111111111111111",
+        mint_filter,
+        .{
+            .commitment = commitmentToString(.confirmed),
+            .encoding = "jsonParsed",
+        },
+    };
+    const mint_params_json = try client.serializeParams(mint_params);
+    defer allocator.free(mint_params_json);
+    try std.testing.expect(std.mem.indexOf(u8, mint_params_json, "\"Owner1111111111111111111111111111111111111\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, mint_params_json, "\"mint\":\"Mint111111111111111111111111111111111111\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, mint_params_json, "\"encoding\":\"jsonParsed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, mint_params_json, "\"commitment\":\"confirmed\"") != null);
+
+    const program_filter = tokenAccountsFilterParams(.{ .program_id = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" });
+    const program_params = .{
+        "Owner1111111111111111111111111111111111111",
+        program_filter,
+        .{ .commitment = null, .encoding = "jsonParsed" },
+    };
+    const program_params_json = try client.serializeParams(program_params);
+    defer allocator.free(program_params_json);
+    try std.testing.expect(std.mem.indexOf(u8, program_params_json, "\"programId\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\"") != null);
+}
+
+test "root.getTokenAccountsByDelegate params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const params = .{
+        "Delegate11111111111111111111111111111111111",
+        tokenAccountsFilterParams(.{ .mint = "Mint111111111111111111111111111111111111" }),
+        .{
+            .commitment = commitmentToString(.processed),
+            .encoding = "jsonParsed",
+        },
+    };
+    const params_json = try client.serializeParams(params);
+    defer allocator.free(params_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"Delegate11111111111111111111111111111111111\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"mint\":\"Mint111111111111111111111111111111111111\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"processed\"") != null);
+}
+
+test "root.simulateTransaction params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const params = .{
+        "signed-transaction-base64",
+        .{
+            .commitment = commitmentToString(.finalized),
+            .encoding = "base64",
+            .replaceRecentBlockhash = true,
+            .sigVerify = true,
+        },
+    };
+    const params_json = try client.serializeParams(params);
+    defer allocator.free(params_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"signed-transaction-base64\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"encoding\":\"base64\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"replaceRecentBlockhash\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"sigVerify\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"finalized\"") != null);
 }
 
 test "root.blockTime params serialization" {

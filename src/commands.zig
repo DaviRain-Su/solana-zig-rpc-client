@@ -22,8 +22,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const leader_schedule_slot_arg = args.leader_schedule_slot_arg;
     const leader_schedule_identity_arg = args.leader_schedule_identity_arg;
     const lamports_arg = args.lamports_arg;
+    const mint_arg = args.mint_arg;
     const rent_bytes_arg = args.rent_bytes_arg;
     const signed_tx_arg = args.signed_tx_arg;
+    const token_program_id_arg = args.token_program_id_arg;
     const signature_statuses = args.signature_statuses;
     const multiple_accounts = args.multiple_accounts;
     const blocks_limit_arg = args.blocks_limit_arg;
@@ -31,6 +33,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const status_timeout_ms = args.status_timeout_ms;
     const status_poll_ms = args.status_poll_ms;
     const send_skip_preflight = args.send_skip_preflight;
+    const simulate_replace_recent_blockhash = args.simulate_replace_recent_blockhash;
+    const simulate_sig_verify = args.simulate_sig_verify;
     const send_max_retries = args.send_max_retries;
     const send_preflight_commitment = toClientCommitment(args.send_preflight_commitment);
 
@@ -52,6 +56,27 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .signatures_for_address)
     {
         std.debug.print("error: --before, --until, --limit are only supported by signatures-for-address\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((simulate_sig_verify or simulate_replace_recent_blockhash) and command != .simulate_transaction) {
+        std.debug.print("error: --sig-verify and --replace-recent-blockhash require simulate-transaction\n", .{});
+        return error.InvalidCli;
+    }
+
+    const is_token_accounts_command = command == .token_accounts_by_owner or command == .token_accounts_by_delegate;
+    if ((mint_arg != null or token_program_id_arg != null) and !is_token_accounts_command) {
+        std.debug.print("error: --mint and --token-program-id are only supported by token-accounts-by-owner and token-accounts-by-delegate\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (is_token_accounts_command and mint_arg == null and token_program_id_arg == null) {
+        std.debug.print("error: token account queries require exactly one filter: --mint or --token-program-id\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (is_token_accounts_command and mint_arg != null and token_program_id_arg != null) {
+        std.debug.print("error: token account queries require exactly one filter: --mint or --token-program-id\n", .{});
         return error.InvalidCli;
     }
 
@@ -173,6 +198,50 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             defer allocator.free(tx_signature);
 
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
+        },
+
+        .simulate_transaction => {
+            const tx = signed_tx_arg orelse {
+                std.debug.print("error: simulate-transaction requires <signed-tx-base64>\n", .{});
+                return error.InvalidCli;
+            };
+
+            const options = if (simulate_sig_verify or simulate_replace_recent_blockhash or commitment != null)
+                client.SimulateTransactionOptions{
+                    .sig_verify = simulate_sig_verify,
+                    .replace_recent_blockhash = simulate_replace_recent_blockhash,
+                    .commitment = commitment,
+                }
+            else
+                null;
+
+            const simulation = try rpc.simulateTransaction(tx, options);
+            defer freeSimulatedTransaction(allocator, simulation);
+
+            std.debug.print(
+                "simulation: err={s} units_consumed={?d} loaded_accounts_data_size={?d}\n",
+                .{
+                    if (simulation.err_json) |value| value else "null",
+                    simulation.units_consumed,
+                    simulation.loaded_accounts_data_size,
+                },
+            );
+
+            if (simulation.replacement_blockhash) |value| {
+                std.debug.print(
+                    "replacement blockhash: {s} last_valid_block_height={}\n",
+                    .{ value.blockhash, value.last_valid_block_height },
+                );
+            }
+
+            if (simulation.logs) |logs| {
+                std.debug.print("logs: {}\n", .{logs.len});
+                for (logs, 0..) |entry, index| {
+                    std.debug.print("  [{}] {s}\n", .{ index, entry });
+                }
+            } else {
+                std.debug.print("logs: 0\n", .{});
+            }
         },
 
         .slot => {
@@ -751,6 +820,60 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             }
         },
 
+        .token_accounts_by_owner => {
+            const owner = account orelse return error.InvalidCli;
+            const filter = toTokenAccountsFilter(mint_arg, token_program_id_arg) orelse return error.InvalidCli;
+            const entries = try rpc.getTokenAccountsByOwner(owner, filter, commitment);
+            defer {
+                for (entries) |entry| {
+                    allocator.free(entry.pubkey);
+                    freeJsonParsedAccountInfo(allocator, entry.account);
+                }
+                allocator.free(entries);
+            }
+
+            if (entries.len == 0) {
+                std.debug.print("no token accounts found for owner {s}\n", .{owner});
+                return;
+            }
+
+            std.debug.print("token accounts for owner {s}: {}\n", .{ owner, entries.len });
+            for (entries, 0..) |entry, index| {
+                std.debug.print(
+                    "  [{}] pubkey={s} lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                    .{ index, entry.pubkey, entry.account.lamports, if (entry.account.executable) "true" else "false", entry.account.owner, entry.account.rent_epoch, entry.account.space },
+                );
+                std.debug.print("      data(jsonParsed): {s}\n", .{entry.account.data_json});
+            }
+        },
+
+        .token_accounts_by_delegate => {
+            const delegate = account orelse return error.InvalidCli;
+            const filter = toTokenAccountsFilter(mint_arg, token_program_id_arg) orelse return error.InvalidCli;
+            const entries = try rpc.getTokenAccountsByDelegate(delegate, filter, commitment);
+            defer {
+                for (entries) |entry| {
+                    allocator.free(entry.pubkey);
+                    freeJsonParsedAccountInfo(allocator, entry.account);
+                }
+                allocator.free(entries);
+            }
+
+            if (entries.len == 0) {
+                std.debug.print("no token accounts found for delegate {s}\n", .{delegate});
+                return;
+            }
+
+            std.debug.print("token accounts for delegate {s}: {}\n", .{ delegate, entries.len });
+            for (entries, 0..) |entry, index| {
+                std.debug.print(
+                    "  [{}] pubkey={s} lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                    .{ index, entry.pubkey, entry.account.lamports, if (entry.account.executable) "true" else "false", entry.account.owner, entry.account.rent_epoch, entry.account.space },
+                );
+                std.debug.print("      data(jsonParsed): {s}\n", .{entry.account.data_json});
+            }
+        },
+
         .blockhash_valid => {
             const blockhash_value = blockhash_arg orelse return error.InvalidCli;
             const is_valid = try rpc.isBlockhashValid(blockhash_value, commitment);
@@ -834,6 +957,30 @@ fn freeAccountInfo(allocator: Allocator, info: client.AccountInfo) void {
 fn freeTokenAmount(allocator: Allocator, amount: client.TokenAmount) void {
     allocator.free(amount.amount);
     allocator.free(amount.ui_amount_string);
+}
+
+fn freeJsonParsedAccountInfo(allocator: Allocator, info: client.JsonParsedAccountInfo) void {
+    allocator.free(info.owner);
+    allocator.free(info.data_json);
+}
+
+fn freeSimulatedTransaction(allocator: Allocator, simulation: client.SimulatedTransaction) void {
+    if (simulation.err_json) |value| allocator.free(value);
+    if (simulation.logs) |logs| {
+        for (logs) |entry| allocator.free(entry);
+        allocator.free(logs);
+    }
+    if (simulation.replacement_blockhash) |value| allocator.free(value.blockhash);
+}
+
+fn toTokenAccountsFilter(mint_arg: ?[]const u8, token_program_id_arg: ?[]const u8) ?client.TokenAccountsFilter {
+    if (mint_arg) |mint| {
+        return .{ .mint = mint };
+    }
+    if (token_program_id_arg) |program_id| {
+        return .{ .program_id = program_id };
+    }
+    return null;
 }
 
 fn runMockBlockServer(
@@ -1455,6 +1602,67 @@ test "runCommand rejects signatures-for-address filters on non-signatures-for-ad
         "slot",
         "--before",
         "BeforeSig",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates simulate options on non-simulate commands" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--sig-verify",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects token account filters on non-token-account queries" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--mint",
+        "Mint111111111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand requires token account filter for owner query" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "token-accounts-by-owner",
+        "Owner1111111111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects conflicting token account filters" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "token-accounts-by-delegate",
+        "Delegate11111111111111111111111111111111111",
+        "--mint",
+        "Mint111111111111111111111111111111111111",
+        "--token-program-id",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
     });
     defer parsed.deinit(allocator);
 
