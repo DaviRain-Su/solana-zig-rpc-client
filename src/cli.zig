@@ -12,6 +12,7 @@ pub const usage_text =
     "Usage:\n" ++
     "  solana_client_zig [--rpc <url>] latest-blockhash\n" ++
     "  solana_client_zig [--rpc <url>] status <signature>\n" ++
+    "  solana_client_zig [--rpc <url>] confirm-transaction <signature>\n" ++
     "  solana_client_zig [--rpc <url>] signature-status <signature>\n" ++
     "  solana_client_zig [--rpc <url>] signature-statuses <signature-1> [signature-2 ...]\n" ++
     "  solana_client_zig [--rpc <url>] send-transaction <signed-tx-base64>\n" ++
@@ -22,9 +23,15 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] transaction-count\n" ++
     "  solana_client_zig [--rpc <url>] transaction <signature>\n" ++
     "  solana_client_zig [--rpc <url>] balance <account>\n" ++
+    "  solana_client_zig [--rpc <url>] poll-balance <account>\n" ++
+    "  solana_client_zig [--rpc <url>] wait-for-balance <account> <expected-lamports>\n" ++
     "  solana_client_zig [--rpc <url>] account-info <account>\n" ++
+    "  solana_client_zig [--rpc <url>] account-data <account>\n" ++
+    "  solana_client_zig [--rpc <url>] ui-account <account>\n" ++
     "  solana_client_zig [--rpc <url>] multiple-accounts <account-1> [account-2 ...]\n" ++
+    "  solana_client_zig [--rpc <url>] multiple-ui-accounts <account-1> [account-2 ...]\n" ++
     "  solana_client_zig [--rpc <url>] program-accounts <program-id>\n" ++
+    "  solana_client_zig [--rpc <url>] program-ui-accounts <program-id>\n" ++
     "  solana_client_zig [--rpc <url>] request-airdrop <account> <lamports>\n" ++
     "  solana_client_zig [--rpc <url>] minimum-rent-exemption <bytes>\n" ++
     "  solana_client_zig [--rpc <url>] version\n" ++
@@ -39,11 +46,14 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] block-commitment <slot>\n" ++
     "  solana_client_zig [--rpc <url>] block <slot>\n" ++
     "  solana_client_zig [--rpc <url>] blocks-with-limit <start-slot> <limit>\n" ++
+    "  solana_client_zig [--rpc <url>] poll-for-signature-confirmation <signature> <min-confirmed-blocks>\n" ++
+    "  solana_client_zig [--rpc <url>] blocks-since-signature-confirmation <signature>\n" ++
     "  solana_client_zig [--rpc <url>] signatures-for-address <address> [--before <signature>] [--until <signature>] [--limit <count>]\n" ++
     "  solana_client_zig [--rpc <url>] feature-activation-slot <feature-pubkey>\n" ++
     "  solana_client_zig [--rpc <url>] stake-minimum-delegation\n" ++
     "  solana_client_zig [--rpc <url>] largest-accounts\n" ++
     "  solana_client_zig [--rpc <url>] token-account-balance <token-account>\n" ++
+    "  solana_client_zig [--rpc <url>] token-account <token-account>\n" ++
     "  solana_client_zig [--rpc <url>] token-supply <mint>\n" ++
     "  solana_client_zig [--rpc <url>] token-largest-accounts <mint>\n" ++
     "  solana_client_zig [--rpc <url>] token-accounts-by-owner <owner> (--mint <mint> | --token-program-id <program-id>)\n" ++
@@ -70,13 +80,13 @@ pub const usage_text =
     "Optional flags:\n" ++
     "  --rpc <url>             RPC endpoint to use\n" ++
     "  --commitment <level>     processed|confirmed|finalized\n" ++
-    "  --timeout-ms <ms>        Signature wait timeout (status and send-transaction-and-confirm)\n" ++
-    "  --poll-ms <ms>           Poll interval in ms (status and send-transaction-and-confirm)\n" ++
+    "  --timeout-ms <ms>        Wait timeout (status, poll/wait balance, poll-for-signature-confirmation, send-transaction-and-confirm)\n" ++
+    "  --poll-ms <ms>           Poll interval in ms (status, poll/wait balance, poll-for-signature-confirmation, send-transaction-and-confirm)\n" ++
     "  --before <signature>     Filter signatures after this older signature (signatures-for-address)\n" ++
     "  --until <signature>      Stop at this oldest signature (signatures-for-address)\n" ++
     "  --limit <count>          Maximum results to return (signatures-for-address)\n" ++
-    "  --min-context-slot <slot> Minimum context slot (send commands and signatures-for-address)\n" ++
-    "  --search-transaction-history  Search transaction history for status queries\n" ++
+    "  --min-context-slot <slot> Minimum context slot (send commands, signatures-for-address, account/program queries, or token-account)\n" ++
+    "  --search-transaction-history  Search transaction history for status and confirmation queries\n" ++
     "  --skip-preflight         Skip tx preflight checks (send commands)\n" ++
     "  --sig-verify             Verify signatures during simulation (simulate-transaction)\n" ++
     "  --replace-recent-blockhash  Replace recent blockhash during simulation\n" ++
@@ -86,6 +96,7 @@ pub const usage_text =
     "  --simulation-min-context-slot <slot> Minimum context slot for simulate-transaction\n" ++
     "  --max-retries <count>    Max tx retries before giving up\n" ++
     "  --preflight-commitment <level>  Commitment for tx preflight checks\n" ++
+    "  --airdrop-recent-blockhash <blockhash> Recent blockhash override for request-airdrop\n" ++
     "  --epoch <epoch>          Epoch override for inflation-reward\n" ++
     "  --encoding <mode>        json|jsonParsed|base58|base64 (block and transaction)\n" ++
     "  --max-supported-transaction-version <n>  Max supported tx version (block and transaction)\n" ++
@@ -99,12 +110,14 @@ pub const usage_text =
     "  --range-first-slot <slot> First slot for block-production range\n" ++
     "  --range-last-slot <slot>  Last slot for block-production range\n" ++
     "  --exclude-non-circulating-accounts-list Exclude non-circulating account list from supply\n" ++
-    "  --program-data-size <bytes> Filter program-accounts by account data size\n" ++
-    "  --program-memcmp-offset <offset> Memcmp offset for program-accounts filter\n" ++
-    "  --program-memcmp-bytes <bytes>  Memcmp bytes for program-accounts filter\n" ++
-    "  --program-data-slice-offset <offset> Data slice offset for program-accounts\n" ++
-    "  --program-data-slice-length <length> Data slice length for program-accounts\n" ++
-    "  --account-encoding <mode> base58|base64 for account-info and multiple-accounts\n" ++
+    "  --program-data-size <bytes> Filter program-accounts and program-ui-accounts by account data size\n" ++
+    "  --program-memcmp-offset <offset> Memcmp offset for program-accounts and program-ui-accounts\n" ++
+    "  --program-memcmp-bytes <bytes>  Memcmp bytes for program-accounts and program-ui-accounts\n" ++
+    "  --program-data-slice-offset <offset> Data slice offset for program-accounts and program-ui-accounts\n" ++
+    "  --program-data-slice-length <length> Data slice length for program-accounts and program-ui-accounts\n" ++
+    "  --with-context        Include RPC context in latest-blockhash, balance, fee-for-message, token-account-balance, token-supply, token-largest-accounts, account, and program queries\n" ++
+    "  --sort-results        Sort program account results by pubkey locally\n" ++
+    "  --account-encoding <mode> base58|base64|jsonParsed for account-info and multiple-accounts\n" ++
     "  --account-data-slice-offset <offset> Data slice offset for account-info and multiple-accounts\n" ++
     "  --account-data-slice-length <length> Data slice length for account-info and multiple-accounts\n" ++
     "  --mint <mint>            Token account filter by mint (token-accounts-by-*)\n" ++
@@ -128,6 +141,8 @@ pub const ParsedArgs = struct {
     rpc_url: []const u8,
     signature: ?[]const u8,
     account: ?[]const u8,
+    expected_balance_arg: ?[]const u8,
+    airdrop_recent_blockhash_arg: ?[]const u8,
     account_data_slice_length_arg: ?[]const u8,
     account_data_slice_offset_arg: ?[]const u8,
     account_encoding_arg: ?[]const u8,
@@ -135,6 +150,7 @@ pub const ParsedArgs = struct {
     block_production_identity_arg: ?[]const u8,
     block_production_first_slot_arg: ?[]const u8,
     block_production_last_slot_arg: ?[]const u8,
+    confirmation_blocks_arg: ?[]const u8,
     delinquent_slot_distance_arg: ?[]const u8,
     encoding_arg: ?[]const u8,
     epoch_arg: ?[]const u8,
@@ -147,6 +163,8 @@ pub const ParsedArgs = struct {
     program_data_slice_offset_arg: ?[]const u8,
     program_memcmp_bytes_arg: ?[]const u8,
     program_memcmp_offset_arg: ?[]const u8,
+    program_sort_results: bool,
+    program_with_context: bool,
     signatures_for_address_arg: ?[]const u8,
     signatures_for_address_before_arg: ?[]const u8,
     signatures_for_address_until_arg: ?[]const u8,
@@ -176,6 +194,8 @@ pub const ParsedArgs = struct {
     commitment: ?Commitment,
     status_timeout_ms: u64,
     status_poll_ms: u64,
+    timeout_ms_overridden: bool,
+    poll_ms_overridden: bool,
     search_transaction_history: bool,
     send_skip_preflight: bool,
     simulate_inner_instructions: bool,
@@ -200,6 +220,8 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .rpc_url = "https://api.mainnet-beta.solana.com",
         .signature = null,
         .account = null,
+        .expected_balance_arg = null,
+        .airdrop_recent_blockhash_arg = null,
         .account_data_slice_length_arg = null,
         .account_data_slice_offset_arg = null,
         .account_encoding_arg = null,
@@ -207,6 +229,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .block_production_identity_arg = null,
         .block_production_first_slot_arg = null,
         .block_production_last_slot_arg = null,
+        .confirmation_blocks_arg = null,
         .delinquent_slot_distance_arg = null,
         .encoding_arg = null,
         .epoch_arg = null,
@@ -219,6 +242,8 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .program_data_slice_offset_arg = null,
         .program_memcmp_bytes_arg = null,
         .program_memcmp_offset_arg = null,
+        .program_sort_results = false,
+        .program_with_context = false,
         .signatures_for_address_arg = null,
         .signatures_for_address_before_arg = null,
         .signatures_for_address_until_arg = null,
@@ -248,6 +273,8 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .commitment = null,
         .status_timeout_ms = 30_000,
         .status_poll_ms = 500,
+        .timeout_ms_overridden = false,
+        .poll_ms_overridden = false,
         .search_transaction_history = false,
         .send_skip_preflight = false,
         .simulate_inner_instructions = false,
@@ -285,6 +312,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         if (std.mem.eql(u8, arg, "--timeout-ms")) {
             if (index >= args.len) return error.InvalidCli;
             parsed.status_timeout_ms = std.fmt.parseInt(u64, args[index], 10) catch return error.InvalidCli;
+            parsed.timeout_ms_overridden = true;
             index += 1;
             continue;
         }
@@ -292,6 +320,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         if (std.mem.eql(u8, arg, "--poll-ms")) {
             if (index >= args.len) return error.InvalidCli;
             parsed.status_poll_ms = std.fmt.parseInt(u64, args[index], 10) catch return error.InvalidCli;
+            parsed.poll_ms_overridden = true;
             index += 1;
             continue;
         }
@@ -457,6 +486,16 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
             continue;
         }
 
+        if (std.mem.eql(u8, arg, "--with-context")) {
+            parsed.program_with_context = true;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--sort-results")) {
+            parsed.program_sort_results = true;
+            continue;
+        }
+
         if (std.mem.eql(u8, arg, "--account-encoding")) {
             if (index >= args.len or parsed.account_encoding_arg != null) return error.InvalidCli;
             parsed.account_encoding_arg = args[index];
@@ -506,6 +545,13 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
             continue;
         }
 
+        if (std.mem.eql(u8, arg, "--airdrop-recent-blockhash")) {
+            if (index >= args.len or parsed.airdrop_recent_blockhash_arg != null) return error.InvalidCli;
+            parsed.airdrop_recent_blockhash_arg = args[index];
+            index += 1;
+            continue;
+        }
+
         if (std.mem.eql(u8, arg, "--before")) {
             if (index >= args.len or parsed.signatures_for_address_before_arg != null) return error.InvalidCli;
             parsed.signatures_for_address_before_arg = args[index];
@@ -550,6 +596,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
 
             if (std.mem.eql(u8, arg, "status")) {
                 parsed.command = .status;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "confirm-transaction")) {
+                parsed.command = .confirm_transaction;
                 parsed.has_command = true;
                 continue;
             }
@@ -614,6 +666,24 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "poll-balance")) {
+                parsed.command = .poll_balance;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "wait-for-balance")) {
+                parsed.command = .wait_for_balance;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "account-data")) {
+                parsed.command = .account_data;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "request-airdrop")) {
                 parsed.command = .request_airdrop;
                 parsed.has_command = true;
@@ -626,14 +696,32 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "ui-account")) {
+                parsed.command = .ui_account;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "multiple-accounts")) {
                 parsed.command = .multiple_accounts;
                 parsed.has_command = true;
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "multiple-ui-accounts")) {
+                parsed.command = .multiple_ui_accounts;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "program-accounts")) {
                 parsed.command = .program_accounts;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "program-ui-accounts")) {
+                parsed.command = .program_ui_accounts;
                 parsed.has_command = true;
                 continue;
             }
@@ -730,6 +818,18 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
 
             if (std.mem.eql(u8, arg, "blocks-with-limit")) {
                 parsed.command = .blocks_with_limit;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "poll-for-signature-confirmation")) {
+                parsed.command = .poll_for_signature_confirmation;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "blocks-since-signature-confirmation")) {
+                parsed.command = .blocks_since_signature_confirmation;
                 parsed.has_command = true;
                 continue;
             }
@@ -854,6 +954,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "token-account")) {
+                parsed.command = .token_account;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "token-supply")) {
                 parsed.command = .token_supply;
                 parsed.has_command = true;
@@ -896,8 +1002,16 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 return error.InvalidCli;
             },
 
-            .status, .signature_status, .transaction => if (parsed.signature == null) {
+            .status, .confirm_transaction, .signature_status, .transaction, .blocks_since_signature_confirmation => if (parsed.signature == null) {
                 parsed.signature = arg;
+            } else {
+                return error.InvalidCli;
+            },
+
+            .poll_for_signature_confirmation => if (parsed.signature == null) {
+                parsed.signature = arg;
+            } else if (parsed.confirmation_blocks_arg == null) {
+                parsed.confirmation_blocks_arg = arg;
             } else {
                 return error.InvalidCli;
             },
@@ -912,8 +1026,16 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 return error.InvalidCli;
             },
 
-            .balance => if (parsed.account == null) {
+            .balance, .poll_balance, .account_data, .ui_account => if (parsed.account == null) {
                 parsed.account = arg;
+            } else {
+                return error.InvalidCli;
+            },
+
+            .wait_for_balance => if (parsed.account == null) {
+                parsed.account = arg;
+            } else if (parsed.expected_balance_arg == null) {
+                parsed.expected_balance_arg = arg;
             } else {
                 return error.InvalidCli;
             },
@@ -932,11 +1054,11 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 return error.InvalidCli;
             },
 
-            .multiple_accounts, .inflation_reward, .recent_prioritization_fees => {
+            .multiple_accounts, .multiple_ui_accounts, .inflation_reward, .recent_prioritization_fees => {
                 parsed.multiple_accounts.append(allocator, arg) catch return error.InvalidCli;
             },
 
-            .program_accounts, .token_account_balance, .token_supply, .token_largest_accounts, .token_accounts_by_owner, .token_accounts_by_delegate => if (parsed.account == null) {
+            .program_accounts, .program_ui_accounts, .token_account_balance, .token_account, .token_supply, .token_largest_accounts, .token_accounts_by_owner, .token_accounts_by_delegate => if (parsed.account == null) {
                 parsed.account = arg;
             } else {
                 return error.InvalidCli;
@@ -1030,10 +1152,15 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
 pub const Command = enum {
     latest_blockhash,
     account_info,
+    account_data,
+    ui_account,
     multiple_accounts,
+    multiple_ui_accounts,
     program_accounts,
+    program_ui_accounts,
     signatures_for_address,
     status,
+    confirm_transaction,
     signature_status,
     signature_statuses,
     send_transaction,
@@ -1044,6 +1171,8 @@ pub const Command = enum {
     transaction_count,
     transaction,
     balance,
+    poll_balance,
+    wait_for_balance,
     request_airdrop,
     minimum_rent_exemption,
     feature_activation_slot,
@@ -1052,6 +1181,7 @@ pub const Command = enum {
     stake_minimum_delegation,
     largest_accounts,
     token_account_balance,
+    token_account,
     token_supply,
     token_largest_accounts,
     token_accounts_by_owner,
@@ -1068,6 +1198,8 @@ pub const Command = enum {
     block_time,
     blocks,
     blocks_with_limit,
+    poll_for_signature_confirmation,
+    blocks_since_signature_confirmation,
     slot_leader,
     slot_leaders,
     recent_prioritization_fees,
@@ -1101,6 +1233,7 @@ test "cli.printUsage includes new commands" {
     const usage = out.written();
     try std.testing.expect(std.mem.indexOf(u8, usage, "signature-status <signature>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "signature-statuses <signature-1> [signature-2 ...]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "confirm-transaction <signature>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "cluster-nodes") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "leader-schedule [slot] [identity]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "blocks-with-limit <start-slot> <limit>") != null);
@@ -1111,18 +1244,27 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "signatures-for-address <address>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "block-commitment <slot>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "block <slot>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "poll-for-signature-confirmation <signature> <min-confirmed-blocks>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "blocks-since-signature-confirmation <signature>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "slot-leader") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "stake-minimum-delegation") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "account-info <account>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "account-data <account>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "ui-account <account>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "multiple-accounts <account-1> [account-2 ...]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "multiple-ui-accounts <account-1> [account-2 ...]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "program-accounts <program-id>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "program-ui-accounts <program-id>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "largest-accounts") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "token-account-balance <token-account>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "token-account <token-account>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "token-supply <mint>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "token-largest-accounts <mint>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "inflation-reward <address-1> [address-2 ...] [--epoch <epoch>]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transaction <signature>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-transaction <signed-tx-base64>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "poll-balance <account>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "wait-for-balance <account> <expected-lamports>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "token-accounts-by-owner <owner>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "token-accounts-by-delegate <delegate>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-transaction <signed-tx-base64>") != null);
@@ -1138,6 +1280,7 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "--search-transaction-history") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--max-retries <count>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--preflight-commitment") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--airdrop-recent-blockhash <blockhash>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--epoch <epoch>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--encoding <mode>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--max-supported-transaction-version <n>") != null);
@@ -1156,7 +1299,9 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "--program-memcmp-bytes <bytes>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--program-data-slice-offset <offset>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--program-data-slice-length <length>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "--account-encoding <mode>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--with-context") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--sort-results") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--account-encoding <mode> base58|base64|jsonParsed") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--account-data-slice-offset <offset>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--account-data-slice-length <length>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--mint <mint>") != null);
@@ -1212,6 +1357,22 @@ test "cli.parseCliArgs parses send-transaction with preflight options" {
     try std.testing.expectEqual(Commitment.confirmed, parsed.send_preflight_commitment orelse .processed);
 }
 
+test "cli.parseCliArgs parses request-airdrop with recent blockhash" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "request-airdrop",
+        "--airdrop-recent-blockhash",
+        "RecentBlockhash1111111111111111111111111111",
+        "Address11111111111111111111111111111111",
+        "1000",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.request_airdrop, parsed.command);
+    try std.testing.expectEqualStrings("Address11111111111111111111111111111111", parsed.account orelse "");
+    try std.testing.expectEqualStrings("1000", parsed.lamports_arg orelse "");
+    try std.testing.expectEqualStrings("RecentBlockhash1111111111111111111111111111", parsed.airdrop_recent_blockhash_arg orelse "");
+}
+
 test "cli.parseCliArgs parses simulate-transaction with simulation options" {
     var parsed = try parseCliArgs(std.testing.allocator, &.{
         "simulate-transaction",
@@ -1260,6 +1421,81 @@ test "cli.parseCliArgs parses status timeout flags" {
     try std.testing.expectEqualStrings("signature-value", parsed.signature orelse "");
     try std.testing.expectEqual(@as(u64, 10000), parsed.status_timeout_ms);
     try std.testing.expectEqual(@as(u64, 100), parsed.status_poll_ms);
+}
+
+test "cli.parseCliArgs parses poll-balance" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "poll-balance",
+        "Account11111111111111111111111111111111",
+        "--timeout-ms",
+        "2000",
+        "--poll-ms",
+        "50",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.poll_balance, parsed.command);
+    try std.testing.expectEqualStrings("Account11111111111111111111111111111111", parsed.account orelse "");
+    try std.testing.expectEqual(@as(u64, 2000), parsed.status_timeout_ms);
+    try std.testing.expectEqual(@as(u64, 50), parsed.status_poll_ms);
+    try std.testing.expect(parsed.timeout_ms_overridden);
+    try std.testing.expect(parsed.poll_ms_overridden);
+}
+
+test "cli.parseCliArgs parses wait-for-balance" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "wait-for-balance",
+        "Account11111111111111111111111111111111",
+        "5000",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.wait_for_balance, parsed.command);
+    try std.testing.expectEqualStrings("Account11111111111111111111111111111111", parsed.account orelse "");
+    try std.testing.expectEqualStrings("5000", parsed.expected_balance_arg orelse "");
+}
+
+test "cli.parseCliArgs parses confirm-transaction" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "confirm-transaction",
+        "--search-transaction-history",
+        "signature-value",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.confirm_transaction, parsed.command);
+    try std.testing.expectEqualStrings("signature-value", parsed.signature orelse "");
+    try std.testing.expect(parsed.search_transaction_history);
+}
+
+test "cli.parseCliArgs parses poll-for-signature-confirmation" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "poll-for-signature-confirmation",
+        "signature-value",
+        "8",
+        "--timeout-ms",
+        "10000",
+        "--poll-ms",
+        "250",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.poll_for_signature_confirmation, parsed.command);
+    try std.testing.expectEqualStrings("signature-value", parsed.signature orelse "");
+    try std.testing.expectEqualStrings("8", parsed.confirmation_blocks_arg orelse "");
+    try std.testing.expectEqual(@as(u64, 10000), parsed.status_timeout_ms);
+    try std.testing.expectEqual(@as(u64, 250), parsed.status_poll_ms);
+}
+
+test "cli.parseCliArgs parses blocks-since-signature-confirmation" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "blocks-since-signature-confirmation",
+        "signature-value",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.blocks_since_signature_confirmation, parsed.command);
+    try std.testing.expectEqualStrings("signature-value", parsed.signature orelse "");
 }
 
 test "cli.parseCliArgs parses signature-status with history search" {
@@ -1574,9 +1810,32 @@ test "cli.parseCliArgs parses account info" {
     try std.testing.expectEqualStrings("Address11111111111111111111111111111111", parsed.account orelse "");
 }
 
+test "cli.parseCliArgs parses account data" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "account-data",
+        "Address11111111111111111111111111111111",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.account_data, parsed.command);
+    try std.testing.expectEqualStrings("Address11111111111111111111111111111111", parsed.account orelse "");
+}
+
+test "cli.parseCliArgs parses ui account" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "ui-account",
+        "Address11111111111111111111111111111111",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.ui_account, parsed.command);
+    try std.testing.expectEqualStrings("Address11111111111111111111111111111111", parsed.account orelse "");
+}
+
 test "cli.parseCliArgs parses account info with config" {
     var parsed = try parseCliArgs(std.testing.allocator, &.{
         "account-info",
+        "--with-context",
         "--account-encoding",
         "base64",
         "--account-data-slice-offset",
@@ -1588,9 +1847,23 @@ test "cli.parseCliArgs parses account info with config" {
     defer parsed.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(Command.account_info, parsed.command);
+    try std.testing.expect(parsed.program_with_context);
     try std.testing.expectEqualStrings("base64", parsed.account_encoding_arg orelse "");
     try std.testing.expectEqualStrings("0", parsed.account_data_slice_offset_arg orelse "");
     try std.testing.expectEqualStrings("32", parsed.account_data_slice_length_arg orelse "");
+}
+
+test "cli.parseCliArgs parses account info with jsonParsed encoding" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "account-info",
+        "--account-encoding",
+        "jsonParsed",
+        "Address11111111111111111111111111111111",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.account_info, parsed.command);
+    try std.testing.expectEqualStrings("jsonParsed", parsed.account_encoding_arg orelse "");
 }
 
 test "cli.parseCliArgs parses multiple accounts" {
@@ -1605,6 +1878,34 @@ test "cli.parseCliArgs parses multiple accounts" {
     try std.testing.expectEqual(@as(usize, 2), parsed.multiple_accounts.items.len);
     try std.testing.expectEqualStrings("Address11111111111111111111111111111111", parsed.multiple_accounts.items[0]);
     try std.testing.expectEqualStrings("Address22222222222222222222222222222222", parsed.multiple_accounts.items[1]);
+}
+
+test "cli.parseCliArgs parses multiple ui accounts" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "multiple-ui-accounts",
+        "Address11111111111111111111111111111111",
+        "Address22222222222222222222222222222222",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.multiple_ui_accounts, parsed.command);
+    try std.testing.expectEqual(@as(usize, 2), parsed.multiple_accounts.items.len);
+    try std.testing.expectEqualStrings("Address11111111111111111111111111111111", parsed.multiple_accounts.items[0]);
+    try std.testing.expectEqualStrings("Address22222222222222222222222222222222", parsed.multiple_accounts.items[1]);
+}
+
+test "cli.parseCliArgs parses multiple ui accounts with context" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "multiple-ui-accounts",
+        "--with-context",
+        "Address11111111111111111111111111111111",
+        "Address22222222222222222222222222222222",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.multiple_ui_accounts, parsed.command);
+    try std.testing.expect(parsed.program_with_context);
+    try std.testing.expectEqual(@as(usize, 2), parsed.multiple_accounts.items.len);
 }
 
 test "cli.parseCliArgs parses multiple accounts with config" {
@@ -1628,6 +1929,21 @@ test "cli.parseCliArgs parses multiple accounts with config" {
     try std.testing.expectEqual(@as(usize, 2), parsed.multiple_accounts.items.len);
 }
 
+test "cli.parseCliArgs parses multiple accounts with jsonParsed encoding" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "multiple-accounts",
+        "--account-encoding",
+        "jsonParsed",
+        "Address11111111111111111111111111111111",
+        "Address22222222222222222222222222222222",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.multiple_accounts, parsed.command);
+    try std.testing.expectEqualStrings("jsonParsed", parsed.account_encoding_arg orelse "");
+    try std.testing.expectEqual(@as(usize, 2), parsed.multiple_accounts.items.len);
+}
+
 test "cli.parseCliArgs parses program accounts" {
     var parsed = try parseCliArgs(std.testing.allocator, &.{
         "program-accounts",
@@ -1637,6 +1953,50 @@ test "cli.parseCliArgs parses program accounts" {
 
     try std.testing.expectEqual(Command.program_accounts, parsed.command);
     try std.testing.expectEqualStrings("Program1111111111111111111111111111111111", parsed.account orelse "");
+}
+
+test "cli.parseCliArgs parses program ui accounts" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "program-ui-accounts",
+        "Program1111111111111111111111111111111111",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.program_ui_accounts, parsed.command);
+    try std.testing.expectEqualStrings("Program1111111111111111111111111111111111", parsed.account orelse "");
+}
+
+test "cli.parseCliArgs parses program ui accounts with filters" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "program-ui-accounts",
+        "--program-data-size",
+        "165",
+        "--program-memcmp-offset",
+        "32",
+        "--program-memcmp-bytes",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "--program-data-slice-offset",
+        "0",
+        "--program-data-slice-length",
+        "32",
+        "--with-context",
+        "--sort-results",
+        "--commitment",
+        "finalized",
+        "Program1111111111111111111111111111111111",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.program_ui_accounts, parsed.command);
+    try std.testing.expectEqualStrings("Program1111111111111111111111111111111111", parsed.account orelse "");
+    try std.testing.expectEqualStrings("165", parsed.program_data_size_arg orelse "");
+    try std.testing.expectEqualStrings("32", parsed.program_memcmp_offset_arg orelse "");
+    try std.testing.expectEqualStrings("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", parsed.program_memcmp_bytes_arg orelse "");
+    try std.testing.expectEqualStrings("0", parsed.program_data_slice_offset_arg orelse "");
+    try std.testing.expectEqualStrings("32", parsed.program_data_slice_length_arg orelse "");
+    try std.testing.expect(parsed.program_with_context);
+    try std.testing.expect(parsed.program_sort_results);
+    try std.testing.expectEqual(Commitment.finalized, parsed.commitment orelse .processed);
 }
 
 test "cli.parseCliArgs parses program accounts with filters" {
@@ -1652,6 +2012,8 @@ test "cli.parseCliArgs parses program accounts with filters" {
         "0",
         "--program-data-slice-length",
         "32",
+        "--with-context",
+        "--sort-results",
         "--commitment",
         "confirmed",
         "Program1111111111111111111111111111111111",
@@ -1665,6 +2027,8 @@ test "cli.parseCliArgs parses program accounts with filters" {
     try std.testing.expectEqualStrings("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", parsed.program_memcmp_bytes_arg orelse "");
     try std.testing.expectEqualStrings("0", parsed.program_data_slice_offset_arg orelse "");
     try std.testing.expectEqualStrings("32", parsed.program_data_slice_length_arg orelse "");
+    try std.testing.expect(parsed.program_with_context);
+    try std.testing.expect(parsed.program_sort_results);
     try std.testing.expectEqual(Commitment.confirmed, parsed.commitment orelse .processed);
 }
 
@@ -1708,6 +2072,17 @@ test "cli.parseCliArgs parses token account balance" {
     defer parsed.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(Command.token_account_balance, parsed.command);
+    try std.testing.expectEqualStrings("TokenAcct1111111111111111111111111111111", parsed.account orelse "");
+}
+
+test "cli.parseCliArgs parses token account" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "token-account",
+        "TokenAcct1111111111111111111111111111111",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.token_account, parsed.command);
     try std.testing.expectEqualStrings("TokenAcct1111111111111111111111111111111", parsed.account orelse "");
 }
 

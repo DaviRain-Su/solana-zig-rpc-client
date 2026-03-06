@@ -2,11 +2,20 @@ const std = @import("std");
 const json = std.json;
 
 const Allocator = std.mem.Allocator;
+const max_lockout_history: u64 = 31;
+const poll_for_signature_timeout_ms: u64 = 15_000;
+const poll_for_signature_confirmation_timeout_ms: u64 = 20_000;
+const signature_poll_interval_ms: u64 = 250;
+pub const default_balance_poll_timeout_ms: u64 = 1_000;
+pub const default_balance_poll_interval_ms: u64 = 100;
+const wait_for_balance_error_retries: usize = 30;
 
 pub const RpcError = error{
     HttpError,
     RpcError,
     InvalidResponse,
+    AccountDataUnavailable,
+    AccountNotFound,
     Timeout,
     TransactionFailed,
     TransactionNotConfirmed,
@@ -48,6 +57,11 @@ pub const LatestBlockhash = struct {
     last_valid_block_height: u64,
 };
 
+pub const LatestBlockhashResponse = struct {
+    context_slot: u64 = 0,
+    value: LatestBlockhash,
+};
+
 pub const SignatureStatus = struct {
     confirmation_status: ?[]const u8 = null,
     has_error: bool = false,
@@ -70,6 +84,26 @@ pub const ProgramAccount = struct {
     account: AccountInfo = .{},
 };
 
+pub const ProgramAccountsResponse = struct {
+    context_slot: ?u64 = null,
+    accounts: []ProgramAccount = &.{},
+};
+
+pub const AccountInfoResponse = struct {
+    context_slot: u64 = 0,
+    account: ?AccountInfo = null,
+};
+
+pub const BalanceResponse = struct {
+    context_slot: u64 = 0,
+    value: u64 = 0,
+};
+
+pub const MultipleAccountsResponse = struct {
+    context_slot: u64 = 0,
+    accounts: []?AccountInfo = &.{},
+};
+
 pub const TokenAmount = struct {
     amount: []const u8 = "",
     decimals: u8 = 0,
@@ -77,9 +111,19 @@ pub const TokenAmount = struct {
     ui_amount_string: []const u8 = "",
 };
 
+pub const TokenAmountResponse = struct {
+    context_slot: u64 = 0,
+    value: TokenAmount = .{},
+};
+
 pub const TokenLargestAccount = struct {
     address: []const u8 = "",
     amount: TokenAmount = .{},
+};
+
+pub const TokenLargestAccountsResponse = struct {
+    context_slot: u64 = 0,
+    value: []TokenLargestAccount = &.{},
 };
 
 pub const LargestAccount = struct {
@@ -94,6 +138,9 @@ pub const LargestAccountsFilter = enum {
 
 pub const ProgramAccountsQueryOptions = struct {
     commitment: ?Commitment = null,
+    min_context_slot: ?u64 = null,
+    with_context: bool = false,
+    sort_results: bool = false,
     data_size: ?u64 = null,
     memcmp_offset: ?u64 = null,
     memcmp_bytes: ?[]const u8 = null,
@@ -103,9 +150,15 @@ pub const ProgramAccountsQueryOptions = struct {
 
 pub const AccountQueryOptions = struct {
     commitment: ?Commitment = null,
+    min_context_slot: ?u64 = null,
     encoding: ?AccountEncoding = null,
     data_slice_offset: ?u64 = null,
     data_slice_length: ?u64 = null,
+};
+
+pub const UiAccountQueryOptions = struct {
+    commitment: ?Commitment = null,
+    min_context_slot: ?u64 = null,
 };
 
 pub const SimulationAccountsOptions = struct {
@@ -132,9 +185,24 @@ pub const JsonParsedAccountInfo = struct {
     data_json: []const u8 = "",
 };
 
+pub const UiAccountResponse = struct {
+    context_slot: u64 = 0,
+    account: ?JsonParsedAccountInfo = null,
+};
+
 pub const JsonParsedProgramAccount = struct {
     pubkey: []const u8 = "",
     account: JsonParsedAccountInfo = .{},
+};
+
+pub const JsonParsedProgramAccountsResponse = struct {
+    context_slot: ?u64 = null,
+    accounts: []JsonParsedProgramAccount = &.{},
+};
+
+pub const MultipleUiAccountsResponse = struct {
+    context_slot: u64 = 0,
+    accounts: []?JsonParsedAccountInfo = &.{},
 };
 
 pub const TokenAccountsFilter = union(enum) {
@@ -167,6 +235,11 @@ pub const Supply = struct {
 };
 
 pub const FeeForMessage = struct {
+    value: ?u64 = null,
+};
+
+pub const FeeForMessageResponse = struct {
+    context_slot: u64 = 0,
     value: ?u64 = null,
 };
 
@@ -370,6 +443,11 @@ pub const SignatureStatusesQueryOptions = struct {
     search_transaction_history: bool = false,
 };
 
+pub const RequestAirdropOptions = struct {
+    commitment: ?Commitment = null,
+    recent_blockhash: ?[]const u8 = null,
+};
+
 pub const SimulateTransactionOptions = struct {
     sig_verify: bool = false,
     replace_recent_blockhash: bool = false,
@@ -396,6 +474,27 @@ pub const SimulatedTransaction = struct {
     replacement_blockhash: ?LatestBlockhash = null,
     return_data: ?SimulationReturnData = null,
     units_consumed: ?u64 = null,
+};
+
+pub const BlockSummary = struct {
+    blockhash: ?[]const u8 = null,
+    previous_blockhash: ?[]const u8 = null,
+    parent_slot: u64 = 0,
+    block_height: ?u64 = null,
+    block_time: ?i64 = null,
+    transaction_count: ?usize = null,
+    rewards_count: ?usize = null,
+};
+
+pub const TransactionSummary = struct {
+    slot: u64 = 0,
+    block_time: ?i64 = null,
+    version: ?[]const u8 = null,
+    signature_count: ?usize = null,
+    fee: ?u64 = null,
+    log_messages_count: ?usize = null,
+    has_error: bool = false,
+    error_json: ?[]const u8 = null,
 };
 
 pub const BlockQueryOptions = struct {
@@ -545,13 +644,30 @@ pub const RpcClient = struct {
             .{ .name = "accept", .value = "application/json" },
         };
 
-        const response = try self.http_client.fetch(.{
+        const response = self.http_client.fetch(.{
             .location = .{ .url = self.endpoint },
             .method = .POST,
             .payload = request_body,
             .extra_headers = &headers,
             .response_writer = &response_writer.writer,
-        });
+        }) catch |err| switch (err) {
+            error.HttpConnectionClosing => retry: {
+                response_writer.deinit();
+                response_writer = std.io.Writer.Allocating.init(self.allocator);
+
+                self.http_client.deinit();
+                self.http_client = .{ .allocator = self.allocator };
+
+                break :retry try self.http_client.fetch(.{
+                    .location = .{ .url = self.endpoint },
+                    .method = .POST,
+                    .payload = request_body,
+                    .extra_headers = &headers,
+                    .response_writer = &response_writer.writer,
+                });
+            },
+            else => return err,
+        };
 
         self.allocator.free(request_body);
 
@@ -630,6 +746,12 @@ pub const RpcClient = struct {
         };
     }
 
+    fn freeOwnedAccountInfo(self: *RpcClient, info: AccountInfo) void {
+        self.allocator.free(info.owner);
+        if (info.data) |value| self.allocator.free(value);
+        if (info.data_encoding) |value| self.allocator.free(value);
+    }
+
     fn cloneOptionalAccountInfos(self: *RpcClient, source: []const ?RpcAccountInfoResult) ![]?AccountInfo {
         const copied = try self.allocator.alloc(?AccountInfo, source.len);
         var copied_len: usize = 0;
@@ -646,6 +768,30 @@ pub const RpcClient = struct {
 
         for (source, 0..) |maybe_info, index| {
             copied[index] = if (maybe_info) |info| try self.cloneAccountInfo(info) else null;
+            copied_len += 1;
+        }
+
+        return copied;
+    }
+
+    fn cloneOptionalJsonParsedAccountInfos(
+        self: *RpcClient,
+        source: []const ?RpcJsonParsedAccountInfoResult,
+    ) ![]?JsonParsedAccountInfo {
+        const copied = try self.allocator.alloc(?JsonParsedAccountInfo, source.len);
+        var copied_len: usize = 0;
+        errdefer {
+            for (copied[0..copied_len]) |maybe_info| {
+                if (maybe_info) |info| {
+                    self.allocator.free(info.owner);
+                    self.allocator.free(info.data_json);
+                }
+            }
+            self.allocator.free(copied);
+        }
+
+        for (source, 0..) |maybe_info, index| {
+            copied[index] = if (maybe_info) |info| try self.cloneJsonParsedAccountInfo(info) else null;
             copied_len += 1;
         }
 
@@ -746,7 +892,25 @@ pub const RpcClient = struct {
         return copied;
     }
 
-    pub fn getLatestBlockhash(self: *RpcClient, commitment: ?Commitment) !LatestBlockhash {
+    fn lessThanProgramAccount(_: void, lhs: ProgramAccount, rhs: ProgramAccount) bool {
+        return std.mem.order(u8, lhs.pubkey, rhs.pubkey) == .lt;
+    }
+
+    fn lessThanJsonParsedProgramAccount(_: void, lhs: JsonParsedProgramAccount, rhs: JsonParsedProgramAccount) bool {
+        return std.mem.order(u8, lhs.pubkey, rhs.pubkey) == .lt;
+    }
+
+    fn maybeSortProgramAccounts(accounts: []ProgramAccount, sort_results: bool) void {
+        if (!sort_results) return;
+        std.mem.sort(ProgramAccount, accounts, {}, lessThanProgramAccount);
+    }
+
+    fn maybeSortJsonParsedProgramAccounts(accounts: []JsonParsedProgramAccount, sort_results: bool) void {
+        if (!sort_results) return;
+        std.mem.sort(JsonParsedProgramAccount, accounts, {}, lessThanJsonParsedProgramAccount);
+    }
+
+    pub fn getLatestBlockhashResponse(self: *RpcClient, commitment: ?Commitment) !LatestBlockhashResponse {
         const params = .{commitmentParams(commitment)};
         const params_json = try self.serializeParams(params);
         defer self.allocator.free(params_json);
@@ -775,10 +939,18 @@ pub const RpcClient = struct {
             return error.InvalidResponse;
         }
 
-        return LatestBlockhash{
-            .blockhash = try self.allocator.dupe(u8, result.value.blockhash),
-            .last_valid_block_height = result.value.lastValidBlockHeight,
+        return LatestBlockhashResponse{
+            .context_slot = result.context.slot,
+            .value = LatestBlockhash{
+                .blockhash = try self.allocator.dupe(u8, result.value.blockhash),
+                .last_valid_block_height = result.value.lastValidBlockHeight,
+            },
         };
+    }
+
+    pub fn getLatestBlockhash(self: *RpcClient, commitment: ?Commitment) !LatestBlockhash {
+        const response = try self.getLatestBlockhashResponse(commitment);
+        return response.value;
     }
 
     pub fn getFeatureActivationSlot(self: *RpcClient, feature_pubkey: []const u8, commitment: ?Commitment) !?u64 {
@@ -828,7 +1000,7 @@ pub const RpcClient = struct {
         return try self.parseResponse(response, u64);
     }
 
-    pub fn getBalance(self: *RpcClient, account: []const u8, commitment: ?Commitment) !u64 {
+    pub fn getBalanceResponse(self: *RpcClient, account: []const u8, commitment: ?Commitment) !BalanceResponse {
         const BalanceResult = struct {
             context: struct {
                 slot: u64 = 0,
@@ -847,6 +1019,14 @@ pub const RpcClient = struct {
         defer self.allocator.free(response);
 
         const result = try self.parseResponse(response, BalanceResult);
+        return BalanceResponse{
+            .context_slot = result.context.slot,
+            .value = result.value,
+        };
+    }
+
+    pub fn getBalance(self: *RpcClient, account: []const u8, commitment: ?Commitment) !u64 {
+        const result = try self.getBalanceResponse(account, commitment);
         return result.value;
     }
 
@@ -862,6 +1042,7 @@ pub const RpcClient = struct {
                 account,
                 .{
                     .commitment = if (value.commitment) |entry| commitmentToString(entry) else null,
+                    .minContextSlot = value.min_context_slot,
                     .encoding = if (value.encoding) |entry| accountEncodingToString(entry) else null,
                     .dataSlice = if (has_data_slice)
                         DataSlice{
@@ -890,6 +1071,7 @@ pub const RpcClient = struct {
                 accounts,
                 .{
                     .commitment = if (value.commitment) |entry| commitmentToString(entry) else null,
+                    .minContextSlot = value.min_context_slot,
                     .encoding = if (value.encoding) |entry| accountEncodingToString(entry) else null,
                     .dataSlice = if (has_data_slice)
                         DataSlice{
@@ -904,6 +1086,36 @@ pub const RpcClient = struct {
         }
 
         return try self.serializeParams(.{accounts});
+    }
+
+    fn serializeUiAccountParams(self: *RpcClient, account: []const u8, options: ?UiAccountQueryOptions) ![]u8 {
+        const params = .{
+            account,
+            .{
+                .commitment = if (options) |value|
+                    if (value.commitment) |entry| commitmentToString(entry) else null
+                else
+                    null,
+                .minContextSlot = if (options) |value| value.min_context_slot else null,
+                .encoding = "jsonParsed",
+            },
+        };
+        return try self.serializeParams(params);
+    }
+
+    fn serializeMultipleUiAccountsParams(self: *RpcClient, accounts: []const []const u8, options: ?UiAccountQueryOptions) ![]u8 {
+        const params = .{
+            accounts,
+            .{
+                .commitment = if (options) |value|
+                    if (value.commitment) |entry| commitmentToString(entry) else null
+                else
+                    null,
+                .minContextSlot = if (options) |value| value.min_context_slot else null,
+                .encoding = "jsonParsed",
+            },
+        };
+        return try self.serializeParams(params);
     }
 
     fn serializeSimulateTransactionParams(
@@ -1024,33 +1236,172 @@ pub const RpcClient = struct {
         return try self.serializeParams(.{signatures});
     }
 
-    pub fn getAccountInfoWithOptions(self: *RpcClient, account: []const u8, options: ?AccountQueryOptions) !AccountInfo {
+    fn serializeRequestAirdropParams(
+        self: *RpcClient,
+        account: []const u8,
+        lamports: u64,
+        options: ?RequestAirdropOptions,
+    ) ![]u8 {
+        if (options) |value| {
+            const params = .{
+                account,
+                lamports,
+                .{
+                    .commitment = if (value.commitment) |entry| commitmentToString(entry) else null,
+                    .recentBlockhash = value.recent_blockhash,
+                },
+            };
+            return try self.serializeParams(params);
+        }
+
+        return try self.serializeParams(.{ account, lamports });
+    }
+
+    pub fn getAccountInfoResponseWithOptions(self: *RpcClient, account: []const u8, options: ?AccountQueryOptions) !AccountInfoResponse {
         const params_json = try self.serializeAccountParams(account, options);
         defer self.allocator.free(params_json);
 
         const response = try self.sendRequest("getAccountInfo", params_json);
         defer self.allocator.free(response);
 
-        const RpcResult = struct {
-            context: struct {
-                slot: u64 = 0,
-            } = .{ .slot = 0 },
-            value: ?RpcAccountInfoResult = null,
+        try self.captureRpcError(response);
+
+        const ParsedEnvelope = struct {
+            jsonrpc: []const u8 = "",
+            id: u64 = 0,
+            result: ?struct {
+                context: struct {
+                    slot: u64 = 0,
+                } = .{ .slot = 0 },
+                value: ?RpcAccountInfoResult = null,
+            } = null,
         };
 
-        const result = try self.parseResponse(response, RpcResult);
-        const source = result.value orelse return error.InvalidResponse;
-        return try self.cloneAccountInfo(source);
+        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        const result = parsed.value.result orelse return error.InvalidResponse;
+        return AccountInfoResponse{
+            .context_slot = result.context.slot,
+            .account = if (result.value) |source| try self.cloneAccountInfo(source) else null,
+        };
     }
 
-    pub fn getAccountInfo(self: *RpcClient, account: []const u8, commitment: ?Commitment) !AccountInfo {
-        return try self.getAccountInfoWithOptions(
+    pub fn getAccountInfoMaybeWithOptions(self: *RpcClient, account: []const u8, options: ?AccountQueryOptions) !?AccountInfo {
+        const response = try self.getAccountInfoResponseWithOptions(account, options);
+        return response.account;
+    }
+
+    pub fn getAccountInfoWithOptions(self: *RpcClient, account: []const u8, options: ?AccountQueryOptions) !AccountInfo {
+        return (try self.getAccountInfoMaybeWithOptions(account, options)) orelse error.AccountNotFound;
+    }
+
+    pub fn getAccountInfoResponse(self: *RpcClient, account: []const u8, commitment: ?Commitment) !AccountInfoResponse {
+        return try self.getAccountInfoResponseWithOptions(
             account,
             if (commitment) |value| AccountQueryOptions{ .commitment = value } else null,
         );
     }
 
-    pub fn getMultipleAccountsWithOptions(self: *RpcClient, accounts: []const []const u8, options: ?AccountQueryOptions) ![]?AccountInfo {
+    pub fn getAccountInfoMaybe(self: *RpcClient, account: []const u8, commitment: ?Commitment) !?AccountInfo {
+        return try self.getAccountInfoMaybeWithOptions(
+            account,
+            if (commitment) |value| AccountQueryOptions{ .commitment = value } else null,
+        );
+    }
+
+    pub fn getAccountInfo(self: *RpcClient, account: []const u8, commitment: ?Commitment) !AccountInfo {
+        return (try self.getAccountInfoMaybe(account, commitment)) orelse error.AccountNotFound;
+    }
+
+    pub fn getAccountDataWithOptions(self: *RpcClient, account: []const u8, options: ?AccountQueryOptions) ![]const u8 {
+        const info = try self.getAccountInfoWithOptions(account, .{
+            .commitment = if (options) |value| value.commitment else null,
+            .min_context_slot = if (options) |value| value.min_context_slot else null,
+            .encoding = .base64,
+            .data_slice_offset = if (options) |value| value.data_slice_offset else null,
+            .data_slice_length = if (options) |value| value.data_slice_length else null,
+        });
+        errdefer self.freeOwnedAccountInfo(info);
+
+        const encoded_data = info.data orelse return error.AccountDataUnavailable;
+        const data_encoding = info.data_encoding orelse return error.AccountDataUnavailable;
+        if (!std.mem.eql(u8, data_encoding, "base64")) return error.AccountDataUnavailable;
+
+        const decoded_len = try std.base64.standard.Decoder.calcSizeForSlice(encoded_data);
+        const decoded = try self.allocator.alloc(u8, decoded_len);
+        errdefer self.allocator.free(decoded);
+        try std.base64.standard.Decoder.decode(decoded, encoded_data);
+
+        self.freeOwnedAccountInfo(info);
+        return decoded;
+    }
+
+    pub fn getAccountData(self: *RpcClient, account: []const u8, commitment: ?Commitment) ![]const u8 {
+        return try self.getAccountDataWithOptions(
+            account,
+            if (commitment) |value| AccountQueryOptions{ .commitment = value } else null,
+        );
+    }
+
+    pub fn getUiAccountResponseWithOptions(self: *RpcClient, account: []const u8, options: ?UiAccountQueryOptions) !UiAccountResponse {
+        const params_json = try self.serializeUiAccountParams(account, options);
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest("getAccountInfo", params_json);
+        defer self.allocator.free(response);
+
+        try self.captureRpcError(response);
+
+        const ParsedEnvelope = struct {
+            jsonrpc: []const u8 = "",
+            id: u64 = 0,
+            result: ?struct {
+                context: struct {
+                    slot: u64 = 0,
+                } = .{ .slot = 0 },
+                value: ?RpcJsonParsedAccountInfoResult = null,
+            } = null,
+        };
+
+        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        const result = parsed.value.result orelse return error.InvalidResponse;
+        return UiAccountResponse{
+            .context_slot = result.context.slot,
+            .account = if (result.value) |source| try self.cloneJsonParsedAccountInfo(source) else null,
+        };
+    }
+
+    pub fn getUiAccountMaybeWithOptions(self: *RpcClient, account: []const u8, options: ?UiAccountQueryOptions) !?JsonParsedAccountInfo {
+        const response = try self.getUiAccountResponseWithOptions(account, options);
+        return response.account;
+    }
+
+    pub fn getUiAccountWithOptions(self: *RpcClient, account: []const u8, options: ?UiAccountQueryOptions) !JsonParsedAccountInfo {
+        return (try self.getUiAccountMaybeWithOptions(account, options)) orelse error.AccountNotFound;
+    }
+
+    pub fn getUiAccountResponse(self: *RpcClient, account: []const u8, commitment: ?Commitment) !UiAccountResponse {
+        return try self.getUiAccountResponseWithOptions(
+            account,
+            if (commitment) |value| UiAccountQueryOptions{ .commitment = value } else null,
+        );
+    }
+
+    pub fn getUiAccountMaybe(self: *RpcClient, account: []const u8, commitment: ?Commitment) !?JsonParsedAccountInfo {
+        return try self.getUiAccountMaybeWithOptions(
+            account,
+            if (commitment) |value| UiAccountQueryOptions{ .commitment = value } else null,
+        );
+    }
+
+    pub fn getUiAccount(self: *RpcClient, account: []const u8, commitment: ?Commitment) !JsonParsedAccountInfo {
+        return (try self.getUiAccountMaybe(account, commitment)) orelse error.AccountNotFound;
+    }
+
+    pub fn getMultipleAccountsResponseWithOptions(self: *RpcClient, accounts: []const []const u8, options: ?AccountQueryOptions) !MultipleAccountsResponse {
         const params_json = try self.serializeMultipleAccountsParams(accounts, options);
         defer self.allocator.free(params_json);
 
@@ -1074,23 +1425,77 @@ pub const RpcClient = struct {
         defer parsed.deinit();
 
         const result = parsed.value.result orelse return error.InvalidResponse;
-        const copied = try self.allocator.alloc(?AccountInfo, result.value.len);
+        return MultipleAccountsResponse{
+            .context_slot = result.context.slot,
+            .accounts = try self.cloneOptionalAccountInfos(result.value),
+        };
+    }
 
-        for (result.value, 0..) |entry, index| {
-            if (entry) |value| {
-                copied[index] = try self.cloneAccountInfo(value);
-            } else {
-                copied[index] = null;
-            }
-        }
-
-        return copied;
+    pub fn getMultipleAccountsWithOptions(self: *RpcClient, accounts: []const []const u8, options: ?AccountQueryOptions) ![]?AccountInfo {
+        const response = try self.getMultipleAccountsResponseWithOptions(accounts, options);
+        return response.accounts;
     }
 
     pub fn getMultipleAccounts(self: *RpcClient, accounts: []const []const u8, commitment: ?Commitment) ![]?AccountInfo {
         return try self.getMultipleAccountsWithOptions(
             accounts,
             if (commitment) |value| AccountQueryOptions{ .commitment = value } else null,
+        );
+    }
+
+    pub fn getMultipleAccountsResponse(self: *RpcClient, accounts: []const []const u8, commitment: ?Commitment) !MultipleAccountsResponse {
+        return try self.getMultipleAccountsResponseWithOptions(
+            accounts,
+            if (commitment) |value| AccountQueryOptions{ .commitment = value } else null,
+        );
+    }
+
+    pub fn getMultipleUiAccountsResponseWithOptions(self: *RpcClient, accounts: []const []const u8, options: ?UiAccountQueryOptions) !MultipleUiAccountsResponse {
+        const params_json = try self.serializeMultipleUiAccountsParams(accounts, options);
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest("getMultipleAccounts", params_json);
+        defer self.allocator.free(response);
+
+        try self.captureRpcError(response);
+
+        const ParsedEnvelope = struct {
+            jsonrpc: []const u8 = "",
+            id: u64 = 0,
+            result: ?struct {
+                context: struct {
+                    slot: u64 = 0,
+                } = .{ .slot = 0 },
+                value: []?RpcJsonParsedAccountInfoResult = &.{},
+            } = null,
+        };
+
+        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        const result = parsed.value.result orelse return error.InvalidResponse;
+        return MultipleUiAccountsResponse{
+            .context_slot = result.context.slot,
+            .accounts = try self.cloneOptionalJsonParsedAccountInfos(result.value),
+        };
+    }
+
+    pub fn getMultipleUiAccountsWithOptions(self: *RpcClient, accounts: []const []const u8, options: ?UiAccountQueryOptions) ![]?JsonParsedAccountInfo {
+        const response = try self.getMultipleUiAccountsResponseWithOptions(accounts, options);
+        return response.accounts;
+    }
+
+    pub fn getMultipleUiAccounts(self: *RpcClient, accounts: []const []const u8, commitment: ?Commitment) ![]?JsonParsedAccountInfo {
+        return try self.getMultipleUiAccountsWithOptions(
+            accounts,
+            if (commitment) |value| UiAccountQueryOptions{ .commitment = value } else null,
+        );
+    }
+
+    pub fn getMultipleUiAccountsResponse(self: *RpcClient, accounts: []const []const u8, commitment: ?Commitment) !MultipleUiAccountsResponse {
+        return try self.getMultipleUiAccountsResponseWithOptions(
+            accounts,
+            if (commitment) |value| UiAccountQueryOptions{ .commitment = value } else null,
         );
     }
 
@@ -1111,11 +1516,13 @@ pub const RpcClient = struct {
 
         if (options) |value| {
             const commitment = if (value.commitment) |entry| commitmentToString(entry) else null;
+            const min_context_slot = value.min_context_slot;
+            const with_context = value.with_context;
             const has_data_size = value.data_size != null;
             const has_memcmp = value.memcmp_offset != null and value.memcmp_bytes != null;
             const has_data_slice = value.data_slice_offset != null and value.data_slice_length != null;
 
-            if (!has_data_size and !has_memcmp and !has_data_slice and commitment == null) {
+            if (!has_data_size and !has_memcmp and !has_data_slice and commitment == null and min_context_slot == null and !with_context) {
                 return try self.serializeParams(.{program_id});
             }
 
@@ -1124,6 +1531,8 @@ pub const RpcClient = struct {
                     program_id,
                     .{
                         .commitment = commitment,
+                        .minContextSlot = min_context_slot,
+                        .withContext = with_context,
                         .dataSlice = DataSlice{
                             .offset = value.data_slice_offset.?,
                             .length = value.data_slice_length.?,
@@ -1142,6 +1551,8 @@ pub const RpcClient = struct {
                     program_id,
                     .{
                         .commitment = commitment,
+                        .minContextSlot = min_context_slot,
+                        .withContext = with_context,
                         .filters = .{
                             DataSizeFilter{ .dataSize = value.data_size.? },
                             MemcmpFilter{ .memcmp = .{ .offset = value.memcmp_offset.?, .bytes = value.memcmp_bytes.? } },
@@ -1156,6 +1567,8 @@ pub const RpcClient = struct {
                     program_id,
                     .{
                         .commitment = commitment,
+                        .minContextSlot = min_context_slot,
+                        .withContext = with_context,
                         .dataSlice = DataSlice{
                             .offset = value.data_slice_offset.?,
                             .length = value.data_slice_length.?,
@@ -1171,6 +1584,8 @@ pub const RpcClient = struct {
                     program_id,
                     .{
                         .commitment = commitment,
+                        .minContextSlot = min_context_slot,
+                        .withContext = with_context,
                         .dataSlice = DataSlice{
                             .offset = value.data_slice_offset.?,
                             .length = value.data_slice_length.?,
@@ -1186,6 +1601,8 @@ pub const RpcClient = struct {
                     program_id,
                     .{
                         .commitment = commitment,
+                        .minContextSlot = min_context_slot,
+                        .withContext = with_context,
                         .filters = .{DataSizeFilter{ .dataSize = value.data_size.? }},
                     },
                 };
@@ -1197,6 +1614,8 @@ pub const RpcClient = struct {
                     program_id,
                     .{
                         .commitment = commitment,
+                        .minContextSlot = min_context_slot,
+                        .withContext = with_context,
                         .filters = .{MemcmpFilter{ .memcmp = .{ .offset = value.memcmp_offset.?, .bytes = value.memcmp_bytes.? } }},
                     },
                 };
@@ -1208,6 +1627,8 @@ pub const RpcClient = struct {
                     program_id,
                     .{
                         .commitment = commitment,
+                        .minContextSlot = min_context_slot,
+                        .withContext = with_context,
                         .dataSlice = DataSlice{
                             .offset = value.data_slice_offset.?,
                             .length = value.data_slice_length.?,
@@ -1219,7 +1640,11 @@ pub const RpcClient = struct {
 
             const params = .{
                 program_id,
-                .{ .commitment = commitment },
+                .{
+                    .commitment = commitment,
+                    .minContextSlot = min_context_slot,
+                    .withContext = with_context,
+                },
             };
             return try self.serializeParams(params);
         }
@@ -1227,7 +1652,174 @@ pub const RpcClient = struct {
         return try self.serializeParams(.{program_id});
     }
 
-    pub fn getProgramAccountsWithOptions(self: *RpcClient, program_id: []const u8, options: ?ProgramAccountsQueryOptions) ![]ProgramAccount {
+    fn serializeProgramUiAccountsParams(self: *RpcClient, program_id: []const u8, options: ?ProgramAccountsQueryOptions) ![]u8 {
+        const DataSlice = struct {
+            offset: u64,
+            length: u64,
+        };
+        const DataSizeFilter = struct {
+            dataSize: u64,
+        };
+        const MemcmpFilter = struct {
+            memcmp: struct {
+                offset: u64,
+                bytes: []const u8,
+            },
+        };
+
+        if (options) |value| {
+            const commitment = if (value.commitment) |entry| commitmentToString(entry) else null;
+            const min_context_slot = value.min_context_slot;
+            const with_context = value.with_context;
+            const has_data_size = value.data_size != null;
+            const has_memcmp = value.memcmp_offset != null and value.memcmp_bytes != null;
+            const has_data_slice = value.data_slice_offset != null and value.data_slice_length != null;
+
+            if (!has_data_size and !has_memcmp and !has_data_slice and commitment == null and min_context_slot == null and !with_context) {
+                return try self.serializeParams(.{
+                    program_id,
+                    .{ .encoding = "jsonParsed" },
+                });
+            }
+
+            if (has_data_size and has_memcmp and has_data_slice) {
+                const params = .{
+                    program_id,
+                    .{
+                        .commitment = commitment,
+                        .minContextSlot = min_context_slot,
+                        .withContext = with_context,
+                        .encoding = "jsonParsed",
+                        .dataSlice = DataSlice{
+                            .offset = value.data_slice_offset.?,
+                            .length = value.data_slice_length.?,
+                        },
+                        .filters = .{
+                            DataSizeFilter{ .dataSize = value.data_size.? },
+                            MemcmpFilter{ .memcmp = .{ .offset = value.memcmp_offset.?, .bytes = value.memcmp_bytes.? } },
+                        },
+                    },
+                };
+                return try self.serializeParams(params);
+            }
+
+            if (has_data_size and has_memcmp) {
+                const params = .{
+                    program_id,
+                    .{
+                        .commitment = commitment,
+                        .minContextSlot = min_context_slot,
+                        .withContext = with_context,
+                        .encoding = "jsonParsed",
+                        .filters = .{
+                            DataSizeFilter{ .dataSize = value.data_size.? },
+                            MemcmpFilter{ .memcmp = .{ .offset = value.memcmp_offset.?, .bytes = value.memcmp_bytes.? } },
+                        },
+                    },
+                };
+                return try self.serializeParams(params);
+            }
+
+            if (has_data_size and has_data_slice) {
+                const params = .{
+                    program_id,
+                    .{
+                        .commitment = commitment,
+                        .minContextSlot = min_context_slot,
+                        .withContext = with_context,
+                        .encoding = "jsonParsed",
+                        .dataSlice = DataSlice{
+                            .offset = value.data_slice_offset.?,
+                            .length = value.data_slice_length.?,
+                        },
+                        .filters = .{DataSizeFilter{ .dataSize = value.data_size.? }},
+                    },
+                };
+                return try self.serializeParams(params);
+            }
+
+            if (has_memcmp and has_data_slice) {
+                const params = .{
+                    program_id,
+                    .{
+                        .commitment = commitment,
+                        .minContextSlot = min_context_slot,
+                        .withContext = with_context,
+                        .encoding = "jsonParsed",
+                        .dataSlice = DataSlice{
+                            .offset = value.data_slice_offset.?,
+                            .length = value.data_slice_length.?,
+                        },
+                        .filters = .{MemcmpFilter{ .memcmp = .{ .offset = value.memcmp_offset.?, .bytes = value.memcmp_bytes.? } }},
+                    },
+                };
+                return try self.serializeParams(params);
+            }
+
+            if (has_data_size) {
+                const params = .{
+                    program_id,
+                    .{
+                        .commitment = commitment,
+                        .minContextSlot = min_context_slot,
+                        .withContext = with_context,
+                        .encoding = "jsonParsed",
+                        .filters = .{DataSizeFilter{ .dataSize = value.data_size.? }},
+                    },
+                };
+                return try self.serializeParams(params);
+            }
+
+            if (has_memcmp) {
+                const params = .{
+                    program_id,
+                    .{
+                        .commitment = commitment,
+                        .minContextSlot = min_context_slot,
+                        .withContext = with_context,
+                        .encoding = "jsonParsed",
+                        .filters = .{MemcmpFilter{ .memcmp = .{ .offset = value.memcmp_offset.?, .bytes = value.memcmp_bytes.? } }},
+                    },
+                };
+                return try self.serializeParams(params);
+            }
+
+            if (has_data_slice) {
+                const params = .{
+                    program_id,
+                    .{
+                        .commitment = commitment,
+                        .minContextSlot = min_context_slot,
+                        .withContext = with_context,
+                        .encoding = "jsonParsed",
+                        .dataSlice = DataSlice{
+                            .offset = value.data_slice_offset.?,
+                            .length = value.data_slice_length.?,
+                        },
+                    },
+                };
+                return try self.serializeParams(params);
+            }
+
+            const params = .{
+                program_id,
+                .{
+                    .commitment = commitment,
+                    .minContextSlot = min_context_slot,
+                    .withContext = with_context,
+                    .encoding = "jsonParsed",
+                },
+            };
+            return try self.serializeParams(params);
+        }
+
+        return try self.serializeParams(.{
+            program_id,
+            .{ .encoding = "jsonParsed" },
+        });
+    }
+
+    pub fn getProgramAccountsResponseWithOptions(self: *RpcClient, program_id: []const u8, options: ?ProgramAccountsQueryOptions) !ProgramAccountsResponse {
         const params_json = try self.serializeProgramAccountsParams(program_id, options);
         defer self.allocator.free(params_json);
 
@@ -1235,6 +1827,30 @@ pub const RpcClient = struct {
         defer self.allocator.free(response);
 
         try self.captureRpcError(response);
+
+        if (options != null and options.?.with_context) {
+            const ParsedEnvelope = struct {
+                jsonrpc: []const u8 = "",
+                id: u64 = 0,
+                result: ?struct {
+                    context: struct {
+                        slot: u64 = 0,
+                    } = .{ .slot = 0 },
+                    value: []RpcProgramAccountResult = &.{},
+                } = null,
+            };
+
+            const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
+            defer parsed.deinit();
+
+            const result = parsed.value.result orelse return error.InvalidResponse;
+            const copied = try self.cloneProgramAccounts(result.value);
+            maybeSortProgramAccounts(copied, if (options) |value| value.sort_results else false);
+            return ProgramAccountsResponse{
+                .context_slot = result.context.slot,
+                .accounts = copied,
+            };
+        }
 
         const ParsedEnvelope = struct {
             jsonrpc: []const u8 = "",
@@ -1246,7 +1862,17 @@ pub const RpcClient = struct {
         defer parsed.deinit();
 
         const source = parsed.value.result orelse return error.InvalidResponse;
-        return try self.cloneProgramAccounts(source);
+        const copied = try self.cloneProgramAccounts(source);
+        maybeSortProgramAccounts(copied, if (options) |value| value.sort_results else false);
+        return ProgramAccountsResponse{
+            .context_slot = null,
+            .accounts = copied,
+        };
+    }
+
+    pub fn getProgramAccountsWithOptions(self: *RpcClient, program_id: []const u8, options: ?ProgramAccountsQueryOptions) ![]ProgramAccount {
+        const response = try self.getProgramAccountsResponseWithOptions(program_id, options);
+        return response.accounts;
     }
 
     pub fn getProgramAccounts(self: *RpcClient, program_id: []const u8, commitment: ?Commitment) ![]ProgramAccount {
@@ -1255,6 +1881,70 @@ pub const RpcClient = struct {
         else
             null;
         return try self.getProgramAccountsWithOptions(program_id, options);
+    }
+
+    pub fn getProgramUiAccountsResponseWithOptions(self: *RpcClient, program_id: []const u8, options: ?ProgramAccountsQueryOptions) !JsonParsedProgramAccountsResponse {
+        const params_json = try self.serializeProgramUiAccountsParams(program_id, options);
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest("getProgramAccounts", params_json);
+        defer self.allocator.free(response);
+
+        try self.captureRpcError(response);
+
+        if (options != null and options.?.with_context) {
+            const ParsedEnvelope = struct {
+                jsonrpc: []const u8 = "",
+                id: u64 = 0,
+                result: ?struct {
+                    context: struct {
+                        slot: u64 = 0,
+                    } = .{ .slot = 0 },
+                    value: []RpcJsonParsedProgramAccountResult = &.{},
+                } = null,
+            };
+
+            const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
+            defer parsed.deinit();
+
+            const result = parsed.value.result orelse return error.InvalidResponse;
+            const copied = try self.cloneJsonParsedProgramAccounts(result.value);
+            maybeSortJsonParsedProgramAccounts(copied, if (options) |value| value.sort_results else false);
+            return JsonParsedProgramAccountsResponse{
+                .context_slot = result.context.slot,
+                .accounts = copied,
+            };
+        }
+
+        const ParsedEnvelope = struct {
+            jsonrpc: []const u8 = "",
+            id: u64 = 0,
+            result: ?[]RpcJsonParsedProgramAccountResult = null,
+        };
+
+        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        const source = parsed.value.result orelse return error.InvalidResponse;
+        const copied = try self.cloneJsonParsedProgramAccounts(source);
+        maybeSortJsonParsedProgramAccounts(copied, if (options) |value| value.sort_results else false);
+        return JsonParsedProgramAccountsResponse{
+            .context_slot = null,
+            .accounts = copied,
+        };
+    }
+
+    pub fn getProgramUiAccountsWithOptions(self: *RpcClient, program_id: []const u8, options: ?ProgramAccountsQueryOptions) ![]JsonParsedProgramAccount {
+        const response = try self.getProgramUiAccountsResponseWithOptions(program_id, options);
+        return response.accounts;
+    }
+
+    pub fn getProgramUiAccounts(self: *RpcClient, program_id: []const u8, commitment: ?Commitment) ![]JsonParsedProgramAccount {
+        const options = if (commitment) |value|
+            ProgramAccountsQueryOptions{ .commitment = value }
+        else
+            null;
+        return try self.getProgramUiAccountsWithOptions(program_id, options);
     }
 
     pub fn getGenesisHash(self: *RpcClient) ![]const u8 {
@@ -1363,13 +2053,13 @@ pub const RpcClient = struct {
         return try self.parseResponse(response, u64);
     }
 
-    pub fn requestAirdrop(self: *RpcClient, account: []const u8, lamports: u64, commitment: ?Commitment) ![]const u8 {
-        const params = .{
-            account,
-            lamports,
-            commitmentParams(commitment),
-        };
-        const params_json = try self.serializeParams(params);
+    pub fn requestAirdropWithOptions(
+        self: *RpcClient,
+        account: []const u8,
+        lamports: u64,
+        options: ?RequestAirdropOptions,
+    ) ![]const u8 {
+        const params_json = try self.serializeRequestAirdropParams(account, lamports, options);
         defer self.allocator.free(params_json);
 
         const response = try self.sendRequest("requestAirdrop", params_json);
@@ -1377,6 +2067,36 @@ pub const RpcClient = struct {
 
         const signature = try self.parseResponse(response, []const u8);
         return try self.allocator.dupe(u8, signature);
+    }
+
+    pub fn requestAirdropWithConfig(
+        self: *RpcClient,
+        account: []const u8,
+        lamports: u64,
+        options: ?RequestAirdropOptions,
+    ) ![]const u8 {
+        return try self.requestAirdropWithOptions(account, lamports, options);
+    }
+
+    pub fn requestAirdrop(self: *RpcClient, account: []const u8, lamports: u64, commitment: ?Commitment) ![]const u8 {
+        return try self.requestAirdropWithOptions(
+            account,
+            lamports,
+            if (commitment) |value| RequestAirdropOptions{ .commitment = value } else null,
+        );
+    }
+
+    pub fn requestAirdropWithBlockhash(
+        self: *RpcClient,
+        account: []const u8,
+        lamports: u64,
+        recent_blockhash: []const u8,
+    ) ![]const u8 {
+        return try self.requestAirdropWithOptions(
+            account,
+            lamports,
+            .{ .recent_blockhash = recent_blockhash },
+        );
     }
 
     pub fn getSupply(self: *RpcClient, commitment: ?Commitment) !Supply {
@@ -1493,6 +2213,11 @@ pub const RpcClient = struct {
     }
 
     pub fn getTokenAccountBalance(self: *RpcClient, token_account: []const u8, commitment: ?Commitment) !TokenAmount {
+        const response = try self.getTokenAccountBalanceResponse(token_account, commitment);
+        return response.value;
+    }
+
+    pub fn getTokenAccountBalanceResponse(self: *RpcClient, token_account: []const u8, commitment: ?Commitment) !TokenAmountResponse {
         const params_json = if (commitment) |value| blk: {
             const params = .{ token_account, .{ .commitment = commitmentToString(value) } };
             break :blk try self.serializeParams(params);
@@ -1513,10 +2238,34 @@ pub const RpcClient = struct {
         };
 
         const result = try self.parseResponse(response, RpcResult);
-        return try self.cloneTokenAmount(result.value);
+        return TokenAmountResponse{
+            .context_slot = result.context.slot,
+            .value = try self.cloneTokenAmount(result.value),
+        };
+    }
+
+    pub fn getTokenAccountMaybe(self: *RpcClient, token_account: []const u8, commitment: ?Commitment) !?JsonParsedAccountInfo {
+        return try self.getUiAccountMaybe(token_account, commitment);
+    }
+
+    pub fn getTokenAccountMaybeWithOptions(self: *RpcClient, token_account: []const u8, options: ?UiAccountQueryOptions) !?JsonParsedAccountInfo {
+        return try self.getUiAccountMaybeWithOptions(token_account, options);
+    }
+
+    pub fn getTokenAccountWithOptions(self: *RpcClient, token_account: []const u8, options: ?UiAccountQueryOptions) !JsonParsedAccountInfo {
+        return (try self.getTokenAccountMaybeWithOptions(token_account, options)) orelse error.AccountNotFound;
+    }
+
+    pub fn getTokenAccount(self: *RpcClient, token_account: []const u8, commitment: ?Commitment) !JsonParsedAccountInfo {
+        return (try self.getTokenAccountMaybe(token_account, commitment)) orelse error.AccountNotFound;
     }
 
     pub fn getTokenSupply(self: *RpcClient, mint: []const u8, commitment: ?Commitment) !TokenAmount {
+        const response = try self.getTokenSupplyResponse(mint, commitment);
+        return response.value;
+    }
+
+    pub fn getTokenSupplyResponse(self: *RpcClient, mint: []const u8, commitment: ?Commitment) !TokenAmountResponse {
         const params_json = if (commitment) |value| blk: {
             const params = .{ mint, .{ .commitment = commitmentToString(value) } };
             break :blk try self.serializeParams(params);
@@ -1537,10 +2286,18 @@ pub const RpcClient = struct {
         };
 
         const result = try self.parseResponse(response, RpcResult);
-        return try self.cloneTokenAmount(result.value);
+        return TokenAmountResponse{
+            .context_slot = result.context.slot,
+            .value = try self.cloneTokenAmount(result.value),
+        };
     }
 
     pub fn getTokenLargestAccounts(self: *RpcClient, mint: []const u8, commitment: ?Commitment) ![]TokenLargestAccount {
+        const response = try self.getTokenLargestAccountsResponse(mint, commitment);
+        return response.value;
+    }
+
+    pub fn getTokenLargestAccountsResponse(self: *RpcClient, mint: []const u8, commitment: ?Commitment) !TokenLargestAccountsResponse {
         const params_json = if (commitment) |value| blk: {
             const params = .{ mint, .{ .commitment = commitmentToString(value) } };
             break :blk try self.serializeParams(params);
@@ -1553,8 +2310,6 @@ pub const RpcClient = struct {
         const response = try self.sendRequest("getTokenLargestAccounts", params_json);
         defer self.allocator.free(response);
 
-        try self.captureRpcError(response);
-
         const TokenLargestAccountResult = struct {
             address: []const u8 = "",
             amount: []const u8 = "",
@@ -1563,21 +2318,34 @@ pub const RpcClient = struct {
             uiAmountString: []const u8 = "",
         };
 
+        const ParsedResponse = struct {
+            context: struct {
+                slot: u64 = 0,
+            } = .{ .slot = 0 },
+            value: []TokenLargestAccountResult = &.{},
+        };
+
         const ParsedEnvelope = struct {
             jsonrpc: []const u8 = "",
             id: u64 = 0,
-            result: ?struct {
-                context: struct {
-                    slot: u64 = 0,
-                } = .{ .slot = 0 },
-                value: []TokenLargestAccountResult = &.{},
-            } = null,
+            result: ?ParsedResponse = null,
+            @"error": ?RpcErrorDetail = null,
         };
 
         const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
         defer parsed.deinit();
 
+        if (parsed.value.@"error" != null) {
+            const err = parsed.value.@"error".?;
+            self.last_error = RpcErrorDetail{
+                .code = err.code,
+                .message = self.allocator.dupe(u8, err.message) catch return error.InvalidResponse,
+            };
+            return error.RpcError;
+        }
+
         const result = parsed.value.result orelse return error.InvalidResponse;
+
         const copied = try self.allocator.alloc(TokenLargestAccount, result.value.len);
 
         for (result.value, 0..) |entry, index| {
@@ -1592,7 +2360,10 @@ pub const RpcClient = struct {
             };
         }
 
-        return copied;
+        return TokenLargestAccountsResponse{
+            .context_slot = result.context.slot,
+            .value = copied,
+        };
     }
 
     fn getTokenAccounts(
@@ -1800,6 +2571,57 @@ pub const RpcClient = struct {
         return try self.parseJsonValueResponse(response);
     }
 
+    pub fn summarizeBlockJson(self: *RpcClient, block_json: []const u8) !BlockSummary {
+        const ParsedBlock = struct {
+            blockhash: ?[]const u8 = null,
+            previousBlockhash: ?[]const u8 = null,
+            parentSlot: u64 = 0,
+            blockHeight: ?u64 = null,
+            blockTime: ?i64 = null,
+            transactions: ?[]json.Value = null,
+            rewards: ?[]json.Value = null,
+        };
+
+        const parsed = try json.parseFromSlice(ParsedBlock, self.allocator, block_json, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        return BlockSummary{
+            .blockhash = if (parsed.value.blockhash) |value| try self.allocator.dupe(u8, value) else null,
+            .previous_blockhash = if (parsed.value.previousBlockhash) |value| try self.allocator.dupe(u8, value) else null,
+            .parent_slot = parsed.value.parentSlot,
+            .block_height = parsed.value.blockHeight,
+            .block_time = parsed.value.blockTime,
+            .transaction_count = if (parsed.value.transactions) |value| value.len else null,
+            .rewards_count = if (parsed.value.rewards) |value| value.len else null,
+        };
+    }
+
+    pub fn freeOwnedBlockSummary(self: *RpcClient, summary: BlockSummary) void {
+        if (summary.blockhash) |value| self.allocator.free(value);
+        if (summary.previous_blockhash) |value| self.allocator.free(value);
+    }
+
+    pub fn getBlockSummaryWithOptions(self: *RpcClient, slot: u64, options: ?BlockQueryOptions) !?BlockSummary {
+        const block_json = try self.getBlockWithOptions(slot, options);
+        defer if (block_json) |value| self.allocator.free(value);
+
+        if (block_json) |value| {
+            return try self.summarizeBlockJson(value);
+        }
+
+        return null;
+    }
+
+    pub fn getBlockSummary(self: *RpcClient, slot: u64, commitment: ?Commitment) !?BlockSummary {
+        return try self.getBlockSummaryWithOptions(
+            slot,
+            if (commitment) |value|
+                BlockQueryOptions{ .commitment = value }
+            else
+                null,
+        );
+    }
+
     pub fn getTransaction(self: *RpcClient, signature: []const u8, options: ?TransactionQueryOptions) !?[]const u8 {
         const TransactionConfig = struct {
             commitment: ?[]const u8 = null,
@@ -1833,6 +2655,85 @@ pub const RpcClient = struct {
         return try self.parseJsonValueResponse(response);
     }
 
+    pub fn summarizeTransactionJson(self: *RpcClient, transaction_json: []const u8) !TransactionSummary {
+        const ParsedTransaction = struct {
+            slot: u64 = 0,
+            blockTime: ?i64 = null,
+            version: ?json.Value = null,
+            meta: ?struct {
+                err: ?json.Value = null,
+                fee: ?u64 = null,
+                logMessages: ?[]json.Value = null,
+            } = null,
+            transaction: ?json.Value = null,
+        };
+
+        const parsed = try json.parseFromSlice(ParsedTransaction, self.allocator, transaction_json, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        var signature_count: ?usize = null;
+        if (parsed.value.transaction) |transaction_value| {
+            if (transaction_value == .object) {
+                if (transaction_value.object.get("signatures")) |signatures_value| {
+                    if (signatures_value == .array) {
+                        signature_count = signatures_value.array.items.len;
+                    }
+                }
+            }
+        }
+
+        var error_json: ?[]const u8 = null;
+        var has_error = false;
+        if (parsed.value.meta) |meta| {
+            if (meta.err) |err_value| {
+                if (err_value != .null) {
+                    has_error = true;
+                    error_json = try self.cloneJsonValueText(err_value);
+                }
+            }
+        }
+
+        return TransactionSummary{
+            .slot = parsed.value.slot,
+            .block_time = parsed.value.blockTime,
+            .version = if (parsed.value.version) |value| try self.cloneJsonValueText(value) else null,
+            .signature_count = signature_count,
+            .fee = if (parsed.value.meta) |meta| meta.fee else null,
+            .log_messages_count = if (parsed.value.meta) |meta|
+                if (meta.logMessages) |logs| logs.len else null
+            else
+                null,
+            .has_error = has_error,
+            .error_json = error_json,
+        };
+    }
+
+    pub fn freeOwnedTransactionSummary(self: *RpcClient, summary: TransactionSummary) void {
+        if (summary.version) |value| self.allocator.free(value);
+        if (summary.error_json) |value| self.allocator.free(value);
+    }
+
+    pub fn getTransactionSummaryWithOptions(self: *RpcClient, signature: []const u8, options: ?TransactionQueryOptions) !?TransactionSummary {
+        const transaction_json = try self.getTransaction(signature, options);
+        defer if (transaction_json) |value| self.allocator.free(value);
+
+        if (transaction_json) |value| {
+            return try self.summarizeTransactionJson(value);
+        }
+
+        return null;
+    }
+
+    pub fn getTransactionSummary(self: *RpcClient, signature: []const u8, commitment: ?Commitment) !?TransactionSummary {
+        return try self.getTransactionSummaryWithOptions(
+            signature,
+            if (commitment) |value|
+                TransactionQueryOptions{ .commitment = value }
+            else
+                null,
+        );
+    }
+
     fn parseJsonValueResponse(self: *RpcClient, response: []const u8) !?[]const u8 {
         const ParsedEnvelope = struct {
             jsonrpc: []const u8 = "",
@@ -1849,7 +2750,7 @@ pub const RpcClient = struct {
         return try json.Stringify.valueAlloc(self.allocator, source, .{});
     }
 
-    pub fn getFeeForMessage(self: *RpcClient, encoded_message: []const u8, commitment: ?Commitment) !FeeForMessage {
+    pub fn getFeeForMessageResponse(self: *RpcClient, encoded_message: []const u8, commitment: ?Commitment) !FeeForMessageResponse {
         const params = .{
             encoded_message,
             commitmentParams(commitment),
@@ -1868,7 +2769,15 @@ pub const RpcClient = struct {
         };
 
         const result = try self.parseResponse(response, FeeResult);
-        return FeeForMessage{ .value = result.value };
+        return FeeForMessageResponse{
+            .context_slot = result.context.slot,
+            .value = result.value,
+        };
+    }
+
+    pub fn getFeeForMessage(self: *RpcClient, encoded_message: []const u8, commitment: ?Commitment) !FeeForMessage {
+        const response = try self.getFeeForMessageResponse(encoded_message, commitment);
+        return FeeForMessage{ .value = response.value };
     }
 
     pub fn getRecentPerformanceSamples(self: *RpcClient, limit: ?u64) ![]PerformanceSample {
@@ -2201,6 +3110,13 @@ pub const RpcClient = struct {
                 return @intFromFloat(float_value);
             },
             else => return error.InvalidResponse,
+        };
+    }
+
+    fn cloneJsonValueText(self: *RpcClient, value: json.Value) ![]const u8 {
+        return switch (value) {
+            .string => |text| try self.allocator.dupe(u8, text),
+            else => try json.Stringify.valueAlloc(self.allocator, value, .{}),
         };
     }
 
@@ -2644,7 +3560,26 @@ pub const RpcClient = struct {
         const response = try self.sendRequest("getSignatureStatuses", params_json);
         defer self.allocator.free(response);
 
-        const result = try self.parseResponse(response, SignatureStatusesResult);
+        const ParsedEnvelope = struct {
+            jsonrpc: []const u8 = "",
+            id: u64 = 0,
+            result: ?SignatureStatusesResult = null,
+            @"error": ?RpcErrorDetail = null,
+        };
+
+        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        if (parsed.value.@"error" != null) {
+            const err = parsed.value.@"error".?;
+            self.last_error = RpcErrorDetail{
+                .code = err.code,
+                .message = self.allocator.dupe(u8, err.message) catch return error.InvalidResponse,
+            };
+            return error.RpcError;
+        }
+
+        const result = parsed.value.result orelse return error.InvalidResponse;
         if (result.value.len == 0) return error.TransactionNotFound;
 
         const first = result.value[0] orelse return error.TransactionNotFound;
@@ -2677,7 +3612,26 @@ pub const RpcClient = struct {
         const response = try self.sendRequest("getSignatureStatuses", params_json);
         defer self.allocator.free(response);
 
-        const result = try self.parseResponse(response, SignatureStatusesResult);
+        const ParsedEnvelope = struct {
+            jsonrpc: []const u8 = "",
+            id: u64 = 0,
+            result: ?SignatureStatusesResult = null,
+            @"error": ?RpcErrorDetail = null,
+        };
+
+        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        if (parsed.value.@"error" != null) {
+            const err = parsed.value.@"error".?;
+            self.last_error = RpcErrorDetail{
+                .code = err.code,
+                .message = self.allocator.dupe(u8, err.message) catch return error.InvalidResponse,
+            };
+            return error.RpcError;
+        }
+
+        const result = parsed.value.result orelse return error.InvalidResponse;
         if (result.value.len == 0) return self.allocator.alloc(?SignatureStatus, 0);
 
         const copied = try self.allocator.alloc(?SignatureStatus, result.value.len);
@@ -2705,6 +3659,45 @@ pub const RpcClient = struct {
 
     pub fn getSignatureStatusesWithHistory(self: *RpcClient, signatures: []const []const u8) ![]?SignatureStatus {
         return try self.getSignatureStatusesWithOptions(signatures, .{ .search_transaction_history = true });
+    }
+
+    pub fn confirmTransaction(
+        self: *RpcClient,
+        signature: []const u8,
+        commitment: ?Commitment,
+        search_transaction_history: bool,
+    ) !bool {
+        const status = self.getSignatureStatusWithOptions(
+            signature,
+            if (search_transaction_history)
+                SignatureStatusesQueryOptions{ .search_transaction_history = true }
+            else
+                null,
+        ) catch |err| switch (err) {
+            error.TransactionNotFound => return false,
+            else => return err,
+        };
+        defer if (status.confirmation_status) |value| self.allocator.free(value);
+
+        if (status.has_error) return false;
+        return confirmationSatisfiesCommitment(status.confirmation_status, commitment);
+    }
+
+    pub fn getNumBlocksSinceSignatureConfirmation(
+        self: *RpcClient,
+        signature: []const u8,
+        search_transaction_history: bool,
+    ) !u64 {
+        const status = try self.getSignatureStatusWithOptions(
+            signature,
+            if (search_transaction_history)
+                SignatureStatusesQueryOptions{ .search_transaction_history = true }
+            else
+                null,
+        );
+        defer if (status.confirmation_status) |value| self.allocator.free(value);
+
+        return status.confirmations orelse max_lockout_history + 1;
     }
 
     const SignatureForAddressResult = struct {
@@ -2774,6 +3767,91 @@ pub const RpcClient = struct {
         return copied;
     }
 
+    pub fn pollGetBalanceWithCommitmentAndTimeouts(
+        self: *RpcClient,
+        account: []const u8,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+        poll_interval_ms: u64,
+    ) !u64 {
+        const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
+        var last_error: ?anyerror = null;
+
+        while (std.time.milliTimestamp() < deadline) {
+            const balance_result = self.getBalance(account, commitment);
+            if (balance_result) |balance| {
+                return balance;
+            } else |err| {
+                last_error = err;
+            }
+
+            std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
+        }
+
+        if (last_error) |err| return err;
+        return error.Timeout;
+    }
+
+    pub fn pollGetBalanceWithCommitment(self: *RpcClient, account: []const u8, commitment: ?Commitment) !u64 {
+        return try self.pollGetBalanceWithCommitmentAndTimeouts(
+            account,
+            commitment,
+            default_balance_poll_timeout_ms,
+            default_balance_poll_interval_ms,
+        );
+    }
+
+    pub fn waitForBalanceWithCommitmentAndTimeouts(
+        self: *RpcClient,
+        account: []const u8,
+        expected_balance: ?u64,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+        poll_interval_ms: u64,
+    ) !u64 {
+        const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
+        var last_error: ?anyerror = null;
+
+        while (std.time.milliTimestamp() < deadline) {
+            const balance_result = self.getBalance(account, commitment);
+            if (balance_result) |balance| {
+                last_error = null;
+                if (expected_balance == null or balance == expected_balance.?) {
+                    return balance;
+                }
+            } else |err| {
+                last_error = err;
+            }
+
+            std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
+        }
+
+        if (last_error) |err| return err;
+        return error.Timeout;
+    }
+
+    pub fn waitForBalanceWithCommitment(
+        self: *RpcClient,
+        account: []const u8,
+        expected_balance: ?u64,
+        commitment: ?Commitment,
+    ) !u64 {
+        var run: usize = 0;
+
+        while (true) {
+            const balance_result = self.pollGetBalanceWithCommitment(account, commitment);
+            if (expected_balance == null) return balance_result;
+
+            if (balance_result) |balance| {
+                if (balance == expected_balance.?) return balance;
+            } else |err| {
+                if (run == wait_for_balance_error_retries) return err;
+            }
+
+            run += 1;
+        }
+    }
+
     pub fn waitForSignatureStatus(
         self: *RpcClient,
         signature: []const u8,
@@ -2818,6 +3896,68 @@ pub const RpcClient = struct {
         return error.TransactionNotConfirmed;
     }
 
+    pub fn pollForSignature(self: *RpcClient, signature: []const u8, commitment: ?Commitment, search_transaction_history: bool) !void {
+        try self.waitForSignatureStatus(
+            signature,
+            commitment,
+            search_transaction_history,
+            poll_for_signature_timeout_ms,
+            signature_poll_interval_ms,
+        );
+    }
+
+    pub fn pollForSignatureConfirmationWithTimeouts(
+        self: *RpcClient,
+        signature: []const u8,
+        min_confirmed_blocks: u64,
+        search_transaction_history: bool,
+        timeout_ms: u64,
+        poll_interval_ms: u64,
+    ) !u64 {
+        const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
+
+        while (std.time.milliTimestamp() < deadline) {
+            const status = self.getSignatureStatusWithOptions(
+                signature,
+                if (search_transaction_history)
+                    SignatureStatusesQueryOptions{ .search_transaction_history = true }
+                else
+                    null,
+            ) catch |err| switch (err) {
+                error.TransactionNotFound => {
+                    std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
+                    continue;
+                },
+                else => return err,
+            };
+            defer if (status.confirmation_status) |value| self.allocator.free(value);
+
+            if (status.has_error) return error.TransactionFailed;
+
+            const confirmed_blocks = status.confirmations orelse max_lockout_history + 1;
+            if (confirmed_blocks >= min_confirmed_blocks) return confirmed_blocks;
+
+            std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
+        }
+
+        return error.TransactionNotConfirmed;
+    }
+
+    pub fn pollForSignatureConfirmation(
+        self: *RpcClient,
+        signature: []const u8,
+        min_confirmed_blocks: u64,
+        search_transaction_history: bool,
+    ) !u64 {
+        return try self.pollForSignatureConfirmationWithTimeouts(
+            signature,
+            min_confirmed_blocks,
+            search_transaction_history,
+            poll_for_signature_confirmation_timeout_ms,
+            signature_poll_interval_ms,
+        );
+    }
+
     pub fn sendTransactionAndConfirm(
         self: *RpcClient,
         signed_tx_base64: []const u8,
@@ -2836,6 +3976,64 @@ pub const RpcClient = struct {
     }
 };
 
+fn acceptMockRootConnection(listener: *std.net.Server) ?std.net.Server.Connection {
+    var poll_fds = [_]std.posix.pollfd{
+        .{
+            .fd = listener.stream.handle,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        },
+    };
+
+    const ready = std.posix.poll(&poll_fds, 500) catch return null;
+    if (ready == 0) return null;
+    if (poll_fds[0].revents & std.posix.POLL.IN != std.posix.POLL.IN) return null;
+
+    return listener.accept() catch return null;
+}
+
+fn runMockRootServer(listener: *std.net.Server, allocator: Allocator, response_body: []const u8) void {
+    var connection = acceptMockRootConnection(listener) orelse return;
+    defer connection.stream.close();
+
+    var receive_buffer: [4096]u8 = undefined;
+    var request_body_buffer: [4096]u8 = undefined;
+    var send_buffer: [4096]u8 = undefined;
+    var connection_reader = connection.stream.reader(&receive_buffer);
+    var connection_writer = connection.stream.writer(&send_buffer);
+    var http_server = std.http.Server.init(connection_reader.interface(), &connection_writer.interface);
+
+    var request = http_server.receiveHead() catch return;
+    const body_length = request.head.content_length orelse 0;
+    const request_body_reader = request.readerExpectNone(&request_body_buffer);
+    const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
+    defer allocator.free(request_body);
+
+    request.respond(response_body, .{}) catch return;
+}
+
+fn runMockRootServerSequence(listener: *std.net.Server, allocator: Allocator, response_bodies: []const []const u8) void {
+    for (response_bodies) |response_body| {
+        var connection = acceptMockRootConnection(listener) orelse return;
+        defer connection.stream.close();
+
+        var receive_buffer: [4096]u8 = undefined;
+        var request_body_buffer: [4096]u8 = undefined;
+        var send_buffer: [4096]u8 = undefined;
+        var connection_reader = connection.stream.reader(&receive_buffer);
+        var connection_writer = connection.stream.writer(&send_buffer);
+        var http_server = std.http.Server.init(connection_reader.interface(), &connection_writer.interface);
+
+        var request = http_server.receiveHead() catch return;
+        const body_length = request.head.content_length orelse 0;
+        const request_body_reader = request.readerExpectNone(&request_body_buffer);
+        const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
+        defer allocator.free(request_body);
+
+        request.respond(response_body, .{}) catch return;
+    }
+}
+
 test "root.getLatestBlockhash params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
@@ -2847,6 +4045,33 @@ test "root.getLatestBlockhash params serialization" {
     defer allocator.free(params_json);
 
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"finalized\"") != null);
+}
+
+test "root.getLatestBlockhashResponse preserves context slot" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":9},"value":{"blockhash":"Blockhash111111111111111111111111111111111111","lastValidBlockHeight":55}},"id":1}
+    ;
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const blockhash_response = try client.getLatestBlockhashResponse(.confirmed);
+    defer allocator.free(blockhash_response.value.blockhash);
+
+    try std.testing.expectEqual(@as(u64, 9), blockhash_response.context_slot);
+    try std.testing.expectEqualStrings("Blockhash111111111111111111111111111111111111", blockhash_response.value.blockhash);
+    try std.testing.expectEqual(@as(u64, 55), blockhash_response.value.last_valid_block_height);
 }
 
 test "root.balance params serialization" {
@@ -2863,6 +4088,197 @@ test "root.balance params serialization" {
 
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"7xKXtg2CWqQm6VfQn2Yf5q3r8JwM6n2vB8z8w1sT8k6\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"finalized\"") != null);
+}
+
+test "root.getBalanceResponse preserves context slot" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":42},"value":9001},"id":1}
+    ;
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const balance_response = try client.getBalanceResponse("Address11111111111111111111111111111111", .confirmed);
+    try std.testing.expectEqual(@as(u64, 42), balance_response.context_slot);
+    try std.testing.expectEqual(@as(u64, 9001), balance_response.value);
+}
+
+test "root.pollGetBalanceWithCommitmentAndTimeouts retries until success" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"node behind"}}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":44},"value":77},"id":2}
+        ,
+    };
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const balance = try client.pollGetBalanceWithCommitmentAndTimeouts(
+        "Address11111111111111111111111111111111",
+        .confirmed,
+        200,
+        10,
+    );
+    try std.testing.expectEqual(@as(u64, 77), balance);
+}
+
+test "root.waitForBalanceWithCommitmentAndTimeouts waits for expected value" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":45},"value":1},"id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":46},"value":5},"id":2}
+        ,
+    };
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const balance = try client.waitForBalanceWithCommitmentAndTimeouts(
+        "Address11111111111111111111111111111111",
+        5,
+        .processed,
+        200,
+        10,
+    );
+    try std.testing.expectEqual(@as(u64, 5), balance);
+}
+
+test "root.confirmTransaction checks transaction confirmed status" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[{"slot":10,"confirmations":1,"confirmationStatus":"confirmed","err":null}]},"id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":11},"value":[{"slot":11,"confirmations":2,"confirmationStatus":"finalized","err":null}]},"id":2}
+        ,
+    };
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const confirmed = try client.confirmTransaction("Sig111111111111111111111111111111111111", .confirmed, false);
+    try std.testing.expect(confirmed);
+}
+
+test "root.confirmTransaction returns false for missing signature" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":1},"value":[null]},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const confirmed = try client.confirmTransaction("Sig111111111111111111111111111111111111", .processed, false);
+    try std.testing.expect(!confirmed);
+}
+
+test "root.pollForSignatureConfirmationWithTimeouts waits for configured lockout" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":21},"value":[{"slot":21,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":22},"value":[{"slot":22,"confirmations":3,"confirmationStatus":"confirmed","err":null}]},"id":2}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":23},"value":[{"slot":23,"confirmations":10,"confirmationStatus":"confirmed","err":null}]},"id":3}
+        ,
+    };
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const confirmed_blocks = try client.pollForSignatureConfirmationWithTimeouts(
+        "Sig111111111111111111111111111111111111",
+        10,
+        false,
+        500,
+        10,
+    );
+    try std.testing.expectEqual(@as(u64, 10), confirmed_blocks);
+}
+
+test "root.getNumBlocksSinceSignatureConfirmation returns lockout fallback when confirmations missing" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":31},"value":[{"slot":31,"confirmationStatus":"confirmed","err":null}]},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const confirmed_blocks = try client.getNumBlocksSinceSignatureConfirmation("Sig111111111111111111111111111111111111", false);
+    try std.testing.expectEqual(@as(u64, max_lockout_history + 1), confirmed_blocks);
 }
 
 test "root.getAccountInfo params serialization" {
@@ -2891,6 +4307,7 @@ test "root.getAccountInfo params serialization" {
         "Address11111111111111111111111111111111",
         .{
             .commitment = .finalized,
+            .min_context_slot = 42,
             .encoding = .base64,
             .data_slice_offset = 0,
             .data_slice_length = 32,
@@ -2898,8 +4315,168 @@ test "root.getAccountInfo params serialization" {
     );
     defer allocator.free(with_options_json);
     try std.testing.expect(std.mem.indexOf(u8, with_options_json, "\"encoding\":\"base64\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_options_json, "\"minContextSlot\":42") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_options_json, "\"dataSlice\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_options_json, "\"length\":32") != null);
+}
+
+test "root.getUiAccount params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const params_json = try client.serializeUiAccountParams(
+        "Address11111111111111111111111111111111",
+        .{
+            .commitment = .confirmed,
+            .min_context_slot = 55,
+        },
+    );
+    defer allocator.free(params_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"encoding\":\"jsonParsed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"minContextSlot\":55") != null);
+}
+
+test "root.getAccountInfoMaybeWithOptions returns null when account missing" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":1},"value":null},"id":1}
+    ;
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const maybe_info = try client.getAccountInfoMaybeWithOptions("Address11111111111111111111111111111111", null);
+    try std.testing.expect(maybe_info == null);
+}
+
+test "root.getAccountInfoResponseWithOptions preserves context slot" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":42},"value":{"data":["","base64"],"executable":false,"lamports":99,"owner":"Owner1111111111111111111111111111111111","rentEpoch":7,"space":0}},"id":1}
+    ;
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const info_response = try client.getAccountInfoResponseWithOptions("Address11111111111111111111111111111111", null);
+    try std.testing.expectEqual(@as(u64, 42), info_response.context_slot);
+    try std.testing.expect(info_response.account != null);
+
+    const info = info_response.account.?;
+    defer client.freeOwnedAccountInfo(info);
+
+    try std.testing.expectEqual(@as(u64, 99), info.lamports);
+    try std.testing.expectEqualStrings("Owner1111111111111111111111111111111111", info.owner);
+}
+
+test "root.getUiAccountWithOptions returns account not found when account missing" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":1},"value":null},"id":1}
+    ;
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    try std.testing.expectError(
+        error.AccountNotFound,
+        client.getUiAccountWithOptions("Address11111111111111111111111111111111", null),
+    );
+}
+
+test "root.getMultipleUiAccountsResponseWithOptions preserves context slot" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":77},"value":[{"data":{"program":"spl-token","parsed":{"type":"account"}},"executable":false,"lamports":1,"owner":"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA","rentEpoch":2,"space":165},null]},"id":1}
+    ;
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const infos_response = try client.getMultipleUiAccountsResponseWithOptions(&.{
+        "Address11111111111111111111111111111111",
+        "Address22222222222222222222222222222222",
+    }, null);
+    defer {
+        for (infos_response.accounts) |maybe_info| {
+            if (maybe_info) |info| {
+                client.allocator.free(info.owner);
+                client.allocator.free(info.data_json);
+            }
+        }
+        client.allocator.free(infos_response.accounts);
+    }
+
+    try std.testing.expectEqual(@as(u64, 77), infos_response.context_slot);
+    try std.testing.expectEqual(@as(usize, 2), infos_response.accounts.len);
+    try std.testing.expect(infos_response.accounts[0] != null);
+    try std.testing.expect(infos_response.accounts[1] == null);
+}
+
+test "root.getMultipleUiAccounts params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const addresses = [_][]const u8{
+        "Address11111111111111111111111111111111",
+        "Address22222222222222222222222222222222",
+    };
+
+    const params_json = try client.serializeMultipleUiAccountsParams(addresses[0..], .{
+        .commitment = .finalized,
+        .min_context_slot = 77,
+    });
+    defer allocator.free(params_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"Address11111111111111111111111111111111\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"Address22222222222222222222222222222222\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"encoding\":\"jsonParsed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"finalized\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"minContextSlot\":77") != null);
 }
 
 test "root.getMultipleAccounts params serialization" {
@@ -2921,6 +4498,7 @@ test "root.getMultipleAccounts params serialization" {
         addresses[0..],
         .{
             .commitment = .finalized,
+            .min_context_slot = 88,
             .encoding = .base58,
             .data_slice_offset = 4,
             .data_slice_length = 16,
@@ -2928,6 +4506,7 @@ test "root.getMultipleAccounts params serialization" {
     );
     defer allocator.free(with_commitment_json);
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"finalized\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"minContextSlot\":88") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"encoding\":\"base58\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"offset\":4") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"length\":16") != null);
@@ -2956,6 +4535,9 @@ test "root.getProgramAccounts params serialization" {
         "Program1111111111111111111111111111111111",
         .{
             .commitment = .finalized,
+            .min_context_slot = 99,
+            .with_context = true,
+            .sort_results = true,
             .data_size = 165,
             .memcmp_offset = 32,
             .memcmp_bytes = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
@@ -2965,6 +4547,9 @@ test "root.getProgramAccounts params serialization" {
     );
     defer allocator.free(with_filters_json);
     try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"commitment\":\"finalized\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"minContextSlot\":99") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"withContext\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "sortResults") == null);
     try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"dataSize\":165") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"offset\":32") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"bytes\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\"") != null);
@@ -2972,21 +4557,121 @@ test "root.getProgramAccounts params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"length\":32") != null);
 }
 
-test "root.requestAirdrop params serialization" {
+test "root.getProgramUiAccounts params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
 
     const params = .{
-        "7xKXtg2CWqQm6VfQn2Yf5q3r8JwM6n2vB8z8w1sT8k6",
-        12345,
-        .{ .commitment = commitmentToString(.processed) },
+        "Program1111111111111111111111111111111111",
+        .{
+            .commitment = commitmentToString(.processed),
+            .encoding = "jsonParsed",
+        },
     };
     const params_json = try client.serializeParams(params);
     defer allocator.free(params_json);
 
-    try std.testing.expect(std.mem.indexOf(u8, params_json, "12345") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"encoding\":\"jsonParsed\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"processed\"") != null);
+}
+
+test "root.getProgramUiAccountsWithOptions params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const params_json = try client.serializeProgramUiAccountsParams(
+        "Program1111111111111111111111111111111111",
+        .{
+            .commitment = .finalized,
+            .min_context_slot = 111,
+            .with_context = true,
+            .sort_results = true,
+            .data_size = 165,
+            .memcmp_offset = 32,
+            .memcmp_bytes = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            .data_slice_offset = 0,
+            .data_slice_length = 32,
+        },
+    );
+    defer allocator.free(params_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"encoding\":\"jsonParsed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"finalized\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"minContextSlot\":111") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"withContext\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "sortResults") == null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"dataSize\":165") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"offset\":32") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"bytes\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"dataSlice\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"length\":32") != null);
+}
+
+test "root.requestAirdrop params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const default_json = try client.serializeRequestAirdropParams(
+        "7xKXtg2CWqQm6VfQn2Yf5q3r8JwM6n2vB8z8w1sT8k6",
+        12345,
+        null,
+    );
+    defer allocator.free(default_json);
+    try std.testing.expect(std.mem.indexOf(u8, default_json, "12345") != null);
+    try std.testing.expect(std.mem.indexOf(u8, default_json, "\"commitment\"") == null);
+
+    const with_commitment_json = try client.serializeRequestAirdropParams(
+        "7xKXtg2CWqQm6VfQn2Yf5q3r8JwM6n2vB8z8w1sT8k6",
+        12345,
+        .{ .commitment = .processed },
+    );
+    defer allocator.free(with_commitment_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"processed\"") != null);
+
+    const with_blockhash_json = try client.serializeRequestAirdropParams(
+        "7xKXtg2CWqQm6VfQn2Yf5q3r8JwM6n2vB8z8w1sT8k6",
+        12345,
+        .{ .recent_blockhash = "RecentBlockhash1111111111111111111111111111" },
+    );
+    defer allocator.free(with_blockhash_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_blockhash_json, "\"recentBlockhash\":\"RecentBlockhash1111111111111111111111111111\"") != null);
+}
+
+test "root.requestAirdropWithConfig returns signature copy" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":"Sig111111111111111111111111111111111111111111111111111111111111111111","id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const signature = try client.requestAirdropWithConfig(
+        "7xKXtg2CWqQm6VfQn2Yf5q3r8JwM6n2vB8z8w1sT8k6",
+        9001,
+        .{
+            .commitment = .processed,
+            .recent_blockhash = "RecentBlockhash1111111111111111111111111111",
+        },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "Sig111111111111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
 }
 
 test "root.minimumBalanceForRentExemption params serialization" {
@@ -3449,6 +5134,108 @@ test "root.parseGetTransactionResponse handles null transaction" {
     try std.testing.expect(transaction == null);
 }
 
+test "root.summarizeBlockJson extracts block summary" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const block_json =
+        \\{"blockhash":"Blockhash111111111111111111111111111111111111","previousBlockhash":"Prev111111111111111111111111111111111111111","parentSlot":456,"blockHeight":123,"blockTime":1700000000,"transactions":[{"transaction":{}},{"transaction":{}}],"rewards":[{},{}]}
+    ;
+
+    const summary = try client.summarizeBlockJson(block_json);
+    defer client.freeOwnedBlockSummary(summary);
+
+    try std.testing.expectEqualStrings("Blockhash111111111111111111111111111111111111", summary.blockhash orelse "");
+    try std.testing.expectEqualStrings("Prev111111111111111111111111111111111111111", summary.previous_blockhash orelse "");
+    try std.testing.expectEqual(@as(u64, 456), summary.parent_slot);
+    try std.testing.expectEqual(@as(?u64, 123), summary.block_height);
+    try std.testing.expectEqual(@as(?i64, 1700000000), summary.block_time);
+    try std.testing.expectEqual(@as(?usize, 2), summary.transaction_count);
+    try std.testing.expectEqual(@as(?usize, 2), summary.rewards_count);
+}
+
+test "root.getBlockSummaryWithOptions fetches and summarizes block" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"blockhash":"Blockhash111111111111111111111111111111111111","previousBlockhash":"Prev111111111111111111111111111111111111111","parentSlot":88,"blockHeight":77,"blockTime":1700000200,"transactions":[{}],"rewards":[]},"id":1}
+    ;
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const summary = try client.getBlockSummaryWithOptions(88, null);
+    try std.testing.expect(summary != null);
+    defer client.freeOwnedBlockSummary(summary.?);
+
+    try std.testing.expectEqual(@as(u64, 88), summary.?.parent_slot);
+    try std.testing.expectEqual(@as(?u64, 77), summary.?.block_height);
+    try std.testing.expectEqual(@as(?usize, 1), summary.?.transaction_count);
+    try std.testing.expectEqual(@as(?usize, 0), summary.?.rewards_count);
+}
+
+test "root.summarizeTransactionJson extracts transaction summary" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const transaction_json =
+        \\{"slot":123,"blockTime":1700000100,"version":"legacy","meta":{"err":{"InstructionError":[0,{"Custom":1}]},"fee":5000,"logMessages":["a","b","c"]},"transaction":{"signatures":["sig1","sig2"]}}
+    ;
+
+    const summary = try client.summarizeTransactionJson(transaction_json);
+    defer client.freeOwnedTransactionSummary(summary);
+
+    try std.testing.expectEqual(@as(u64, 123), summary.slot);
+    try std.testing.expectEqual(@as(?i64, 1700000100), summary.block_time);
+    try std.testing.expectEqualStrings("legacy", summary.version orelse "");
+    try std.testing.expectEqual(@as(?usize, 2), summary.signature_count);
+    try std.testing.expectEqual(@as(?u64, 5000), summary.fee);
+    try std.testing.expectEqual(@as(?usize, 3), summary.log_messages_count);
+    try std.testing.expect(summary.has_error);
+    try std.testing.expect(summary.error_json != null);
+}
+
+test "root.getTransactionSummaryWithOptions fetches and summarizes transaction" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"slot":55,"blockTime":1700000300,"version":0,"meta":{"err":null,"fee":7000,"logMessages":["a","b"]},"transaction":{"signatures":["sig-1"]}},"id":1}
+    ;
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const summary = try client.getTransactionSummaryWithOptions("Signature111111111111111111111111111111111111", null);
+    try std.testing.expect(summary != null);
+    defer client.freeOwnedTransactionSummary(summary.?);
+
+    try std.testing.expectEqual(@as(u64, 55), summary.?.slot);
+    try std.testing.expectEqual(@as(?u64, 7000), summary.?.fee);
+    try std.testing.expectEqual(@as(?usize, 2), summary.?.log_messages_count);
+    try std.testing.expectEqual(@as(?usize, 1), summary.?.signature_count);
+    try std.testing.expect(!summary.?.has_error);
+}
+
 test "root.captureRpcError stores rpc error detail" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
@@ -3490,6 +5277,30 @@ test "root.getFeeForMessage params serialization" {
 
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"base64-message\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"finalized\"") != null);
+}
+
+test "root.getFeeForMessageResponse preserves context slot" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":123},"value":5000},"id":1}
+    ;
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const fee_response = try client.getFeeForMessageResponse("AQAB", .processed);
+    try std.testing.expectEqual(@as(u64, 123), fee_response.context_slot);
+    try std.testing.expectEqual(@as(?u64, 5000), fee_response.value);
 }
 
 test "root.recentPerformanceSamples params serialization" {

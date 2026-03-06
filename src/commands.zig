@@ -8,6 +8,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const command = args.command;
     const signature = args.signature;
     const account = args.account;
+    const expected_balance_arg = args.expected_balance_arg;
+    const airdrop_recent_blockhash_arg = args.airdrop_recent_blockhash_arg;
     const account_data_slice_length_arg = args.account_data_slice_length_arg;
     const account_data_slice_offset_arg = args.account_data_slice_offset_arg;
     const account_encoding_arg = args.account_encoding_arg;
@@ -15,6 +17,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const block_production_identity_arg = args.block_production_identity_arg;
     const block_production_first_slot_arg = args.block_production_first_slot_arg;
     const block_production_last_slot_arg = args.block_production_last_slot_arg;
+    const confirmation_blocks_arg = args.confirmation_blocks_arg;
     const delinquent_slot_distance_arg = args.delinquent_slot_distance_arg;
     const encoding_arg = args.encoding_arg;
     const epoch_arg = args.epoch_arg;
@@ -27,6 +30,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const program_data_slice_offset_arg = args.program_data_slice_offset_arg;
     const program_memcmp_bytes_arg = args.program_memcmp_bytes_arg;
     const program_memcmp_offset_arg = args.program_memcmp_offset_arg;
+    const program_sort_results = args.program_sort_results;
+    const with_context = args.program_with_context;
     const signatures_for_address_arg = args.signatures_for_address_arg;
     const signatures_for_address_before_arg = args.signatures_for_address_before_arg;
     const signatures_for_address_until_arg = args.signatures_for_address_until_arg;
@@ -56,6 +61,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const commitment = toClientCommitment(args.commitment);
     const status_timeout_ms = args.status_timeout_ms;
     const status_poll_ms = args.status_poll_ms;
+    const timeout_ms_overridden = args.timeout_ms_overridden;
+    const poll_ms_overridden = args.poll_ms_overridden;
     const search_transaction_history = args.search_transaction_history;
     const send_skip_preflight = args.send_skip_preflight;
     const simulate_inner_instructions = args.simulate_inner_instructions;
@@ -65,7 +72,40 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const send_max_retries = args.send_max_retries;
     const send_preflight_commitment = toClientCommitment(args.send_preflight_commitment);
 
+    const is_balance_wait_command = command == .poll_balance or command == .wait_for_balance;
     const is_send_command = command == .send_transaction or command == .send_transaction_and_confirm;
+    const is_account_min_context_command = command == .account_data or
+        command == .account_info or
+        command == .ui_account or
+        command == .multiple_accounts or
+        command == .multiple_ui_accounts or
+        command == .program_accounts or
+        command == .program_ui_accounts or
+        command == .token_account;
+    const is_with_context_command = command == .latest_blockhash or
+        command == .balance or
+        command == .account_info or
+        command == .ui_account or
+        command == .multiple_accounts or
+        command == .multiple_ui_accounts or
+        command == .program_accounts or
+        command == .program_ui_accounts or
+        command == .token_account_balance or
+        command == .token_supply or
+        command == .token_largest_accounts or
+        command == .fee_for_message;
+    const effective_timeout_ms = if (timeout_ms_overridden)
+        status_timeout_ms
+    else if (is_balance_wait_command)
+        client.default_balance_poll_timeout_ms
+    else
+        status_timeout_ms;
+    const effective_poll_ms = if (poll_ms_overridden)
+        status_poll_ms
+    else if (is_balance_wait_command)
+        client.default_balance_poll_interval_ms
+    else
+        status_poll_ms;
     if ((send_skip_preflight or send_max_retries != null or send_preflight_commitment != null) and !is_send_command) {
         std.debug.print(
             "error: send options (--skip-preflight, --max-retries, --preflight-commitment) require send-transaction or send-transaction-and-confirm\n",
@@ -74,19 +114,27 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    if ((status_timeout_ms != 30_000 or status_poll_ms != 500) and command != .status and command != .send_transaction_and_confirm) {
-        std.debug.print("error: status options (--timeout-ms, --poll-ms) require status or send-transaction-and-confirm\n", .{});
+    if (airdrop_recent_blockhash_arg != null and command != .request_airdrop) {
+        std.debug.print("error: --airdrop-recent-blockhash requires request-airdrop\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((timeout_ms_overridden or poll_ms_overridden) and command != .status and command != .poll_balance and command != .wait_for_balance and command != .send_transaction_and_confirm and command != .poll_for_signature_confirmation) {
+        std.debug.print("error: wait options (--timeout-ms, --poll-ms) require status, poll-balance, wait-for-balance, poll-for-signature-confirmation, or send-transaction-and-confirm\n", .{});
         return error.InvalidCli;
     }
 
     if (search_transaction_history and
         command != .status and
+        command != .confirm_transaction and
         command != .signature_status and
         command != .signature_statuses and
+        command != .blocks_since_signature_confirmation and
+        command != .poll_for_signature_confirmation and
         command != .send_transaction_and_confirm)
     {
         std.debug.print(
-            "error: --search-transaction-history requires status, signature-status, signature-statuses, or send-transaction-and-confirm\n",
+            "error: --search-transaction-history requires status, confirm-transaction, signature-status, signature-statuses, blocks-since-signature-confirmation, poll-for-signature-confirmation, or send-transaction-and-confirm\n",
             .{},
         );
         return error.InvalidCli;
@@ -99,8 +147,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    if (min_context_slot_arg != null and !is_send_command and command != .signatures_for_address) {
-        std.debug.print("error: --min-context-slot requires send-transaction, send-transaction-and-confirm, or signatures-for-address\n", .{});
+    if (min_context_slot_arg != null and !is_send_command and command != .signatures_for_address and !is_account_min_context_command) {
+        std.debug.print(
+            "error: --min-context-slot requires send commands, signatures-for-address, or account/program queries\n",
+            .{},
+        );
         return error.InvalidCli;
     }
 
@@ -171,6 +222,14 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
+    if (with_context and !is_with_context_command) {
+        std.debug.print(
+            "error: --with-context requires latest-blockhash, balance, fee-for-message, token-account-balance, token-supply, token-largest-accounts, account-info, ui-account, multiple-accounts, multiple-ui-accounts, program-accounts, or program-ui-accounts\n",
+            .{},
+        );
+        return error.InvalidCli;
+    }
+
     if (supply_exclude_non_circulating_accounts_list and command != .supply) {
         std.debug.print("error: --exclude-non-circulating-accounts-list requires supply\n", .{});
         return error.InvalidCli;
@@ -180,9 +239,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         program_memcmp_offset_arg != null or
         program_memcmp_bytes_arg != null or
         program_data_slice_offset_arg != null or
-        program_data_slice_length_arg != null;
-    if (has_program_accounts_filters and command != .program_accounts) {
-        std.debug.print("error: program account filters require program-accounts\n", .{});
+        program_data_slice_length_arg != null or
+        program_sort_results;
+    if (has_program_accounts_filters and command != .program_accounts and command != .program_ui_accounts) {
+        std.debug.print("error: program account filters require program-accounts or program-ui-accounts\n", .{});
         return error.InvalidCli;
     }
 
@@ -209,14 +269,29 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
+    const min_context_slot = if (min_context_slot_arg) |raw|
+        std.fmt.parseInt(u64, raw, 10) catch return error.InvalidCli
+    else
+        null;
+
     switch (command) {
         .latest_blockhash => {
-            const blockhash = try rpc.getLatestBlockhash(commitment);
-            defer allocator.free(blockhash.blockhash);
-            std.debug.print(
-                "Latest blockhash: {s}\nLast valid height: {}\n",
-                .{ blockhash.blockhash, blockhash.last_valid_block_height },
-            );
+            if (with_context) {
+                const blockhash_response = try rpc.getLatestBlockhashResponse(commitment);
+                defer allocator.free(blockhash_response.value.blockhash);
+                std.debug.print("latest blockhash context slot: {}\n", .{blockhash_response.context_slot});
+                std.debug.print(
+                    "Latest blockhash: {s}\nLast valid height: {}\n",
+                    .{ blockhash_response.value.blockhash, blockhash_response.value.last_valid_block_height },
+                );
+            } else {
+                const blockhash = try rpc.getLatestBlockhash(commitment);
+                defer allocator.free(blockhash.blockhash);
+                std.debug.print(
+                    "Latest blockhash: {s}\nLast valid height: {}\n",
+                    .{ blockhash.blockhash, blockhash.last_valid_block_height },
+                );
+            }
         },
 
         .status => {
@@ -226,6 +301,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             try rpc.waitForSignatureStatus(signature_value, commitment, search_transaction_history, status_timeout_ms, status_poll_ms);
             std.debug.print("signature confirmed\n", .{});
+        },
+
+        .confirm_transaction => {
+            const signature_value = signature orelse {
+                std.debug.print("error: confirm-transaction requires <signature>\n", .{});
+                return error.InvalidCli;
+            };
+            const confirmed = try rpc.confirmTransaction(signature_value, commitment, search_transaction_history);
+            std.debug.print("signature {s} confirmed: {s}\n", .{ signature_value, if (confirmed) "true" else "false" });
         },
 
         .signature_status => {
@@ -299,16 +383,45 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             }
         },
 
+        .poll_for_signature_confirmation => {
+            const signature_value = signature orelse {
+                std.debug.print("error: poll-for-signature-confirmation requires <signature> <min-confirmed-blocks>\n", .{});
+                return error.InvalidCli;
+            };
+            const min_confirmed_blocks = if (confirmation_blocks_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else {
+                std.debug.print("error: poll-for-signature-confirmation requires <signature> <min-confirmed-blocks>\n", .{});
+                return error.InvalidCli;
+            };
+
+            const confirmed_blocks = try rpc.pollForSignatureConfirmationWithTimeouts(
+                signature_value,
+                min_confirmed_blocks,
+                search_transaction_history,
+                status_timeout_ms,
+                status_poll_ms,
+            );
+            std.debug.print(
+                "signature {s} reached {} confirmed blocks (target={})\n",
+                .{ signature_value, confirmed_blocks, min_confirmed_blocks },
+            );
+        },
+
+        .blocks_since_signature_confirmation => {
+            const signature_value = signature orelse {
+                std.debug.print("error: blocks-since-signature-confirmation requires <signature>\n", .{});
+                return error.InvalidCli;
+            };
+            const confirmed_blocks = try rpc.getNumBlocksSinceSignatureConfirmation(signature_value, search_transaction_history);
+            std.debug.print("signature {s} confirmed blocks: {}\n", .{ signature_value, confirmed_blocks });
+        },
+
         .send_transaction => {
             const tx = signed_tx_arg orelse {
                 std.debug.print("error: send-transaction requires <signed-tx-base64>\n", .{});
                 return error.InvalidCli;
             };
-
-            const min_context_slot = if (min_context_slot_arg) |value|
-                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
-            else
-                null;
 
             const options = if (send_skip_preflight or send_max_retries != null or send_preflight_commitment != null or min_context_slot != null)
                 client.SendTransactionOptions{
@@ -331,11 +444,6 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 std.debug.print("error: send-transaction-and-confirm requires <signed-tx-base64>\n", .{});
                 return error.InvalidCli;
             };
-
-            const min_context_slot = if (min_context_slot_arg) |value|
-                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
-            else
-                null;
 
             const options = if (send_skip_preflight or send_max_retries != null or send_preflight_commitment != null or min_context_slot != null)
                 client.SendTransactionOptions{
@@ -503,7 +611,26 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             const transaction = try rpc.getTransaction(signature_value, options);
             if (transaction) |value| {
                 defer allocator.free(value);
-                std.debug.print("transaction {s}: {s}\n", .{ signature_value, value });
+                const summary = try rpc.summarizeTransactionJson(value);
+                defer rpc.freeOwnedTransactionSummary(summary);
+
+                std.debug.print(
+                    "transaction {s}: slot={} block_time={?d} version={s} signatures={?d} fee={?d} log_messages={?d} has_error={s}\n",
+                    .{
+                        signature_value,
+                        summary.slot,
+                        summary.block_time,
+                        summary.version orelse "unknown",
+                        summary.signature_count,
+                        summary.fee,
+                        summary.log_messages_count,
+                        if (summary.has_error) "true" else "false",
+                    },
+                );
+                if (summary.error_json) |error_json| {
+                    std.debug.print("  error: {s}\n", .{error_json});
+                }
+                std.debug.print("  raw: {s}\n", .{value});
             } else {
                 std.debug.print("transaction {s}: not found\n", .{signature_value});
             }
@@ -511,13 +638,70 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .balance => {
             const account_value = account orelse return error.InvalidCli;
-            const balance = try rpc.getBalance(account_value, commitment);
-            std.debug.print("balance for {s}: {}\n", .{ account_value, balance });
+            if (with_context) {
+                const balance_response = try rpc.getBalanceResponse(account_value, commitment);
+                std.debug.print("balance context slot: {}\n", .{balance_response.context_slot});
+                std.debug.print("balance for {s}: {}\n", .{ account_value, balance_response.value });
+            } else {
+                const balance = try rpc.getBalance(account_value, commitment);
+                std.debug.print("balance for {s}: {}\n", .{ account_value, balance });
+            }
+        },
+
+        .poll_balance => {
+            const account_value = account orelse return error.InvalidCli;
+            const balance = try rpc.pollGetBalanceWithCommitmentAndTimeouts(
+                account_value,
+                commitment,
+                effective_timeout_ms,
+                effective_poll_ms,
+            );
+            std.debug.print("polled balance for {s}: {}\n", .{ account_value, balance });
+        },
+
+        .wait_for_balance => {
+            const account_value = account orelse return error.InvalidCli;
+            const expected_balance = if (expected_balance_arg) |raw|
+                std.fmt.parseInt(u64, raw, 10) catch return error.InvalidCli
+            else {
+                std.debug.print("error: wait-for-balance requires <expected-lamports>\n", .{});
+                return error.InvalidCli;
+            };
+
+            const balance = try rpc.waitForBalanceWithCommitmentAndTimeouts(
+                account_value,
+                expected_balance,
+                commitment,
+                effective_timeout_ms,
+                effective_poll_ms,
+            );
+            std.debug.print("balance for {s} reached {}\n", .{ account_value, balance });
+        },
+
+        .account_data => {
+            const account_value = account orelse return error.InvalidCli;
+            const data = (if (min_context_slot != null or commitment != null)
+                rpc.getAccountDataWithOptions(account_value, .{
+                    .commitment = commitment,
+                    .min_context_slot = min_context_slot,
+                })
+            else
+                rpc.getAccountData(account_value, commitment)) catch |err| switch (err) {
+                error.AccountNotFound => {
+                    std.debug.print("account data for {s}: not found\n", .{account_value});
+                    return;
+                },
+                else => return err,
+            };
+            defer allocator.free(data);
+
+            std.debug.print("account data for {s}: {} bytes\n", .{ account_value, data.len });
+            std.debug.print("{x}\n", .{data});
         },
 
         .account_info => {
             const account_value = account orelse return error.InvalidCli;
-            const encoding = if (account_encoding_arg) |value| parseAccountEncoding(value) orelse return error.InvalidCli else null;
+            const encoding = if (account_encoding_arg) |value| parseAccountQueryEncoding(value) orelse return error.InvalidCli else null;
             const data_slice_offset = if (account_data_slice_offset_arg) |value|
                 std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
             else
@@ -526,15 +710,167 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
             else
                 null;
-            const info = if (encoding != null or data_slice_offset != null or commitment != null)
-                try rpc.getAccountInfoWithOptions(account_value, .{
+
+            if (encoding) |value| {
+                switch (value) {
+                    .json_parsed => {
+                        if (data_slice_offset != null or data_slice_length != null) {
+                            std.debug.print("error: --account-data-slice-* are not supported with --account-encoding jsonParsed\n", .{});
+                            return error.InvalidCli;
+                        }
+
+                        if (with_context) {
+                            const info_response = try rpc.getUiAccountResponseWithOptions(account_value, .{
+                                .commitment = commitment,
+                                .min_context_slot = min_context_slot,
+                            });
+                            std.debug.print("account info context slot: {}\n", .{info_response.context_slot});
+
+                            const info = info_response.account orelse {
+                                std.debug.print("account info for {s}: not found\n", .{account_value});
+                                return;
+                            };
+                            defer freeJsonParsedAccountInfo(allocator, info);
+
+                            std.debug.print(
+                                "account info for {s}: lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                                .{ account_value, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
+                            );
+                            std.debug.print("  data(jsonParsed): {s}\n", .{info.data_json});
+                        } else {
+                            const info = rpc.getUiAccountWithOptions(account_value, .{
+                                .commitment = commitment,
+                                .min_context_slot = min_context_slot,
+                            }) catch |err| switch (err) {
+                                error.AccountNotFound => {
+                                    std.debug.print("account info for {s}: not found\n", .{account_value});
+                                    return;
+                                },
+                                else => return err,
+                            };
+                            defer freeJsonParsedAccountInfo(allocator, info);
+
+                            std.debug.print(
+                                "account info for {s}: lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                                .{ account_value, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
+                            );
+                            std.debug.print("  data(jsonParsed): {s}\n", .{info.data_json});
+                        }
+                    },
+                    .raw => |raw_encoding| {
+                        if (with_context) {
+                            const info_response = try rpc.getAccountInfoResponseWithOptions(account_value, .{
+                                .commitment = commitment,
+                                .min_context_slot = min_context_slot,
+                                .encoding = raw_encoding,
+                                .data_slice_offset = data_slice_offset,
+                                .data_slice_length = data_slice_length,
+                            });
+                            std.debug.print("account info context slot: {}\n", .{info_response.context_slot});
+
+                            const info = info_response.account orelse {
+                                std.debug.print("account info for {s}: not found\n", .{account_value});
+                                return;
+                            };
+                            defer freeAccountInfo(allocator, info);
+
+                            std.debug.print(
+                                "account info for {s}: lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                                .{ account_value, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
+                            );
+                            if (info.data) |entry| {
+                                std.debug.print("  data({s}) size={}\n", .{ info.data_encoding orelse "unknown", entry.len });
+                            } else {
+                                std.debug.print("  data: unavailable\n", .{});
+                            }
+                        } else {
+                            const info = rpc.getAccountInfoWithOptions(account_value, .{
+                                .commitment = commitment,
+                                .min_context_slot = min_context_slot,
+                                .encoding = raw_encoding,
+                                .data_slice_offset = data_slice_offset,
+                                .data_slice_length = data_slice_length,
+                            }) catch |err| switch (err) {
+                                error.AccountNotFound => {
+                                    std.debug.print("account info for {s}: not found\n", .{account_value});
+                                    return;
+                                },
+                                else => return err,
+                            };
+                            defer freeAccountInfo(allocator, info);
+
+                            std.debug.print(
+                                "account info for {s}: lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                                .{ account_value, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
+                            );
+                            if (info.data) |entry| {
+                                std.debug.print("  data({s}) size={}\n", .{ info.data_encoding orelse "unknown", entry.len });
+                            } else {
+                                std.debug.print("  data: unavailable\n", .{});
+                            }
+                        }
+                    },
+                }
+
+                return;
+            }
+
+            if (with_context) {
+                const info_response = try rpc.getAccountInfoResponseWithOptions(
+                    account_value,
+                    if (data_slice_offset != null or data_slice_length != null or commitment != null or min_context_slot != null)
+                        client.AccountQueryOptions{
+                            .commitment = commitment,
+                            .min_context_slot = min_context_slot,
+                            .encoding = null,
+                            .data_slice_offset = data_slice_offset,
+                            .data_slice_length = data_slice_length,
+                        }
+                    else
+                        null,
+                );
+                std.debug.print("account info context slot: {}\n", .{info_response.context_slot});
+
+                const info = info_response.account orelse {
+                    std.debug.print("account info for {s}: not found\n", .{account_value});
+                    return;
+                };
+                defer freeAccountInfo(allocator, info);
+
+                std.debug.print(
+                    "account info for {s}: lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                    .{ account_value, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
+                );
+                if (info.data) |value| {
+                    std.debug.print("  data({s}) size={}\n", .{ info.data_encoding orelse "unknown", value.len });
+                } else {
+                    std.debug.print("  data: unavailable\n", .{});
+                }
+                return;
+            }
+
+            const info = if (data_slice_offset != null or data_slice_length != null or commitment != null or min_context_slot != null)
+                rpc.getAccountInfoWithOptions(account_value, .{
                     .commitment = commitment,
-                    .encoding = encoding,
+                    .min_context_slot = min_context_slot,
+                    .encoding = null,
                     .data_slice_offset = data_slice_offset,
                     .data_slice_length = data_slice_length,
-                })
+                }) catch |err| switch (err) {
+                    error.AccountNotFound => {
+                        std.debug.print("account info for {s}: not found\n", .{account_value});
+                        return;
+                    },
+                    else => return err,
+                }
             else
-                try rpc.getAccountInfo(account_value, commitment);
+                rpc.getAccountInfo(account_value, commitment) catch |err| switch (err) {
+                    error.AccountNotFound => {
+                        std.debug.print("account info for {s}: not found\n", .{account_value});
+                        return;
+                    },
+                    else => return err,
+                };
             defer {
                 freeAccountInfo(allocator, info);
             }
@@ -550,13 +886,64 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             }
         },
 
+        .ui_account => {
+            const account_value = account orelse return error.InvalidCli;
+            if (with_context) {
+                const info_response = try rpc.getUiAccountResponseWithOptions(
+                    account_value,
+                    if (min_context_slot != null or commitment != null)
+                        client.UiAccountQueryOptions{
+                            .commitment = commitment,
+                            .min_context_slot = min_context_slot,
+                        }
+                    else
+                        null,
+                );
+                std.debug.print("ui account context slot: {}\n", .{info_response.context_slot});
+
+                const info = info_response.account orelse {
+                    std.debug.print("ui account for {s}: not found\n", .{account_value});
+                    return;
+                };
+                defer freeJsonParsedAccountInfo(allocator, info);
+
+                std.debug.print(
+                    "ui account for {s}: lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                    .{ account_value, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
+                );
+                std.debug.print("  data(jsonParsed): {s}\n", .{info.data_json});
+                return;
+            }
+
+            const info = (if (min_context_slot != null or commitment != null)
+                rpc.getUiAccountWithOptions(account_value, .{
+                    .commitment = commitment,
+                    .min_context_slot = min_context_slot,
+                })
+            else
+                rpc.getUiAccount(account_value, commitment)) catch |err| switch (err) {
+                error.AccountNotFound => {
+                    std.debug.print("ui account for {s}: not found\n", .{account_value});
+                    return;
+                },
+                else => return err,
+            };
+            defer freeJsonParsedAccountInfo(allocator, info);
+
+            std.debug.print(
+                "ui account for {s}: lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                .{ account_value, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
+            );
+            std.debug.print("  data(jsonParsed): {s}\n", .{info.data_json});
+        },
+
         .multiple_accounts => {
             if (multiple_accounts.items.len == 0) {
                 std.debug.print("error: multiple-accounts requires at least one account\n", .{});
                 return error.InvalidCli;
             }
 
-            const encoding = if (account_encoding_arg) |value| parseAccountEncoding(value) orelse return error.InvalidCli else null;
+            const encoding = if (account_encoding_arg) |value| parseAccountQueryEncoding(value) orelse return error.InvalidCli else null;
             const data_slice_offset = if (account_data_slice_offset_arg) |value|
                 std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
             else
@@ -565,15 +952,136 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
             else
                 null;
-            const infos = if (encoding != null or data_slice_offset != null or commitment != null)
-                try rpc.getMultipleAccountsWithOptions(multiple_accounts.items, .{
-                    .commitment = commitment,
-                    .encoding = encoding,
-                    .data_slice_offset = data_slice_offset,
-                    .data_slice_length = data_slice_length,
-                })
+
+            if (encoding) |value| {
+                switch (value) {
+                    .json_parsed => {
+                        if (data_slice_offset != null or data_slice_length != null) {
+                            std.debug.print("error: --account-data-slice-* are not supported with --account-encoding jsonParsed\n", .{});
+                            return error.InvalidCli;
+                        }
+
+                        const infos_response = if (with_context)
+                            try rpc.getMultipleUiAccountsResponseWithOptions(multiple_accounts.items, .{
+                                .commitment = commitment,
+                                .min_context_slot = min_context_slot,
+                            })
+                        else
+                            client.MultipleUiAccountsResponse{
+                                .context_slot = 0,
+                                .accounts = try rpc.getMultipleUiAccountsWithOptions(multiple_accounts.items, .{
+                                    .commitment = commitment,
+                                    .min_context_slot = min_context_slot,
+                                }),
+                            };
+                        const infos = infos_response.accounts;
+                        defer {
+                            for (infos) |maybe_info| {
+                                if (maybe_info) |info| freeJsonParsedAccountInfo(allocator, info);
+                            }
+                            allocator.free(infos);
+                        }
+
+                        if (with_context) {
+                            std.debug.print("multiple accounts context slot: {}\n", .{infos_response.context_slot});
+                        }
+                        std.debug.print("multiple accounts: {}\n", .{infos.len});
+                        for (infos, 0..) |maybe_info, index| {
+                            const address = multiple_accounts.items[index];
+                            if (maybe_info) |info| {
+                                std.debug.print(
+                                    "  [{}] {s}: lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                                    .{ index, address, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
+                                );
+                                std.debug.print("      data(jsonParsed): {s}\n", .{info.data_json});
+                            } else {
+                                std.debug.print("  [{}] {s}: not found\n", .{ index, address });
+                            }
+                        }
+                    },
+                    .raw => |raw_encoding| {
+                        const infos_response = if (with_context)
+                            try rpc.getMultipleAccountsResponseWithOptions(multiple_accounts.items, .{
+                                .commitment = commitment,
+                                .min_context_slot = min_context_slot,
+                                .encoding = raw_encoding,
+                                .data_slice_offset = data_slice_offset,
+                                .data_slice_length = data_slice_length,
+                            })
+                        else
+                            client.MultipleAccountsResponse{
+                                .context_slot = 0,
+                                .accounts = try rpc.getMultipleAccountsWithOptions(multiple_accounts.items, .{
+                                    .commitment = commitment,
+                                    .min_context_slot = min_context_slot,
+                                    .encoding = raw_encoding,
+                                    .data_slice_offset = data_slice_offset,
+                                    .data_slice_length = data_slice_length,
+                                }),
+                            };
+                        const infos = infos_response.accounts;
+                        defer {
+                            for (infos) |maybe_info| {
+                                if (maybe_info) |info| freeAccountInfo(allocator, info);
+                            }
+                            allocator.free(infos);
+                        }
+
+                        if (with_context) {
+                            std.debug.print("multiple accounts context slot: {}\n", .{infos_response.context_slot});
+                        }
+                        std.debug.print("multiple accounts: {}\n", .{infos.len});
+                        for (infos, 0..) |maybe_info, index| {
+                            const address = multiple_accounts.items[index];
+                            if (maybe_info) |info| {
+                                std.debug.print(
+                                    "  [{}] {s}: lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                                    .{ index, address, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
+                                );
+                                if (info.data) |entry| {
+                                    std.debug.print("      data({s}) size={}\n", .{ info.data_encoding orelse "unknown", entry.len });
+                                }
+                            } else {
+                                std.debug.print("  [{}] {s}: not found\n", .{ index, address });
+                            }
+                        }
+                    },
+                }
+
+                return;
+            }
+
+            const infos_response = if (with_context)
+                try rpc.getMultipleAccountsResponseWithOptions(
+                    multiple_accounts.items,
+                    if (data_slice_offset != null or data_slice_length != null or commitment != null or min_context_slot != null)
+                        client.AccountQueryOptions{
+                            .commitment = commitment,
+                            .min_context_slot = min_context_slot,
+                            .encoding = null,
+                            .data_slice_offset = data_slice_offset,
+                            .data_slice_length = data_slice_length,
+                        }
+                    else
+                        null,
+                )
+            else if (data_slice_offset != null or data_slice_length != null or commitment != null or min_context_slot != null)
+                client.MultipleAccountsResponse{
+                    .context_slot = 0,
+                    .accounts = try rpc.getMultipleAccountsWithOptions(multiple_accounts.items, .{
+                        .commitment = commitment,
+                        .min_context_slot = min_context_slot,
+                        .encoding = null,
+                        .data_slice_offset = data_slice_offset,
+                        .data_slice_length = data_slice_length,
+                    }),
+                }
             else
-                try rpc.getMultipleAccounts(multiple_accounts.items, commitment);
+                client.MultipleAccountsResponse{
+                    .context_slot = 0,
+                    .accounts = try rpc.getMultipleAccounts(multiple_accounts.items, commitment),
+                };
+            const infos = infos_response.accounts;
             defer {
                 for (infos) |maybe_info| {
                     if (maybe_info) |info| freeAccountInfo(allocator, info);
@@ -581,6 +1089,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 allocator.free(infos);
             }
 
+            if (with_context) {
+                std.debug.print("multiple accounts context slot: {}\n", .{infos_response.context_slot});
+            }
             std.debug.print("multiple accounts: {}\n", .{infos.len});
             for (infos, 0..) |maybe_info, index| {
                 const address = multiple_accounts.items[index];
@@ -595,6 +1106,124 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 } else {
                     std.debug.print("  [{}] {s}: not found\n", .{ index, address });
                 }
+            }
+        },
+
+        .multiple_ui_accounts => {
+            if (multiple_accounts.items.len == 0) {
+                std.debug.print("error: multiple-ui-accounts requires at least one account\n", .{});
+                return error.InvalidCli;
+            }
+
+            const infos_response = if (with_context)
+                try rpc.getMultipleUiAccountsResponseWithOptions(
+                    multiple_accounts.items,
+                    if (min_context_slot != null or commitment != null)
+                        client.UiAccountQueryOptions{
+                            .commitment = commitment,
+                            .min_context_slot = min_context_slot,
+                        }
+                    else
+                        null,
+                )
+            else if (min_context_slot != null or commitment != null)
+                client.MultipleUiAccountsResponse{
+                    .context_slot = 0,
+                    .accounts = try rpc.getMultipleUiAccountsWithOptions(multiple_accounts.items, .{
+                        .commitment = commitment,
+                        .min_context_slot = min_context_slot,
+                    }),
+                }
+            else
+                client.MultipleUiAccountsResponse{
+                    .context_slot = 0,
+                    .accounts = try rpc.getMultipleUiAccounts(multiple_accounts.items, commitment),
+                };
+            const infos = infos_response.accounts;
+            defer {
+                for (infos) |maybe_info| {
+                    if (maybe_info) |info| freeJsonParsedAccountInfo(allocator, info);
+                }
+                allocator.free(infos);
+            }
+
+            if (with_context) {
+                std.debug.print("multiple ui accounts context slot: {}\n", .{infos_response.context_slot});
+            }
+            std.debug.print("multiple ui accounts: {}\n", .{infos.len});
+            for (infos, 0..) |maybe_info, index| {
+                const address = multiple_accounts.items[index];
+                if (maybe_info) |info| {
+                    std.debug.print(
+                        "  [{}] {s}: lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                        .{ index, address, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
+                    );
+                    std.debug.print("      data(jsonParsed): {s}\n", .{info.data_json});
+                } else {
+                    std.debug.print("  [{}] {s}: not found\n", .{ index, address });
+                }
+            }
+        },
+
+        .program_ui_accounts => {
+            const program_id = account orelse return error.InvalidCli;
+            const data_size = if (program_data_size_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const memcmp_offset = if (program_memcmp_offset_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const data_slice_offset = if (program_data_slice_offset_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const data_slice_length = if (program_data_slice_length_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const entries_response = if (data_size != null or memcmp_offset != null or data_slice_offset != null or commitment != null or min_context_slot != null or with_context or program_sort_results)
+                try rpc.getProgramUiAccountsResponseWithOptions(program_id, .{
+                    .commitment = commitment,
+                    .min_context_slot = min_context_slot,
+                    .with_context = with_context,
+                    .sort_results = program_sort_results,
+                    .data_size = data_size,
+                    .memcmp_offset = memcmp_offset,
+                    .memcmp_bytes = program_memcmp_bytes_arg,
+                    .data_slice_offset = data_slice_offset,
+                    .data_slice_length = data_slice_length,
+                })
+            else
+                client.JsonParsedProgramAccountsResponse{
+                    .context_slot = null,
+                    .accounts = try rpc.getProgramUiAccounts(program_id, commitment),
+                };
+            const entries = entries_response.accounts;
+            defer {
+                for (entries) |entry| {
+                    freeJsonParsedProgramAccount(allocator, entry);
+                }
+                allocator.free(entries);
+            }
+
+            if (entries.len == 0) {
+                std.debug.print("no program ui accounts found for {s}\n", .{program_id});
+                return;
+            }
+
+            if (with_context) {
+                const slot = entries_response.context_slot orelse return error.InvalidResponse;
+                std.debug.print("program ui accounts context slot: {}\n", .{slot});
+            }
+            std.debug.print("program ui accounts for {s}: {}\n", .{ program_id, entries.len });
+            for (entries, 0..) |entry, index| {
+                std.debug.print(
+                    "  [{}] pubkey={s} lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                    .{ index, entry.pubkey, entry.account.lamports, if (entry.account.executable) "true" else "false", entry.account.owner, entry.account.rent_epoch, entry.account.space },
+                );
+                std.debug.print("      data(jsonParsed): {s}\n", .{entry.account.data_json});
             }
         },
 
@@ -616,9 +1245,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
             else
                 null;
-            const accounts_for_program = if (data_size != null or memcmp_offset != null or data_slice_offset != null or commitment != null)
-                try rpc.getProgramAccountsWithOptions(program_id, .{
+            const accounts_response = if (data_size != null or memcmp_offset != null or data_slice_offset != null or commitment != null or min_context_slot != null or with_context or program_sort_results)
+                try rpc.getProgramAccountsResponseWithOptions(program_id, .{
                     .commitment = commitment,
+                    .min_context_slot = min_context_slot,
+                    .with_context = with_context,
+                    .sort_results = program_sort_results,
                     .data_size = data_size,
                     .memcmp_offset = memcmp_offset,
                     .memcmp_bytes = program_memcmp_bytes_arg,
@@ -626,7 +1258,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                     .data_slice_length = data_slice_length,
                 })
             else
-                try rpc.getProgramAccounts(program_id, commitment);
+                client.ProgramAccountsResponse{
+                    .context_slot = null,
+                    .accounts = try rpc.getProgramAccounts(program_id, commitment),
+                };
+            const accounts_for_program = accounts_response.accounts;
             defer {
                 for (accounts_for_program) |entry| {
                     allocator.free(entry.pubkey);
@@ -640,6 +1276,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return;
             }
 
+            if (with_context) {
+                const slot = accounts_response.context_slot orelse return error.InvalidResponse;
+                std.debug.print("program accounts context slot: {}\n", .{slot});
+            }
             std.debug.print("program accounts for {s}: {}\n", .{ program_id, accounts_for_program.len });
             for (accounts_for_program, 0..) |entry, index| {
                 std.debug.print(
@@ -656,7 +1296,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             const account_value = account orelse return error.InvalidCli;
             const lamports_txt = lamports_arg orelse return error.InvalidCli;
             const lamports = std.fmt.parseInt(u64, lamports_txt, 10) catch return error.InvalidCli;
-            const signature_value = try rpc.requestAirdrop(account_value, lamports, commitment);
+            const signature_value = if (airdrop_recent_blockhash_arg != null or commitment != null)
+                try rpc.requestAirdropWithOptions(account_value, lamports, .{
+                    .commitment = commitment,
+                    .recent_blockhash = airdrop_recent_blockhash_arg,
+                })
+            else
+                try rpc.requestAirdrop(account_value, lamports, commitment);
             defer allocator.free(signature_value);
             std.debug.print("airdrop signature: {s}\n", .{signature_value});
         },
@@ -801,7 +1447,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 try rpc.getBlock(slot, commitment);
             if (block) |value| {
                 defer allocator.free(value);
-                std.debug.print("block {}: {s}\n", .{ slot, value });
+                const summary = try rpc.summarizeBlockJson(value);
+                defer rpc.freeOwnedBlockSummary(summary);
+
+                std.debug.print(
+                    "block {}: parent_slot={} block_height={?d} block_time={?d} transactions={?d} rewards={?d}\n",
+                    .{ slot, summary.parent_slot, summary.block_height, summary.block_time, summary.transaction_count, summary.rewards_count },
+                );
+                if (summary.blockhash) |blockhash| {
+                    std.debug.print("  blockhash: {s}\n", .{blockhash});
+                }
+                if (summary.previous_blockhash) |previous_blockhash| {
+                    std.debug.print("  previous_blockhash: {s}\n", .{previous_blockhash});
+                }
+                std.debug.print("  raw: {s}\n", .{value});
             } else {
                 std.debug.print("block {}: not found\n", .{slot});
             }
@@ -1123,11 +1782,21 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .fee_for_message => {
             const message = message_arg orelse return error.InvalidCli;
-            const fee = try rpc.getFeeForMessage(message, commitment);
-            if (fee.value) |value| {
-                std.debug.print("fee for message: {}\n", .{value});
+            if (with_context) {
+                const fee_response = try rpc.getFeeForMessageResponse(message, commitment);
+                std.debug.print("fee context slot: {}\n", .{fee_response.context_slot});
+                if (fee_response.value) |value| {
+                    std.debug.print("fee for message: {}\n", .{value});
+                } else {
+                    std.debug.print("fee for message: unavailable\n", .{});
+                }
             } else {
-                std.debug.print("fee for message: unavailable\n", .{});
+                const fee = try rpc.getFeeForMessage(message, commitment);
+                if (fee.value) |value| {
+                    std.debug.print("fee for message: {}\n", .{value});
+                } else {
+                    std.debug.print("fee for message: unavailable\n", .{});
+                }
             }
         },
 
@@ -1207,48 +1876,130 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .token_account_balance => {
             const token_account = account orelse return error.InvalidCli;
-            const amount = try rpc.getTokenAccountBalance(token_account, commitment);
-            defer freeTokenAmount(allocator, amount);
+            if (with_context) {
+                const amount_response = try rpc.getTokenAccountBalanceResponse(token_account, commitment);
+                defer freeTokenAmount(allocator, amount_response.value);
+                std.debug.print("token account balance context slot: {}\n", .{amount_response.context_slot});
+                std.debug.print(
+                    "token account balance for {s}: amount={s} decimals={} ui_amount={?d} ui_amount_string={s}\n",
+                    .{
+                        token_account,
+                        amount_response.value.amount,
+                        amount_response.value.decimals,
+                        amount_response.value.ui_amount,
+                        amount_response.value.ui_amount_string,
+                    },
+                );
+            } else {
+                const amount = try rpc.getTokenAccountBalance(token_account, commitment);
+                defer freeTokenAmount(allocator, amount);
+
+                std.debug.print(
+                    "token account balance for {s}: amount={s} decimals={} ui_amount={?d} ui_amount_string={s}\n",
+                    .{ token_account, amount.amount, amount.decimals, amount.ui_amount, amount.ui_amount_string },
+                );
+            }
+        },
+
+        .token_account => {
+            const token_account = account orelse return error.InvalidCli;
+            const info = (if (min_context_slot != null or commitment != null)
+                rpc.getTokenAccountWithOptions(token_account, .{
+                    .commitment = commitment,
+                    .min_context_slot = min_context_slot,
+                })
+            else
+                rpc.getTokenAccount(token_account, commitment)) catch |err| switch (err) {
+                error.AccountNotFound => {
+                    std.debug.print("token account for {s}: not found\n", .{token_account});
+                    return;
+                },
+                else => return err,
+            };
+            defer freeJsonParsedAccountInfo(allocator, info);
 
             std.debug.print(
-                "token account balance for {s}: amount={s} decimals={} ui_amount={?d} ui_amount_string={s}\n",
-                .{ token_account, amount.amount, amount.decimals, amount.ui_amount, amount.ui_amount_string },
+                "token account for {s}: lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                .{ token_account, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
             );
+            std.debug.print("  data(jsonParsed): {s}\n", .{info.data_json});
         },
 
         .token_supply => {
             const mint = account orelse return error.InvalidCli;
-            const amount = try rpc.getTokenSupply(mint, commitment);
-            defer freeTokenAmount(allocator, amount);
+            if (with_context) {
+                const supply_response = try rpc.getTokenSupplyResponse(mint, commitment);
+                defer freeTokenAmount(allocator, supply_response.value);
+                std.debug.print("token supply context slot: {}\n", .{supply_response.context_slot});
+                std.debug.print(
+                    "token supply for {s}: amount={s} decimals={} ui_amount={?d} ui_amount_string={s}\n",
+                    .{
+                        mint,
+                        supply_response.value.amount,
+                        supply_response.value.decimals,
+                        supply_response.value.ui_amount,
+                        supply_response.value.ui_amount_string,
+                    },
+                );
+            } else {
+                const amount = try rpc.getTokenSupply(mint, commitment);
+                defer freeTokenAmount(allocator, amount);
 
-            std.debug.print(
-                "token supply for {s}: amount={s} decimals={} ui_amount={?d} ui_amount_string={s}\n",
-                .{ mint, amount.amount, amount.decimals, amount.ui_amount, amount.ui_amount_string },
-            );
+                std.debug.print(
+                    "token supply for {s}: amount={s} decimals={} ui_amount={?d} ui_amount_string={s}\n",
+                    .{ mint, amount.amount, amount.decimals, amount.ui_amount, amount.ui_amount_string },
+                );
+            }
         },
 
         .token_largest_accounts => {
             const mint = account orelse return error.InvalidCli;
-            const entries = try rpc.getTokenLargestAccounts(mint, commitment);
-            defer {
-                for (entries) |entry| {
-                    allocator.free(entry.address);
-                    freeTokenAmount(allocator, entry.amount);
+            if (with_context) {
+                const response = try rpc.getTokenLargestAccountsResponse(mint, commitment);
+                defer {
+                    for (response.value) |entry| {
+                        allocator.free(entry.address);
+                        freeTokenAmount(allocator, entry.amount);
+                    }
+                    allocator.free(response.value);
                 }
-                allocator.free(entries);
-            }
 
-            if (entries.len == 0) {
-                std.debug.print("no token largest accounts found for {s}\n", .{mint});
-                return;
-            }
+                std.debug.print("token largest accounts context slot: {}\n", .{response.context_slot});
 
-            std.debug.print("token largest accounts for {s}: {}\n", .{ mint, entries.len });
-            for (entries, 0..) |entry, index| {
-                std.debug.print(
-                    "  [{}] address={s} amount={s} decimals={} ui_amount={?d} ui_amount_string={s}\n",
-                    .{ index, entry.address, entry.amount.amount, entry.amount.decimals, entry.amount.ui_amount, entry.amount.ui_amount_string },
-                );
+                if (response.value.len == 0) {
+                    std.debug.print("no token largest accounts found for {s}\n", .{mint});
+                    return;
+                }
+
+                std.debug.print("token largest accounts for {s}: {}\n", .{ mint, response.value.len });
+                for (response.value, 0..) |entry, index| {
+                    std.debug.print(
+                        "  [{}] address={s} amount={s} decimals={} ui_amount={?d} ui_amount_string={s}\n",
+                        .{ index, entry.address, entry.amount.amount, entry.amount.decimals, entry.amount.ui_amount, entry.amount.ui_amount_string },
+                    );
+                }
+            } else {
+                const entries = try rpc.getTokenLargestAccounts(mint, commitment);
+                defer {
+                    for (entries) |entry| {
+                        allocator.free(entry.address);
+                        freeTokenAmount(allocator, entry.amount);
+                    }
+                    allocator.free(entries);
+                }
+
+                if (entries.len == 0) {
+                    std.debug.print("no token largest accounts found for {s}\n", .{mint});
+                    return;
+                }
+
+                std.debug.print("token largest accounts for {s}: {}\n", .{ mint, entries.len });
+                for (entries, 0..) |entry, index| {
+                    std.debug.print(
+                        "  [{}] address={s} amount={s} decimals={} ui_amount={?d} ui_amount_string={s}\n",
+                        .{ index, entry.address, entry.amount.amount, entry.amount.decimals, entry.amount.ui_amount, entry.amount.ui_amount_string },
+                    );
+                }
             }
         },
 
@@ -1315,7 +2066,6 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         .signatures_for_address => {
             const address = signatures_for_address_arg orelse return error.InvalidCli;
             const limit = if (signatures_for_address_limit_arg) |raw| std.fmt.parseInt(u64, raw, 10) catch return error.InvalidCli else null;
-            const min_context_slot = if (min_context_slot_arg) |raw| std.fmt.parseInt(u64, raw, 10) catch return error.InvalidCli else null;
             const signatures = try rpc.getSignaturesForAddressWithOptions(
                 address,
                 .{
@@ -1400,6 +2150,11 @@ fn freeJsonParsedAccountInfo(allocator: Allocator, info: client.JsonParsedAccoun
     allocator.free(info.data_json);
 }
 
+fn freeJsonParsedProgramAccount(allocator: Allocator, entry: client.JsonParsedProgramAccount) void {
+    allocator.free(entry.pubkey);
+    freeJsonParsedAccountInfo(allocator, entry.account);
+}
+
 fn freeSimulatedTransaction(allocator: Allocator, simulation: client.SimulatedTransaction) void {
     if (simulation.accounts) |accounts| {
         for (accounts) |maybe_info| {
@@ -1470,6 +2225,18 @@ fn parseLargestAccountsFilter(value: []const u8) ?client.LargestAccountsFilter {
     return null;
 }
 
+const AccountQueryEncoding = union(enum) {
+    raw: client.AccountEncoding,
+    json_parsed,
+};
+
+fn parseAccountQueryEncoding(value: []const u8) ?AccountQueryEncoding {
+    if (std.mem.eql(u8, value, "base58")) return .{ .raw = .base58 };
+    if (std.mem.eql(u8, value, "base64")) return .{ .raw = .base64 };
+    if (std.mem.eql(u8, value, "jsonParsed")) return .json_parsed;
+    return null;
+}
+
 fn parseAccountEncoding(value: []const u8) ?client.AccountEncoding {
     if (std.mem.eql(u8, value, "base58")) return .base58;
     if (std.mem.eql(u8, value, "base64")) return .base64;
@@ -1485,6 +2252,22 @@ fn runMockBlockServer(
     runMockBlockServerWithLifetime(listener, allocator, request_capture, response_body, false);
 }
 
+fn acceptMockConnection(listener: *std.net.Server) ?std.net.Server.Connection {
+    var poll_fds = [_]std.posix.pollfd{
+        .{
+            .fd = listener.stream.handle,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        },
+    };
+
+    const ready = std.posix.poll(&poll_fds, 500) catch return null;
+    if (ready == 0) return null;
+    if (poll_fds[0].revents & std.posix.POLL.IN != std.posix.POLL.IN) return null;
+
+    return listener.accept() catch return null;
+}
+
 fn runMockBlockServerWithLifetime(
     listener: *std.net.Server,
     allocator: Allocator,
@@ -1498,10 +2281,11 @@ fn runMockBlockServerWithLifetime(
         defer listener.deinit();
     }
 
-    var connection = listener.accept() catch return;
+    var connection = acceptMockConnection(listener) orelse return;
     defer connection.stream.close();
 
     var receive_buffer: [4096]u8 = undefined;
+    var request_body_buffer: [4096]u8 = undefined;
     var send_buffer: [4096]u8 = undefined;
     var connection_reader = connection.stream.reader(&receive_buffer);
     var connection_writer = connection.stream.writer(&send_buffer);
@@ -1509,7 +2293,59 @@ fn runMockBlockServerWithLifetime(
 
     var request = http_server.receiveHead() catch return;
     const body_length = request.head.content_length orelse 0;
-    const request_body_reader = request.readerExpectNone(&receive_buffer);
+    const request_body_reader = request.readerExpectNone(&request_body_buffer);
+    const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
+    defer allocator.free(request_body);
+
+    request_capture.appendSlice(allocator, request_body) catch return;
+    request.respond(response_body, .{}) catch return;
+}
+
+fn runMockTransactionServer(
+    listener: *std.net.Server,
+    allocator: Allocator,
+    request_capture: *std.ArrayList(u8),
+    response_body: []const u8,
+) void {
+    var connection = acceptMockConnection(listener) orelse return;
+    defer connection.stream.close();
+
+    var receive_buffer: [4096]u8 = undefined;
+    var request_body_buffer: [4096]u8 = undefined;
+    var send_buffer: [4096]u8 = undefined;
+    var connection_reader = connection.stream.reader(&receive_buffer);
+    var connection_writer = connection.stream.writer(&send_buffer);
+    var http_server = std.http.Server.init(connection_reader.interface(), &connection_writer.interface);
+
+    var request = http_server.receiveHead() catch return;
+    const body_length = request.head.content_length orelse 0;
+    const request_body_reader = request.readerExpectNone(&request_body_buffer);
+    const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
+    defer allocator.free(request_body);
+
+    request_capture.appendSlice(allocator, request_body) catch return;
+    request.respond(response_body, .{}) catch return;
+}
+
+fn runMockBalanceServer(
+    listener: *std.net.Server,
+    allocator: Allocator,
+    request_capture: *std.ArrayList(u8),
+    response_body: []const u8,
+) void {
+    var connection = acceptMockConnection(listener) orelse return;
+    defer connection.stream.close();
+
+    var receive_buffer: [4096]u8 = undefined;
+    var request_body_buffer: [4096]u8 = undefined;
+    var send_buffer: [4096]u8 = undefined;
+    var connection_reader = connection.stream.reader(&receive_buffer);
+    var connection_writer = connection.stream.writer(&send_buffer);
+    var http_server = std.http.Server.init(connection_reader.interface(), &connection_writer.interface);
+
+    var request = http_server.receiveHead() catch return;
+    const body_length = request.head.content_length orelse 0;
+    const request_body_reader = request.readerExpectNone(&request_body_buffer);
     const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
     defer allocator.free(request_body);
 
@@ -1584,9 +2420,344 @@ fn expectGetBlockRequestWithId(
     try std.testing.expectEqual(expected_id, parsed_request.value.id);
 }
 
+fn expectGetTransactionRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_signature: []const u8,
+    expected_commitment: ?[]const u8,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("getTransaction", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    try std.testing.expectEqual(
+        if (expected_commitment != null) @as(usize, 2) else @as(usize, 1),
+        params.items.len,
+    );
+
+    switch (params.items[0]) {
+        .string => |value| try std.testing.expectEqualStrings(expected_signature, value),
+        else => return error.InvalidResponse,
+    }
+
+    if (expected_commitment) |expected| {
+        switch (params.items[1]) {
+            .object => |obj| {
+                const commitment_value = obj.get("commitment") orelse return error.InvalidResponse;
+                switch (commitment_value) {
+                    .string => |value| try std.testing.expectEqualStrings(expected, value),
+                    else => return error.InvalidResponse,
+                }
+            },
+            else => return error.InvalidResponse,
+        }
+    }
+}
+
+fn expectGetBalanceRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_account: []const u8,
+    expected_commitment: ?[]const u8,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("getBalance", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    try std.testing.expectEqual(@as(usize, 2), params.items.len);
+
+    switch (params.items[0]) {
+        .string => |value| try std.testing.expectEqualStrings(expected_account, value),
+        else => return error.InvalidResponse,
+    }
+
+    switch (params.items[1]) {
+        .object => |obj| {
+            const commitment_value = obj.get("commitment") orelse return error.InvalidResponse;
+            if (expected_commitment) |expected| {
+                switch (commitment_value) {
+                    .string => |value| try std.testing.expectEqualStrings(expected, value),
+                    else => return error.InvalidResponse,
+                }
+            } else {
+                switch (commitment_value) {
+                    .null => {},
+                    else => return error.InvalidResponse,
+                }
+            }
+        },
+        else => return error.InvalidResponse,
+    }
+}
+
+fn expectGetTokenAccountBalanceRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_token_account: []const u8,
+    expected_commitment: ?[]const u8,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("getTokenAccountBalance", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    const expected_params_len = if (expected_commitment) |_| @as(usize, 2) else @as(usize, 1);
+    try std.testing.expectEqual(expected_params_len, params.items.len);
+
+    switch (params.items[0]) {
+        .string => |value| try std.testing.expectEqualStrings(expected_token_account, value),
+        else => return error.InvalidResponse,
+    }
+
+    if (expected_commitment) |expected| {
+        switch (params.items[1]) {
+            .object => |obj| {
+                const commitment_value = obj.get("commitment") orelse return error.InvalidResponse;
+                switch (commitment_value) {
+                    .string => |value| try std.testing.expectEqualStrings(expected, value),
+                    else => return error.InvalidResponse,
+                }
+            },
+            else => return error.InvalidResponse,
+        }
+    }
+}
+
+fn expectGetTokenSupplyRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_mint: []const u8,
+    expected_commitment: ?[]const u8,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("getTokenSupply", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    const expected_params_len = if (expected_commitment) |_| @as(usize, 2) else @as(usize, 1);
+    try std.testing.expectEqual(expected_params_len, params.items.len);
+
+    switch (params.items[0]) {
+        .string => |value| try std.testing.expectEqualStrings(expected_mint, value),
+        else => return error.InvalidResponse,
+    }
+
+    if (expected_commitment) |expected| {
+        switch (params.items[1]) {
+            .object => |obj| {
+                const commitment_value = obj.get("commitment") orelse return error.InvalidResponse;
+                switch (commitment_value) {
+                    .string => |value| try std.testing.expectEqualStrings(expected, value),
+                    else => return error.InvalidResponse,
+                }
+            },
+            else => return error.InvalidResponse,
+        }
+    }
+}
+
+fn expectGetTokenLargestAccountsRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_mint: []const u8,
+    expected_commitment: ?[]const u8,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("getTokenLargestAccounts", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    const expected_params_len = if (expected_commitment) |_| @as(usize, 2) else @as(usize, 1);
+    try std.testing.expectEqual(expected_params_len, params.items.len);
+
+    switch (params.items[0]) {
+        .string => |value| try std.testing.expectEqualStrings(expected_mint, value),
+        else => return error.InvalidResponse,
+    }
+
+    if (expected_commitment) |expected| {
+        switch (params.items[1]) {
+            .object => |obj| {
+                const commitment_value = obj.get("commitment") orelse return error.InvalidResponse;
+                switch (commitment_value) {
+                    .string => |value| try std.testing.expectEqualStrings(expected, value),
+                    else => return error.InvalidResponse,
+                }
+            },
+            else => return error.InvalidResponse,
+        }
+    }
+}
+
+fn expectGetLatestBlockhashRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_commitment: ?[]const u8,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("getLatestBlockhash", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    try std.testing.expectEqual(@as(usize, 1), params.items.len);
+    switch (params.items[0]) {
+        .object => |obj| {
+            const commitment_value = obj.get("commitment") orelse return error.InvalidResponse;
+            if (expected_commitment) |expected| {
+                switch (commitment_value) {
+                    .string => |value| try std.testing.expectEqualStrings(expected, value),
+                    else => return error.InvalidResponse,
+                }
+            } else {
+                switch (commitment_value) {
+                    .null => {},
+                    else => return error.InvalidResponse,
+                }
+            }
+        },
+        else => return error.InvalidResponse,
+    }
+}
+
+fn expectGetFeeForMessageRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_message: []const u8,
+    expected_commitment: ?[]const u8,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("getFeeForMessage", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    try std.testing.expectEqual(@as(usize, 2), params.items.len);
+    switch (params.items[0]) {
+        .string => |value| try std.testing.expectEqualStrings(expected_message, value),
+        else => return error.InvalidResponse,
+    }
+
+    switch (params.items[1]) {
+        .object => |obj| {
+            const commitment_value = obj.get("commitment") orelse return error.InvalidResponse;
+            if (expected_commitment) |expected| {
+                switch (commitment_value) {
+                    .string => |value| try std.testing.expectEqualStrings(expected, value),
+                    else => return error.InvalidResponse,
+                }
+            } else {
+                switch (commitment_value) {
+                    .null => {},
+                    else => return error.InvalidResponse,
+                }
+            }
+        },
+        else => return error.InvalidResponse,
+    }
+}
+
 test "runCommand validates send options on non-send commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1604,7 +2775,7 @@ test "runCommand validates send options on non-send commands" {
 
 test "runCommand rejects search transaction history on unsupported commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1616,9 +2787,38 @@ test "runCommand rejects search transaction history on unsupported commands" {
     try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
 }
 
+test "runCommand validates poll-for-signature-confirmation requires blocks" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "poll-for-signature-confirmation",
+        "signature-value",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates poll-for-signature-confirmation blocks int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "poll-for-signature-confirmation",
+        "signature-value",
+        "bogus",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
 test "runCommand rejects min context slot on unsupported commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1633,7 +2833,7 @@ test "runCommand rejects min context slot on unsupported commands" {
 
 test "runCommand validates send min context slot int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1645,6 +2845,388 @@ test "runCommand validates send min context slot int" {
     defer parsed.deinit(allocator);
 
     try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates account query min context slot int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "account-info",
+        "--min-context-slot",
+        "bogus",
+        "Address11111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates wait-for-balance requires expected lamports" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "wait-for-balance",
+        "Address11111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand balance with context prints slot and value" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":345},\"id\":1}";
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "balance",
+        "--with-context",
+        "--commitment",
+        "confirmed",
+        "Address11111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetBalanceRequest(allocator, request_capture.items, "Address11111111111111111111111111111111", "confirmed");
+    try std.testing.expectEqualStrings(
+        "balance context slot: 12\nbalance for Address11111111111111111111111111111111: 345\n",
+        captured,
+    );
+}
+
+test "runCommand poll-balance prints value" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":15},\"value\":678},\"id\":1}";
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "poll-balance",
+        "--timeout-ms",
+        "1000",
+        "--poll-ms",
+        "50",
+        "Address11111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetBalanceRequest(allocator, request_capture.items, "Address11111111111111111111111111111111", null);
+    try std.testing.expectEqualStrings(
+        "polled balance for Address11111111111111111111111111111111: 678\n",
+        captured,
+    );
+}
+
+test "runCommand latest-blockhash with context prints slot and value" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":{\"blockhash\":\"Blockhash111111111111111111111111111111111111\",\"lastValidBlockHeight\":77}},\"id\":1}";
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "latest-blockhash",
+        "--with-context",
+        "--commitment",
+        "confirmed",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetLatestBlockhashRequest(allocator, request_capture.items, "confirmed");
+    try std.testing.expectEqualStrings(
+        "latest blockhash context slot: 44\nLatest blockhash: Blockhash111111111111111111111111111111111111\nLast valid height: 77\n",
+        captured,
+    );
+}
+
+test "runCommand fee-for-message with context prints slot and value" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":88},\"value\":5000},\"id\":1}";
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "fee-for-message",
+        "--with-context",
+        "--commitment",
+        "finalized",
+        "AQAB",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetFeeForMessageRequest(allocator, request_capture.items, "AQAB", "finalized");
+    try std.testing.expectEqualStrings(
+        "fee context slot: 88\nfee for message: 5000\n",
+        captured,
+    );
+}
+
+test "runCommand token-account-balance with context prints slot and value" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":{"amount":"1234.560000","decimals":6,"uiAmount":12.3456,"uiAmountString":"12.3456"}}, "id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "token-account-balance",
+        "--with-context",
+        "--commitment",
+        "confirmed",
+        "TokenAcct1111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetTokenAccountBalanceRequest(allocator, request_capture.items, "TokenAcct1111111111111111111111111111111", "confirmed");
+    try std.testing.expectEqualStrings(
+        "token account balance context slot: 12\n" ++
+            "token account balance for TokenAcct1111111111111111111111111111111: amount=1234.560000 decimals=6 ui_amount=12.3456 ui_amount_string=12.3456\n",
+        captured,
+    );
+}
+
+test "runCommand token-supply with context prints slot and value" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":77},"value":{"amount":"1000000","decimals":9,"uiAmount":1e-3,"uiAmountString":"0.001"}}, "id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "token-supply",
+        "--with-context",
+        "--commitment",
+        "finalized",
+        "Mint111111111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetTokenSupplyRequest(allocator, request_capture.items, "Mint111111111111111111111111111111111111", "finalized");
+    try std.testing.expectEqualStrings(
+        "token supply context slot: 77\n" ++
+            "token supply for Mint111111111111111111111111111111111111: amount=1000000 decimals=9 ui_amount=0.001 ui_amount_string=0.001\n",
+        captured,
+    );
+}
+
+test "runCommand token-largest-accounts with context prints slot and entries" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":99},"value":[{"address":"Owner111111111111111111111111111111111111","amount":"100","decimals":2,"uiAmount":1,"uiAmountString":"1"},{"address":"Owner222222222222222222222222222222222222","amount":"200","decimals":2,"uiAmount":2,"uiAmountString":"2"}]},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "token-largest-accounts",
+        "--with-context",
+        "--commitment",
+        "confirmed",
+        "Mint111111111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetTokenLargestAccountsRequest(allocator, request_capture.items, "Mint111111111111111111111111111111111111", "confirmed");
+    try std.testing.expect(std.mem.indexOf(u8, captured, "token largest accounts context slot: 99\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "token largest accounts for Mint111111111111111111111111111111111111: 2\n") != null);
+    try std.testing.expect(
+        std.mem.indexOf(u8, captured, "  [0] address=Owner111111111111111111111111111111111111 amount=100 decimals=2 ui_amount=1 ui_amount_string=1\n") != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(u8, captured, "  [1] address=Owner222222222222222222222222222222222222 amount=200 decimals=2 ui_amount=2 ui_amount_string=2\n") != null,
+    );
 }
 
 test "runCommand executes block command and sends getBlock request" {
@@ -1830,9 +3412,101 @@ test "runCommand block not found prints message" {
     try std.testing.expectEqualStrings("block 789: not found\n", captured);
 }
 
+test "runCommand block prints summary and raw json" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"blockhash\":\"Blockhash111111111111111111111111111111111111\",\"previousBlockhash\":\"Prev111111111111111111111111111111111111111\",\"parentSlot\":99,\"blockHeight\":100,\"blockTime\":1700000400,\"transactions\":[{},{}],\"rewards\":[{}]},\"id\":1}";
+    const server_thread = try std.Thread.spawn(.{}, runMockBlockServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block",
+        "100",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    try expectGetBlockRequest(allocator, request_capture.items, 100, null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "block 100: parent_slot=99 block_height=100 block_time=1700000400 transactions=2 rewards=1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "  blockhash: Blockhash111111111111111111111111111111111111") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "  previous_blockhash: Prev111111111111111111111111111111111111111") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "  raw: {") != null);
+}
+
+test "runCommand transaction prints summary and raw json" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":55,\"blockTime\":1700000500,\"version\":\"legacy\",\"meta\":{\"err\":{\"InstructionError\":[0,{\"Custom\":1}]},\"fee\":7000,\"logMessages\":[\"a\",\"b\"]},\"transaction\":{\"signatures\":[\"sig-1\",\"sig-2\"]}},\"id\":1}";
+    const server_thread = try std.Thread.spawn(.{}, runMockTransactionServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const signature_value = "5h6xSignature111111111111111111111111111111111111";
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "transaction",
+        signature_value,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    try expectGetTransactionRequest(allocator, request_capture.items, signature_value, null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "transaction 5h6xSignature111111111111111111111111111111111111: slot=55 block_time=1700000500 version=legacy signatures=2 fee=7000 log_messages=2 has_error=true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "  error: {\"InstructionError\":[0,{\"Custom\":1}]}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "  raw: {") != null);
+}
+
 test "runCommand validates status options on non-status commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1849,7 +3523,7 @@ test "runCommand validates status options on non-status commands" {
 
 test "runCommand validates blocks-with-limit requires required args" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1863,7 +3537,7 @@ test "runCommand validates blocks-with-limit requires required args" {
 
 test "runCommand validates blocks-with-limit start slot int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1878,7 +3552,7 @@ test "runCommand validates blocks-with-limit start slot int" {
 
 test "runCommand validates blocks-with-limit limit int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1893,7 +3567,7 @@ test "runCommand validates blocks-with-limit limit int" {
 
 test "runCommand validates blocks start slot int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1907,7 +3581,7 @@ test "runCommand validates blocks start slot int" {
 
 test "runCommand validates blocks end slot int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1922,7 +3596,7 @@ test "runCommand validates blocks end slot int" {
 
 test "runCommand validates slot-leaders start slot int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1937,7 +3611,7 @@ test "runCommand validates slot-leaders start slot int" {
 
 test "runCommand validates slot-leaders limit int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1952,7 +3626,7 @@ test "runCommand validates slot-leaders limit int" {
 
 test "runCommand validates block-time slot int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1966,7 +3640,7 @@ test "runCommand validates block-time slot int" {
 
 test "runCommand validates block requires slot" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1979,7 +3653,7 @@ test "runCommand validates block requires slot" {
 
 test "runCommand validates block-commitment requires slot" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -1992,7 +3666,7 @@ test "runCommand validates block-commitment requires slot" {
 
 test "runCommand validates block-commitment slot int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2006,7 +3680,7 @@ test "runCommand validates block-commitment slot int" {
 
 test "runCommand validates block slot int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2020,7 +3694,7 @@ test "runCommand validates block slot int" {
 
 test "runCommand validates status requires signature" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2033,7 +3707,7 @@ test "runCommand validates status requires signature" {
 
 test "runCommand validates signature-status requires signature" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2046,7 +3720,7 @@ test "runCommand validates signature-status requires signature" {
 
 test "runCommand validates signature-statuses requires at least one signature" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2059,7 +3733,7 @@ test "runCommand validates signature-statuses requires at least one signature" {
 
 test "runCommand validates request-airdrop requires account" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2073,7 +3747,7 @@ test "runCommand validates request-airdrop requires account" {
 
 test "runCommand validates request-airdrop requires lamports" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2087,7 +3761,7 @@ test "runCommand validates request-airdrop requires lamports" {
 
 test "runCommand validates request-airdrop lamports int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2100,9 +3774,24 @@ test "runCommand validates request-airdrop lamports int" {
     try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
 }
 
+test "runCommand rejects airdrop recent blockhash on unsupported commands" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--airdrop-recent-blockhash",
+        "RecentBlockhash1111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
 test "runCommand validates minimum-rent-exemption requires bytes" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2115,7 +3804,7 @@ test "runCommand validates minimum-rent-exemption requires bytes" {
 
 test "runCommand validates minimum-rent-exemption bytes int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2129,7 +3818,7 @@ test "runCommand validates minimum-rent-exemption bytes int" {
 
 test "runCommand validates signatures-for-address requires address" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2144,7 +3833,7 @@ test "runCommand validates signatures-for-address requires address" {
 
 test "runCommand validates signatures-for-address limit int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2160,7 +3849,7 @@ test "runCommand validates signatures-for-address limit int" {
 
 test "runCommand validates signatures-for-address min context slot int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2176,7 +3865,7 @@ test "runCommand validates signatures-for-address min context slot int" {
 
 test "runCommand rejects signatures-for-address filters on non-signatures-for-address commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2191,7 +3880,7 @@ test "runCommand rejects signatures-for-address filters on non-signatures-for-ad
 
 test "runCommand rejects transaction query flags on unsupported commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2206,7 +3895,7 @@ test "runCommand rejects transaction query flags on unsupported commands" {
 
 test "runCommand rejects epoch flag on unsupported commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2221,7 +3910,7 @@ test "runCommand rejects epoch flag on unsupported commands" {
 
 test "runCommand rejects vote account filters on unsupported commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2236,7 +3925,7 @@ test "runCommand rejects vote account filters on unsupported commands" {
 
 test "runCommand rejects largest filter on unsupported commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2251,7 +3940,7 @@ test "runCommand rejects largest filter on unsupported commands" {
 
 test "runCommand rejects block production filters on unsupported commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2266,7 +3955,7 @@ test "runCommand rejects block production filters on unsupported commands" {
 
 test "runCommand rejects supply exclude list flag on unsupported commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2280,7 +3969,7 @@ test "runCommand rejects supply exclude list flag on unsupported commands" {
 
 test "runCommand rejects program account filters on unsupported commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2295,7 +3984,7 @@ test "runCommand rejects program account filters on unsupported commands" {
 
 test "runCommand rejects account query filters on unsupported commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2310,7 +3999,7 @@ test "runCommand rejects account query filters on unsupported commands" {
 
 test "runCommand rejects simulation query filters on unsupported commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2325,7 +4014,7 @@ test "runCommand rejects simulation query filters on unsupported commands" {
 
 test "runCommand rejects simulation account encoding without accounts" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2341,7 +4030,7 @@ test "runCommand rejects simulation account encoding without accounts" {
 
 test "runCommand rejects incomplete program memcmp filter" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2357,7 +4046,7 @@ test "runCommand rejects incomplete program memcmp filter" {
 
 test "runCommand rejects incomplete account data slice filter" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2371,9 +4060,29 @@ test "runCommand rejects incomplete account data slice filter" {
     try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
 }
 
+test "runCommand rejects account data slice with jsonParsed encoding" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "account-info",
+        "Address11111111111111111111111111111111",
+        "--account-encoding",
+        "jsonParsed",
+        "--account-data-slice-offset",
+        "0",
+        "--account-data-slice-length",
+        "32",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
 test "runCommand rejects incomplete program data slice filter" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2389,7 +4098,7 @@ test "runCommand rejects incomplete program data slice filter" {
 
 test "runCommand rejects block-only flags on transaction command" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2405,7 +4114,7 @@ test "runCommand rejects block-only flags on transaction command" {
 
 test "runCommand validates transaction requires signature" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2418,7 +4127,7 @@ test "runCommand validates transaction requires signature" {
 
 test "runCommand validates inflation reward requires address" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2431,7 +4140,7 @@ test "runCommand validates inflation reward requires address" {
 
 test "runCommand validates inflation reward epoch int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2447,7 +4156,7 @@ test "runCommand validates inflation reward epoch int" {
 
 test "runCommand validates transaction encoding" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2463,7 +4172,7 @@ test "runCommand validates transaction encoding" {
 
 test "runCommand validates simulation account encoding" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2481,7 +4190,7 @@ test "runCommand validates simulation account encoding" {
 
 test "runCommand validates simulation min context slot int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2497,7 +4206,7 @@ test "runCommand validates simulation min context slot int" {
 
 test "runCommand validates block rewards bool" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2513,7 +4222,7 @@ test "runCommand validates block rewards bool" {
 
 test "runCommand validates vote account delinquent slot distance int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2528,7 +4237,7 @@ test "runCommand validates vote account delinquent slot distance int" {
 
 test "runCommand validates block production first slot int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2543,7 +4252,7 @@ test "runCommand validates block production first slot int" {
 
 test "runCommand validates program account data size int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2559,7 +4268,7 @@ test "runCommand validates program account data size int" {
 
 test "runCommand validates account query encoding" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2573,9 +4282,23 @@ test "runCommand validates account query encoding" {
     try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
 }
 
+test "runCommand rejects with-context outside supported queries" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--with-context",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
 test "runCommand validates account query data slice offset int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2593,7 +4316,7 @@ test "runCommand validates account query data slice offset int" {
 
 test "runCommand validates program account memcmp offset int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2611,7 +4334,7 @@ test "runCommand validates program account memcmp offset int" {
 
 test "runCommand validates block production last slot int" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2628,7 +4351,7 @@ test "runCommand validates block production last slot int" {
 
 test "runCommand validates block production last slot requires first slot" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2643,7 +4366,7 @@ test "runCommand validates block production last slot requires first slot" {
 
 test "runCommand validates block production slot range ordering" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2660,7 +4383,7 @@ test "runCommand validates block production slot range ordering" {
 
 test "runCommand validates largest accounts filter value" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2675,7 +4398,7 @@ test "runCommand validates largest accounts filter value" {
 
 test "runCommand validates simulate options on non-simulate commands" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2689,7 +4412,7 @@ test "runCommand validates simulate options on non-simulate commands" {
 
 test "runCommand rejects token account filters on non-token-account queries" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2704,7 +4427,7 @@ test "runCommand rejects token account filters on non-token-account queries" {
 
 test "runCommand requires token account filter for owner query" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -2718,7 +4441,7 @@ test "runCommand requires token account filter for owner query" {
 
 test "runCommand rejects conflicting token account filters" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    var rpc = try client.RpcClient.init(allocator, "http://127.0.0.1:1");
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{

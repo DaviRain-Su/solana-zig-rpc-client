@@ -33,6 +33,7 @@ fn run(allocator: std.mem.Allocator) !u8 {
 
     commands.runCommand(allocator, &rpc, &parsed) catch |err| switch (err) {
         error.InvalidCli => return printCliError("error: invalid arguments\n"),
+        error.AccountNotFound => return printError("error: account not found\n"),
         error.HttpError => return printError("error: request failed\n"),
         error.Timeout => return printError("error: request timed out\n"),
         error.RpcError => return printRpcError(&rpc),
