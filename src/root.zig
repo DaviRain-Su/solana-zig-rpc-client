@@ -441,6 +441,7 @@ pub const SignaturesForAddressOptions = struct {
 
 pub const SignatureStatusesQueryOptions = struct {
     search_transaction_history: bool = false,
+    commitment: ?Commitment = null,
 };
 
 pub const RequestAirdropOptions = struct {
@@ -1223,13 +1224,32 @@ pub const RpcClient = struct {
         options: ?SignatureStatusesQueryOptions,
     ) ![]u8 {
         if (options) |value| {
-            if (!value.search_transaction_history) {
+            const commitment = if (value.commitment) |entry| commitmentToString(entry) else null;
+
+            if (!value.search_transaction_history and commitment == null) {
                 return try self.serializeParams(.{signatures});
+            }
+
+            if (value.search_transaction_history and commitment != null) {
+                return try self.serializeParams(.{
+                    signatures,
+                    .{
+                        .searchTransactionHistory = true,
+                        .commitment = commitment,
+                    },
+                });
+            }
+
+            if (value.search_transaction_history) {
+                return try self.serializeParams(.{
+                    signatures,
+                    .{ .searchTransactionHistory = true },
+                });
             }
 
             return try self.serializeParams(.{
                 signatures,
-                .{ .searchTransactionHistory = true },
+                .{ .commitment = commitment },
             });
         }
 
@@ -3593,12 +3613,28 @@ pub const RpcClient = struct {
     }
 
     pub fn getSignatureStatus(self: *RpcClient, signature: []const u8, commitment: ?Commitment) !SignatureStatus {
-        _ = commitment;
-        return try self.getSignatureStatusWithOptions(signature, null);
+        return try self.getSignatureStatusWithOptions(
+            signature,
+            if (commitment) |value| .{ .commitment = value } else null,
+        );
     }
 
     pub fn getSignatureStatusWithHistory(self: *RpcClient, signature: []const u8) !SignatureStatus {
         return try self.getSignatureStatusWithOptions(signature, .{ .search_transaction_history = true });
+    }
+
+    pub fn getSignatureStatusWithCommitmentAndHistory(
+        self: *RpcClient,
+        signature: []const u8,
+        commitment: ?Commitment,
+    ) !SignatureStatus {
+        return try self.getSignatureStatusWithOptions(
+            signature,
+            .{
+                .search_transaction_history = true,
+                .commitment = commitment,
+            },
+        );
     }
 
     pub fn getSignatureStatusesWithOptions(
@@ -3653,12 +3689,28 @@ pub const RpcClient = struct {
     }
 
     pub fn getSignatureStatuses(self: *RpcClient, signatures: []const []const u8, commitment: ?Commitment) ![]?SignatureStatus {
-        _ = commitment;
-        return try self.getSignatureStatusesWithOptions(signatures, null);
+        return try self.getSignatureStatusesWithOptions(
+            signatures,
+            if (commitment) |value| .{ .commitment = value } else null,
+        );
     }
 
     pub fn getSignatureStatusesWithHistory(self: *RpcClient, signatures: []const []const u8) ![]?SignatureStatus {
         return try self.getSignatureStatusesWithOptions(signatures, .{ .search_transaction_history = true });
+    }
+
+    pub fn getSignatureStatusesWithCommitmentAndHistory(
+        self: *RpcClient,
+        signatures: []const []const u8,
+        commitment: ?Commitment,
+    ) ![]?SignatureStatus {
+        return try self.getSignatureStatusesWithOptions(
+            signatures,
+            .{
+                .search_transaction_history = true,
+                .commitment = commitment,
+            },
+        );
     }
 
     pub fn confirmTransaction(
@@ -3667,12 +3719,17 @@ pub const RpcClient = struct {
         commitment: ?Commitment,
         search_transaction_history: bool,
     ) !bool {
+        const signature_status_options = if (search_transaction_history or commitment != null)
+            SignatureStatusesQueryOptions{
+                .search_transaction_history = search_transaction_history,
+                .commitment = commitment,
+            }
+        else
+            null;
+
         const status = self.getSignatureStatusWithOptions(
             signature,
-            if (search_transaction_history)
-                SignatureStatusesQueryOptions{ .search_transaction_history = true }
-            else
-                null,
+            signature_status_options,
         ) catch |err| switch (err) {
             error.TransactionNotFound => return false,
             else => return err,
@@ -3863,13 +3920,15 @@ pub const RpcClient = struct {
         const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
 
         while (std.time.milliTimestamp() < deadline) {
-            const status = self.getSignatureStatusWithOptions(
-                signature,
-                if (search_transaction_history)
-                    SignatureStatusesQueryOptions{ .search_transaction_history = true }
-                else
-                    null,
-            ) catch |err| {
+            const status_options = if (search_transaction_history or commitment != null)
+                SignatureStatusesQueryOptions{
+                    .search_transaction_history = search_transaction_history,
+                    .commitment = commitment,
+                }
+            else
+                null;
+
+            const status = self.getSignatureStatusWithOptions(signature, status_options) catch |err| {
                 switch (err) {
                     error.TransactionNotFound => {
                         std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
@@ -5482,6 +5541,23 @@ test "root.getSignatureStatus params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, with_history_json, "\"signature\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_history_json, "searchTransactionHistory") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_history_json, "true") != null);
+
+    const with_commitment_json = try client.serializeSignatureStatusesParams(
+        signatures[0..],
+        .{ .commitment = .confirmed },
+    );
+    defer allocator.free(with_commitment_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "commitment") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"confirmed\"") != null);
+
+    const with_commitment_history_json = try client.serializeSignatureStatusesParams(
+        signatures[0..],
+        .{ .search_transaction_history = true, .commitment = .finalized },
+    );
+    defer allocator.free(with_commitment_history_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_history_json, "searchTransactionHistory") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_history_json, "true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_history_json, "\"finalized\"") != null);
 }
 
 test "root.getSignatureStatuses params serialization" {

@@ -317,13 +317,14 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 std.debug.print("error: signature-status requires <signature>\n", .{});
                 return error.InvalidCli;
             };
-            const status_info = try rpc.getSignatureStatusWithOptions(
-                signature_value,
-                if (search_transaction_history)
-                    client.SignatureStatusesQueryOptions{ .search_transaction_history = true }
-                else
-                    null,
-            );
+            const status_request_options = if (search_transaction_history or commitment != null)
+                client.SignatureStatusesQueryOptions{
+                    .search_transaction_history = search_transaction_history,
+                    .commitment = commitment,
+                }
+            else
+                null;
+            const status_info = try rpc.getSignatureStatusWithOptions(signature_value, status_request_options);
             defer if (status_info.confirmation_status) |value| allocator.free(value);
 
             std.debug.print(
@@ -343,12 +344,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             }
 
+            const signature_status_options = if (search_transaction_history or commitment != null)
+                client.SignatureStatusesQueryOptions{
+                    .search_transaction_history = search_transaction_history,
+                    .commitment = commitment,
+                }
+            else
+                null;
             const statuses = try rpc.getSignatureStatusesWithOptions(
                 signature_statuses.items,
-                if (search_transaction_history)
-                    client.SignatureStatusesQueryOptions{ .search_transaction_history = true }
-                else
-                    null,
+                signature_status_options,
             );
             defer {
                 for (statuses) |status| {
@@ -2793,6 +2798,7 @@ fn expectGetSignatureStatusesRequest(
     body: []const u8,
     expected_signatures: []const []const u8,
     expected_search_transaction_history: bool,
+    expected_commitment: ?[]const u8,
 ) !void {
     const ParsedRequest = struct {
         jsonrpc: []const u8 = "",
@@ -2813,7 +2819,8 @@ fn expectGetSignatureStatusesRequest(
         else => return error.InvalidResponse,
     };
 
-    if (expected_search_transaction_history) {
+    const expected_has_options = expected_search_transaction_history or expected_commitment != null;
+    if (expected_has_options) {
         try std.testing.expectEqual(@as(usize, 2), params.items.len);
     } else {
         try std.testing.expectEqual(@as(usize, 1), params.items.len);
@@ -2832,17 +2839,27 @@ fn expectGetSignatureStatusesRequest(
         }
     }
 
-    if (!expected_search_transaction_history) return;
+    if (!expected_has_options) return;
 
     const options = switch (params.items[1]) {
         .object => |obj| obj,
         else => return error.InvalidResponse,
     };
 
-    const search_transaction_history_value = options.get("searchTransactionHistory") orelse return error.InvalidResponse;
-    switch (search_transaction_history_value) {
-        .bool => |value| try std.testing.expect(value),
-        else => return error.InvalidResponse,
+    if (expected_search_transaction_history) {
+        const search_transaction_history_value = options.get("searchTransactionHistory") orelse return error.InvalidResponse;
+        switch (search_transaction_history_value) {
+            .bool => |value| try std.testing.expect(value),
+            else => return error.InvalidResponse,
+        }
+    }
+
+    if (expected_commitment) |expected| {
+        const commitment_value = options.get("commitment") orelse return error.InvalidResponse;
+        switch (commitment_value) {
+            .string => |value| try std.testing.expectEqualStrings(expected, value),
+            else => return error.InvalidResponse,
+        }
     }
 }
 
@@ -4097,12 +4114,14 @@ test "runCommand status waits for signature status with search history and commi
         request_captures.items[0],
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         true,
+        "confirmed",
     );
     try expectGetSignatureStatusesRequest(
         allocator,
         request_captures.items[1],
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         true,
+        "confirmed",
     );
     try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
     try std.testing.expectEqualStrings("signature confirmed\n", captured);
@@ -4156,6 +4175,7 @@ test "runCommand confirm-transaction respects commitment" {
         request_capture.items,
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         true,
+        "confirmed",
     );
     try std.testing.expectEqualStrings("signature Sig111111111111111111111111111111111111 confirmed: false\n", captured);
 }
@@ -4190,6 +4210,8 @@ test "runCommand signature-status prints status" {
 
     var parsed = try cli.parseCliArgs(allocator, &.{
         "signature-status",
+        "--commitment",
+        "confirmed",
         "Sig111111111111111111111111111111111111",
     });
     defer parsed.deinit(allocator);
@@ -4205,6 +4227,7 @@ test "runCommand signature-status prints status" {
         request_capture.items,
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         false,
+        "confirmed",
     );
     try std.testing.expectEqualStrings(
         "signature status: has_error=false slot=55 confirmations=7 confirmation=confirmed\n",
@@ -4260,6 +4283,7 @@ test "runCommand signature-statuses prints per-signature output" {
         request_capture.items,
         &[_][]const u8{ "SigA111111111111111111111111111111111111", "SigB111111111111111111111111111111111111", "SigC111111111111111111111111111111111111" },
         true,
+        null,
     );
     try std.testing.expect(std.mem.indexOf(u8, captured, "signature statuses: 3\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  [0] SigA111111111111111111111111111111111111: not found\n") != null);
@@ -4327,12 +4351,14 @@ test "runCommand poll-for-signature-confirmation polls until min confirmed block
         request_captures.items[0],
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         true,
+        null,
     );
     try expectGetSignatureStatusesRequest(
         allocator,
         request_captures.items[1],
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         true,
+        null,
     );
     try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
     try std.testing.expectEqualStrings(
@@ -4386,6 +4412,7 @@ test "runCommand blocks-since-signature-confirmation prints confirmations" {
         request_capture.items,
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         false,
+        null,
     );
     try std.testing.expectEqualStrings(
         "signature Sig111111111111111111111111111111111111 confirmed blocks: 9\n",
