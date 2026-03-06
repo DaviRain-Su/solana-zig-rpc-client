@@ -1,839 +1,135 @@
 const std = @import("std");
 const json = std.json;
 const Ed25519 = std.crypto.sign.Ed25519;
+pub const sdk = @import("./client/sdk.zig");
+pub const rpc_types = @import("./client/rpc_types.zig");
 
 const Allocator = std.mem.Allocator;
-const max_lockout_history: u64 = 31;
-const poll_for_signature_timeout_ms: u64 = 15_000;
-const poll_for_signature_confirmation_timeout_ms: u64 = 20_000;
-const signature_poll_interval_ms: u64 = 250;
-pub const default_balance_poll_timeout_ms: u64 = 1_000;
-pub const default_balance_poll_interval_ms: u64 = 100;
-const get_new_latest_blockhash_timeout_ms: u64 = 5_000;
-const get_new_latest_blockhash_interval_ms: u64 = 400;
-const wait_for_balance_error_retries: usize = 30;
 
-const base58_alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-const base58_inverse = init: {
-    var table = [_]i16{-1} ** 256;
-    for (base58_alphabet, 0..) |ch, index| {
-        table[ch] = @intCast(index);
-    }
-    break :init table;
-};
-
-pub const RpcError = error{
-    HttpError,
-    RpcError,
-    InvalidResponse,
-    AccountDataUnavailable,
-    AccountNotFound,
-    Timeout,
-    TransactionFailed,
-    TransactionNotConfirmed,
-    TransactionNotFound,
-};
-
-pub const SdkError = error{
-    InvalidBase58Character,
-    InvalidBase58Length,
-    InvalidSecretKeyLength,
-};
-
-fn base58Value(byte: u8) SdkError!u8 {
-    const value = base58_inverse[byte];
-    if (value < 0) return error.InvalidBase58Character;
-    return @intCast(value);
-}
-
-fn decodeBase58(allocator: Allocator, encoded: []const u8) ![]u8 {
-    if (encoded.len == 0) return error.InvalidBase58Length;
-
-    var leading_zeroes: usize = 0;
-    for (encoded) |byte| {
-        if (byte == '1') {
-            leading_zeroes += 1;
-        } else {
-            break;
-        }
-    }
-
-    var decoded = std.ArrayList(u8).empty;
-    errdefer decoded.deinit(allocator);
-
-    for (encoded) |byte| {
-        var carry: u64 = try base58Value(byte);
-        var index: usize = 0;
-        while (index < decoded.items.len) : (index += 1) {
-            const current = @as(u64, decoded.items[index]) * 58 + carry;
-            decoded.items[index] = @truncate(current);
-            carry = current >> 8;
-        }
-        while (carry > 0) {
-            try decoded.append(allocator, @truncate(carry));
-            carry >>= 8;
-        }
-    }
-
-    if (decoded.items.len == 0) {
-        const result = try allocator.alloc(u8, leading_zeroes);
-        @memset(result, 0);
-        return result;
-    }
-
-    const reversed = try decoded.toOwnedSlice(allocator);
-    defer allocator.free(reversed);
-
-    const result = try allocator.alloc(u8, reversed.len + leading_zeroes);
-    @memset(result[0..leading_zeroes], 0);
-
-    var output_index: usize = leading_zeroes;
-    var reversed_index = reversed.len;
-    while (reversed_index > 0) : (reversed_index -= 1) {
-        result[output_index] = reversed[reversed_index - 1];
-        output_index += 1;
-    }
-
-    return result;
-}
-
-fn decodeBase58WithLength(allocator: Allocator, encoded: []const u8, expected_len: usize) ![]u8 {
-    const decoded = try decodeBase58(allocator, encoded);
-    if (decoded.len != expected_len) {
-        allocator.free(decoded);
-        return error.InvalidBase58Length;
-    }
-    return decoded;
-}
-
-fn encodeBase58(allocator: Allocator, bytes: []const u8) ![]u8 {
-    var leading_zeroes: usize = 0;
-    while (leading_zeroes < bytes.len and bytes[leading_zeroes] == 0) : (leading_zeroes += 1) {}
-
-    var digits = std.ArrayList(u8).empty;
-    defer digits.deinit(allocator);
-
-    for (bytes) |byte| {
-        var carry: u32 = byte;
-        var index: usize = 0;
-        while (index < digits.items.len) : (index += 1) {
-            const value = @as(u32, digits.items[index]) * 256 + carry;
-            digits.items[index] = @intCast(value % 58);
-            carry = value / 58;
-        }
-        while (carry > 0) {
-            try digits.append(allocator, @intCast(carry % 58));
-            carry /= 58;
-        }
-    }
-
-    var encoded = std.ArrayList(u8).empty;
-    errdefer encoded.deinit(allocator);
-
-    for (0..leading_zeroes) |_| {
-        try encoded.append(allocator, '1');
-    }
-
-    var index = digits.items.len;
-    while (index > 0) : (index -= 1) {
-        try encoded.append(allocator, base58_alphabet[digits.items[index - 1]]);
-    }
-
-    return try encoded.toOwnedSlice(allocator);
-}
-
-fn writeCompactVecLen(bytes: *std.ArrayList(u8), allocator: Allocator, value: usize) !void {
-    var remaining = value;
-    while (remaining >= 0x80) {
-        try bytes.append(allocator, @as(u8, @truncate((remaining & 0x7f) | 0x80)));
-        remaining >>= 7;
-    }
-    try bytes.append(allocator, @as(u8, @truncate(remaining)));
-}
-
-fn buildLegacyTransferMessage(
-    allocator: Allocator,
-    sender_public_key: [Ed25519.PublicKey.encoded_length]u8,
-    destination_public_key: [Ed25519.PublicKey.encoded_length]u8,
-    recent_blockhash: [32]u8,
-    lamports: u64,
-) ![]u8 {
-    const system_program_id: [Ed25519.PublicKey.encoded_length]u8 = .{0} ** Ed25519.PublicKey.encoded_length;
-
-    var instruction_data = [_]u8{2} ++ [_]u8{0} ** 8;
-    std.mem.writeInt(u64, instruction_data[1..9], lamports, .little);
-
-    var message = std.ArrayList(u8).empty;
-    errdefer message.deinit(allocator);
-
-    // legacy header
-    try message.append(allocator, 1); // required signatures
-    try message.append(allocator, 0); // readonly signed
-    try message.append(allocator, 1); // readonly unsigned
-
-    // account keys
-    try writeCompactVecLen(&message, allocator, 3);
-    try message.appendSlice(allocator, &sender_public_key);
-    try message.appendSlice(allocator, &destination_public_key);
-    try message.appendSlice(allocator, &system_program_id);
-
-    // blockhash
-    try message.appendSlice(allocator, &recent_blockhash);
-
-    // one instruction: system transfer
-    try writeCompactVecLen(&message, allocator, 1);
-    try message.append(allocator, 2); // system program account index
-    try writeCompactVecLen(&message, allocator, 2); // from/to
-    try message.append(allocator, 0);
-    try message.append(allocator, 1);
-    try writeCompactVecLen(&message, allocator, instruction_data.len);
-    try message.appendSlice(allocator, &instruction_data);
-
-    return try message.toOwnedSlice(allocator);
-}
-
-fn buildLegacyTransferTransaction(
-    allocator: Allocator,
-    secret_key: []const u8,
-    destination_public_key: []const u8,
-    recent_blockhash: []const u8,
-    lamports: u64,
-) ![]u8 {
-    if (secret_key.len != Ed25519.SecretKey.encoded_length) return error.InvalidSecretKeyLength;
-    if (destination_public_key.len != Ed25519.PublicKey.encoded_length) return error.InvalidBase58Length;
-    if (recent_blockhash.len != 32) return error.InvalidBase58Length;
-
-    var sender_secret_key: [Ed25519.SecretKey.encoded_length]u8 = undefined;
-    @memcpy(sender_secret_key[0..], secret_key);
-    var destination_bytes: [Ed25519.PublicKey.encoded_length]u8 = undefined;
-    @memcpy(destination_bytes[0..], destination_public_key);
-    var blockhash_bytes: [32]u8 = undefined;
-    @memcpy(blockhash_bytes[0..], recent_blockhash);
-
-    const key_pair = try Ed25519.KeyPair.fromSecretKey(try Ed25519.SecretKey.fromBytes(sender_secret_key));
-    const sender_public_key = key_pair.public_key.toBytes();
-
-    const message = try buildLegacyTransferMessage(
-        allocator,
-        sender_public_key,
-        destination_bytes,
-        blockhash_bytes,
-        lamports,
-    );
-    defer allocator.free(message);
-
-    const signature = try Ed25519.KeyPair.sign(key_pair, message, null);
-    const signature_bytes = signature.toBytes();
-
-    var tx = std.ArrayList(u8).empty;
-    errdefer tx.deinit(allocator);
-    try writeCompactVecLen(&tx, allocator, 1);
-    try tx.appendSlice(allocator, &signature_bytes);
-    try tx.appendSlice(allocator, message);
-
-    const tx_bytes = try tx.toOwnedSlice(allocator);
-    defer allocator.free(tx_bytes);
-
-    const base64_len = std.base64.standard.Encoder.calcSize(tx_bytes.len);
-    const encoded = try allocator.alloc(u8, base64_len);
-    _ = std.base64.standard.Encoder.encode(encoded, tx_bytes);
-    return encoded;
-}
-
-pub const TransportStats = struct {
-    request_count: usize = 0,
-    elapsed_time_ms: u64 = 0,
-    rate_limited_time_ms: u64 = 0,
-};
-
-pub const Commitment = enum {
-    processed,
-    confirmed,
-    finalized,
-};
-
-pub const TransactionEncoding = enum {
-    json,
-    jsonParsed,
-    base58,
-    base64,
-};
-
-pub const AccountEncoding = enum {
-    base58,
-    base64,
-};
-
-pub const TransactionDetails = enum {
-    full,
-    accounts,
-    signatures,
-    none,
-};
-
-pub const RpcErrorDetail = struct {
-    code: i64 = 0,
-    message: []const u8 = "",
-};
-
-pub const LatestBlockhash = struct {
-    blockhash: []const u8,
-    last_valid_block_height: u64,
-};
-
-pub const LatestBlockhashResponse = struct {
-    context_slot: u64 = 0,
-    value: LatestBlockhash,
-};
-
-pub const SignatureStatus = struct {
-    confirmation_status: ?[]const u8 = null,
-    has_error: bool = false,
-    slot: ?u64 = null,
-    confirmations: ?u64 = null,
-};
-
-pub const AccountInfo = struct {
-    lamports: u64 = 0,
-    owner: []const u8 = "",
-    executable: bool = false,
-    rent_epoch: ?u64 = null,
-    space: ?u64 = null,
-    data: ?[]const u8 = null,
-    data_encoding: ?[]const u8 = null,
-};
-
-pub const ProgramAccount = struct {
-    pubkey: []const u8 = "",
-    account: AccountInfo = .{},
-};
-
-pub const ProgramAccountsResponse = struct {
-    context_slot: ?u64 = null,
-    accounts: []ProgramAccount = &.{},
-};
-
-pub const AccountInfoResponse = struct {
-    context_slot: u64 = 0,
-    account: ?AccountInfo = null,
-};
-
-pub const BalanceResponse = struct {
-    context_slot: u64 = 0,
-    value: u64 = 0,
-};
-
-pub const MultipleAccountsResponse = struct {
-    context_slot: u64 = 0,
-    accounts: []?AccountInfo = &.{},
-};
-
-pub const TokenAmount = struct {
-    amount: []const u8 = "",
-    decimals: u8 = 0,
-    ui_amount: ?f64 = null,
-    ui_amount_string: []const u8 = "",
-};
-
-pub const TokenAmountResponse = struct {
-    context_slot: u64 = 0,
-    value: TokenAmount = .{},
-};
-
-pub const TokenLargestAccount = struct {
-    address: []const u8 = "",
-    amount: TokenAmount = .{},
-};
-
-pub const TokenLargestAccountsResponse = struct {
-    context_slot: u64 = 0,
-    value: []TokenLargestAccount = &.{},
-};
-
-pub const LargestAccount = struct {
-    address: []const u8 = "",
-    lamports: u64 = 0,
-};
-
-pub const LargestAccountsFilter = enum {
-    circulating,
-    non_circulating,
-};
-
-pub const ProgramAccountsQueryOptions = struct {
-    commitment: ?Commitment = null,
-    min_context_slot: ?u64 = null,
-    with_context: bool = false,
-    sort_results: bool = false,
-    data_size: ?u64 = null,
-    memcmp_offset: ?u64 = null,
-    memcmp_bytes: ?[]const u8 = null,
-    data_slice_offset: ?u64 = null,
-    data_slice_length: ?u64 = null,
-};
-
-pub const AccountQueryOptions = struct {
-    commitment: ?Commitment = null,
-    min_context_slot: ?u64 = null,
-    encoding: ?AccountEncoding = null,
-    data_slice_offset: ?u64 = null,
-    data_slice_length: ?u64 = null,
-};
-
-pub const UiAccountQueryOptions = struct {
-    commitment: ?Commitment = null,
-    min_context_slot: ?u64 = null,
-};
-
-pub const SimulationAccountsOptions = struct {
-    addresses: []const []const u8 = &.{},
-    encoding: ?AccountEncoding = null,
-};
-
-pub const LargestAccountsQueryOptions = struct {
-    commitment: ?Commitment = null,
-    filter: ?LargestAccountsFilter = null,
-};
-
-pub const BlockCommitment = struct {
-    commitment: ?[]u64 = null,
-    total_stake: u64 = 0,
-};
-
-pub const JsonParsedAccountInfo = struct {
-    lamports: u64 = 0,
-    owner: []const u8 = "",
-    executable: bool = false,
-    rent_epoch: ?u64 = null,
-    space: ?u64 = null,
-    data_json: []const u8 = "",
-};
-
-pub const UiAccountResponse = struct {
-    context_slot: u64 = 0,
-    account: ?JsonParsedAccountInfo = null,
-};
-
-pub const JsonParsedProgramAccount = struct {
-    pubkey: []const u8 = "",
-    account: JsonParsedAccountInfo = .{},
-};
-
-pub const JsonParsedProgramAccountsResponse = struct {
-    context_slot: ?u64 = null,
-    accounts: []JsonParsedProgramAccount = &.{},
-};
-
-pub const MultipleUiAccountsResponse = struct {
-    context_slot: u64 = 0,
-    accounts: []?JsonParsedAccountInfo = &.{},
-};
-
-pub const TokenAccountsFilter = union(enum) {
-    mint: []const u8,
-    program_id: []const u8,
-};
-
-pub const SignatureForAddress = struct {
-    signature: []const u8 = "",
-    slot: u64 = 0,
-    block_time: ?i64 = null,
-    confirmation_status: ?[]const u8 = null,
-    memo: ?[]const u8 = null,
-    has_error: bool = false,
-};
-
-pub const EpochInfo = struct {
-    absolute_slot: ?u64 = null,
-    block_height: ?u64 = null,
-    epoch: ?u64 = null,
-    slot_index: ?u64 = null,
-    slots_in_epoch: ?u64 = null,
-};
-
-pub const Supply = struct {
-    total: u64 = 0,
-    circulating: u64 = 0,
-    non_circulating: u64 = 0,
-    non_circulating_accounts: ?[][]const u8 = null,
-};
-
-pub const FeeForMessage = struct {
-    value: ?u64 = null,
-};
-
-pub const FeeForMessageResponse = struct {
-    context_slot: u64 = 0,
-    value: ?u64 = null,
-};
-
-pub const EpochSchedule = struct {
-    first_normal_slot: u64 = 0,
-    first_normal_epoch: u64 = 0,
-    leader_schedule_slot_offset: u64 = 0,
-    slots_per_epoch: u64 = 0,
-    warmup: bool = false,
-};
-
-pub const InflationRate = struct {
-    total: f64 = 0,
-    validator: f64 = 0,
-    foundation: f64 = 0,
-    epoch: u64 = 0,
-};
-
-pub const PerformanceSample = struct {
-    slot: u64 = 0,
-    num_slots: u64 = 0,
-    num_transactions: u64 = 0,
-    sample_period_secs: u64 = 0,
-    num_non_vote_slots: u64 = 0,
-};
-
-pub const SnapshotSlots = struct {
-    full: ?u64 = null,
-    incremental: ?u64 = null,
-};
-
-pub const RecentPrioritizationFee = struct {
-    slot: u64 = 0,
-    prioritization_fee: u64 = 0,
-};
-
-pub const InflationReward = struct {
-    epoch: u64 = 0,
-    effective_slot: u64 = 0,
-    amount: u64 = 0,
-    post_balance: u64 = 0,
-    commission: ?u8 = null,
-};
-
-pub const InflationGovernor = struct {
-    foundation: f64 = 0,
-    foundation_term: f64 = 0,
-    initial: f64 = 0,
-    taper: f64 = 0,
-    terminal: f64 = 0,
-};
-
-const VoteAccountResult = struct {
-    votePubkey: []const u8 = "",
-    nodePubkey: []const u8 = "",
-    activatedStake: u64 = 0,
-    commission: u64 = 0,
-    epochCredits: ?[][]i64 = null,
-    lastVote: ?u64 = null,
-    epochVoteAccount: bool = false,
-    rootSlot: ?u64 = null,
-};
-
-const RpcAccountInfoResult = struct {
-    data: ?[]const []const u8 = null,
-    executable: bool = false,
-    lamports: u64 = 0,
-    owner: []const u8 = "",
-    rentEpoch: ?u64 = null,
-    space: ?u64 = null,
-};
-
-const RpcTokenAmountResult = struct {
-    amount: []const u8 = "",
-    decimals: u8 = 0,
-    uiAmount: ?f64 = null,
-    uiAmountString: []const u8 = "",
-};
-
-const RpcProgramAccountResult = struct {
-    pubkey: []const u8 = "",
-    account: RpcAccountInfoResult = .{},
-};
-
-const RpcJsonParsedAccountInfoResult = struct {
-    data: json.Value = .null,
-    executable: bool = false,
-    lamports: u64 = 0,
-    owner: []const u8 = "",
-    rentEpoch: ?u64 = null,
-    space: ?u64 = null,
-};
-
-const RpcJsonParsedProgramAccountResult = struct {
-    pubkey: []const u8 = "",
-    account: RpcJsonParsedAccountInfoResult = .{},
-};
-
-const RpcSimulatedTransactionResult = struct {
-    accounts: ?[]?RpcAccountInfoResult = null,
-    err: ?json.Value = null,
-    fee: ?u64 = null,
-    innerInstructions: ?json.Value = null,
-    logs: ?[]const []const u8 = null,
-    loadedAccountsDataSize: ?u32 = null,
-    replacementBlockhash: ?struct {
-        blockhash: []const u8 = "",
-        lastValidBlockHeight: u64 = 0,
-    } = null,
-    returnData: ?struct {
-        programId: []const u8 = "",
-        data: ?[]const []const u8 = null,
-    } = null,
-    unitsConsumed: ?u64 = null,
-};
-
-pub const ClusterNode = struct {
-    feature_set: u64 = 0,
-    gossip: ?[]const u8 = null,
-    pubkey: []const u8 = "",
-    rpc: ?[]const u8 = null,
-    shred_version: u64 = 0,
-    tpu: ?[]const u8 = null,
-    version: ?[]const u8 = null,
-};
-
-pub const LeaderSchedule = struct {
-    identity: []const u8 = "",
-    slots: []u64 = &.{},
-};
-
-pub const EpochCredit = struct {
-    epoch: u64 = 0,
-    prev_credits: u64 = 0,
-    curr_credits: u64 = 0,
-};
-
-pub const VoteAccount = struct {
-    vote_pubkey: []const u8 = "",
-    node_pubkey: []const u8 = "",
-    activated_stake: u64 = 0,
-    commission: u64 = 0,
-    epoch_credits: ?[]EpochCredit = null,
-    last_vote: ?u64 = null,
-    root_slot: ?u64 = null,
-    epoch_vote_account: bool = false,
-};
-
-pub const VoteAccounts = struct {
-    current: []VoteAccount = &.{},
-    delinquent: []VoteAccount = &.{},
-};
-
-pub const VoteAccountsQueryOptions = struct {
-    commitment: ?Commitment = null,
-    vote_pubkey: ?[]const u8 = null,
-    keep_unstaked_delinquents: ?bool = null,
-    delinquent_slot_distance: ?u64 = null,
-};
-
-pub const BlockProductionQueryOptions = struct {
-    commitment: ?Commitment = null,
-    identity: ?[]const u8 = null,
-    first_slot: ?u64 = null,
-    last_slot: ?u64 = null,
-};
-
-pub const SupplyQueryOptions = struct {
-    commitment: ?Commitment = null,
-    exclude_non_circulating_accounts_list: ?bool = null,
-};
-
-pub const BlockProduction = struct {
-    first_slot: u64 = 0,
-    last_slot: u64 = 0,
-    by_identity: []BlockProductionIdentity = &.{},
-};
-
-pub const BlockProductionIdentity = struct {
-    identity: []const u8 = "",
-    leader_slots: u64 = 0,
-    blocks: u64 = 0,
-};
-
-pub const SendTransactionOptions = struct {
-    skip_preflight: bool = false,
-    preflight_commitment: ?Commitment = null,
-    max_retries: ?u32 = null,
-    min_context_slot: ?u64 = null,
-};
-
-pub const TransferBuildOptions = struct {
-    recent_blockhash: ?[]const u8 = null,
-    blockhash_commitment: ?Commitment = null,
-};
-
-pub const SendTransferOptions = struct {
-    recent_blockhash: ?[]const u8 = null,
-    blockhash_commitment: ?Commitment = null,
-    send_transaction_options: ?SendTransactionOptions = null,
-};
-
-pub const TransferOptions = struct {
-    recent_blockhash: ?[]const u8 = null,
-    blockhash_commitment: ?Commitment = null,
-    send_transaction_options: ?SendTransactionOptions = null,
-    commitment: ?Commitment = null,
-    search_transaction_history: bool = false,
-    timeout_ms: u64 = poll_for_signature_confirmation_timeout_ms,
-    poll_interval_ms: u64 = signature_poll_interval_ms,
-};
-
-pub const SignaturesForAddressOptions = struct {
-    before: ?[]const u8 = null,
-    until: ?[]const u8 = null,
-    limit: ?u64 = null,
-    commitment: ?Commitment = null,
-    min_context_slot: ?u64 = null,
-};
-
-pub const SignatureStatusesQueryOptions = struct {
-    search_transaction_history: bool = false,
-    commitment: ?Commitment = null,
-};
-
-pub const RequestAirdropOptions = struct {
-    commitment: ?Commitment = null,
-    recent_blockhash: ?[]const u8 = null,
-};
-
-pub const SimulateTransactionOptions = struct {
-    sig_verify: bool = false,
-    replace_recent_blockhash: bool = false,
-    commitment: ?Commitment = null,
-    min_context_slot: ?u64 = null,
-    inner_instructions: bool = false,
-    accounts: ?SimulationAccountsOptions = null,
-};
-
-pub const SimulationReturnData = struct {
-    program_id: []const u8 = "",
-    data: ?[]const u8 = null,
-    data_encoding: ?[]const u8 = null,
-};
-
-pub const SimulatedTransaction = struct {
-    context_slot: u64 = 0,
-    accounts: ?[]?AccountInfo = null,
-    err_json: ?[]const u8 = null,
-    fee: ?u64 = null,
-    inner_instructions_json: ?[]const u8 = null,
-    logs: ?[][]const u8 = null,
-    loaded_accounts_data_size: ?u32 = null,
-    replacement_blockhash: ?LatestBlockhash = null,
-    return_data: ?SimulationReturnData = null,
-    units_consumed: ?u64 = null,
-};
-
-pub const BlockSummary = struct {
-    blockhash: ?[]const u8 = null,
-    previous_blockhash: ?[]const u8 = null,
-    parent_slot: u64 = 0,
-    block_height: ?u64 = null,
-    block_time: ?i64 = null,
-    transaction_count: ?usize = null,
-    rewards_count: ?usize = null,
-};
-
-pub const TransactionSummary = struct {
-    slot: u64 = 0,
-    block_time: ?i64 = null,
-    version: ?[]const u8 = null,
-    signature_count: ?usize = null,
-    fee: ?u64 = null,
-    log_messages_count: ?usize = null,
-    has_error: bool = false,
-    error_json: ?[]const u8 = null,
-};
-
-pub const BlockQueryOptions = struct {
-    commitment: ?Commitment = null,
-    encoding: ?TransactionEncoding = null,
-    transaction_details: ?TransactionDetails = null,
-    rewards: ?bool = null,
-    max_supported_transaction_version: ?u8 = null,
-};
-
-pub const TransactionQueryOptions = struct {
-    commitment: ?Commitment = null,
-    encoding: ?TransactionEncoding = null,
-    max_supported_transaction_version: ?u8 = null,
-};
-
-const TokenAccountsFilterParams = struct {
-    mint: ?[]const u8 = null,
-    programId: ?[]const u8 = null,
-};
-
-fn commitmentParams(commitment: ?Commitment) struct { commitment: ?[]const u8 = null } {
-    return .{ .commitment = if (commitment) |value| commitmentToString(value) else null };
-}
-
-fn commitmentToString(c: Commitment) []const u8 {
-    return switch (c) {
-        .processed => "processed",
-        .confirmed => "confirmed",
-        .finalized => "finalized",
-    };
-}
-
-fn commitmentRank(value: Commitment) u8 {
-    return switch (value) {
-        .processed => 0,
-        .confirmed => 1,
-        .finalized => 2,
-    };
-}
-
-fn confirmationStatusRank(value: []const u8) ?u8 {
-    if (std.mem.eql(u8, value, "processed")) return 0;
-    if (std.mem.eql(u8, value, "confirmed")) return 1;
-    if (std.mem.eql(u8, value, "finalized")) return 2;
-    return null;
-}
-
-fn confirmationSatisfiesCommitment(status: ?[]const u8, commitment: ?Commitment) bool {
-    const status_value = status orelse return false;
-    const status_rank = confirmationStatusRank(status_value) orelse return false;
-    const required_rank = if (commitment) |value| commitmentRank(value) else commitmentRank(.processed);
-    return status_rank >= required_rank;
-}
-
-fn transactionEncodingToString(value: TransactionEncoding) []const u8 {
-    return switch (value) {
-        .json => "json",
-        .jsonParsed => "jsonParsed",
-        .base58 => "base58",
-        .base64 => "base64",
-    };
-}
-
-fn accountEncodingToString(value: AccountEncoding) []const u8 {
-    return switch (value) {
-        .base58 => "base58",
-        .base64 => "base64",
-    };
-}
-
-fn transactionDetailsToString(value: TransactionDetails) []const u8 {
-    return switch (value) {
-        .full => "full",
-        .accounts => "accounts",
-        .signatures => "signatures",
-        .none => "none",
-    };
-}
-
-fn largestAccountsFilterToString(value: LargestAccountsFilter) []const u8 {
-    return switch (value) {
-        .circulating => "circulating",
-        .non_circulating => "nonCirculating",
-    };
-}
-
-fn tokenAccountsFilterParams(filter: TokenAccountsFilter) TokenAccountsFilterParams {
-    return switch (filter) {
-        .mint => |value| .{ .mint = value },
-        .program_id => |value| .{ .programId = value },
-    };
-}
+pub const max_lockout_history = sdk.max_lockout_history;
+pub const poll_for_signature_timeout_ms = sdk.poll_for_signature_timeout_ms;
+pub const poll_for_signature_confirmation_timeout_ms = sdk.poll_for_signature_confirmation_timeout_ms;
+pub const signature_poll_interval_ms = sdk.signature_poll_interval_ms;
+pub const default_balance_poll_timeout_ms = sdk.default_balance_poll_timeout_ms;
+pub const default_balance_poll_interval_ms = sdk.default_balance_poll_interval_ms;
+pub const get_new_latest_blockhash_timeout_ms = sdk.get_new_latest_blockhash_timeout_ms;
+pub const get_new_latest_blockhash_interval_ms = sdk.get_new_latest_blockhash_interval_ms;
+pub const wait_for_balance_error_retries = sdk.wait_for_balance_error_retries;
+pub const RpcError = sdk.RpcError;
+pub const SdkError = sdk.SdkError;
+pub const decodeBase58 = sdk.decodeBase58;
+pub const decodeBase58WithLength = sdk.decodeBase58WithLength;
+pub const encodeBase58 = sdk.encodeBase58;
+pub const writeCompactVecLen = sdk.writeCompactVecLen;
+pub const encodeBase64 = sdk.encodeBase64;
+pub const Pubkey = sdk.Pubkey;
+pub const Hash = sdk.Hash;
+pub const Signature = sdk.Signature;
+pub const Keypair = sdk.Keypair;
+pub const AccountMeta = sdk.AccountMeta;
+pub const Instruction = sdk.Instruction;
+pub const LegacyMessageHeader = sdk.LegacyMessageHeader;
+pub const LegacyMessage = sdk.LegacyMessage;
+pub const LegacyTransaction = sdk.LegacyTransaction;
+pub const SignedLegacyTransaction = sdk.SignedLegacyTransaction;
+pub const CompiledInstruction = sdk.CompiledInstruction;
+pub const MessageAddressTableLookup = sdk.MessageAddressTableLookup;
+pub const VersionedMessageV0 = sdk.VersionedMessageV0;
+pub const VersionedTransaction = sdk.VersionedTransaction;
+pub const SignedVersionedTransaction = sdk.SignedVersionedTransaction;
+pub const TransferInstruction = sdk.TransferInstruction;
+pub const SystemProgram = sdk.SystemProgram;
+pub const buildLegacyTransferMessage = sdk.buildLegacyTransferMessage;
+pub const buildLegacyTransferTransaction = sdk.buildLegacyTransferTransaction;
+pub const buildVersionedTransferMessageBytes = sdk.buildVersionedTransferMessageBytes;
+
+pub const TransportStats = rpc_types.TransportStats;
+pub const Commitment = rpc_types.Commitment;
+pub const TransactionEncoding = rpc_types.TransactionEncoding;
+pub const AccountEncoding = rpc_types.AccountEncoding;
+pub const TransactionDetails = rpc_types.TransactionDetails;
+pub const RpcErrorDetail = rpc_types.RpcErrorDetail;
+pub const LatestBlockhash = rpc_types.LatestBlockhash;
+pub const LatestBlockhashResponse = rpc_types.LatestBlockhashResponse;
+pub const SignatureStatus = rpc_types.SignatureStatus;
+pub const AccountInfo = rpc_types.AccountInfo;
+pub const ProgramAccount = rpc_types.ProgramAccount;
+pub const ProgramAccountsResponse = rpc_types.ProgramAccountsResponse;
+pub const AccountInfoResponse = rpc_types.AccountInfoResponse;
+pub const BalanceResponse = rpc_types.BalanceResponse;
+pub const MultipleAccountsResponse = rpc_types.MultipleAccountsResponse;
+pub const TokenAmount = rpc_types.TokenAmount;
+pub const TokenAmountResponse = rpc_types.TokenAmountResponse;
+pub const TokenLargestAccount = rpc_types.TokenLargestAccount;
+pub const TokenLargestAccountsResponse = rpc_types.TokenLargestAccountsResponse;
+pub const LargestAccount = rpc_types.LargestAccount;
+pub const LargestAccountsFilter = rpc_types.LargestAccountsFilter;
+pub const ProgramAccountsQueryOptions = rpc_types.ProgramAccountsQueryOptions;
+pub const AccountQueryOptions = rpc_types.AccountQueryOptions;
+pub const UiAccountQueryOptions = rpc_types.UiAccountQueryOptions;
+pub const SimulationAccountsOptions = rpc_types.SimulationAccountsOptions;
+pub const LargestAccountsQueryOptions = rpc_types.LargestAccountsQueryOptions;
+pub const BlockCommitment = rpc_types.BlockCommitment;
+pub const JsonParsedAccountInfo = rpc_types.JsonParsedAccountInfo;
+pub const UiAccountResponse = rpc_types.UiAccountResponse;
+pub const JsonParsedProgramAccount = rpc_types.JsonParsedProgramAccount;
+pub const JsonParsedProgramAccountsResponse = rpc_types.JsonParsedProgramAccountsResponse;
+pub const MultipleUiAccountsResponse = rpc_types.MultipleUiAccountsResponse;
+pub const TokenAccountsFilter = rpc_types.TokenAccountsFilter;
+pub const SignatureForAddress = rpc_types.SignatureForAddress;
+pub const EpochInfo = rpc_types.EpochInfo;
+pub const Supply = rpc_types.Supply;
+pub const FeeForMessage = rpc_types.FeeForMessage;
+pub const FeeForMessageResponse = rpc_types.FeeForMessageResponse;
+pub const EpochSchedule = rpc_types.EpochSchedule;
+pub const InflationRate = rpc_types.InflationRate;
+pub const PerformanceSample = rpc_types.PerformanceSample;
+pub const SnapshotSlots = rpc_types.SnapshotSlots;
+pub const RecentPrioritizationFee = rpc_types.RecentPrioritizationFee;
+pub const InflationReward = rpc_types.InflationReward;
+pub const InflationGovernor = rpc_types.InflationGovernor;
+pub const VoteAccountResult = rpc_types.VoteAccountResult;
+pub const RpcAccountInfoResult = rpc_types.RpcAccountInfoResult;
+pub const RpcTokenAmountResult = rpc_types.RpcTokenAmountResult;
+pub const RpcProgramAccountResult = rpc_types.RpcProgramAccountResult;
+pub const RpcJsonParsedAccountInfoResult = rpc_types.RpcJsonParsedAccountInfoResult;
+pub const RpcJsonParsedProgramAccountResult = rpc_types.RpcJsonParsedProgramAccountResult;
+pub const RpcSimulatedTransactionResult = rpc_types.RpcSimulatedTransactionResult;
+pub const ClusterNode = rpc_types.ClusterNode;
+pub const LeaderSchedule = rpc_types.LeaderSchedule;
+pub const EpochCredit = rpc_types.EpochCredit;
+pub const VoteAccount = rpc_types.VoteAccount;
+pub const VoteAccounts = rpc_types.VoteAccounts;
+pub const VoteAccountsQueryOptions = rpc_types.VoteAccountsQueryOptions;
+pub const BlockProductionQueryOptions = rpc_types.BlockProductionQueryOptions;
+pub const SupplyQueryOptions = rpc_types.SupplyQueryOptions;
+pub const BlockProduction = rpc_types.BlockProduction;
+pub const BlockProductionIdentity = rpc_types.BlockProductionIdentity;
+pub const SendTransactionOptions = rpc_types.SendTransactionOptions;
+pub const TransferBuildOptions = rpc_types.TransferBuildOptions;
+pub const SendTransferOptions = rpc_types.SendTransferOptions;
+pub const TransferOptions = rpc_types.TransferOptions;
+pub const SignaturesForAddressOptions = rpc_types.SignaturesForAddressOptions;
+pub const SignatureStatusesQueryOptions = rpc_types.SignatureStatusesQueryOptions;
+pub const RequestAirdropOptions = rpc_types.RequestAirdropOptions;
+pub const SimulateTransactionOptions = rpc_types.SimulateTransactionOptions;
+pub const SimulationReturnData = rpc_types.SimulationReturnData;
+pub const SimulatedTransaction = rpc_types.SimulatedTransaction;
+pub const BlockSummary = rpc_types.BlockSummary;
+pub const TransactionSummary = rpc_types.TransactionSummary;
+pub const BlockQueryOptions = rpc_types.BlockQueryOptions;
+pub const TransactionQueryOptions = rpc_types.TransactionQueryOptions;
+pub const TokenAccountsFilterParams = rpc_types.TokenAccountsFilterParams;
+pub const commitmentParams = rpc_types.commitmentParams;
+pub const commitmentToString = rpc_types.commitmentToString;
+pub const commitmentRank = rpc_types.commitmentRank;
+pub const confirmationStatusRank = rpc_types.confirmationStatusRank;
+pub const confirmationSatisfiesCommitment = rpc_types.confirmationSatisfiesCommitment;
+pub const transactionEncodingToString = rpc_types.transactionEncodingToString;
+pub const accountEncodingToString = rpc_types.accountEncodingToString;
+pub const transactionDetailsToString = rpc_types.transactionDetailsToString;
+pub const largestAccountsFilterToString = rpc_types.largestAccountsFilterToString;
+pub const tokenAccountsFilterParams = rpc_types.tokenAccountsFilterParams;
 
 pub const RpcClient = struct {
     allocator: Allocator,
@@ -842,6 +138,55 @@ pub const RpcClient = struct {
     request_id: u64,
     last_error: ?RpcErrorDetail,
     transport_stats: TransportStats,
+    const transaction_methods = @import("./client/rpc_client/transactions.zig");
+
+    pub const send = transaction_methods.send;
+    pub const sendTransactionWithConfig = transaction_methods.sendTransactionWithConfig;
+    pub const sendAndConfirmTransaction = transaction_methods.sendAndConfirmTransaction;
+    pub const sendAndConfirmTransactionWithCommitment = transaction_methods.sendAndConfirmTransactionWithCommitment;
+    pub const sendAndConfirmTransactionWithConfig = transaction_methods.sendAndConfirmTransactionWithConfig;
+    pub const sendAndConfirmTransactionWithCommitmentAndConfig = transaction_methods.sendAndConfirmTransactionWithCommitmentAndConfig;
+    pub const sendTransaction = transaction_methods.sendTransaction;
+    pub const sendTransactionTyped = transaction_methods.sendTransactionTyped;
+    pub const sendVersionedTransactionTyped = transaction_methods.sendVersionedTransactionTyped;
+    pub const sendLegacyTransaction = transaction_methods.sendLegacyTransaction;
+    pub const sendVersionedTransaction = transaction_methods.sendVersionedTransaction;
+    pub const simulateTransaction = transaction_methods.simulateTransaction;
+    pub const simulateTransactionWithConfig = transaction_methods.simulateTransactionWithConfig;
+    pub const simulateTransactionTyped = transaction_methods.simulateTransactionTyped;
+    pub const simulateVersionedTransactionTyped = transaction_methods.simulateVersionedTransactionTyped;
+    pub const simulateLegacyTransaction = transaction_methods.simulateLegacyTransaction;
+    pub const simulateVersionedTransaction = transaction_methods.simulateVersionedTransaction;
+    pub const getSignatureStatusWithOptions = transaction_methods.getSignatureStatusWithOptions;
+    pub const getSignatureStatusWithConfig = transaction_methods.getSignatureStatusWithConfig;
+    pub const getSignatureStatus = transaction_methods.getSignatureStatus;
+    pub const getSignatureStatusWithHistory = transaction_methods.getSignatureStatusWithHistory;
+    pub const getSignatureStatusWithCommitmentAndHistory = transaction_methods.getSignatureStatusWithCommitmentAndHistory;
+    pub const getSignatureStatusesWithOptions = transaction_methods.getSignatureStatusesWithOptions;
+    pub const getSignatureStatusesWithConfig = transaction_methods.getSignatureStatusesWithConfig;
+    pub const getSignatureStatuses = transaction_methods.getSignatureStatuses;
+    pub const getSignatureStatusesWithHistory = transaction_methods.getSignatureStatusesWithHistory;
+    pub const getSignatureStatusesWithCommitmentAndHistory = transaction_methods.getSignatureStatusesWithCommitmentAndHistory;
+    pub const confirmTransaction = transaction_methods.confirmTransaction;
+    pub const getNumBlocksSinceSignatureConfirmation = transaction_methods.getNumBlocksSinceSignatureConfirmation;
+    pub const getNumBlocksSinceSignatureConfirmationWithCommitment = transaction_methods.getNumBlocksSinceSignatureConfirmationWithCommitment;
+    pub const getSignaturesForAddress = transaction_methods.getSignaturesForAddress;
+    pub const getSignaturesForAddressWithConfig = transaction_methods.getSignaturesForAddressWithConfig;
+    pub const getSignaturesForAddressWithOptions = transaction_methods.getSignaturesForAddressWithOptions;
+    pub const pollGetBalanceWithCommitmentAndTimeouts = transaction_methods.pollGetBalanceWithCommitmentAndTimeouts;
+    pub const pollGetBalanceWithCommitment = transaction_methods.pollGetBalanceWithCommitment;
+    pub const waitForBalanceWithCommitmentAndTimeouts = transaction_methods.waitForBalanceWithCommitmentAndTimeouts;
+    pub const waitForBalanceWithCommitment = transaction_methods.waitForBalanceWithCommitment;
+    pub const waitForSignatureStatus = transaction_methods.waitForSignatureStatus;
+    pub const pollForSignature = transaction_methods.pollForSignature;
+    pub const pollForSignatureConfirmationWithTimeouts = transaction_methods.pollForSignatureConfirmationWithTimeouts;
+    pub const pollForSignatureConfirmationWithCommitmentAndTimeouts = transaction_methods.pollForSignatureConfirmationWithCommitmentAndTimeouts;
+    pub const pollForSignatureConfirmation = transaction_methods.pollForSignatureConfirmation;
+    pub const sendTransactionAndConfirm = transaction_methods.sendTransactionAndConfirm;
+    pub const sendTransactionAndConfirmTyped = transaction_methods.sendTransactionAndConfirmTyped;
+    pub const sendAndConfirmVersionedTransactionTyped = transaction_methods.sendAndConfirmVersionedTransactionTyped;
+    pub const sendAndConfirmLegacyTransaction = transaction_methods.sendAndConfirmLegacyTransaction;
+    pub const sendAndConfirmVersionedTransaction = transaction_methods.sendAndConfirmVersionedTransaction;
 
     pub fn init(allocator: Allocator, endpoint: []const u8) !RpcClient {
         return RpcClient{
@@ -951,7 +296,7 @@ pub const RpcClient = struct {
         return try json.Stringify.valueAlloc(self.allocator, value, .{});
     }
 
-    fn sendRequest(self: *RpcClient, method: []const u8, params_json: []const u8) ![]u8 {
+    pub fn sendRequest(self: *RpcClient, method: []const u8, params_json: []const u8) ![]u8 {
         const request_body = try std.fmt.allocPrint(
             self.allocator,
             "{{\"jsonrpc\":\"2.0\",\"id\":{},\"method\":\"{s}\",\"params\":{s}}}",
@@ -1023,7 +368,7 @@ pub const RpcClient = struct {
         return try self.sendRequest(method, "[]");
     }
 
-    fn parseResponse(self: *RpcClient, body: []const u8, comptime ResultType: type) !ResultType {
+    pub fn parseResponse(self: *RpcClient, body: []const u8, comptime ResultType: type) !ResultType {
         self.clearLastError();
         const ParsedEnvelope = struct {
             jsonrpc: []const u8 = "",
@@ -1047,7 +392,7 @@ pub const RpcClient = struct {
         return parsed.value.result orelse error.InvalidResponse;
     }
 
-    fn captureRpcError(self: *RpcClient, body: []const u8) !void {
+    pub fn captureRpcError(self: *RpcClient, body: []const u8) !void {
         self.clearLastError();
 
         const ParsedEnvelope = struct {
@@ -1090,7 +435,7 @@ pub const RpcClient = struct {
         if (info.data_encoding) |value| self.allocator.free(value);
     }
 
-    fn cloneOptionalAccountInfos(self: *RpcClient, source: []const ?RpcAccountInfoResult) ![]?AccountInfo {
+    pub fn cloneOptionalAccountInfos(self: *RpcClient, source: []const ?RpcAccountInfoResult) ![]?AccountInfo {
         const copied = try self.allocator.alloc(?AccountInfo, source.len);
         var copied_len: usize = 0;
         errdefer {
@@ -1145,7 +490,7 @@ pub const RpcClient = struct {
         };
     }
 
-    fn cloneStringList(self: *RpcClient, source: []const []const u8) ![][]const u8 {
+    pub fn cloneStringList(self: *RpcClient, source: []const []const u8) ![][]const u8 {
         const copied = try self.allocator.alloc([]const u8, source.len);
         var copied_len: usize = 0;
         errdefer {
@@ -1472,7 +817,7 @@ pub const RpcClient = struct {
         return try self.serializeParams(params);
     }
 
-    fn serializeSimulateTransactionParams(
+    pub fn serializeSimulateTransactionParams(
         self: *RpcClient,
         signed_tx_base64: []const u8,
         options: ?SimulateTransactionOptions,
@@ -1516,7 +861,7 @@ pub const RpcClient = struct {
         return try self.serializeParams(params);
     }
 
-    fn serializeSendTransactionParams(
+    pub fn serializeSendTransactionParams(
         self: *RpcClient,
         signed_tx_base64: []const u8,
         options: ?SendTransactionOptions,
@@ -1545,7 +890,7 @@ pub const RpcClient = struct {
         return try self.serializeParams(params);
     }
 
-    fn serializeSignaturesForAddressParams(
+    pub fn serializeSignaturesForAddressParams(
         self: *RpcClient,
         address: []const u8,
         options: ?SignaturesForAddressOptions,
@@ -1571,7 +916,7 @@ pub const RpcClient = struct {
         return try self.serializeParams(.{address});
     }
 
-    fn serializeSignatureStatusesParams(
+    pub fn serializeSignatureStatusesParams(
         self: *RpcClient,
         signatures: []const []const u8,
         options: ?SignatureStatusesQueryOptions,
@@ -3360,6 +2705,24 @@ pub const RpcClient = struct {
         return FeeForMessage{ .value = response.value };
     }
 
+    pub fn getFeeForMessageTyped(self: *RpcClient, message: LegacyMessage, commitment: ?Commitment) !FeeForMessage {
+        const encoded_message = try message.toBase64(self.allocator);
+        defer self.allocator.free(encoded_message);
+        return try self.getFeeForMessage(encoded_message, commitment);
+    }
+
+    pub fn getFeeForVersionedMessageTyped(self: *RpcClient, message: VersionedMessageV0, commitment: ?Commitment) !FeeForMessage {
+        const encoded_message = try message.toBase64(self.allocator);
+        defer self.allocator.free(encoded_message);
+        return try self.getFeeForMessage(encoded_message, commitment);
+    }
+
+    pub fn getFeeForMessageResponseTyped(self: *RpcClient, message: LegacyMessage, commitment: ?Commitment) !FeeForMessageResponse {
+        const encoded_message = try message.toBase64(self.allocator);
+        defer self.allocator.free(encoded_message);
+        return try self.getFeeForMessageResponse(encoded_message, commitment);
+    }
+
     fn resolveTransferRecentBlockhash(
         self: *RpcClient,
         recent_blockhash: ?[]const u8,
@@ -3371,6 +2734,61 @@ pub const RpcClient = struct {
 
         const latest_blockhash = try self.getLatestBlockhash(blockhash_commitment);
         return latest_blockhash.blockhash;
+    }
+
+    pub fn buildTransferSignedTransaction(
+        self: *RpcClient,
+        sender_secret_key: []const u8,
+        destination: []const u8,
+        lamports: u64,
+        recent_blockhash: []const u8,
+    ) !SignedLegacyTransaction {
+        const keypair = try Keypair.fromBase58SecretKey(self.allocator, sender_secret_key);
+        const destination_pubkey = try Pubkey.fromBase58(self.allocator, destination);
+        const blockhash = try Hash.fromBase58(self.allocator, recent_blockhash);
+
+        const transfer_instruction = SystemProgram.transfer(keypair.public_key, destination_pubkey, lamports);
+        const instructions = [_]Instruction{transfer_instruction.instruction()};
+        const transaction = LegacyTransaction{
+            .message = .{
+                .payer = keypair.public_key,
+                .recent_blockhash = blockhash,
+                .instructions = instructions[0..],
+            },
+        };
+
+        return try transaction.sign(self.allocator, &.{keypair});
+    }
+
+    pub fn buildTransferSignedTransactionWithOptions(
+        self: *RpcClient,
+        sender_secret_key: []const u8,
+        destination: []const u8,
+        lamports: u64,
+        options: ?TransferBuildOptions,
+    ) !SignedLegacyTransaction {
+        const recent_blockhash = try self.resolveTransferRecentBlockhash(
+            if (options) |value| value.recent_blockhash else null,
+            if (options) |value| value.blockhash_commitment else null,
+        );
+        defer self.allocator.free(recent_blockhash);
+
+        return try self.buildTransferSignedTransaction(
+            sender_secret_key,
+            destination,
+            lamports,
+            recent_blockhash,
+        );
+    }
+
+    pub fn buildTransferSignedTransactionWithConfig(
+        self: *RpcClient,
+        sender_secret_key: []const u8,
+        destination: []const u8,
+        lamports: u64,
+        options: ?TransferBuildOptions,
+    ) !SignedLegacyTransaction {
+        return try self.buildTransferSignedTransactionWithOptions(sender_secret_key, destination, lamports, options);
     }
 
     pub fn buildTransferTransaction(
@@ -4195,763 +3613,6 @@ pub const RpcClient = struct {
 
         return try self.parseResponse(response, bool);
     }
-
-    pub fn send(self: *RpcClient, signed_tx_base64: []const u8) ![]const u8 {
-        return try self.sendTransaction(signed_tx_base64, null);
-    }
-
-    pub fn sendTransactionWithConfig(
-        self: *RpcClient,
-        signed_tx_base64: []const u8,
-        options: ?SendTransactionOptions,
-    ) ![]const u8 {
-        return try self.sendTransaction(signed_tx_base64, options);
-    }
-
-    pub fn sendAndConfirmTransaction(self: *RpcClient, signed_tx_base64: []const u8) ![]const u8 {
-        return try self.sendTransactionAndConfirm(
-            signed_tx_base64,
-            null,
-            null,
-            false,
-            poll_for_signature_confirmation_timeout_ms,
-            signature_poll_interval_ms,
-        );
-    }
-
-    pub fn sendAndConfirmTransactionWithCommitment(
-        self: *RpcClient,
-        signed_tx_base64: []const u8,
-        commitment: Commitment,
-    ) ![]const u8 {
-        return try self.sendTransactionAndConfirm(
-            signed_tx_base64,
-            null,
-            commitment,
-            false,
-            poll_for_signature_confirmation_timeout_ms,
-            signature_poll_interval_ms,
-        );
-    }
-
-    pub fn sendAndConfirmTransactionWithConfig(
-        self: *RpcClient,
-        signed_tx_base64: []const u8,
-        options: ?SendTransactionOptions,
-    ) ![]const u8 {
-        return try self.sendTransactionAndConfirm(
-            signed_tx_base64,
-            options,
-            null,
-            false,
-            poll_for_signature_confirmation_timeout_ms,
-            signature_poll_interval_ms,
-        );
-    }
-
-    pub fn sendAndConfirmTransactionWithCommitmentAndConfig(
-        self: *RpcClient,
-        signed_tx_base64: []const u8,
-        commitment: Commitment,
-        options: ?SendTransactionOptions,
-    ) ![]const u8 {
-        return try self.sendTransactionAndConfirm(
-            signed_tx_base64,
-            options,
-            commitment,
-            false,
-            poll_for_signature_confirmation_timeout_ms,
-            signature_poll_interval_ms,
-        );
-    }
-
-    pub fn sendTransaction(self: *RpcClient, signed_tx_base64: []const u8, options: ?SendTransactionOptions) ![]const u8 {
-        const params_json = try self.serializeSendTransactionParams(signed_tx_base64, options);
-        defer self.allocator.free(params_json);
-
-        const response = try self.sendRequest("sendTransaction", params_json);
-        defer self.allocator.free(response);
-
-        const signature = try self.parseResponse(response, []const u8);
-
-        return try self.allocator.dupe(u8, signature);
-    }
-
-    pub fn simulateTransaction(
-        self: *RpcClient,
-        signed_tx_base64: []const u8,
-        options: ?SimulateTransactionOptions,
-    ) !SimulatedTransaction {
-        const params_json = try self.serializeSimulateTransactionParams(signed_tx_base64, options);
-        defer self.allocator.free(params_json);
-
-        const response = try self.sendRequest("simulateTransaction", params_json);
-        defer self.allocator.free(response);
-
-        try self.captureRpcError(response);
-
-        const ParsedEnvelope = struct {
-            jsonrpc: []const u8 = "",
-            id: u64 = 0,
-            result: ?struct {
-                context: struct {
-                    slot: u64 = 0,
-                } = .{ .slot = 0 },
-                value: RpcSimulatedTransactionResult = .{},
-            } = null,
-        };
-
-        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
-        defer parsed.deinit();
-
-        const result = parsed.value.result orelse return error.InvalidResponse;
-        var simulation = SimulatedTransaction{};
-        errdefer {
-            if (simulation.accounts) |accounts| {
-                for (accounts) |maybe_info| {
-                    if (maybe_info) |info| {
-                        self.allocator.free(info.owner);
-                        if (info.data) |value| self.allocator.free(value);
-                        if (info.data_encoding) |value| self.allocator.free(value);
-                    }
-                }
-                self.allocator.free(accounts);
-            }
-            if (simulation.err_json) |value| self.allocator.free(value);
-            if (simulation.inner_instructions_json) |value| self.allocator.free(value);
-            if (simulation.logs) |logs| {
-                for (logs) |entry| self.allocator.free(entry);
-                self.allocator.free(logs);
-            }
-            if (simulation.replacement_blockhash) |value| self.allocator.free(value.blockhash);
-            if (simulation.return_data) |value| {
-                self.allocator.free(value.program_id);
-                if (value.data) |entry| self.allocator.free(entry);
-                if (value.data_encoding) |entry| self.allocator.free(entry);
-            }
-        }
-
-        simulation.context_slot = result.context.slot;
-
-        if (result.value.accounts) |accounts| {
-            simulation.accounts = try self.cloneOptionalAccountInfos(accounts);
-        }
-
-        if (result.value.err) |value| {
-            simulation.err_json = switch (value) {
-                .null => null,
-                .string => |text| try self.allocator.dupe(u8, text),
-                else => try json.Stringify.valueAlloc(self.allocator, value, .{}),
-            };
-        }
-
-        simulation.fee = result.value.fee;
-
-        if (result.value.innerInstructions) |value| {
-            simulation.inner_instructions_json = try json.Stringify.valueAlloc(self.allocator, value, .{});
-        }
-
-        if (result.value.logs) |logs| {
-            simulation.logs = try self.cloneStringList(logs);
-        }
-
-        simulation.loaded_accounts_data_size = result.value.loadedAccountsDataSize;
-        simulation.units_consumed = result.value.unitsConsumed;
-        simulation.replacement_blockhash = if (result.value.replacementBlockhash) |value|
-            LatestBlockhash{
-                .blockhash = try self.allocator.dupe(u8, value.blockhash),
-                .last_valid_block_height = value.lastValidBlockHeight,
-            }
-        else
-            null;
-
-        simulation.return_data = if (result.value.returnData) |value|
-            SimulationReturnData{
-                .program_id = try self.allocator.dupe(u8, value.programId),
-                .data = if (value.data) |entry|
-                    if (entry.len >= 1) try self.allocator.dupe(u8, entry[0]) else null
-                else
-                    null,
-                .data_encoding = if (value.data) |entry|
-                    if (entry.len >= 2) try self.allocator.dupe(u8, entry[1]) else null
-                else
-                    null,
-            }
-        else
-            null;
-
-        return simulation;
-    }
-
-    pub fn simulateTransactionWithConfig(
-        self: *RpcClient,
-        signed_tx_base64: []const u8,
-        options: ?SimulateTransactionOptions,
-    ) !SimulatedTransaction {
-        return try self.simulateTransaction(signed_tx_base64, options);
-    }
-
-    const SignatureStatusEntry = struct {
-        confirmationStatus: ?[]const u8 = null,
-        err: ?json.Value = null,
-        slot: ?u64 = null,
-        confirmations: ?u64 = null,
-    };
-
-    const SignatureStatusesResult = struct {
-        context: struct {
-            slot: u64 = 0,
-        } = .{ .slot = 0 },
-        value: []?SignatureStatusEntry = &.{},
-    };
-
-    pub fn getSignatureStatusWithOptions(
-        self: *RpcClient,
-        signature: []const u8,
-        options: ?SignatureStatusesQueryOptions,
-    ) !SignatureStatus {
-        const signatures = [_][]const u8{signature};
-        const params_json = try self.serializeSignatureStatusesParams(signatures[0..], options);
-        defer self.allocator.free(params_json);
-
-        const response = try self.sendRequest("getSignatureStatuses", params_json);
-        defer self.allocator.free(response);
-
-        const ParsedEnvelope = struct {
-            jsonrpc: []const u8 = "",
-            id: u64 = 0,
-            result: ?SignatureStatusesResult = null,
-            @"error": ?RpcErrorDetail = null,
-        };
-
-        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
-        defer parsed.deinit();
-
-        if (parsed.value.@"error" != null) {
-            const err = parsed.value.@"error".?;
-            self.last_error = RpcErrorDetail{
-                .code = err.code,
-                .message = self.allocator.dupe(u8, err.message) catch return error.InvalidResponse,
-            };
-            return error.RpcError;
-        }
-
-        const result = parsed.value.result orelse return error.InvalidResponse;
-        if (result.value.len == 0) return error.TransactionNotFound;
-
-        const first = result.value[0] orelse return error.TransactionNotFound;
-
-        return SignatureStatus{
-            .confirmation_status = if (first.confirmationStatus) |value| try self.allocator.dupe(u8, value) else null,
-            .has_error = first.err != null,
-            .slot = first.slot,
-            .confirmations = first.confirmations,
-        };
-    }
-
-    pub fn getSignatureStatusWithConfig(
-        self: *RpcClient,
-        signature: []const u8,
-        options: ?SignatureStatusesQueryOptions,
-    ) !SignatureStatus {
-        return try self.getSignatureStatusWithOptions(signature, options);
-    }
-
-    pub fn getSignatureStatus(self: *RpcClient, signature: []const u8, commitment: ?Commitment) !SignatureStatus {
-        return try self.getSignatureStatusWithOptions(
-            signature,
-            if (commitment) |value| .{ .commitment = value } else null,
-        );
-    }
-
-    pub fn getSignatureStatusWithHistory(self: *RpcClient, signature: []const u8) !SignatureStatus {
-        return try self.getSignatureStatusWithOptions(signature, .{ .search_transaction_history = true });
-    }
-
-    pub fn getSignatureStatusWithCommitmentAndHistory(
-        self: *RpcClient,
-        signature: []const u8,
-        commitment: ?Commitment,
-    ) !SignatureStatus {
-        return try self.getSignatureStatusWithOptions(
-            signature,
-            .{
-                .search_transaction_history = true,
-                .commitment = commitment,
-            },
-        );
-    }
-
-    pub fn getSignatureStatusesWithOptions(
-        self: *RpcClient,
-        signatures: []const []const u8,
-        options: ?SignatureStatusesQueryOptions,
-    ) ![]?SignatureStatus {
-        const params_json = try self.serializeSignatureStatusesParams(signatures, options);
-        defer self.allocator.free(params_json);
-
-        const response = try self.sendRequest("getSignatureStatuses", params_json);
-        defer self.allocator.free(response);
-
-        const ParsedEnvelope = struct {
-            jsonrpc: []const u8 = "",
-            id: u64 = 0,
-            result: ?SignatureStatusesResult = null,
-            @"error": ?RpcErrorDetail = null,
-        };
-
-        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
-        defer parsed.deinit();
-
-        if (parsed.value.@"error" != null) {
-            const err = parsed.value.@"error".?;
-            self.last_error = RpcErrorDetail{
-                .code = err.code,
-                .message = self.allocator.dupe(u8, err.message) catch return error.InvalidResponse,
-            };
-            return error.RpcError;
-        }
-
-        const result = parsed.value.result orelse return error.InvalidResponse;
-        if (result.value.len == 0) return self.allocator.alloc(?SignatureStatus, 0);
-
-        const copied = try self.allocator.alloc(?SignatureStatus, result.value.len);
-
-        for (result.value, 0..) |entry, index| {
-            if (entry) |status| {
-                copied[index] = SignatureStatus{
-                    .confirmation_status = if (status.confirmationStatus) |value| try self.allocator.dupe(u8, value) else null,
-                    .has_error = status.err != null,
-                    .slot = status.slot,
-                    .confirmations = status.confirmations,
-                };
-            } else {
-                copied[index] = null;
-            }
-        }
-
-        return copied;
-    }
-
-    pub fn getSignatureStatusesWithConfig(
-        self: *RpcClient,
-        signatures: []const []const u8,
-        options: ?SignatureStatusesQueryOptions,
-    ) ![]?SignatureStatus {
-        return try self.getSignatureStatusesWithOptions(signatures, options);
-    }
-
-    pub fn getSignatureStatuses(self: *RpcClient, signatures: []const []const u8, commitment: ?Commitment) ![]?SignatureStatus {
-        return try self.getSignatureStatusesWithOptions(
-            signatures,
-            if (commitment) |value| .{ .commitment = value } else null,
-        );
-    }
-
-    pub fn getSignatureStatusesWithHistory(self: *RpcClient, signatures: []const []const u8) ![]?SignatureStatus {
-        return try self.getSignatureStatusesWithOptions(signatures, .{ .search_transaction_history = true });
-    }
-
-    pub fn getSignatureStatusesWithCommitmentAndHistory(
-        self: *RpcClient,
-        signatures: []const []const u8,
-        commitment: ?Commitment,
-    ) ![]?SignatureStatus {
-        return try self.getSignatureStatusesWithOptions(
-            signatures,
-            .{
-                .search_transaction_history = true,
-                .commitment = commitment,
-            },
-        );
-    }
-
-    pub fn confirmTransaction(
-        self: *RpcClient,
-        signature: []const u8,
-        commitment: ?Commitment,
-        search_transaction_history: bool,
-    ) !bool {
-        const signature_status_options = if (search_transaction_history or commitment != null)
-            SignatureStatusesQueryOptions{
-                .search_transaction_history = search_transaction_history,
-                .commitment = commitment,
-            }
-        else
-            null;
-
-        const status = self.getSignatureStatusWithOptions(
-            signature,
-            signature_status_options,
-        ) catch |err| switch (err) {
-            error.TransactionNotFound => return false,
-            else => return err,
-        };
-        defer if (status.confirmation_status) |value| self.allocator.free(value);
-
-        if (status.has_error) return false;
-        return confirmationSatisfiesCommitment(status.confirmation_status, commitment);
-    }
-
-    pub fn getNumBlocksSinceSignatureConfirmation(
-        self: *RpcClient,
-        signature: []const u8,
-        search_transaction_history: bool,
-    ) !u64 {
-        return try self.getNumBlocksSinceSignatureConfirmationWithCommitment(
-            signature,
-            null,
-            search_transaction_history,
-        );
-    }
-
-    pub fn getNumBlocksSinceSignatureConfirmationWithCommitment(
-        self: *RpcClient,
-        signature: []const u8,
-        commitment: ?Commitment,
-        search_transaction_history: bool,
-    ) !u64 {
-        const status = try self.getSignatureStatusWithOptions(
-            signature,
-            if (search_transaction_history or commitment != null)
-                SignatureStatusesQueryOptions{
-                    .search_transaction_history = search_transaction_history,
-                    .commitment = commitment,
-                }
-            else
-                null,
-        );
-        defer if (status.confirmation_status) |value| self.allocator.free(value);
-
-        return status.confirmations orelse max_lockout_history + 1;
-    }
-
-    const SignatureForAddressResult = struct {
-        signature: []const u8 = "",
-        slot: u64 = 0,
-        err: ?json.Value = null,
-        memo: ?[]const u8 = null,
-        confirmationStatus: ?[]const u8 = null,
-        blockTime: ?i64 = null,
-    };
-
-    pub fn getSignaturesForAddress(
-        self: *RpcClient,
-        address: []const u8,
-        before: ?[]const u8,
-        until: ?[]const u8,
-        limit: ?u64,
-        commitment: ?Commitment,
-    ) ![]SignatureForAddress {
-        return try self.getSignaturesForAddressWithOptions(
-            address,
-            .{
-                .before = before,
-                .until = until,
-                .limit = limit,
-                .commitment = commitment,
-            },
-        );
-    }
-
-    pub fn getSignaturesForAddressWithConfig(
-        self: *RpcClient,
-        address: []const u8,
-        options: ?SignaturesForAddressOptions,
-    ) ![]SignatureForAddress {
-        return try self.getSignaturesForAddressWithOptions(address, options);
-    }
-
-    pub fn getSignaturesForAddressWithOptions(
-        self: *RpcClient,
-        address: []const u8,
-        options: ?SignaturesForAddressOptions,
-    ) ![]SignatureForAddress {
-        const params = try self.serializeSignaturesForAddressParams(address, options);
-        defer self.allocator.free(params);
-
-        const response = try self.sendRequest("getSignaturesForAddress", params);
-        defer self.allocator.free(response);
-
-        try self.captureRpcError(response);
-
-        const ParsedEnvelope = struct {
-            jsonrpc: []const u8 = "",
-            id: u64 = 0,
-            result: ?[]SignatureForAddressResult = null,
-        };
-
-        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
-        defer parsed.deinit();
-
-        const source = parsed.value.result orelse return error.InvalidResponse;
-        const copied = try self.allocator.alloc(SignatureForAddress, source.len);
-
-        for (source, 0..) |entry, idx| {
-            copied[idx] = SignatureForAddress{
-                .signature = try self.allocator.dupe(u8, entry.signature),
-                .slot = entry.slot,
-                .block_time = entry.blockTime,
-                .confirmation_status = if (entry.confirmationStatus) |status| try self.allocator.dupe(u8, status) else null,
-                .memo = if (entry.memo) |memo| try self.allocator.dupe(u8, memo) else null,
-                .has_error = entry.err != null,
-            };
-        }
-
-        return copied;
-    }
-
-    pub fn pollGetBalanceWithCommitmentAndTimeouts(
-        self: *RpcClient,
-        account: []const u8,
-        commitment: ?Commitment,
-        timeout_ms: u64,
-        poll_interval_ms: u64,
-    ) !u64 {
-        const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
-        var last_error: ?anyerror = null;
-
-        while (std.time.milliTimestamp() < deadline) {
-            const balance_result = self.getBalance(account, commitment);
-            if (balance_result) |balance| {
-                return balance;
-            } else |err| {
-                last_error = err;
-            }
-
-            std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
-        }
-
-        if (last_error) |err| return err;
-        return error.Timeout;
-    }
-
-    pub fn pollGetBalanceWithCommitment(self: *RpcClient, account: []const u8, commitment: ?Commitment) !u64 {
-        return try self.pollGetBalanceWithCommitmentAndTimeouts(
-            account,
-            commitment,
-            default_balance_poll_timeout_ms,
-            default_balance_poll_interval_ms,
-        );
-    }
-
-    pub fn waitForBalanceWithCommitmentAndTimeouts(
-        self: *RpcClient,
-        account: []const u8,
-        expected_balance: ?u64,
-        commitment: ?Commitment,
-        timeout_ms: u64,
-        poll_interval_ms: u64,
-    ) !u64 {
-        const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
-        var last_error: ?anyerror = null;
-
-        while (std.time.milliTimestamp() < deadline) {
-            const balance_result = self.getBalance(account, commitment);
-            if (balance_result) |balance| {
-                last_error = null;
-                if (expected_balance == null or balance == expected_balance.?) {
-                    return balance;
-                }
-            } else |err| {
-                last_error = err;
-            }
-
-            std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
-        }
-
-        if (last_error) |err| return err;
-        return error.Timeout;
-    }
-
-    pub fn waitForBalanceWithCommitment(
-        self: *RpcClient,
-        account: []const u8,
-        expected_balance: ?u64,
-        commitment: ?Commitment,
-    ) !u64 {
-        var run: usize = 0;
-
-        while (true) {
-            const balance_result = self.pollGetBalanceWithCommitment(account, commitment);
-            if (expected_balance == null) return balance_result;
-
-            if (balance_result) |balance| {
-                if (balance == expected_balance.?) return balance;
-            } else |err| {
-                if (run == wait_for_balance_error_retries) return err;
-            }
-
-            run += 1;
-        }
-    }
-
-    pub fn waitForSignatureStatus(
-        self: *RpcClient,
-        signature: []const u8,
-        commitment: ?Commitment,
-        search_transaction_history: bool,
-        timeout_ms: u64,
-        poll_interval_ms: u64,
-        strict: bool,
-    ) !void {
-        const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
-
-        while (std.time.milliTimestamp() < deadline) {
-            const status_options = if (search_transaction_history or commitment != null)
-                SignatureStatusesQueryOptions{
-                    .search_transaction_history = search_transaction_history,
-                    .commitment = commitment,
-                }
-            else
-                null;
-
-            const status = self.getSignatureStatusWithOptions(signature, status_options) catch |err| {
-                switch (err) {
-                    error.TransactionNotFound => {
-                        std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
-                        continue;
-                    },
-                    else => return err,
-                }
-            };
-
-            defer {
-                if (status.confirmation_status) |value| {
-                    self.allocator.free(value);
-                }
-            }
-
-            if (strict and status.has_error) return error.TransactionFailed;
-            if (confirmationSatisfiesCommitment(status.confirmation_status, commitment)) {
-                return;
-            }
-            if (!strict and status.has_error and commitment == null) {
-                return;
-            }
-
-            std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
-        }
-
-        return error.TransactionNotConfirmed;
-    }
-
-    pub fn pollForSignature(self: *RpcClient, signature: []const u8, commitment: ?Commitment, search_transaction_history: bool) !void {
-        try self.waitForSignatureStatus(
-            signature,
-            commitment,
-            search_transaction_history,
-            poll_for_signature_timeout_ms,
-            signature_poll_interval_ms,
-            false,
-        );
-    }
-
-    pub fn pollForSignatureConfirmationWithTimeouts(
-        self: *RpcClient,
-        signature: []const u8,
-        min_confirmed_blocks: u64,
-        search_transaction_history: bool,
-        timeout_ms: u64,
-        poll_interval_ms: u64,
-    ) !u64 {
-        return try self.pollForSignatureConfirmationWithCommitmentAndTimeouts(
-            signature,
-            min_confirmed_blocks,
-            null,
-            search_transaction_history,
-            timeout_ms,
-            poll_interval_ms,
-        );
-    }
-
-    pub fn pollForSignatureConfirmationWithCommitmentAndTimeouts(
-        self: *RpcClient,
-        signature: []const u8,
-        min_confirmed_blocks: u64,
-        commitment: ?Commitment,
-        search_transaction_history: bool,
-        timeout_ms: u64,
-        poll_interval_ms: u64,
-    ) !u64 {
-        const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
-        var confirmed_blocks: ?u64 = null;
-
-        while (std.time.milliTimestamp() < deadline) {
-            const status = self.getSignatureStatusWithOptions(
-                signature,
-                if (search_transaction_history or commitment != null)
-                    SignatureStatusesQueryOptions{
-                        .search_transaction_history = search_transaction_history,
-                        .commitment = commitment,
-                    }
-                else
-                    null,
-            ) catch |err| switch (err) {
-                error.TransactionNotFound => {
-                    std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
-                    continue;
-                },
-                else => return err,
-            };
-            defer if (status.confirmation_status) |value| self.allocator.free(value);
-
-            if (commitment != null and !confirmationSatisfiesCommitment(status.confirmation_status, commitment)) {
-                std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
-                continue;
-            }
-
-            const current_confirmed_blocks = status.confirmations orelse max_lockout_history + 1;
-            confirmed_blocks = current_confirmed_blocks;
-            if (current_confirmed_blocks >= min_confirmed_blocks) return current_confirmed_blocks;
-
-            std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
-        }
-
-        if (confirmed_blocks) |value| {
-            return value;
-        }
-        return error.TransactionNotConfirmed;
-    }
-
-    pub fn pollForSignatureConfirmation(
-        self: *RpcClient,
-        signature: []const u8,
-        min_confirmed_blocks: u64,
-        search_transaction_history: bool,
-    ) !u64 {
-        return try self.pollForSignatureConfirmationWithTimeouts(
-            signature,
-            min_confirmed_blocks,
-            search_transaction_history,
-            poll_for_signature_confirmation_timeout_ms,
-            signature_poll_interval_ms,
-        );
-    }
-
-    pub fn sendTransactionAndConfirm(
-        self: *RpcClient,
-        signed_tx_base64: []const u8,
-        options: ?SendTransactionOptions,
-        commitment: ?Commitment,
-        search_transaction_history: bool,
-        timeout_ms: u64,
-        poll_interval_ms: u64,
-    ) ![]const u8 {
-        const signature = try self.sendTransaction(signed_tx_base64, options);
-        errdefer self.allocator.free(signature);
-
-        try self.waitForSignatureStatus(
-            signature,
-            commitment,
-            search_transaction_history,
-            timeout_ms,
-            poll_interval_ms,
-            true,
-        );
-
-        return signature;
-    }
 };
 
 fn acceptMockRootConnection(listener: *std.net.Server) ?std.net.Server.Connection {
@@ -5235,6 +3896,139 @@ test "root.send delegates to sendTransaction" {
     );
 }
 
+test "root.sendTransactionTyped serializes signed legacy transaction" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = [_]u8{0x12} ** 32;
+
+    const keypair = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const transfer = SystemProgram.transfer(
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    const transaction = LegacyTransaction{
+        .message = .{
+            .payer = keypair.public_key,
+            .recent_blockhash = Hash.fromBytes(recent_blockhash),
+            .instructions = instructions[0..],
+        },
+    };
+    var signed = try transaction.sign(allocator, &.{keypair});
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":"SigTyped111111111111111111111111111111111111111111111111111111111111111","id":1}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const signature = try client.sendTransactionTyped(
+        signed,
+        .{
+            .skip_preflight = true,
+            .preflight_commitment = .confirmed,
+        },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigTyped111111111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"sendTransaction\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"preflightCommitment\":\"confirmed\"") != null);
+}
+
+test "root.sendLegacyTransaction signs and serializes legacy transaction" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = [_]u8{0x12} ** 32;
+
+    const keypair = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const transfer = SystemProgram.transfer(
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    const transaction = LegacyTransaction{
+        .message = .{
+            .payer = keypair.public_key,
+            .recent_blockhash = Hash.fromBytes(recent_blockhash),
+            .instructions = instructions[0..],
+        },
+    };
+
+    const encoded = try transaction.toBase64(allocator, &.{keypair});
+    defer allocator.free(encoded);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":"SigLegacy11111111111111111111111111111111111111111111111111111111111111","id":1}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const signature = try client.sendLegacyTransaction(transaction, &.{keypair}, .{ .skip_preflight = true });
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigLegacy11111111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"sendTransaction\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"skipPreflight\":true") != null);
+}
+
 test "root.getAccount wrappers return decoded account info" {
     const allocator = std.testing.allocator;
     var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
@@ -5407,6 +4201,81 @@ test "root.sendAndConfirmTransaction aliases wait on signature status" {
         "Sig111111111111111111111111111111111111111111111111111111111111111111",
         signature,
     );
+}
+
+test "root.sendTransactionAndConfirmTyped submits and confirms signed legacy transaction" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = [_]u8{0x12} ** 32;
+
+    const keypair = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const transfer = SystemProgram.transfer(
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    const transaction = LegacyTransaction{
+        .message = .{
+            .payer = keypair.public_key,
+            .recent_blockhash = Hash.fromBytes(recent_blockhash),
+            .instructions = instructions[0..],
+        },
+    };
+    var signed = try transaction.sign(allocator, &.{keypair});
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":"SigTypedConfirm11111111111111111111111111111111111111111111111111111111111","id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[{"slot":10,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":2}
+    };
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const signature = try client.sendTransactionAndConfirmTyped(
+        signed,
+        .{ .skip_preflight = true },
+        null,
+        true,
+        2_000,
+        20,
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigTypedConfirm11111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"sendTransaction\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"getSignatureStatuses\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"searchTransactionHistory\":true") != null);
 }
 
 test "root.sendAndConfirmTransactionWithConfig supports send options" {
@@ -5861,6 +4730,127 @@ test "root.simulateTransactionWithConfig delegates to simulateTransaction" {
     const result = try client.simulateTransactionWithConfig("signed-transaction-base64", null);
     try std.testing.expectEqual(@as(u64, 120), result.fee.?);
     try std.testing.expectEqual(@as(u64, 42), result.units_consumed.?);
+}
+
+test "root.simulateTransactionTyped serializes signed legacy transaction" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = [_]u8{0x12} ** 32;
+
+    const keypair = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const transfer = SystemProgram.transfer(
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    const transaction = LegacyTransaction{
+        .message = .{
+            .payer = keypair.public_key,
+            .recent_blockhash = Hash.fromBytes(recent_blockhash),
+            .instructions = instructions[0..],
+        },
+    };
+    var signed = try transaction.sign(allocator, &.{keypair});
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":{"accounts":[],"err":null,"fee":120,"unitsConsumed":42}},"id":1}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const result = try client.simulateTransactionTyped(
+        signed,
+        .{ .sig_verify = true, .replace_recent_blockhash = true },
+    );
+    try std.testing.expectEqual(@as(u64, 120), result.fee.?);
+    try std.testing.expectEqual(@as(u64, 42), result.units_consumed.?);
+    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"simulateTransaction\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"sigVerify\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"replaceRecentBlockhash\":true") != null);
+}
+
+test "root.simulateLegacyTransaction signs and serializes legacy transaction" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = [_]u8{0x12} ** 32;
+
+    const keypair = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const transfer = SystemProgram.transfer(
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    const transaction = LegacyTransaction{
+        .message = .{
+            .payer = keypair.public_key,
+            .recent_blockhash = Hash.fromBytes(recent_blockhash),
+            .instructions = instructions[0..],
+        },
+    };
+
+    const encoded = try transaction.toBase64(allocator, &.{keypair});
+    defer allocator.free(encoded);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":{"accounts":[],"err":null,"fee":120,"unitsConsumed":42}},"id":1}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const result = try client.simulateLegacyTransaction(transaction, &.{keypair}, .{ .sig_verify = true });
+    try std.testing.expectEqual(@as(u64, 120), result.fee.?);
+    try std.testing.expectEqual(@as(u64, 42), result.units_consumed.?);
+    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"sigVerify\":true") != null);
 }
 
 test "root.getAccountInfo params serialization" {
@@ -6340,6 +5330,122 @@ test "root.encodeBase58 roundtrips decodeBase58" {
     try std.testing.expect(std.mem.eql(u8, &source, decoded));
 }
 
+test "root.LegacyMessage serializes system transfer" {
+    const allocator = std.testing.allocator;
+
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = [_]u8{0x12} ** 32;
+
+    const transfer = SystemProgram.transfer(
+        Pubkey.fromBytes(sender_key_pair.public_key.toBytes()),
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    const message = LegacyMessage{
+        .payer = Pubkey.fromBytes(sender_key_pair.public_key.toBytes()),
+        .recent_blockhash = Hash.fromBytes(recent_blockhash),
+        .instructions = instructions[0..],
+    };
+
+    const serialized = try message.serialize(allocator);
+    defer allocator.free(serialized);
+
+    const expected = try buildLegacyTransferMessage(
+        allocator,
+        sender_key_pair.public_key.toBytes(),
+        destination_key_pair.public_key.toBytes(),
+        recent_blockhash,
+        1_000,
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expect(std.mem.eql(u8, expected, serialized));
+}
+
+test "root.LegacyTransaction signs system transfer" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const recent_blockhash = [_]u8{0x12} ** 32;
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const keypair = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const transfer = SystemProgram.transfer(
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    const transaction = LegacyTransaction{
+        .message = .{
+            .payer = keypair.public_key,
+            .recent_blockhash = Hash.fromBytes(recent_blockhash),
+            .instructions = instructions[0..],
+        },
+    };
+
+    var signed = try transaction.sign(allocator, &.{keypair});
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try buildLegacyTransferTransaction(
+        allocator,
+        &sender_secret_key,
+        &destination_key_pair.public_key.toBytes(),
+        &recent_blockhash,
+        1_000,
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqual(@as(usize, 1), signed.signatures.len);
+    try std.testing.expect(std.mem.eql(u8, expected, encoded));
+}
+
+test "root.LegacyTransaction toBase64 matches signed transfer payload" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const recent_blockhash = [_]u8{0x12} ** 32;
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const keypair = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const transfer = SystemProgram.transfer(
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    const transaction = LegacyTransaction{
+        .message = .{
+            .payer = keypair.public_key,
+            .recent_blockhash = Hash.fromBytes(recent_blockhash),
+            .instructions = instructions[0..],
+        },
+    };
+
+    const encoded = try transaction.toBase64(allocator, &.{keypair});
+    defer allocator.free(encoded);
+
+    const expected = try buildLegacyTransferTransaction(
+        allocator,
+        &sender_secret_key,
+        &destination_key_pair.public_key.toBytes(),
+        &recent_blockhash,
+        1_000,
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expect(std.mem.eql(u8, expected, encoded));
+}
+
 test "root.buildLegacyTransferTransaction builds valid signed transfer payload" {
     const allocator = std.testing.allocator;
 
@@ -6471,6 +5577,70 @@ test "root.buildTransferTransactionWithOptions fetches latest blockhash" {
     var tx_bytes = try allocator.alloc(u8, tx_bytes_len);
     defer allocator.free(tx_bytes);
     try std.base64.standard.Decoder.decode(tx_bytes, encoded_transaction);
+
+    const message = tx_bytes[1 + Ed25519.Signature.encoded_length ..];
+    try std.testing.expect(std.mem.eql(u8, message[100..132], &recent_blockhash));
+}
+
+test "root.buildTransferSignedTransactionWithOptions fetches latest blockhash" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_public_key = destination_key_pair.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x12} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_body = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":9}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":55}}}},\"id\":1}}",
+        .{recent_blockhash_base58},
+    );
+    defer allocator.free(response_body);
+
+    const response_bodies = [_][]const u8{response_body};
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    var signed = try client.buildTransferSignedTransactionWithOptions(
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        .{ .blockhash_commitment = .confirmed },
+    );
+    defer signed.deinit(allocator);
+
+    const tx_bytes = try signed.serialize(allocator);
+    defer allocator.free(tx_bytes);
+
+    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getLatestBlockhash\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"commitment\":\"confirmed\"") != null);
 
     const message = tx_bytes[1 + Ed25519.Signature.encoded_length ..];
     try std.testing.expect(std.mem.eql(u8, message[100..132], &recent_blockhash));
@@ -7184,6 +6354,57 @@ test "root.getFeeForMessageResponse preserves context slot" {
     try std.testing.expectEqual(@as(?u64, 5000), fee_response.value);
 }
 
+test "root.getFeeForMessageTyped serializes typed legacy message" {
+    const allocator = std.testing.allocator;
+
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = [_]u8{0x12} ** 32;
+
+    const transfer = SystemProgram.transfer(
+        Pubkey.fromBytes(sender_key_pair.public_key.toBytes()),
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    const message = LegacyMessage{
+        .payer = Pubkey.fromBytes(sender_key_pair.public_key.toBytes()),
+        .recent_blockhash = Hash.fromBytes(recent_blockhash),
+        .instructions = instructions[0..],
+    };
+    const encoded_message = try message.toBase64(allocator);
+    defer allocator.free(encoded_message);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":123},"value":5000},"id":1}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const fee = try client.getFeeForMessageTyped(message, .processed);
+    try std.testing.expectEqual(@as(?u64, 5000), fee.value);
+    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getFeeForMessage\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded_message) != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"commitment\":\"processed\"") != null);
+}
+
 test "root.recentPerformanceSamples params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
@@ -7570,4 +6791,463 @@ test "root.getBlockProduction params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, with_config_json, "\"identity\":\"Identity1111111111111111111111111111111111\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_config_json, "\"firstSlot\":100") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_config_json, "\"lastSlot\":200") != null);
+}
+
+test "root.VersionedMessageV0 serializes system transfer with lookup table references" {
+    const allocator = std.testing.allocator;
+
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const lookup_table_key_pair = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const recent_blockhash = [_]u8{0x12} ** 32;
+
+    const transfer_instruction = SystemProgram.transfer(
+        Pubkey.fromBytes(sender_key_pair.public_key.toBytes()),
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const account_indexes = [_]u8{ 0, 1 };
+    const instructions = [_]CompiledInstruction{
+        .{
+            .program_id_index = 2,
+            .account_indexes = account_indexes[0..],
+            .data = transfer_instruction.data[0..],
+        },
+    };
+    const writable_indexes = [_]u8{ 0, 2 };
+    const readonly_indexes = [_]u8{1};
+    const lookups = [_]MessageAddressTableLookup{
+        .{
+            .account_key = Pubkey.fromBytes(lookup_table_key_pair.public_key.toBytes()),
+            .writable_indexes = writable_indexes[0..],
+            .readonly_indexes = readonly_indexes[0..],
+        },
+    };
+    const account_keys = [_]Pubkey{
+        Pubkey.fromBytes(sender_key_pair.public_key.toBytes()),
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        SystemProgram.id(),
+    };
+    const message = VersionedMessageV0{
+        .header = .{
+            .num_required_signatures = 1,
+            .num_readonly_signed_accounts = 0,
+            .num_readonly_unsigned_accounts = 1,
+        },
+        .account_keys = account_keys[0..],
+        .recent_blockhash = Hash.fromBytes(recent_blockhash),
+        .instructions = instructions[0..],
+        .address_table_lookups = lookups[0..],
+    };
+
+    const serialized = try message.serialize(allocator);
+    defer allocator.free(serialized);
+
+    const expected = try buildVersionedTransferMessageBytes(
+        allocator,
+        sender_key_pair.public_key.toBytes(),
+        destination_key_pair.public_key.toBytes(),
+        recent_blockhash,
+        1_000,
+        lookups[0..],
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expect(std.mem.eql(u8, expected, serialized));
+}
+
+test "root.VersionedTransaction signs system transfer" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = [_]u8{0x12} ** 32;
+
+    const keypair = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const transfer_instruction = SystemProgram.transfer(
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const account_indexes = [_]u8{ 0, 1 };
+    const instructions = [_]CompiledInstruction{
+        .{
+            .program_id_index = 2,
+            .account_indexes = account_indexes[0..],
+            .data = transfer_instruction.data[0..],
+        },
+    };
+    const address_table_lookups = [_]MessageAddressTableLookup{};
+    const account_keys = [_]Pubkey{
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        SystemProgram.id(),
+    };
+    const transaction = VersionedTransaction{
+        .message = .{
+            .header = .{
+                .num_required_signatures = 1,
+                .num_readonly_signed_accounts = 0,
+                .num_readonly_unsigned_accounts = 1,
+            },
+            .account_keys = account_keys[0..],
+            .recent_blockhash = Hash.fromBytes(recent_blockhash),
+            .instructions = instructions[0..],
+            .address_table_lookups = address_table_lookups[0..],
+        },
+    };
+
+    var signed = try transaction.sign(allocator, &.{keypair});
+    defer signed.deinit(allocator);
+
+    const expected_signature = try keypair.signMessage(signed.message_bytes);
+    try std.testing.expectEqual(@as(usize, 1), signed.signatures.len);
+    try std.testing.expect(std.mem.eql(u8, expected_signature.bytes[0..], signed.signatures[0].bytes[0..]));
+
+    const serialized = try signed.serialize(allocator);
+    defer allocator.free(serialized);
+
+    try std.testing.expectEqual(@as(usize, 1 + Ed25519.Signature.encoded_length + signed.message_bytes.len), serialized.len);
+    try std.testing.expectEqual(@as(u8, 1), serialized[0]);
+    try std.testing.expect(std.mem.eql(u8, expected_signature.bytes[0..], serialized[1 .. 1 + Ed25519.Signature.encoded_length]));
+    try std.testing.expect(std.mem.eql(u8, signed.message_bytes, serialized[1 + Ed25519.Signature.encoded_length ..]));
+}
+
+test "root.sendVersionedTransactionTyped serializes signed versioned transaction" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = [_]u8{0x12} ** 32;
+
+    const keypair = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const transfer_instruction = SystemProgram.transfer(
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const account_indexes = [_]u8{ 0, 1 };
+    const instructions = [_]CompiledInstruction{
+        .{
+            .program_id_index = 2,
+            .account_indexes = account_indexes[0..],
+            .data = transfer_instruction.data[0..],
+        },
+    };
+    const address_table_lookups = [_]MessageAddressTableLookup{};
+    const account_keys = [_]Pubkey{
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        SystemProgram.id(),
+    };
+    const transaction = VersionedTransaction{
+        .message = .{
+            .header = .{
+                .num_required_signatures = 1,
+                .num_readonly_signed_accounts = 0,
+                .num_readonly_unsigned_accounts = 1,
+            },
+            .account_keys = account_keys[0..],
+            .recent_blockhash = Hash.fromBytes(recent_blockhash),
+            .instructions = instructions[0..],
+            .address_table_lookups = address_table_lookups[0..],
+        },
+    };
+    var signed = try transaction.sign(allocator, &.{keypair});
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":"SigVersioned1111111111111111111111111111111111111111111111111111111111111","id":1}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const signature = try client.sendVersionedTransactionTyped(
+        signed,
+        .{
+            .skip_preflight = true,
+            .preflight_commitment = .confirmed,
+        },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigVersioned1111111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"sendTransaction\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"preflightCommitment\":\"confirmed\"") != null);
+}
+
+test "root.simulateVersionedTransactionTyped serializes signed versioned transaction" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = [_]u8{0x12} ** 32;
+
+    const keypair = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const transfer_instruction = SystemProgram.transfer(
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const account_indexes = [_]u8{ 0, 1 };
+    const instructions = [_]CompiledInstruction{
+        .{
+            .program_id_index = 2,
+            .account_indexes = account_indexes[0..],
+            .data = transfer_instruction.data[0..],
+        },
+    };
+    const address_table_lookups = [_]MessageAddressTableLookup{};
+    const account_keys = [_]Pubkey{
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        SystemProgram.id(),
+    };
+    const transaction = VersionedTransaction{
+        .message = .{
+            .header = .{
+                .num_required_signatures = 1,
+                .num_readonly_signed_accounts = 0,
+                .num_readonly_unsigned_accounts = 1,
+            },
+            .account_keys = account_keys[0..],
+            .recent_blockhash = Hash.fromBytes(recent_blockhash),
+            .instructions = instructions[0..],
+            .address_table_lookups = address_table_lookups[0..],
+        },
+    };
+    var signed = try transaction.sign(allocator, &.{keypair});
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":{"accounts":[],"err":null,"fee":120,"unitsConsumed":42}},"id":1}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const result = try client.simulateVersionedTransactionTyped(
+        signed,
+        .{ .sig_verify = true, .replace_recent_blockhash = true },
+    );
+    try std.testing.expectEqual(@as(u64, 120), result.fee.?);
+    try std.testing.expectEqual(@as(u64, 42), result.units_consumed.?);
+    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"simulateTransaction\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"sigVerify\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"replaceRecentBlockhash\":true") != null);
+}
+
+test "root.sendAndConfirmVersionedTransactionTyped submits and confirms signed versioned transaction" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = [_]u8{0x12} ** 32;
+
+    const keypair = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const transfer_instruction = SystemProgram.transfer(
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const account_indexes = [_]u8{ 0, 1 };
+    const instructions = [_]CompiledInstruction{
+        .{
+            .program_id_index = 2,
+            .account_indexes = account_indexes[0..],
+            .data = transfer_instruction.data[0..],
+        },
+    };
+    const address_table_lookups = [_]MessageAddressTableLookup{};
+    const account_keys = [_]Pubkey{
+        keypair.public_key,
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        SystemProgram.id(),
+    };
+    const transaction = VersionedTransaction{
+        .message = .{
+            .header = .{
+                .num_required_signatures = 1,
+                .num_readonly_signed_accounts = 0,
+                .num_readonly_unsigned_accounts = 1,
+            },
+            .account_keys = account_keys[0..],
+            .recent_blockhash = Hash.fromBytes(recent_blockhash),
+            .instructions = instructions[0..],
+            .address_table_lookups = address_table_lookups[0..],
+        },
+    };
+    var signed = try transaction.sign(allocator, &.{keypair});
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":"SigVersionedConfirm111111111111111111111111111111111111111111111111111111111","id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[{"slot":10,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":2}
+    };
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const signature = try client.sendAndConfirmVersionedTransactionTyped(
+        signed,
+        .{ .skip_preflight = true },
+        null,
+        true,
+        2_000,
+        20,
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigVersionedConfirm111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"sendTransaction\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"getSignatureStatuses\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"searchTransactionHistory\":true") != null);
+}
+
+test "root.getFeeForVersionedMessageTyped serializes typed v0 message" {
+    const allocator = std.testing.allocator;
+
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = [_]u8{0x12} ** 32;
+
+    const transfer_instruction = SystemProgram.transfer(
+        Pubkey.fromBytes(sender_key_pair.public_key.toBytes()),
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        1_000,
+    );
+    const account_indexes = [_]u8{ 0, 1 };
+    const instructions = [_]CompiledInstruction{
+        .{
+            .program_id_index = 2,
+            .account_indexes = account_indexes[0..],
+            .data = transfer_instruction.data[0..],
+        },
+    };
+    const address_table_lookups = [_]MessageAddressTableLookup{};
+    const account_keys = [_]Pubkey{
+        Pubkey.fromBytes(sender_key_pair.public_key.toBytes()),
+        Pubkey.fromBytes(destination_key_pair.public_key.toBytes()),
+        SystemProgram.id(),
+    };
+    const message = VersionedMessageV0{
+        .header = .{
+            .num_required_signatures = 1,
+            .num_readonly_signed_accounts = 0,
+            .num_readonly_unsigned_accounts = 1,
+        },
+        .account_keys = account_keys[0..],
+        .recent_blockhash = Hash.fromBytes(recent_blockhash),
+        .instructions = instructions[0..],
+        .address_table_lookups = address_table_lookups[0..],
+    };
+    const encoded_message = try message.toBase64(allocator);
+    defer allocator.free(encoded_message);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":123},"value":5000},"id":1}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const fee = try client.getFeeForVersionedMessageTyped(message, .processed);
+    try std.testing.expectEqual(@as(?u64, 5000), fee.value);
+    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getFeeForMessage\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded_message) != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"commitment\":\"processed\"") != null);
 }

@@ -51,7 +51,7 @@ fn resolveTransferSenderSecretKey(
         const sender_secret_key_bytes = try loadSecretKeyFromKeypairFile(allocator, resolved_path);
         defer allocator.free(sender_secret_key_bytes);
 
-        return try encodeBase58(allocator, sender_secret_key_bytes);
+        return try client.encodeBase58(allocator, sender_secret_key_bytes);
     }
 
     if (sender_secret_key_arg) |value| {
@@ -65,7 +65,7 @@ fn resolveTransferSenderSecretKey(
     const sender_secret_key_bytes = try loadSecretKeyFromKeypairFile(allocator, default_path);
     defer allocator.free(sender_secret_key_bytes);
 
-    return try encodeBase58(allocator, sender_secret_key_bytes);
+    return try client.encodeBase58(allocator, sender_secret_key_bytes);
 }
 
 pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli.ParsedArgs) !void {
@@ -2552,44 +2552,6 @@ fn runMockRequestSequenceServer(
     }
 }
 
-fn encodeBase58(allocator: Allocator, bytes: []const u8) ![]u8 {
-    const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
-    var leading_zeroes: usize = 0;
-    while (leading_zeroes < bytes.len and bytes[leading_zeroes] == 0) : (leading_zeroes += 1) {}
-
-    var digits = std.ArrayList(u8).empty;
-    defer digits.deinit(allocator);
-
-    for (bytes) |byte| {
-        var carry: u32 = byte;
-        var index: usize = 0;
-        while (index < digits.items.len) : (index += 1) {
-            const value = @as(u32, digits.items[index]) * 256 + carry;
-            digits.items[index] = @intCast(value % 58);
-            carry = value / 58;
-        }
-        while (carry > 0) {
-            try digits.append(allocator, @intCast(carry % 58));
-            carry /= 58;
-        }
-    }
-
-    var encoded = std.ArrayList(u8).empty;
-    errdefer encoded.deinit(allocator);
-
-    for (0..leading_zeroes) |_| {
-        try encoded.append(allocator, '1');
-    }
-
-    var index = digits.items.len;
-    while (index > 0) : (index -= 1) {
-        try encoded.append(allocator, alphabet[digits.items[index - 1]]);
-    }
-
-    return try encoded.toOwnedSlice(allocator);
-}
-
 fn writeKeypairJsonFile(allocator: Allocator, path: []const u8, secret_key: []const u8) !void {
     if (std.fs.path.dirname(path)) |parent_path| {
         try std.fs.cwd().makePath(parent_path);
@@ -4829,7 +4791,7 @@ test "commands.resolveTransferSenderSecretKey loads default Solana id.json" {
     const sender_seed = [_]u8{7} ** 32;
     const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
     const sender_secret_key = sender_key_pair.secret_key.toBytes();
-    const expected_secret_key = try encodeBase58(allocator, &sender_secret_key);
+    const expected_secret_key = try client.encodeBase58(allocator, &sender_secret_key);
     defer allocator.free(expected_secret_key);
 
     var tmp = std.testing.tmpDir(.{});
@@ -4854,7 +4816,7 @@ test "commands.resolveTransferSenderSecretKey expands sender keypair tilde path"
     const sender_seed = [_]u8{9} ** 32;
     const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
     const sender_secret_key = sender_key_pair.secret_key.toBytes();
-    const expected_secret_key = try encodeBase58(allocator, &sender_secret_key);
+    const expected_secret_key = try client.encodeBase58(allocator, &sender_secret_key);
     defer allocator.free(expected_secret_key);
 
     var tmp = std.testing.tmpDir(.{});
@@ -4879,16 +4841,16 @@ test "runCommand transfer fetches blockhash builds transaction and confirms sign
     const sender_seed = [_]u8{7} ** 32;
     const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
     const sender_secret_key = sender_key_pair.secret_key.toBytes();
-    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    const sender_secret_key_base58 = try client.encodeBase58(allocator, &sender_secret_key);
     defer allocator.free(sender_secret_key_base58);
 
     const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
     const destination_public_key = destination_key_pair.public_key.toBytes();
-    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    const destination_base58 = try client.encodeBase58(allocator, &destination_public_key);
     defer allocator.free(destination_base58);
 
     const recent_blockhash = [_]u8{0x12} ** 32;
-    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    const recent_blockhash_base58 = try client.encodeBase58(allocator, &recent_blockhash);
     defer allocator.free(recent_blockhash_base58);
 
     var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
@@ -5008,11 +4970,11 @@ test "runCommand transfer accepts sender keypair file" {
 
     const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
     const destination_public_key = destination_key_pair.public_key.toBytes();
-    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    const destination_base58 = try client.encodeBase58(allocator, &destination_public_key);
     defer allocator.free(destination_base58);
 
     const recent_blockhash = [_]u8{0x56} ** 32;
-    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    const recent_blockhash_base58 = try client.encodeBase58(allocator, &recent_blockhash);
     defer allocator.free(recent_blockhash_base58);
 
     var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});

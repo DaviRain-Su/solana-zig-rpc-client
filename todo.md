@@ -132,17 +132,17 @@ The following are still absent and should be treated as a separate effort:
 
 ### Phase 1: High Value, Do First
 
-- [ ] Introduce a minimal legacy typed SDK layer.
-- [ ] Add `Pubkey`, `Hash`, `Signature`, `Keypair`, `AccountMeta`, `Instruction`,
+- [x] Introduce a minimal legacy typed SDK layer.
+- [x] Add `Pubkey`, `Hash`, `Signature`, `Keypair`, `AccountMeta`, `Instruction`,
   `Message`, and `Transaction`.
-- [ ] Promote the current legacy SOL transfer builder into a general legacy
+- [x] Promote the current legacy SOL transfer builder into a general legacy
   message/transaction builder.
-- [ ] Add typed convenience APIs on top of existing encoded RPC paths:
-  - [ ] `sendTransactionTyped`
-  - [ ] `simulateTransactionTyped`
-  - [ ] `getFeeForMessageTyped`
-  - [ ] `sendAndConfirmTransactionTyped`
-- [ ] Keep the first cut focused on blocking, legacy transactions only.
+- [x] Add typed convenience APIs on top of existing encoded RPC paths:
+  - [x] `sendTransactionTyped`
+  - [x] `simulateTransactionTyped`
+  - [x] `getFeeForMessageTyped`
+  - [x] `sendAndConfirmTransactionTyped`
+- [x] Keep the first cut focused on blocking, legacy transactions only.
 
 Why this phase is first:
 
@@ -152,10 +152,10 @@ Why this phase is first:
 
 ### Phase 2: Minimal v0 / ALT Support
 
-- [ ] Add `VersionedMessageV0`.
-- [ ] Add `VersionedTransaction`.
-- [ ] Add minimal address lookup table reference structures.
-- [ ] Extend typed send/simulate/fee helpers to support versioned transactions.
+- [x] Add `VersionedMessageV0`.
+- [x] Add `VersionedTransaction`.
+- [x] Add minimal address lookup table reference structures.
+- [x] Extend typed send/simulate/fee helpers to support versioned transactions.
 - [ ] Keep scope tight: enough to build, sign, serialize, and submit v0 txs.
 
 Why this phase is second:
