@@ -19,6 +19,20 @@ pub const Commitment = enum {
     finalized,
 };
 
+pub const TransactionEncoding = enum {
+    json,
+    jsonParsed,
+    base58,
+    base64,
+};
+
+pub const TransactionDetails = enum {
+    full,
+    accounts,
+    signatures,
+    none,
+};
+
 pub const RpcErrorDetail = struct {
     code: i64 = 0,
     message: []const u8 = "",
@@ -281,6 +295,20 @@ pub const SimulatedTransaction = struct {
     units_consumed: ?u64 = null,
 };
 
+pub const BlockQueryOptions = struct {
+    commitment: ?Commitment = null,
+    encoding: ?TransactionEncoding = null,
+    transaction_details: ?TransactionDetails = null,
+    rewards: ?bool = null,
+    max_supported_transaction_version: ?u8 = null,
+};
+
+pub const TransactionQueryOptions = struct {
+    commitment: ?Commitment = null,
+    encoding: ?TransactionEncoding = null,
+    max_supported_transaction_version: ?u8 = null,
+};
+
 const TokenAccountsFilterParams = struct {
     mint: ?[]const u8 = null,
     programId: ?[]const u8 = null,
@@ -295,6 +323,24 @@ fn commitmentToString(c: Commitment) []const u8 {
         .processed => "processed",
         .confirmed => "confirmed",
         .finalized => "finalized",
+    };
+}
+
+fn transactionEncodingToString(value: TransactionEncoding) []const u8 {
+    return switch (value) {
+        .json => "json",
+        .jsonParsed => "jsonParsed",
+        .base58 => "base58",
+        .base64 => "base64",
+    };
+}
+
+fn transactionDetailsToString(value: TransactionDetails) []const u8 {
+    return switch (value) {
+        .full => "full",
+        .accounts => "accounts",
+        .signatures => "signatures",
+        .none => "none",
     };
 }
 
@@ -1163,6 +1209,39 @@ pub const RpcClient = struct {
         return try self.parseResponse(response, ?i64);
     }
 
+    pub fn getBlockWithOptions(self: *RpcClient, slot: u64, options: ?BlockQueryOptions) !?[]const u8 {
+        const BlockConfig = struct {
+            commitment: ?[]const u8 = null,
+            encoding: ?[]const u8 = null,
+            transactionDetails: ?[]const u8 = null,
+            rewards: ?bool = null,
+            maxSupportedTransactionVersion: ?u8 = null,
+        };
+
+        const params_json = if (options) |value| blk: {
+            const params = .{
+                slot,
+                BlockConfig{
+                    .commitment = if (value.commitment) |entry| commitmentToString(entry) else null,
+                    .encoding = if (value.encoding) |entry| transactionEncodingToString(entry) else null,
+                    .transactionDetails = if (value.transaction_details) |entry| transactionDetailsToString(entry) else null,
+                    .rewards = value.rewards,
+                    .maxSupportedTransactionVersion = value.max_supported_transaction_version,
+                },
+            };
+            break :blk try self.serializeParams(params);
+        } else blk: {
+            const params = .{slot};
+            break :blk try self.serializeParams(params);
+        };
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest("getBlock", params_json);
+        defer self.allocator.free(response);
+
+        return try self.parseGetBlockResponse(response);
+    }
+
     pub fn getBlock(self: *RpcClient, slot: u64, commitment: ?Commitment) !?[]const u8 {
         const params = if (commitment) |value| blk: {
             const params = .{ slot, .{ .commitment = commitmentToString(value) } };
@@ -1180,6 +1259,43 @@ pub const RpcClient = struct {
     }
 
     fn parseGetBlockResponse(self: *RpcClient, response: []const u8) !?[]const u8 {
+        return try self.parseJsonValueResponse(response);
+    }
+
+    pub fn getTransaction(self: *RpcClient, signature: []const u8, options: ?TransactionQueryOptions) !?[]const u8 {
+        const TransactionConfig = struct {
+            commitment: ?[]const u8 = null,
+            encoding: ?[]const u8 = null,
+            maxSupportedTransactionVersion: ?u8 = null,
+        };
+
+        const params_json = if (options) |value| blk: {
+            const params = .{
+                signature,
+                TransactionConfig{
+                    .commitment = if (value.commitment) |entry| commitmentToString(entry) else null,
+                    .encoding = if (value.encoding) |entry| transactionEncodingToString(entry) else null,
+                    .maxSupportedTransactionVersion = value.max_supported_transaction_version,
+                },
+            };
+            break :blk try self.serializeParams(params);
+        } else blk: {
+            const params = .{signature};
+            break :blk try self.serializeParams(params);
+        };
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest("getTransaction", params_json);
+        defer self.allocator.free(response);
+
+        return try self.parseGetTransactionResponse(response);
+    }
+
+    fn parseGetTransactionResponse(self: *RpcClient, response: []const u8) !?[]const u8 {
+        return try self.parseJsonValueResponse(response);
+    }
+
+    fn parseJsonValueResponse(self: *RpcClient, response: []const u8) !?[]const u8 {
         const ParsedEnvelope = struct {
             jsonrpc: []const u8 = "",
             id: u64 = 0,
@@ -2393,6 +2509,54 @@ test "root.getBlock params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"finalized\"") != null);
 }
 
+test "root.getBlockWithOptions params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const params = .{
+        456,
+        .{
+            .commitment = commitmentToString(.confirmed),
+            .encoding = transactionEncodingToString(.jsonParsed),
+            .transactionDetails = transactionDetailsToString(.signatures),
+            .rewards = false,
+            .maxSupportedTransactionVersion = @as(u8, 0),
+        },
+    };
+    const params_json = try client.serializeParams(params);
+    defer allocator.free(params_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "456") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"encoding\":\"jsonParsed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"transactionDetails\":\"signatures\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"rewards\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"maxSupportedTransactionVersion\":0") != null);
+}
+
+test "root.getTransaction params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const params = .{
+        "5h6xSignature111111111111111111111111111111111111",
+        .{
+            .commitment = commitmentToString(.finalized),
+            .encoding = transactionEncodingToString(.json),
+            .maxSupportedTransactionVersion = @as(u8, 0),
+        },
+    };
+    const params_json = try client.serializeParams(params);
+    defer allocator.free(params_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"5h6xSignature111111111111111111111111111111111111\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"finalized\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"encoding\":\"json\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"maxSupportedTransactionVersion\":0") != null);
+}
+
 test "root.parseGetBlockResponse parses block object" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
@@ -2451,6 +2615,32 @@ test "root.parseGetBlockResponse clears last error on successful parse" {
 
     try std.testing.expect(client.getLastError() == null);
     try std.testing.expect(block != null);
+}
+
+test "root.parseGetTransactionResponse parses transaction object" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const body =
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":123,\"version\":0},\"id\":1}";
+    const transaction = try client.parseGetTransactionResponse(body);
+    defer allocator.free(transaction.?);
+
+    try std.testing.expect(transaction != null);
+    try std.testing.expect(std.mem.indexOf(u8, transaction.?, "\"slot\":123") != null);
+    try std.testing.expect(std.mem.indexOf(u8, transaction.?, "\"version\":0") != null);
+}
+
+test "root.parseGetTransactionResponse handles null transaction" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const body = "{\"jsonrpc\":\"2.0\",\"result\":null,\"id\":1}";
+    const transaction = try client.parseGetTransactionResponse(body);
+
+    try std.testing.expect(transaction == null);
 }
 
 test "root.captureRpcError stores rpc error detail" {

@@ -9,11 +9,14 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const signature = args.signature;
     const account = args.account;
     const blockhash_arg = args.blockhash_arg;
+    const encoding_arg = args.encoding_arg;
     const feature_key_arg = args.feature_key_arg;
+    const max_supported_transaction_version_arg = args.max_supported_transaction_version_arg;
     const signatures_for_address_arg = args.signatures_for_address_arg;
     const signatures_for_address_before_arg = args.signatures_for_address_before_arg;
     const signatures_for_address_until_arg = args.signatures_for_address_until_arg;
     const signatures_for_address_limit_arg = args.signatures_for_address_limit_arg;
+    const rewards_arg = args.rewards_arg;
     const slot_arg = args.slot_arg;
     const blocks_end_slot_arg = args.blocks_end_slot_arg;
     const message_arg = args.message_arg;
@@ -26,6 +29,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const rent_bytes_arg = args.rent_bytes_arg;
     const signed_tx_arg = args.signed_tx_arg;
     const token_program_id_arg = args.token_program_id_arg;
+    const transaction_details_arg = args.transaction_details_arg;
     const signature_statuses = args.signature_statuses;
     const multiple_accounts = args.multiple_accounts;
     const blocks_limit_arg = args.blocks_limit_arg;
@@ -77,6 +81,17 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
     if (is_token_accounts_command and mint_arg != null and token_program_id_arg != null) {
         std.debug.print("error: token account queries require exactly one filter: --mint or --token-program-id\n", .{});
+        return error.InvalidCli;
+    }
+
+    const is_transaction_query_command = command == .block or command == .transaction;
+    if ((encoding_arg != null or max_supported_transaction_version_arg != null) and !is_transaction_query_command) {
+        std.debug.print("error: --encoding and --max-supported-transaction-version require block or transaction\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((transaction_details_arg != null or rewards_arg != null) and command != .block) {
+        std.debug.print("error: --transaction-details and --rewards require block\n", .{});
         return error.InvalidCli;
     }
 
@@ -259,6 +274,34 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             std.debug.print("transaction-count: {}\n", .{count});
         },
 
+        .transaction => {
+            const signature_value = signature orelse {
+                std.debug.print("error: transaction requires <signature>\n", .{});
+                return error.InvalidCli;
+            };
+            const encoding = if (encoding_arg) |value| parseTransactionEncoding(value) orelse return error.InvalidCli else null;
+            const max_supported_transaction_version = if (max_supported_transaction_version_arg) |value|
+                std.fmt.parseInt(u8, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const options = if (encoding != null or max_supported_transaction_version != null or commitment != null)
+                client.TransactionQueryOptions{
+                    .commitment = commitment,
+                    .encoding = encoding,
+                    .max_supported_transaction_version = max_supported_transaction_version,
+                }
+            else
+                null;
+
+            const transaction = try rpc.getTransaction(signature_value, options);
+            if (transaction) |value| {
+                defer allocator.free(value);
+                std.debug.print("transaction {s}: {s}\n", .{ signature_value, value });
+            } else {
+                std.debug.print("transaction {s}: not found\n", .{signature_value});
+            }
+        },
+
         .balance => {
             const account_value = account orelse return error.InvalidCli;
             const balance = try rpc.getBalance(account_value, commitment);
@@ -431,8 +474,23 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         .block => {
             const slot_text = slot_arg orelse return error.InvalidCli;
             const slot = std.fmt.parseInt(u64, slot_text, 10) catch return error.InvalidCli;
-
-            const block = try rpc.getBlock(slot, commitment);
+            const encoding = if (encoding_arg) |value| parseTransactionEncoding(value) orelse return error.InvalidCli else null;
+            const transaction_details = if (transaction_details_arg) |value| parseTransactionDetails(value) orelse return error.InvalidCli else null;
+            const rewards = if (rewards_arg) |value| parseBoolArg(value) orelse return error.InvalidCli else null;
+            const max_supported_transaction_version = if (max_supported_transaction_version_arg) |value|
+                std.fmt.parseInt(u8, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const block = if (encoding != null or transaction_details != null or rewards != null or max_supported_transaction_version != null)
+                try rpc.getBlockWithOptions(slot, client.BlockQueryOptions{
+                    .commitment = commitment,
+                    .encoding = encoding,
+                    .transaction_details = transaction_details,
+                    .rewards = rewards,
+                    .max_supported_transaction_version = max_supported_transaction_version,
+                })
+            else
+                try rpc.getBlock(slot, commitment);
             if (block) |value| {
                 defer allocator.free(value);
                 std.debug.print("block {}: {s}\n", .{ slot, value });
@@ -980,6 +1038,28 @@ fn toTokenAccountsFilter(mint_arg: ?[]const u8, token_program_id_arg: ?[]const u
     if (token_program_id_arg) |program_id| {
         return .{ .program_id = program_id };
     }
+    return null;
+}
+
+fn parseTransactionEncoding(value: []const u8) ?client.TransactionEncoding {
+    if (std.mem.eql(u8, value, "json")) return .json;
+    if (std.mem.eql(u8, value, "jsonParsed")) return .jsonParsed;
+    if (std.mem.eql(u8, value, "base58")) return .base58;
+    if (std.mem.eql(u8, value, "base64")) return .base64;
+    return null;
+}
+
+fn parseTransactionDetails(value: []const u8) ?client.TransactionDetails {
+    if (std.mem.eql(u8, value, "full")) return .full;
+    if (std.mem.eql(u8, value, "accounts")) return .accounts;
+    if (std.mem.eql(u8, value, "signatures")) return .signatures;
+    if (std.mem.eql(u8, value, "none")) return .none;
+    return null;
+}
+
+fn parseBoolArg(value: []const u8) ?bool {
+    if (std.mem.eql(u8, value, "true")) return true;
+    if (std.mem.eql(u8, value, "false")) return false;
     return null;
 }
 
@@ -1602,6 +1682,82 @@ test "runCommand rejects signatures-for-address filters on non-signatures-for-ad
         "slot",
         "--before",
         "BeforeSig",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects transaction query flags on unsupported commands" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--encoding",
+        "json",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects block-only flags on transaction command" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "transaction",
+        "5h6xSignature111111111111111111111111111111111111",
+        "--rewards",
+        "true",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates transaction requires signature" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "transaction",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates transaction encoding" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "transaction",
+        "5h6xSignature111111111111111111111111111111111111",
+        "--encoding",
+        "bogus",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates block rewards bool" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block",
+        "123",
+        "--rewards",
+        "bogus",
     });
     defer parsed.deinit(allocator);
 
