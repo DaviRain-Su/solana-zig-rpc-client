@@ -1,5 +1,49 @@
 const std = @import("std");
 
+fn createImportedModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    root_source_file: []const u8,
+    import_name: []const u8,
+    import_module: *std.Build.Module,
+) *std.Build.Module {
+    return b.createModule(.{
+        .root_source_file = b.path(root_source_file),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = import_name, .module = import_module },
+        },
+    });
+}
+
+fn createRootTestModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    root_source_file: []const u8,
+    client_module: *std.Build.Module,
+    root_test_support_module: *std.Build.Module,
+) *std.Build.Module {
+    return b.createModule(.{
+        .root_source_file = b.path(root_source_file),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "solana_client_zig", .module = client_module },
+            .{ .name = "root_test_support", .module = root_test_support_module },
+        },
+    });
+}
+
+fn addRunTestForModule(b: *std.Build, root_module: *std.Build.Module) *std.Build.Step.Run {
+    const tests = b.addTest(.{
+        .root_module = root_module,
+    });
+    return b.addRunArtifact(tests);
+}
+
 // Although this function looks imperative, it does not perform the build
 // directly and instead it mutates the build graph (`b`) that will be then
 // executed by an external runner. The functions in `std.Build` implement a DSL
@@ -115,9 +159,35 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
-    // Creates an executable that will run `test` blocks from the provided module.
-    // Here `mod` needs to define a target, which is why earlier we made sure to
-    // set the releative field.
+    const root_test_support_module = b.createModule(.{
+        .root_source_file = b.path("tests/support/root_mock_server.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const root_test_sources = [_][]const u8{
+        "tests/root/sdk.zig",
+        "tests/root/ledger.zig",
+        "tests/root/network.zig",
+        "tests/root/assets.zig",
+        "tests/root/accounts.zig",
+        "tests/root/smoke.zig",
+        "tests/root/transactions.zig",
+    };
+    var run_root_tests: [root_test_sources.len]*std.Build.Step.Run = undefined;
+    for (root_test_sources, 0..) |source, index| {
+        const module = createRootTestModule(
+            b,
+            target,
+            optimize,
+            source,
+            mod,
+            root_test_support_module,
+        );
+        run_root_tests[index] = addRunTestForModule(b, module);
+    }
+
+    // Creates an executable that will run root-layer library tests.
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });
@@ -138,21 +208,16 @@ pub fn build(b: *std.Build) void {
     // A run step that will run CLI-only tests.
     const run_cli_tests = b.addRunArtifact(cli_tests);
 
-    const commands_tests_module = b.createModule(.{
-        .root_source_file = b.path("src/commands.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "solana_client_zig", .module = mod },
-        },
-    });
+    const commands_tests_module = createImportedModule(
+        b,
+        target,
+        optimize,
+        "src/commands.zig",
+        "solana_client_zig",
+        mod,
+    );
 
-    const commands_tests = b.addTest(.{
-        .root_module = commands_tests_module,
-    });
-
-    // A run step that will run command layer tests.
-    const run_commands_tests = b.addRunArtifact(commands_tests);
+    const run_commands_tests = addRunTestForModule(b, commands_tests_module);
 
     // Creates an executable that will run `test` blocks from the executable's
     // root module. Note that test executables only test one module at a time,
@@ -169,12 +234,18 @@ pub fn build(b: *std.Build) void {
     // make the two of them run in parallel.
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
+    for (run_root_tests) |run_root_test| {
+        test_step.dependOn(&run_root_test.step);
+    }
     test_step.dependOn(&run_cli_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_commands_tests.step);
 
     const test_root_step = b.step("test-root", "Run root module tests");
     test_root_step.dependOn(&run_mod_tests.step);
+    for (run_root_tests) |run_root_test| {
+        test_root_step.dependOn(&run_root_test.step);
+    }
 
     const test_cli_step = b.step("test-cli", "Run CLI tests");
     test_cli_step.dependOn(&run_cli_tests.step);

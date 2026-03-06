@@ -22,11 +22,147 @@ const RpcSimulatedTransactionResult = rpc_types.RpcSimulatedTransactionResult;
 const SendTransactionOptions = rpc_types.SendTransactionOptions;
 const SignatureForAddress = rpc_types.SignatureForAddress;
 const SignatureStatus = rpc_types.SignatureStatus;
+const SignaturesForAddressOptions = rpc_types.SignaturesForAddressOptions;
 const SignatureStatusesQueryOptions = rpc_types.SignatureStatusesQueryOptions;
 const SimulateTransactionOptions = rpc_types.SimulateTransactionOptions;
 const SimulatedTransaction = rpc_types.SimulatedTransaction;
 const SimulationReturnData = rpc_types.SimulationReturnData;
+const accountEncodingToString = rpc_types.accountEncodingToString;
+const commitmentToString = rpc_types.commitmentToString;
 const confirmationSatisfiesCommitment = rpc_types.confirmationSatisfiesCommitment;
+
+pub fn serializeSimulateTransactionParams(
+    self: anytype,
+    signed_tx_base64: []const u8,
+    options: ?SimulateTransactionOptions,
+) ![]u8 {
+    const SimulationAccountsConfig = struct {
+        addresses: []const []const u8 = &.{},
+        encoding: ?[]const u8 = null,
+    };
+
+    const SimulateOptions = struct {
+        commitment: ?[]const u8 = null,
+        encoding: []const u8 = "base64",
+        replaceRecentBlockhash: bool = false,
+        sigVerify: bool = false,
+        minContextSlot: ?u64 = null,
+        innerInstructions: bool = false,
+        accounts: ?SimulationAccountsConfig = null,
+    };
+
+    const params = .{
+        signed_tx_base64,
+        SimulateOptions{
+            .commitment = self.resolveCommitmentString(if (options) |opts| opts.commitment else null),
+            .replaceRecentBlockhash = if (options) |opts| opts.replace_recent_blockhash else false,
+            .sigVerify = if (options) |opts| opts.sig_verify else false,
+            .minContextSlot = if (options) |opts| opts.min_context_slot else null,
+            .innerInstructions = if (options) |opts| opts.inner_instructions else false,
+            .accounts = if (options) |opts|
+                if (opts.accounts) |accounts|
+                    SimulationAccountsConfig{
+                        .addresses = accounts.addresses,
+                        .encoding = if (accounts.encoding) |value| accountEncodingToString(value) else null,
+                    }
+                else
+                    null
+            else
+                null,
+        },
+    };
+
+    return try self.serializeParams(params);
+}
+
+pub fn serializeSendTransactionParams(
+    self: anytype,
+    signed_tx_base64: []const u8,
+    options: ?SendTransactionOptions,
+) ![]u8 {
+    const SendOptions = struct {
+        encoding: []const u8 = "base64",
+        skipPreflight: bool,
+        maxRetries: ?u32 = null,
+        preflightCommitment: ?[]const u8 = null,
+        minContextSlot: ?u64 = null,
+    };
+
+    const params = .{
+        signed_tx_base64,
+        SendOptions{
+            .skipPreflight = if (options) |opts| opts.skip_preflight else false,
+            .maxRetries = if (options) |opts| opts.max_retries else null,
+            .preflightCommitment = self.resolveCommitmentString(if (options) |opts| opts.preflight_commitment else null),
+            .minContextSlot = if (options) |opts| opts.min_context_slot else null,
+        },
+    };
+
+    return try self.serializeParams(params);
+}
+
+pub fn serializeSignaturesForAddressParams(
+    self: anytype,
+    address: []const u8,
+    options: ?SignaturesForAddressOptions,
+) ![]u8 {
+    const resolved_commitment = self.resolveCommitmentString(if (options) |value| value.commitment else null);
+    const before = if (options) |value| value.before else null;
+    const until = if (options) |value| value.until else null;
+    const limit = if (options) |value| value.limit else null;
+    const min_context_slot = if (options) |value| value.min_context_slot else null;
+
+    if (before == null and until == null and limit == null and resolved_commitment == null and min_context_slot == null) {
+        return try self.serializeParams(.{address});
+    }
+
+    const params = .{
+        address,
+        .{
+            .before = before,
+            .until = until,
+            .limit = limit,
+            .commitment = resolved_commitment,
+            .minContextSlot = min_context_slot,
+        },
+    };
+    return try self.serializeParams(params);
+}
+
+pub fn serializeSignatureStatusesParams(
+    self: anytype,
+    signatures: []const []const u8,
+    options: ?SignatureStatusesQueryOptions,
+) ![]u8 {
+    const search_transaction_history = if (options) |value| value.search_transaction_history else false;
+    const resolved_commitment = self.resolveCommitmentString(if (options) |value| value.commitment else null);
+
+    if (!search_transaction_history and resolved_commitment == null) {
+        return try self.serializeParams(.{signatures});
+    }
+
+    if (search_transaction_history and resolved_commitment != null) {
+        return try self.serializeParams(.{
+            signatures,
+            .{
+                .searchTransactionHistory = true,
+                .commitment = resolved_commitment,
+            },
+        });
+    }
+
+    if (search_transaction_history) {
+        return try self.serializeParams(.{
+            signatures,
+            .{ .searchTransactionHistory = true },
+        });
+    }
+
+    return try self.serializeParams(.{
+        signatures,
+        .{ .commitment = resolved_commitment },
+    });
+}
 
 pub fn send(self: anytype, signed_tx_base64: []const u8) ![]const u8 {
     return try self.sendTransaction(signed_tx_base64, null);
@@ -488,10 +624,11 @@ pub fn confirmTransaction(
     commitment: ?Commitment,
     search_transaction_history: bool,
 ) !bool {
-    const signature_status_options = if (search_transaction_history or commitment != null)
+    const resolved_commitment = self.resolveCommitment(commitment);
+    const signature_status_options = if (search_transaction_history or resolved_commitment != null)
         SignatureStatusesQueryOptions{
             .search_transaction_history = search_transaction_history,
-            .commitment = commitment,
+            .commitment = resolved_commitment,
         }
     else
         null;
@@ -506,7 +643,7 @@ pub fn confirmTransaction(
     defer if (status.confirmation_status) |value| self.allocator.free(value);
 
     if (status.has_error) return false;
-    return confirmationSatisfiesCommitment(status.confirmation_status, commitment);
+    return confirmationSatisfiesCommitment(status.confirmation_status, resolved_commitment);
 }
 
 pub fn getNumBlocksSinceSignatureConfirmation(
@@ -527,12 +664,13 @@ pub fn getNumBlocksSinceSignatureConfirmationWithCommitment(
     commitment: ?Commitment,
     search_transaction_history: bool,
 ) !u64 {
+    const resolved_commitment = self.resolveCommitment(commitment);
     const status = try self.getSignatureStatusWithOptions(
         signature,
-        if (search_transaction_history or commitment != null)
+        if (search_transaction_history or resolved_commitment != null)
             SignatureStatusesQueryOptions{
                 .search_transaction_history = search_transaction_history,
-                .commitment = commitment,
+                .commitment = resolved_commitment,
             }
         else
             null,
@@ -712,12 +850,13 @@ pub fn waitForSignatureStatus(
     strict: bool,
 ) !void {
     const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
+    const resolved_commitment = self.resolveCommitment(commitment);
 
     while (std.time.milliTimestamp() < deadline) {
-        const status_options = if (search_transaction_history or commitment != null)
+        const status_options = if (search_transaction_history or resolved_commitment != null)
             SignatureStatusesQueryOptions{
                 .search_transaction_history = search_transaction_history,
-                .commitment = commitment,
+                .commitment = resolved_commitment,
             }
         else
             null;
@@ -739,10 +878,10 @@ pub fn waitForSignatureStatus(
         }
 
         if (strict and status.has_error) return error.TransactionFailed;
-        if (confirmationSatisfiesCommitment(status.confirmation_status, commitment)) {
+        if (confirmationSatisfiesCommitment(status.confirmation_status, resolved_commitment)) {
             return;
         }
-        if (!strict and status.has_error and commitment == null) {
+        if (!strict and status.has_error and resolved_commitment == null) {
             return;
         }
 
@@ -792,14 +931,15 @@ pub fn pollForSignatureConfirmationWithCommitmentAndTimeouts(
 ) !u64 {
     const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
     var confirmed_blocks: ?u64 = null;
+    const resolved_commitment = self.resolveCommitment(commitment);
 
     while (std.time.milliTimestamp() < deadline) {
         const status = self.getSignatureStatusWithOptions(
             signature,
-            if (search_transaction_history or commitment != null)
+            if (search_transaction_history or resolved_commitment != null)
                 SignatureStatusesQueryOptions{
                     .search_transaction_history = search_transaction_history,
-                    .commitment = commitment,
+                    .commitment = resolved_commitment,
                 }
             else
                 null,
@@ -812,7 +952,7 @@ pub fn pollForSignatureConfirmationWithCommitmentAndTimeouts(
         };
         defer if (status.confirmation_status) |value| self.allocator.free(value);
 
-        if (commitment != null and !confirmationSatisfiesCommitment(status.confirmation_status, commitment)) {
+        if (resolved_commitment != null and !confirmationSatisfiesCommitment(status.confirmation_status, resolved_commitment)) {
             std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
             continue;
         }
