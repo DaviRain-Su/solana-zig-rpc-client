@@ -2353,6 +2353,39 @@ fn runMockBalanceServer(
     request.respond(response_body, .{}) catch return;
 }
 
+fn runMockRequestSequenceServer(
+    listener: *std.net.Server,
+    allocator: Allocator,
+    request_captures: *std.ArrayList([]u8),
+    response_bodies: []const []const u8,
+) void {
+    for (response_bodies) |response_body| {
+        var connection = acceptMockConnection(listener) orelse return;
+        defer connection.stream.close();
+
+        var receive_buffer: [4096]u8 = undefined;
+        var request_body_buffer: [4096]u8 = undefined;
+        var send_buffer: [4096]u8 = undefined;
+        var connection_reader = connection.stream.reader(&receive_buffer);
+        var connection_writer = connection.stream.writer(&send_buffer);
+        var http_server = std.http.Server.init(connection_reader.interface(), &connection_writer.interface);
+
+        var request = http_server.receiveHead() catch return;
+        const body_length = request.head.content_length orelse 0;
+        const request_body_reader = request.readerExpectNone(&request_body_buffer);
+        const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
+        defer allocator.free(request_body);
+
+        const request_body_copy = allocator.dupe(u8, request_body) catch return;
+        request_captures.append(allocator, request_body_copy) catch {
+            allocator.free(request_body_copy);
+            return;
+        };
+
+        request.respond(response_body, .{}) catch return;
+    }
+}
+
 fn expectGetBlockRequest(
     allocator: Allocator,
     body: []const u8,
@@ -2752,6 +2785,505 @@ fn expectGetFeeForMessageRequest(
             }
         },
         else => return error.InvalidResponse,
+    }
+}
+
+fn expectGetSignatureStatusesRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_signatures: []const []const u8,
+    expected_search_transaction_history: bool,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("getSignatureStatuses", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    if (expected_search_transaction_history) {
+        try std.testing.expectEqual(@as(usize, 2), params.items.len);
+    } else {
+        try std.testing.expectEqual(@as(usize, 1), params.items.len);
+    }
+
+    const signatures = switch (params.items[0]) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+    try std.testing.expectEqual(expected_signatures.len, signatures.items.len);
+
+    for (expected_signatures, 0..) |expected, index| {
+        switch (signatures.items[index]) {
+            .string => |value| try std.testing.expectEqualStrings(expected, value),
+            else => return error.InvalidResponse,
+        }
+    }
+
+    if (!expected_search_transaction_history) return;
+
+    const options = switch (params.items[1]) {
+        .object => |obj| obj,
+        else => return error.InvalidResponse,
+    };
+
+    const search_transaction_history_value = options.get("searchTransactionHistory") orelse return error.InvalidResponse;
+    switch (search_transaction_history_value) {
+        .bool => |value| try std.testing.expect(value),
+        else => return error.InvalidResponse,
+    }
+}
+
+fn expectRequestAirdropRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_account: []const u8,
+    expected_lamports: u64,
+    expected_commitment: ?[]const u8,
+    expected_recent_blockhash: ?[]const u8,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("requestAirdrop", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    const expected_params_len = if (expected_commitment != null or expected_recent_blockhash != null)
+        @as(usize, 3)
+    else
+        @as(usize, 2);
+    try std.testing.expectEqual(expected_params_len, params.items.len);
+
+    switch (params.items[0]) {
+        .string => |value| try std.testing.expectEqualStrings(expected_account, value),
+        else => return error.InvalidResponse,
+    }
+
+    switch (params.items[1]) {
+        .integer => |value| try std.testing.expectEqual(@as(i64, @intCast(expected_lamports)), value),
+        else => return error.InvalidResponse,
+    }
+
+    if (expected_commitment != null or expected_recent_blockhash != null) {
+        const options = switch (params.items[2]) {
+            .object => |obj| obj,
+            else => return error.InvalidResponse,
+        };
+
+        if (expected_commitment) |expected| {
+            const commitment_value = options.get("commitment") orelse return error.InvalidResponse;
+            switch (commitment_value) {
+                .string => |value| try std.testing.expectEqualStrings(expected, value),
+                else => return error.InvalidResponse,
+            }
+        } else {
+            switch (options.get("commitment") orelse return error.InvalidResponse) {
+                .null => {},
+                else => return error.InvalidResponse,
+            }
+        }
+
+        if (expected_recent_blockhash) |expected| {
+            const recent_blockhash_value = options.get("recentBlockhash") orelse return error.InvalidResponse;
+            switch (recent_blockhash_value) {
+                .string => |value| try std.testing.expectEqualStrings(expected, value),
+                else => return error.InvalidResponse,
+            }
+        } else {
+            switch (options.get("recentBlockhash") orelse return error.InvalidResponse) {
+                .null => {},
+                else => return error.InvalidResponse,
+            }
+        }
+    }
+}
+
+fn expectGetAccountInfoRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_account: []const u8,
+    expected_method: []const u8,
+    expected_commitment: ?[]const u8,
+    expected_min_context_slot: ?u64,
+    expected_encoding: ?[]const u8,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings(expected_method, request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+    try std.testing.expectEqual(@as(usize, 2), params.items.len);
+
+    switch (params.items[0]) {
+        .string => |value| try std.testing.expectEqualStrings(expected_account, value),
+        else => return error.InvalidResponse,
+    }
+
+    const options = switch (params.items[1]) {
+        .object => |obj| obj,
+        else => return error.InvalidResponse,
+    };
+
+    if (expected_encoding) |expected| {
+        const encoding_value = options.get("encoding") orelse return error.InvalidResponse;
+        switch (encoding_value) {
+            .string => |value| try std.testing.expectEqualStrings(expected, value),
+            else => return error.InvalidResponse,
+        }
+    }
+
+    if (expected_commitment) |expected| {
+        const commitment_value = options.get("commitment") orelse return error.InvalidResponse;
+        switch (commitment_value) {
+            .string => |value| try std.testing.expectEqualStrings(expected, value),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("commitment") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
+    }
+
+    if (expected_min_context_slot) |expected| {
+        const min_context_slot_value = options.get("minContextSlot") orelse return error.InvalidResponse;
+        switch (min_context_slot_value) {
+            .integer => |value| try std.testing.expectEqual(@as(i64, @intCast(expected)), value),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("minContextSlot") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
+    }
+}
+
+fn expectGetMultipleAccountsRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_accounts: []const []const u8,
+    expected_method: []const u8,
+    expected_commitment: ?[]const u8,
+    expected_min_context_slot: ?u64,
+    expected_encoding: []const u8,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings(expected_method, request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+    try std.testing.expectEqual(@as(usize, 2), params.items.len);
+
+    const accounts = switch (params.items[0]) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+    try std.testing.expectEqual(expected_accounts.len, accounts.items.len);
+
+    for (expected_accounts, 0..) |expected, index| {
+        switch (accounts.items[index]) {
+            .string => |value| try std.testing.expectEqualStrings(expected, value),
+            else => return error.InvalidResponse,
+        }
+    }
+
+    const options = switch (params.items[1]) {
+        .object => |obj| obj,
+        else => return error.InvalidResponse,
+    };
+
+    const encoding_value = options.get("encoding") orelse return error.InvalidResponse;
+    switch (encoding_value) {
+        .string => |value| try std.testing.expectEqualStrings(expected_encoding, value),
+        else => return error.InvalidResponse,
+    }
+
+    if (expected_commitment) |expected| {
+        const commitment_value = options.get("commitment") orelse return error.InvalidResponse;
+        switch (commitment_value) {
+            .string => |value| try std.testing.expectEqualStrings(expected, value),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("commitment") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
+    }
+
+    if (expected_min_context_slot) |expected| {
+        const min_context_slot_value = options.get("minContextSlot") orelse return error.InvalidResponse;
+        switch (min_context_slot_value) {
+            .integer => |value| try std.testing.expectEqual(@as(i64, @intCast(expected)), value),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("minContextSlot") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
+    }
+}
+
+fn expectGetProgramUiAccountsRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_program_id: []const u8,
+    expected_commitment: ?[]const u8,
+    expected_with_context: bool,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("getProgramAccounts", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+    try std.testing.expectEqual(@as(usize, 2), params.items.len);
+
+    switch (params.items[0]) {
+        .string => |value| try std.testing.expectEqualStrings(expected_program_id, value),
+        else => return error.InvalidResponse,
+    }
+
+    const options = switch (params.items[1]) {
+        .object => |obj| obj,
+        else => return error.InvalidResponse,
+    };
+
+    const encoding_value = options.get("encoding") orelse return error.InvalidResponse;
+    switch (encoding_value) {
+        .string => |value| try std.testing.expectEqualStrings("jsonParsed", value),
+        else => return error.InvalidResponse,
+    }
+
+    if (expected_commitment) |expected| {
+        const commitment_value = options.get("commitment") orelse return error.InvalidResponse;
+        switch (commitment_value) {
+            .string => |value| try std.testing.expectEqualStrings(expected, value),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("commitment") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
+    }
+
+    const with_context_value = options.get("withContext") orelse return error.InvalidResponse;
+    switch (with_context_value) {
+        .bool => |value| try std.testing.expectEqual(expected_with_context, value),
+        else => return error.InvalidResponse,
+    }
+}
+
+fn expectGetUiAccountRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_account: []const u8,
+    expected_commitment: ?[]const u8,
+    expected_min_context_slot: ?u64,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("getAccountInfo", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+    try std.testing.expectEqual(@as(usize, 2), params.items.len);
+
+    switch (params.items[0]) {
+        .string => |value| try std.testing.expectEqualStrings(expected_account, value),
+        else => return error.InvalidResponse,
+    }
+
+    const options = switch (params.items[1]) {
+        .object => |obj| obj,
+        else => return error.InvalidResponse,
+    };
+
+    const encoding_value = options.get("encoding") orelse return error.InvalidResponse;
+    switch (encoding_value) {
+        .string => |value| try std.testing.expectEqualStrings("jsonParsed", value),
+        else => return error.InvalidResponse,
+    }
+
+    if (expected_commitment) |expected| {
+        const commitment_value = options.get("commitment") orelse return error.InvalidResponse;
+        switch (commitment_value) {
+            .string => |value| try std.testing.expectEqualStrings(expected, value),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("commitment") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
+    }
+
+    if (expected_min_context_slot) |expected| {
+        const min_context_slot_value = options.get("minContextSlot") orelse return error.InvalidResponse;
+        switch (min_context_slot_value) {
+            .integer => |value| try std.testing.expectEqual(@as(i64, @intCast(expected)), value),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("minContextSlot") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
+    }
+}
+
+fn expectGetMultipleUiAccountsRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_accounts: []const []const u8,
+    expected_commitment: ?[]const u8,
+    expected_min_context_slot: ?u64,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("getMultipleAccounts", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+    try std.testing.expectEqual(@as(usize, 2), params.items.len);
+
+    const accounts = switch (params.items[0]) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+    try std.testing.expectEqual(expected_accounts.len, accounts.items.len);
+
+    for (expected_accounts, 0..) |expected, index| {
+        switch (accounts.items[index]) {
+            .string => |value| try std.testing.expectEqualStrings(expected, value),
+            else => return error.InvalidResponse,
+        }
+    }
+
+    const options = switch (params.items[1]) {
+        .object => |obj| obj,
+        else => return error.InvalidResponse,
+    };
+    const encoding_value = options.get("encoding") orelse return error.InvalidResponse;
+    switch (encoding_value) {
+        .string => |value| try std.testing.expectEqualStrings("jsonParsed", value),
+        else => return error.InvalidResponse,
+    }
+
+    if (expected_commitment) |expected| {
+        const commitment_value = options.get("commitment") orelse return error.InvalidResponse;
+        switch (commitment_value) {
+            .string => |value| try std.testing.expectEqualStrings(expected, value),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("commitment") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
+    }
+
+    if (expected_min_context_slot) |expected| {
+        const min_context_slot_value = options.get("minContextSlot") orelse return error.InvalidResponse;
+        switch (min_context_slot_value) {
+            .integer => |value| try std.testing.expectEqual(@as(i64, @intCast(expected)), value),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("minContextSlot") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
     }
 }
 
@@ -3502,6 +4034,760 @@ test "runCommand transaction prints summary and raw json" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "transaction 5h6xSignature111111111111111111111111111111111111: slot=55 block_time=1700000500 version=legacy signatures=2 fee=7000 log_messages=2 has_error=true") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  error: {\"InstructionError\":[0,{\"Custom\":1}]}") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  raw: {") != null);
+}
+
+test "runCommand status waits for signature status with search history and commitment" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| {
+            allocator.free(request);
+        }
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":77},"value":[null]},"id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":78},"value":[{"slot":78,"confirmations":1,"confirmationStatus":"confirmed","err":null}]},"id":2}
+        ,
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRequestSequenceServer, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "status",
+        "--search-transaction-history",
+        "--commitment",
+        "confirmed",
+        "--timeout-ms",
+        "200",
+        "--poll-ms",
+        "10",
+        "Sig111111111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetSignatureStatusesRequest(
+        allocator,
+        request_captures.items[0],
+        &[_][]const u8{"Sig111111111111111111111111111111111111"},
+        true,
+    );
+    try expectGetSignatureStatusesRequest(
+        allocator,
+        request_captures.items[1],
+        &[_][]const u8{"Sig111111111111111111111111111111111111"},
+        true,
+    );
+    try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
+    try std.testing.expectEqualStrings("signature confirmed\n", captured);
+}
+
+test "runCommand confirm-transaction respects commitment" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":44},"value":[{"slot":44,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "confirm-transaction",
+        "--search-transaction-history",
+        "--commitment",
+        "confirmed",
+        "Sig111111111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetSignatureStatusesRequest(
+        allocator,
+        request_capture.items,
+        &[_][]const u8{"Sig111111111111111111111111111111111111"},
+        true,
+    );
+    try std.testing.expectEqualStrings("signature Sig111111111111111111111111111111111111 confirmed: false\n", captured);
+}
+
+test "runCommand signature-status prints status" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":55},"value":[{"slot":55,"confirmations":7,"confirmationStatus":"confirmed","err":null}]},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "signature-status",
+        "Sig111111111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetSignatureStatusesRequest(
+        allocator,
+        request_capture.items,
+        &[_][]const u8{"Sig111111111111111111111111111111111111"},
+        false,
+    );
+    try std.testing.expectEqualStrings(
+        "signature status: has_error=false slot=55 confirmations=7 confirmation=confirmed\n",
+        captured,
+    );
+}
+
+test "runCommand signature-statuses prints per-signature output" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":61},"value":[null,{"slot":61,"confirmations":2,"confirmationStatus":"confirmed","err":null},{"slot":62,"confirmations":4,"confirmationStatus":"processed","err":{"InstructionError":0}}]},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "signature-statuses",
+        "--search-transaction-history",
+        "SigA111111111111111111111111111111111111",
+        "SigB111111111111111111111111111111111111",
+        "SigC111111111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetSignatureStatusesRequest(
+        allocator,
+        request_capture.items,
+        &[_][]const u8{ "SigA111111111111111111111111111111111111", "SigB111111111111111111111111111111111111", "SigC111111111111111111111111111111111111" },
+        true,
+    );
+    try std.testing.expect(std.mem.indexOf(u8, captured, "signature statuses: 3\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "  [0] SigA111111111111111111111111111111111111: not found\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "  [1] SigB111111111111111111111111111111111111: error=false slot=61 confirmations=2 confirmation=confirmed\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "  [2] SigC111111111111111111111111111111111111: error=true slot=62 confirmations=4 confirmation=processed\n") != null);
+}
+
+test "runCommand poll-for-signature-confirmation polls until min confirmed blocks" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| {
+            allocator.free(request);
+        }
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":77},"value":[{"slot":77,"confirmations":1,"confirmationStatus":"confirmed","err":null}]},"id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":78},"value":[{"slot":78,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":2}
+        ,
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRequestSequenceServer, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "poll-for-signature-confirmation",
+        "--search-transaction-history",
+        "--timeout-ms",
+        "200",
+        "--poll-ms",
+        "10",
+        "Sig111111111111111111111111111111111111",
+        "2",
+    });
+    defer parsed.deinit(allocator);
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetSignatureStatusesRequest(
+        allocator,
+        request_captures.items[0],
+        &[_][]const u8{"Sig111111111111111111111111111111111111"},
+        true,
+    );
+    try expectGetSignatureStatusesRequest(
+        allocator,
+        request_captures.items[1],
+        &[_][]const u8{"Sig111111111111111111111111111111111111"},
+        true,
+    );
+    try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
+    try std.testing.expectEqualStrings(
+        "signature Sig111111111111111111111111111111111111 reached 2 confirmed blocks (target=2)\n",
+        captured,
+    );
+}
+
+test "runCommand blocks-since-signature-confirmation prints confirmations" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":88},"value":[{"slot":88,"confirmations":9,"confirmationStatus":"finalized","err":null}]},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "blocks-since-signature-confirmation",
+        "Sig111111111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetSignatureStatusesRequest(
+        allocator,
+        request_capture.items,
+        &[_][]const u8{"Sig111111111111111111111111111111111111"},
+        false,
+    );
+    try std.testing.expectEqualStrings(
+        "signature Sig111111111111111111111111111111111111 confirmed blocks: 9\n",
+        captured,
+    );
+}
+
+test "runCommand request-airdrop uses default params" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":"Sig111111111111111111111111111111111111111111111111111111111111111111","id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "request-airdrop",
+        "Address11111111111111111111111111111111",
+        "9999",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectRequestAirdropRequest(
+        allocator,
+        request_capture.items,
+        "Address11111111111111111111111111111111",
+        9999,
+        null,
+        null,
+    );
+    try std.testing.expectEqualStrings(
+        "airdrop signature: Sig111111111111111111111111111111111111111111111111111111111111111111\n",
+        captured,
+    );
+}
+
+test "runCommand request-airdrop with commitment and recent blockhash passes both" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":"Sig111111111111111111111111111111111111111111111111111111111111111111","id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "request-airdrop",
+        "--commitment",
+        "confirmed",
+        "--airdrop-recent-blockhash",
+        "RecentBlockhash11111111111111111111111111",
+        "Address11111111111111111111111111111111",
+        "9999",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectRequestAirdropRequest(
+        allocator,
+        request_capture.items,
+        "Address11111111111111111111111111111111",
+        9999,
+        "confirmed",
+        "RecentBlockhash11111111111111111111111111",
+    );
+    try std.testing.expectEqualStrings(
+        "airdrop signature: Sig111111111111111111111111111111111111111111111111111111111111111111\n",
+        captured,
+    );
+}
+
+test "runCommand account-data decodes base64 and prints hex" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":15},"value":{"data":["AQID","base64"],"executable":false,"lamports":200,"owner":"Owner1111111111111111111111111111111111","rentEpoch":1,"space":3}},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "account-data",
+        "--commitment",
+        "finalized",
+        "--min-context-slot",
+        "123",
+        "Address11111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetAccountInfoRequest(
+        allocator,
+        request_capture.items,
+        "Address11111111111111111111111111111111",
+        "getAccountInfo",
+        "finalized",
+        123,
+        "base64",
+    );
+    try std.testing.expectEqualStrings(
+        "account data for Address11111111111111111111111111111111: 3 bytes\n010203\n",
+        captured,
+    );
+}
+
+test "runCommand ui-account prints parsed account details" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":77},"value":{"data":{"program":"system","parsed":{"type":"account"}}, "executable":false,"lamports":111,"owner":"Owner1111111111111111111111111111111111","rentEpoch":3,"space":64}},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "ui-account",
+        "--with-context",
+        "--commitment",
+        "confirmed",
+        "--min-context-slot",
+        "99",
+        "Address11111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetUiAccountRequest(
+        allocator,
+        request_capture.items,
+        "Address11111111111111111111111111111111",
+        "confirmed",
+        99,
+    );
+    try std.testing.expect(std.mem.indexOf(u8, captured, "ui account context slot: 77\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "ui account for Address11111111111111111111111111111111: lamports=111 executable=false owner=Owner1111111111111111111111111111111111 rent_epoch=3 space=64\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "  data(jsonParsed):") != null);
+}
+
+test "runCommand multiple-ui-accounts prints parsed entries and not found" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":66},"value":[{"data":{"program":"system","parsed":{"type":"account","info":{}}},"executable":false,"lamports":11,"owner":"Owner1111111111111111111111111111111111","rentEpoch":1,"space":65},null]},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "multiple-ui-accounts",
+        "--with-context",
+        "--commitment",
+        "confirmed",
+        "Address11111111111111111111111111111111",
+        "Address22222222222222222222222222222222",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectGetMultipleUiAccountsRequest(
+        allocator,
+        request_capture.items,
+        &[_][]const u8{ "Address11111111111111111111111111111111", "Address22222222222222222222222222222222" },
+        "confirmed",
+        null,
+    );
+    try std.testing.expect(std.mem.indexOf(u8, captured, "multiple ui accounts context slot: 66\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "multiple ui accounts: 2\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "  [0] Address11111111111111111111111111111111: lamports=11 executable=false owner=Owner1111111111111111111111111111111111 rent_epoch=1 space=65\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "  [1] Address22222222222222222222222222222222: not found\n") != null);
+}
+
+test "runCommand program-ui-accounts prints ui program accounts" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":55},"value":[{"pubkey":"Acct11111111111111111111111111111111","account":{"data":{"program":"system","parsed":{"type":"account","info":{}}},"executable":false,"lamports":101,"owner":"Owner1111111111111111111111111111111111","rentEpoch":2,"space":128}}]},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "program-ui-accounts",
+        "--with-context",
+        "--commitment",
+        "confirmed",
+        "Program1111111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectGetProgramUiAccountsRequest(
+        allocator,
+        request_capture.items,
+        "Program1111111111111111111111111111111111",
+        "confirmed",
+        true,
+    );
+    try std.testing.expect(std.mem.indexOf(u8, captured, "program ui accounts context slot: 55\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "program ui accounts for Program1111111111111111111111111111111111: 1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "  [0] pubkey=Acct11111111111111111111111111111111 lamports=101 executable=false owner=Owner1111111111111111111111111111111111 rent_epoch=2 space=128\n") != null);
+}
+
+test "runCommand token-account prints parsed account details" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":44},"value":{"data":{"program":"spl-token","parsed":{"type":"account","info":{}}},"executable":false,"lamports":77,"owner":"Owner1111111111111111111111111111111111","rentEpoch":4,"space":165}},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "token-account",
+        "--min-context-slot",
+        "44",
+        "TokenAcct1111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectGetAccountInfoRequest(
+        allocator,
+        request_capture.items,
+        "TokenAcct1111111111111111111111111111111",
+        "getAccountInfo",
+        null,
+        44,
+        "jsonParsed",
+    );
+    try std.testing.expect(std.mem.indexOf(u8, captured, "token account for TokenAcct1111111111111111111111111111111: lamports=77 executable=false owner=Owner1111111111111111111111111111111111 rent_epoch=4 space=165\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "  data(jsonParsed): ") != null);
 }
 
 test "runCommand validates status options on non-status commands" {
