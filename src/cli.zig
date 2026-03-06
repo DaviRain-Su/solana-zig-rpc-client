@@ -21,6 +21,8 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] transaction-count\n" ++
     "  solana_client_zig [--rpc <url>] balance <account>\n" ++
     "  solana_client_zig [--rpc <url>] account-info <account>\n" ++
+    "  solana_client_zig [--rpc <url>] multiple-accounts <account-1> [account-2 ...]\n" ++
+    "  solana_client_zig [--rpc <url>] program-accounts <program-id>\n" ++
     "  solana_client_zig [--rpc <url>] request-airdrop <account> <lamports>\n" ++
     "  solana_client_zig [--rpc <url>] minimum-rent-exemption <bytes>\n" ++
     "  solana_client_zig [--rpc <url>] version\n" ++
@@ -36,6 +38,10 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] signatures-for-address <address> [--before <signature>] [--until <signature>] [--limit <count>]\n" ++
     "  solana_client_zig [--rpc <url>] feature-activation-slot <feature-pubkey>\n" ++
     "  solana_client_zig [--rpc <url>] stake-minimum-delegation\n" ++
+    "  solana_client_zig [--rpc <url>] largest-accounts\n" ++
+    "  solana_client_zig [--rpc <url>] token-account-balance <token-account>\n" ++
+    "  solana_client_zig [--rpc <url>] token-supply <mint>\n" ++
+    "  solana_client_zig [--rpc <url>] token-largest-accounts <mint>\n" ++
     "  solana_client_zig [--rpc <url>] fee-for-message <base64-message>\n" ++
     "  solana_client_zig [--rpc <url>] recent-performance-samples [limit]\n" ++
     "  solana_client_zig [--rpc <url>] highest-snapshot-slot\n" ++
@@ -102,6 +108,7 @@ pub const ParsedArgs = struct {
     rent_bytes_arg: ?[]const u8,
     signed_tx_arg: ?[]const u8,
     signature_statuses: std.ArrayListUnmanaged([]const u8),
+    multiple_accounts: std.ArrayListUnmanaged([]const u8),
     commitment: ?Commitment,
     status_timeout_ms: u64,
     status_poll_ms: u64,
@@ -111,6 +118,7 @@ pub const ParsedArgs = struct {
 
     pub fn deinit(self: *ParsedArgs, allocator: Allocator) void {
         self.signature_statuses.deinit(allocator);
+        self.multiple_accounts.deinit(allocator);
     }
 };
 
@@ -140,6 +148,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .rent_bytes_arg = null,
         .signed_tx_arg = null,
         .signature_statuses = .{},
+        .multiple_accounts = .{},
         .commitment = null,
         .status_timeout_ms = 30_000,
         .status_poll_ms = 500,
@@ -295,6 +304,18 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
 
             if (std.mem.eql(u8, arg, "account-info")) {
                 parsed.command = .account_info;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "multiple-accounts")) {
+                parsed.command = .multiple_accounts;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "program-accounts")) {
+                parsed.command = .program_accounts;
                 parsed.has_command = true;
                 continue;
             }
@@ -485,6 +506,30 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "largest-accounts")) {
+                parsed.command = .largest_accounts;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "token-account-balance")) {
+                parsed.command = .token_account_balance;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "token-supply")) {
+                parsed.command = .token_supply;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "token-largest-accounts")) {
+                parsed.command = .token_largest_accounts;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "help")) {
                 parsed.show_usage = true;
                 parsed.has_command = true;
@@ -493,7 +538,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         }
 
         switch (parsed.command) {
-            .latest_blockhash, .slot, .block_height, .transaction_count, .version, .epoch_info, .health, .genesis_hash, .supply, .epoch_schedule, .inflation_rate, .highest_snapshot_slot, .first_available_block, .recent_prioritization_fees, .identity, .cluster_nodes, .vote_accounts, .block_production, .inflation_governor, .minimum_ledger_slot, .max_retransmit_slot, .max_shred_insert_slot => return error.InvalidCli,
+            .latest_blockhash, .slot, .block_height, .transaction_count, .version, .epoch_info, .health, .genesis_hash, .supply, .epoch_schedule, .inflation_rate, .highest_snapshot_slot, .first_available_block, .recent_prioritization_fees, .identity, .cluster_nodes, .vote_accounts, .block_production, .inflation_governor, .minimum_ledger_slot, .max_retransmit_slot, .max_shred_insert_slot, .largest_accounts => return error.InvalidCli,
 
             .stake_minimum_delegation => return error.InvalidCli,
 
@@ -534,6 +579,16 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
             },
 
             .account_info => if (parsed.account == null) {
+                parsed.account = arg;
+            } else {
+                return error.InvalidCli;
+            },
+
+            .multiple_accounts => {
+                parsed.multiple_accounts.append(allocator, arg) catch return error.InvalidCli;
+            },
+
+            .program_accounts, .token_account_balance, .token_supply, .token_largest_accounts => if (parsed.account == null) {
                 parsed.account = arg;
             } else {
                 return error.InvalidCli;
@@ -621,6 +676,8 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
 pub const Command = enum {
     latest_blockhash,
     account_info,
+    multiple_accounts,
+    program_accounts,
     signatures_for_address,
     status,
     signature_status,
@@ -637,6 +694,10 @@ pub const Command = enum {
     blockhash_valid,
     version,
     stake_minimum_delegation,
+    largest_accounts,
+    token_account_balance,
+    token_supply,
+    token_largest_accounts,
     epoch_info,
     health,
     genesis_hash,
@@ -690,6 +751,12 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "block <slot>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "stake-minimum-delegation") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "account-info <account>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "multiple-accounts <account-1> [account-2 ...]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "program-accounts <program-id>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "largest-accounts") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "token-account-balance <token-account>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "token-supply <mint>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "token-largest-accounts <mint>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-transaction <signed-tx-base64>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-transaction-and-confirm <signed-tx-base64>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--skip-preflight") != null);
@@ -923,6 +990,73 @@ test "cli.parseCliArgs parses account info" {
 
     try std.testing.expectEqual(Command.account_info, parsed.command);
     try std.testing.expectEqualStrings("Address11111111111111111111111111111111", parsed.account orelse "");
+}
+
+test "cli.parseCliArgs parses multiple accounts" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "multiple-accounts",
+        "Address11111111111111111111111111111111",
+        "Address22222222222222222222222222222222",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.multiple_accounts, parsed.command);
+    try std.testing.expectEqual(@as(usize, 2), parsed.multiple_accounts.items.len);
+    try std.testing.expectEqualStrings("Address11111111111111111111111111111111", parsed.multiple_accounts.items[0]);
+    try std.testing.expectEqualStrings("Address22222222222222222222222222222222", parsed.multiple_accounts.items[1]);
+}
+
+test "cli.parseCliArgs parses program accounts" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "program-accounts",
+        "Program1111111111111111111111111111111111",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.program_accounts, parsed.command);
+    try std.testing.expectEqualStrings("Program1111111111111111111111111111111111", parsed.account orelse "");
+}
+
+test "cli.parseCliArgs parses largest accounts" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "largest-accounts",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.largest_accounts, parsed.command);
+}
+
+test "cli.parseCliArgs parses token account balance" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "token-account-balance",
+        "TokenAcct1111111111111111111111111111111",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.token_account_balance, parsed.command);
+    try std.testing.expectEqualStrings("TokenAcct1111111111111111111111111111111", parsed.account orelse "");
+}
+
+test "cli.parseCliArgs parses token supply" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "token-supply",
+        "Mint111111111111111111111111111111111111",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.token_supply, parsed.command);
+    try std.testing.expectEqualStrings("Mint111111111111111111111111111111111111", parsed.account orelse "");
+}
+
+test "cli.parseCliArgs parses token largest accounts" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "token-largest-accounts",
+        "Mint111111111111111111111111111111111111",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.token_largest_accounts, parsed.command);
+    try std.testing.expectEqualStrings("Mint111111111111111111111111111111111111", parsed.account orelse "");
 }
 
 test "cli.parseCliArgs parses signatures for address" {

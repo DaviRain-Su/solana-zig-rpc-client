@@ -25,6 +25,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const rent_bytes_arg = args.rent_bytes_arg;
     const signed_tx_arg = args.signed_tx_arg;
     const signature_statuses = args.signature_statuses;
+    const multiple_accounts = args.multiple_accounts;
     const blocks_limit_arg = args.blocks_limit_arg;
     const commitment = toClientCommitment(args.commitment);
     const status_timeout_ms = args.status_timeout_ms;
@@ -199,19 +200,76 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             const account_value = account orelse return error.InvalidCli;
             const info = try rpc.getAccountInfo(account_value, commitment);
             defer {
-                allocator.free(info.owner);
-                if (info.data) |value| allocator.free(value);
-                if (info.data_encoding) |value| allocator.free(value);
+                freeAccountInfo(allocator, info);
             }
 
             std.debug.print(
-                "account info for {s}: lamports={} executable={s} owner={s} rent_epoch={?d}\n",
-                .{ account_value, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch },
+                "account info for {s}: lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                .{ account_value, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
             );
             if (info.data) |value| {
                 std.debug.print("  data({s}) size={}\n", .{ info.data_encoding orelse "unknown", value.len });
             } else {
                 std.debug.print("  data: unavailable\n", .{});
+            }
+        },
+
+        .multiple_accounts => {
+            if (multiple_accounts.items.len == 0) {
+                std.debug.print("error: multiple-accounts requires at least one account\n", .{});
+                return error.InvalidCli;
+            }
+
+            const infos = try rpc.getMultipleAccounts(multiple_accounts.items, commitment);
+            defer {
+                for (infos) |maybe_info| {
+                    if (maybe_info) |info| freeAccountInfo(allocator, info);
+                }
+                allocator.free(infos);
+            }
+
+            std.debug.print("multiple accounts: {}\n", .{infos.len});
+            for (infos, 0..) |maybe_info, index| {
+                const address = multiple_accounts.items[index];
+                if (maybe_info) |info| {
+                    std.debug.print(
+                        "  [{}] {s}: lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                        .{ index, address, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
+                    );
+                    if (info.data) |value| {
+                        std.debug.print("      data({s}) size={}\n", .{ info.data_encoding orelse "unknown", value.len });
+                    }
+                } else {
+                    std.debug.print("  [{}] {s}: not found\n", .{ index, address });
+                }
+            }
+        },
+
+        .program_accounts => {
+            const program_id = account orelse return error.InvalidCli;
+            const accounts_for_program = try rpc.getProgramAccounts(program_id, commitment);
+            defer {
+                for (accounts_for_program) |entry| {
+                    allocator.free(entry.pubkey);
+                    freeAccountInfo(allocator, entry.account);
+                }
+                allocator.free(accounts_for_program);
+            }
+
+            if (accounts_for_program.len == 0) {
+                std.debug.print("no program accounts found for {s}\n", .{program_id});
+                return;
+            }
+
+            std.debug.print("program accounts for {s}: {}\n", .{ program_id, accounts_for_program.len });
+            for (accounts_for_program, 0..) |entry, index| {
+                std.debug.print(
+                    "  [{}] pubkey={s} lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                    .{ index, entry.pubkey, entry.account.lamports, if (entry.account.executable) "true" else "false", entry.account.owner, entry.account.rent_epoch, entry.account.space },
+                );
+                if (entry.account.data) |value| {
+                    std.debug.print("      data({s}) size={}\n", .{ entry.account.data_encoding orelse "unknown", value.len });
+                }
             }
         },
 
@@ -626,6 +684,73 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             );
         },
 
+        .largest_accounts => {
+            const largest_accounts = try rpc.getLargestAccounts(commitment);
+            defer {
+                for (largest_accounts) |entry| {
+                    allocator.free(entry.address);
+                }
+                allocator.free(largest_accounts);
+            }
+
+            if (largest_accounts.len == 0) {
+                std.debug.print("no largest accounts found\n", .{});
+                return;
+            }
+
+            std.debug.print("largest accounts: {}\n", .{largest_accounts.len});
+            for (largest_accounts, 0..) |entry, index| {
+                std.debug.print("  [{}] address={s} lamports={}\n", .{ index, entry.address, entry.lamports });
+            }
+        },
+
+        .token_account_balance => {
+            const token_account = account orelse return error.InvalidCli;
+            const amount = try rpc.getTokenAccountBalance(token_account, commitment);
+            defer freeTokenAmount(allocator, amount);
+
+            std.debug.print(
+                "token account balance for {s}: amount={s} decimals={} ui_amount={?d} ui_amount_string={s}\n",
+                .{ token_account, amount.amount, amount.decimals, amount.ui_amount, amount.ui_amount_string },
+            );
+        },
+
+        .token_supply => {
+            const mint = account orelse return error.InvalidCli;
+            const amount = try rpc.getTokenSupply(mint, commitment);
+            defer freeTokenAmount(allocator, amount);
+
+            std.debug.print(
+                "token supply for {s}: amount={s} decimals={} ui_amount={?d} ui_amount_string={s}\n",
+                .{ mint, amount.amount, amount.decimals, amount.ui_amount, amount.ui_amount_string },
+            );
+        },
+
+        .token_largest_accounts => {
+            const mint = account orelse return error.InvalidCli;
+            const entries = try rpc.getTokenLargestAccounts(mint, commitment);
+            defer {
+                for (entries) |entry| {
+                    allocator.free(entry.address);
+                    freeTokenAmount(allocator, entry.amount);
+                }
+                allocator.free(entries);
+            }
+
+            if (entries.len == 0) {
+                std.debug.print("no token largest accounts found for {s}\n", .{mint});
+                return;
+            }
+
+            std.debug.print("token largest accounts for {s}: {}\n", .{ mint, entries.len });
+            for (entries, 0..) |entry, index| {
+                std.debug.print(
+                    "  [{}] address={s} amount={s} decimals={} ui_amount={?d} ui_amount_string={s}\n",
+                    .{ index, entry.address, entry.amount.amount, entry.amount.decimals, entry.amount.ui_amount, entry.amount.ui_amount_string },
+                );
+            }
+        },
+
         .blockhash_valid => {
             const blockhash_value = blockhash_arg orelse return error.InvalidCli;
             const is_valid = try rpc.isBlockhashValid(blockhash_value, commitment);
@@ -698,6 +823,17 @@ fn toClientCommitment(value: ?cli.Commitment) ?client.Commitment {
         };
     }
     return null;
+}
+
+fn freeAccountInfo(allocator: Allocator, info: client.AccountInfo) void {
+    allocator.free(info.owner);
+    if (info.data) |value| allocator.free(value);
+    if (info.data_encoding) |value| allocator.free(value);
+}
+
+fn freeTokenAmount(allocator: Allocator, amount: client.TokenAmount) void {
+    allocator.free(amount.amount);
+    allocator.free(amount.ui_amount_string);
 }
 
 fn runMockBlockServer(
