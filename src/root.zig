@@ -1495,6 +1495,10 @@ pub const RpcClient = struct {
         return (try self.getUiAccountMaybeWithOptions(account, options)) orelse error.AccountNotFound;
     }
 
+    pub fn getUiAccountWithConfig(self: *RpcClient, account: []const u8, options: ?UiAccountQueryOptions) !JsonParsedAccountInfo {
+        return try self.getUiAccountWithOptions(account, options);
+    }
+
     pub fn getUiAccountResponse(self: *RpcClient, account: []const u8, commitment: ?Commitment) !UiAccountResponse {
         return try self.getUiAccountResponseWithOptions(
             account,
@@ -2051,6 +2055,14 @@ pub const RpcClient = struct {
         return response.accounts;
     }
 
+    pub fn getProgramUiAccountsWithConfig(
+        self: *RpcClient,
+        program_id: []const u8,
+        options: ?ProgramAccountsQueryOptions,
+    ) ![]JsonParsedProgramAccount {
+        return try self.getProgramUiAccountsWithOptions(program_id, options);
+    }
+
     pub fn getProgramUiAccounts(self: *RpcClient, program_id: []const u8, commitment: ?Commitment) ![]JsonParsedProgramAccount {
         const options = if (commitment) |value|
             ProgramAccountsQueryOptions{ .commitment = value }
@@ -2366,6 +2378,18 @@ pub const RpcClient = struct {
 
     pub fn getTokenAccountWithOptions(self: *RpcClient, token_account: []const u8, options: ?UiAccountQueryOptions) !JsonParsedAccountInfo {
         return (try self.getTokenAccountMaybeWithOptions(token_account, options)) orelse error.AccountNotFound;
+    }
+
+    pub fn getTokenAccountWithConfig(self: *RpcClient, token_account: []const u8, options: ?UiAccountQueryOptions) !JsonParsedAccountInfo {
+        return try self.getTokenAccountWithOptions(token_account, options);
+    }
+
+    pub fn getTokenAccountMaybeWithConfig(
+        self: *RpcClient,
+        token_account: []const u8,
+        options: ?UiAccountQueryOptions,
+    ) !?JsonParsedAccountInfo {
+        return try self.getTokenAccountMaybeWithOptions(token_account, options);
     }
 
     pub fn getTokenAccount(self: *RpcClient, token_account: []const u8, commitment: ?Commitment) !JsonParsedAccountInfo {
@@ -3532,6 +3556,55 @@ pub const RpcClient = struct {
         return try self.sendTransaction(signed_tx_base64, null);
     }
 
+    pub fn sendTransactionWithConfig(
+        self: *RpcClient,
+        signed_tx_base64: []const u8,
+        options: ?SendTransactionOptions,
+    ) ![]const u8 {
+        return try self.sendTransaction(signed_tx_base64, options);
+    }
+
+    pub fn sendAndConfirmTransaction(self: *RpcClient, signed_tx_base64: []const u8) ![]const u8 {
+        return try self.sendTransactionAndConfirm(
+            signed_tx_base64,
+            null,
+            null,
+            false,
+            poll_for_signature_confirmation_timeout_ms,
+            signature_poll_interval_ms,
+        );
+    }
+
+    pub fn sendAndConfirmTransactionWithCommitment(
+        self: *RpcClient,
+        signed_tx_base64: []const u8,
+        commitment: Commitment,
+    ) ![]const u8 {
+        return try self.sendTransactionAndConfirm(
+            signed_tx_base64,
+            null,
+            commitment,
+            false,
+            poll_for_signature_confirmation_timeout_ms,
+            signature_poll_interval_ms,
+        );
+    }
+
+    pub fn sendAndConfirmTransactionWithConfig(
+        self: *RpcClient,
+        signed_tx_base64: []const u8,
+        options: ?SendTransactionOptions,
+    ) ![]const u8 {
+        return try self.sendTransactionAndConfirm(
+            signed_tx_base64,
+            options,
+            null,
+            false,
+            poll_for_signature_confirmation_timeout_ms,
+            signature_poll_interval_ms,
+        );
+    }
+
     pub fn sendTransaction(self: *RpcClient, signed_tx_base64: []const u8, options: ?SendTransactionOptions) ![]const u8 {
         const params_json = try self.serializeSendTransactionParams(signed_tx_base64, options);
         defer self.allocator.free(params_json);
@@ -4471,6 +4544,141 @@ test "root.getTokenAccount returns parsed ui account" {
     try std.testing.expectEqualStrings("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", token_account.owner);
 }
 
+test "root.ui and token account config aliases return same parsed account" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":14},"value":{"data":{"program":"spl-token","parsed":{"type":"account","info":{"mint":"Mint1111111111111111111111111111111111"}}},"executable":false,"lamports":99,"owner":"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA","rentEpoch":42,"space":165}},"id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":14},"value":{"data":{"program":"spl-token","parsed":{"type":"account","info":{"mint":"Mint1111111111111111111111111111111111"}}},"executable":false,"lamports":99,"owner":"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA","rentEpoch":42,"space":165}},"id":2}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const ui_account = try client.getUiAccountWithConfig(
+        "Address11111111111111111111111111111111",
+        UiAccountQueryOptions{ .commitment = .confirmed },
+    );
+    defer client.allocator.free(ui_account.owner);
+    defer client.allocator.free(ui_account.data_json);
+
+    try std.testing.expectEqual(@as(u64, 99), ui_account.lamports);
+
+    const token_account = try client.getTokenAccountWithConfig(
+        "TokenAccount1111111111111111111111111111111111",
+        UiAccountQueryOptions{ .commitment = .confirmed },
+    );
+    defer client.allocator.free(token_account.owner);
+    defer client.allocator.free(token_account.data_json);
+
+    try std.testing.expectEqual(@as(u64, 99), token_account.lamports);
+}
+
+test "root.sendAndConfirmTransaction aliases wait on signature status" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":"Sig111111111111111111111111111111111111111111111111111111111111111111","id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[{"slot":10,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":2}
+    };
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const signature = try client.sendAndConfirmTransaction("SignedTransactionBase64==");
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "Sig111111111111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+}
+
+test "root.sendAndConfirmTransactionWithConfig supports send options" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":"Sig222222222222222222222222222222222222222222222222222222222222222222","id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":11},"value":[{"slot":11,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":2}
+    };
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const signature = try client.sendAndConfirmTransactionWithConfig(
+        "SignedTransactionBase64==",
+        .{ .skip_preflight = true },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "Sig222222222222222222222222222222222222222222222222222222222222222222",
+        signature,
+    );
+}
+
+test "root.sendAndConfirmTransactionWithCommitment requires commitment-aware confirmation" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":"Sig333333333333333333333333333333333333333333333333333333333333333333","id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":[{"slot":12,"confirmations":1,"confirmationStatus":"finalized","err":null}]},"id":2}
+    };
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const signature = try client.sendAndConfirmTransactionWithCommitment(
+        "SignedTransactionBase64==",
+        .confirmed,
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "Sig333333333333333333333333333333333333333333333333333333333333333333",
+        signature,
+    );
+}
+
 test "root.getBalanceResponse preserves context slot" {
     const allocator = std.testing.allocator;
     var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
@@ -5047,6 +5255,42 @@ test "root.getProgramUiAccountsWithOptions params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"bytes\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"dataSlice\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"length\":32") != null);
+}
+
+test "root.getProgramUiAccountsWithConfig returns parsed program accounts" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":[{"pubkey":"ProgramAcct1111111111111111111111111111111111","account":{"data":{"program":"spl-token","parsed":{"type":"account","info":{"mint":"Mint1111111111111111111111111111111111"}}},"executable":false,"lamports":123,"owner":"Owner1111111111111111111111111111111111","rentEpoch":9,"space":165}}],"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const accounts = try client.getProgramUiAccountsWithConfig(
+        "Program1111111111111111111111111111111111",
+        ProgramAccountsQueryOptions{ .commitment = .confirmed },
+    );
+    defer {
+        for (accounts) |entry| {
+            client.allocator.free(entry.account.owner);
+            client.allocator.free(entry.account.data_json);
+            client.allocator.free(entry.pubkey);
+        }
+        client.allocator.free(accounts);
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), accounts.len);
+    try std.testing.expectEqualStrings("ProgramAcct1111111111111111111111111111111111", accounts[0].pubkey);
+    try std.testing.expectEqual(@as(u64, 123), accounts[0].account.lamports);
 }
 
 test "root.requestAirdrop params serialization" {
