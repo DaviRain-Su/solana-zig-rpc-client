@@ -1,5 +1,6 @@
 const std = @import("std");
 const json = std.json;
+const Ed25519 = std.crypto.sign.Ed25519;
 
 const Allocator = std.mem.Allocator;
 const max_lockout_history: u64 = 31;
@@ -12,6 +13,15 @@ const get_new_latest_blockhash_timeout_ms: u64 = 5_000;
 const get_new_latest_blockhash_interval_ms: u64 = 400;
 const wait_for_balance_error_retries: usize = 30;
 
+const base58_alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const base58_inverse = init: {
+    var table = [_]i16{ -1 } ** 256;
+    for (base58_alphabet, 0..) |ch, index| {
+        table[ch] = @intCast(index);
+    }
+    break :init table;
+};
+
 pub const RpcError = error{
     HttpError,
     RpcError,
@@ -23,6 +33,176 @@ pub const RpcError = error{
     TransactionNotConfirmed,
     TransactionNotFound,
 };
+
+pub const SdkError = error{
+    InvalidBase58Character,
+    InvalidBase58Length,
+    InvalidSecretKeyLength,
+};
+
+fn base58Value(byte: u8) SdkError!u8 {
+    const value = base58_inverse[byte];
+    if (value < 0) return error.InvalidBase58Character;
+    return @intCast(value);
+}
+
+fn decodeBase58(allocator: Allocator, encoded: []const u8) ![]u8 {
+    if (encoded.len == 0) return error.InvalidBase58Length;
+
+    var leading_zeroes: usize = 0;
+    for (encoded) |byte| {
+        if (byte == '1') {
+            leading_zeroes += 1;
+        } else {
+            break;
+        }
+    }
+
+    var decoded = std.ArrayList(u8).empty;
+    errdefer decoded.deinit(allocator);
+
+    for (encoded) |byte| {
+        var carry: u64 = try base58Value(byte);
+        var index: usize = 0;
+        while (index < decoded.items.len) : (index += 1) {
+            const current = @as(u64, decoded.items[index]) * 58 + carry;
+            decoded.items[index] = @truncate(current);
+            carry = current >> 8;
+        }
+        while (carry > 0) {
+            try decoded.append(allocator, @truncate(carry));
+            carry >>= 8;
+        }
+    }
+
+    if (decoded.items.len == 0) {
+        const result = try allocator.alloc(u8, leading_zeroes);
+        @memset(result, 0);
+        return result;
+    }
+
+    const reversed = try decoded.toOwnedSlice(allocator);
+    defer allocator.free(reversed);
+
+    const result = try allocator.alloc(u8, reversed.len + leading_zeroes);
+    @memset(result[0..leading_zeroes], 0);
+
+    var output_index: usize = leading_zeroes;
+    var reversed_index = reversed.len;
+    while (reversed_index > 0) : (reversed_index -= 1) {
+        result[output_index] = reversed[reversed_index - 1];
+        output_index += 1;
+    }
+
+    return result;
+}
+
+fn decodeBase58WithLength(allocator: Allocator, encoded: []const u8, expected_len: usize) ![]u8 {
+    const decoded = try decodeBase58(allocator, encoded);
+    if (decoded.len != expected_len) {
+        allocator.free(decoded);
+        return error.InvalidBase58Length;
+    }
+    return decoded;
+}
+
+fn writeCompactVecLen(bytes: *std.ArrayList(u8), allocator: Allocator, value: usize) !void {
+    var remaining = value;
+    while (remaining >= 0x80) {
+        try bytes.append(allocator, @as(u8, @truncate((remaining & 0x7f) | 0x80)));
+        remaining >>= 7;
+    }
+    try bytes.append(allocator, @as(u8, @truncate(remaining)));
+}
+
+fn buildLegacyTransferMessage(
+    allocator: Allocator,
+    sender_public_key: [Ed25519.PublicKey.encoded_length]u8,
+    destination_public_key: [Ed25519.PublicKey.encoded_length]u8,
+    recent_blockhash: [32]u8,
+    lamports: u64,
+) ![]u8 {
+    const system_program_id: [Ed25519.PublicKey.encoded_length]u8 = .{0} ** Ed25519.PublicKey.encoded_length;
+
+    var instruction_data = [_]u8{2} ++ [_]u8{0} ** 8;
+    std.mem.writeInt(u64, instruction_data[1..9], lamports, .little);
+
+    var message = std.ArrayList(u8).empty;
+    errdefer message.deinit(allocator);
+
+    // legacy header
+    try message.append(allocator, 1); // required signatures
+    try message.append(allocator, 0); // readonly signed
+    try message.append(allocator, 1); // readonly unsigned
+
+    // account keys
+    try writeCompactVecLen(&message, allocator, 3);
+    try message.appendSlice(allocator, &sender_public_key);
+    try message.appendSlice(allocator, &destination_public_key);
+    try message.appendSlice(allocator, &system_program_id);
+
+    // blockhash
+    try message.appendSlice(allocator, &recent_blockhash);
+
+    // one instruction: system transfer
+    try writeCompactVecLen(&message, allocator, 1);
+    try message.append(allocator, 2); // system program account index
+    try writeCompactVecLen(&message, allocator, 2); // from/to
+    try message.append(allocator, 0);
+    try message.append(allocator, 1);
+    try writeCompactVecLen(&message, allocator, instruction_data.len);
+    try message.appendSlice(allocator, &instruction_data);
+
+    return try message.toOwnedSlice(allocator);
+}
+
+fn buildLegacyTransferTransaction(
+    allocator: Allocator,
+    secret_key: []const u8,
+    destination_public_key: []const u8,
+    recent_blockhash: []const u8,
+    lamports: u64,
+) ![]u8 {
+    if (secret_key.len != Ed25519.SecretKey.encoded_length) return error.InvalidSecretKeyLength;
+    if (destination_public_key.len != Ed25519.PublicKey.encoded_length) return error.InvalidBase58Length;
+    if (recent_blockhash.len != 32) return error.InvalidBase58Length;
+
+    var sender_secret_key: [Ed25519.SecretKey.encoded_length]u8 = undefined;
+    @memcpy(sender_secret_key[0..], secret_key);
+    var destination_bytes: [Ed25519.PublicKey.encoded_length]u8 = undefined;
+    @memcpy(destination_bytes[0..], destination_public_key);
+    var blockhash_bytes: [32]u8 = undefined;
+    @memcpy(blockhash_bytes[0..], recent_blockhash);
+
+    const key_pair = try Ed25519.KeyPair.fromSecretKey(try Ed25519.SecretKey.fromBytes(sender_secret_key));
+    const sender_public_key = key_pair.public_key.toBytes();
+
+    const message = try buildLegacyTransferMessage(
+        allocator,
+        sender_public_key,
+        destination_bytes,
+        blockhash_bytes,
+        lamports,
+    );
+    defer allocator.free(message);
+
+    const signature = try Ed25519.KeyPair.sign(key_pair, message, null);
+    const signature_bytes = signature.toBytes();
+
+    var tx = std.ArrayList(u8).empty;
+    errdefer tx.deinit(allocator);
+    try writeCompactVecLen(&tx, allocator, 1);
+    try tx.appendSlice(allocator, &signature_bytes);
+    try tx.appendSlice(allocator, message);
+
+    const tx_bytes = try tx.toOwnedSlice(allocator);
+    defer allocator.free(tx_bytes);
+
+    const base64_len = std.base64.standard.Encoder.calcSize(tx_bytes.len);
+    const encoded = try allocator.alloc(u8, base64_len);
+    _ = std.base64.standard.Encoder.encode(encoded, tx_bytes);
+    return encoded;
+}
 
 pub const TransportStats = struct {
     request_count: usize = 0,
@@ -3123,6 +3303,77 @@ pub const RpcClient = struct {
         return FeeForMessage{ .value = response.value };
     }
 
+    pub fn buildTransferTransaction(
+        self: *RpcClient,
+        sender_secret_key: []const u8,
+        destination: []const u8,
+        lamports: u64,
+        recent_blockhash: []const u8,
+    ) ![]const u8 {
+        const sender_secret_key_bytes = try decodeBase58WithLength(
+            self.allocator,
+            sender_secret_key,
+            Ed25519.SecretKey.encoded_length,
+        );
+        defer self.allocator.free(sender_secret_key_bytes);
+
+        const destination_public_key = try decodeBase58WithLength(
+            self.allocator,
+            destination,
+            Ed25519.PublicKey.encoded_length,
+        );
+        defer self.allocator.free(destination_public_key);
+
+        const recent_blockhash_bytes = try decodeBase58WithLength(self.allocator, recent_blockhash, 32);
+        defer self.allocator.free(recent_blockhash_bytes);
+
+        return try buildLegacyTransferTransaction(
+            self.allocator,
+            sender_secret_key_bytes,
+            destination_public_key,
+            recent_blockhash_bytes,
+            lamports,
+        );
+    }
+
+    pub fn sendTransfer(
+        self: *RpcClient,
+        sender_secret_key: []const u8,
+        destination: []const u8,
+        lamports: u64,
+        recent_blockhash: []const u8,
+    ) ![]const u8 {
+        const signed_tx_base64 = try self.buildTransferTransaction(sender_secret_key, destination, lamports, recent_blockhash);
+        defer self.allocator.free(signed_tx_base64);
+        return try self.sendTransaction(signed_tx_base64, null);
+    }
+
+    pub fn transfer(
+        self: *RpcClient,
+        sender_secret_key: []const u8,
+        destination: []const u8,
+        lamports: u64,
+        recent_blockhash: []const u8,
+        commitment: ?Commitment,
+        options: ?SendTransactionOptions,
+    ) ![]const u8 {
+        const signed_tx_base64 = try self.buildTransferTransaction(sender_secret_key, destination, lamports, recent_blockhash);
+        defer self.allocator.free(signed_tx_base64);
+
+        if (commitment) |value| {
+            if (options) |opts| {
+                return try self.sendAndConfirmTransactionWithCommitmentAndConfig(signed_tx_base64, value, opts);
+            }
+            return try self.sendAndConfirmTransactionWithCommitment(signed_tx_base64, value);
+        }
+
+        if (options) |opts| {
+            return try self.sendAndConfirmTransactionWithConfig(signed_tx_base64, opts);
+        }
+
+        return try self.sendAndConfirmTransaction(signed_tx_base64);
+    }
+
     pub fn getRecentPerformanceSamples(self: *RpcClient, limit: ?u64) ![]PerformanceSample {
         var response: []u8 = undefined;
         if (limit) |value| {
@@ -5834,6 +6085,111 @@ test "root.requestAirdropWithConfig returns signature copy" {
         "Sig111111111111111111111111111111111111111111111111111111111111111111",
         signature,
     );
+}
+
+test "root.writeCompactVecLen uses shortvec little-endian 7-bit chunks" {
+    const allocator = std.testing.allocator;
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(allocator);
+
+    try writeCompactVecLen(&bytes, allocator, 0);
+    try writeCompactVecLen(&bytes, allocator, 1);
+    try writeCompactVecLen(&bytes, allocator, 127);
+    try writeCompactVecLen(&bytes, allocator, 128);
+    try writeCompactVecLen(&bytes, allocator, 255);
+
+    const expected = [_]u8{ 0, 1, 127, 128, 1, 255, 1 };
+    try std.testing.expect(std.mem.eql(u8, bytes.items, &expected));
+}
+
+test "root.decodeBase58 validates characters and lengths" {
+    const allocator = std.testing.allocator;
+
+    const zeros = try decodeBase58(allocator, "11111111111111111111111111111111");
+    defer allocator.free(zeros);
+    var expected = [_]u8{0} ** 32;
+    try std.testing.expectEqual(@as(usize, 32), zeros.len);
+    try std.testing.expect(std.mem.eql(u8, zeros, expected[0..]));
+
+    try std.testing.expectError(
+        SdkError.InvalidBase58Character,
+        decodeBase58(allocator, "0"),
+    );
+
+    try std.testing.expectError(
+        SdkError.InvalidBase58Length,
+        decodeBase58WithLength(allocator, "11111111111111111111111111111111", 31),
+    );
+}
+
+test "root.buildLegacyTransferTransaction builds valid signed transfer payload" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_public_key = destination_key_pair.public_key.toBytes();
+    const recent_blockhash = [_]u8{0x12} ** 32;
+
+    const encoded_transaction = try buildLegacyTransferTransaction(
+        allocator,
+        &sender_secret_key,
+        &destination_public_key,
+        &recent_blockhash,
+        1_000,
+    );
+    defer allocator.free(encoded_transaction);
+
+    const tx_bytes_len = try std.base64.standard.Decoder.calcSizeForSlice(encoded_transaction);
+    var tx_bytes = try allocator.alloc(u8, tx_bytes_len);
+    defer allocator.free(tx_bytes);
+    try std.base64.standard.Decoder.decode(tx_bytes, encoded_transaction);
+
+    try std.testing.expectEqual(@as(u8, 1), tx_bytes[0]);
+    try std.testing.expectEqual(@as(usize, 1 + Ed25519.Signature.encoded_length + 147), tx_bytes_len);
+
+    const signature_offset = 1;
+    const signature_end = signature_offset + Ed25519.Signature.encoded_length;
+    const signature_bytes = tx_bytes[signature_offset..signature_end];
+    const message = tx_bytes[signature_end..];
+
+    const signature_array: [Ed25519.Signature.encoded_length]u8 = signature_bytes.*;
+    const signature = Ed25519.Signature.fromBytes(signature_array);
+    try Ed25519.Signature.verify(signature, message, sender_key_pair.public_key);
+
+    const expected_header = [_]u8{ 1, 0, 1 };
+    try std.testing.expect(std.mem.eql(u8, message[0..3], &expected_header));
+
+    try std.testing.expectEqual(@as(u8, 3), message[3]);
+
+    const sender_pubkey_offset = 4;
+    const destination_pubkey_offset = sender_pubkey_offset + 32;
+    const system_pubkey_offset = destination_pubkey_offset + 32;
+    const blockhash_offset = system_pubkey_offset + 32;
+    const instructions_offset = blockhash_offset + 32;
+    try std.testing.expect(std.mem.eql(u8, message[sender_pubkey_offset..destination_pubkey_offset], &sender_key_pair.public_key.toBytes()));
+    try std.testing.expect(std.mem.eql(u8, message[destination_pubkey_offset..system_pubkey_offset], &destination_public_key));
+    try std.testing.expect(std.mem.eql(u8, message[system_pubkey_offset..blockhash_offset], &([_]u8{0} ** 32)));
+    try std.testing.expect(std.mem.eql(u8, message[blockhash_offset..instructions_offset], &recent_blockhash));
+
+    try std.testing.expectEqual(@as(u8, 1), message[instructions_offset]);
+    const first_instruction_offset = instructions_offset + 1;
+    try std.testing.expectEqual(@as(u8, 2), message[first_instruction_offset]);
+    const first_instruction_account_count_offset = first_instruction_offset + 1;
+    try std.testing.expectEqual(@as(u8, 2), message[first_instruction_account_count_offset]);
+    try std.testing.expectEqual(@as(u8, 0), message[first_instruction_account_count_offset + 1]);
+    try std.testing.expectEqual(@as(u8, 1), message[first_instruction_account_count_offset + 2]);
+    const instruction_data_len_offset = first_instruction_account_count_offset + 3;
+    try std.testing.expectEqual(@as(u8, 9), message[instruction_data_len_offset]);
+    try std.testing.expectEqual(@as(u8, 2), message[instruction_data_len_offset + 1]);
+    try std.testing.expectEqual(@as(u8, 232), message[instruction_data_len_offset + 2]);
+    try std.testing.expectEqual(@as(u8, 3), message[instruction_data_len_offset + 3]);
+    try std.testing.expectEqual(@as(u8, 0), message[instruction_data_len_offset + 4]);
+    try std.testing.expectEqual(@as(u8, 0), message[instruction_data_len_offset + 5]);
+    try std.testing.expectEqual(@as(u8, 0), message[instruction_data_len_offset + 6]);
+    try std.testing.expectEqual(@as(u8, 0), message[instruction_data_len_offset + 7]);
+    try std.testing.expectEqual(@as(u8, 0), message[instruction_data_len_offset + 8]);
 }
 
 test "root.minimumBalanceForRentExemption params serialization" {
