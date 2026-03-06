@@ -3745,10 +3745,26 @@ pub const RpcClient = struct {
         signature: []const u8,
         search_transaction_history: bool,
     ) !u64 {
+        return try self.getNumBlocksSinceSignatureConfirmationWithCommitment(
+            signature,
+            null,
+            search_transaction_history,
+        );
+    }
+
+    pub fn getNumBlocksSinceSignatureConfirmationWithCommitment(
+        self: *RpcClient,
+        signature: []const u8,
+        commitment: ?Commitment,
+        search_transaction_history: bool,
+    ) !u64 {
         const status = try self.getSignatureStatusWithOptions(
             signature,
-            if (search_transaction_history)
-                SignatureStatusesQueryOptions{ .search_transaction_history = true }
+            if (search_transaction_history or commitment != null)
+                SignatureStatusesQueryOptions{
+                    .search_transaction_history = search_transaction_history,
+                    .commitment = commitment,
+                }
             else
                 null,
         );
@@ -3973,13 +3989,35 @@ pub const RpcClient = struct {
         timeout_ms: u64,
         poll_interval_ms: u64,
     ) !u64 {
+        return try self.pollForSignatureConfirmationWithCommitmentAndTimeouts(
+            signature,
+            min_confirmed_blocks,
+            null,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+        );
+    }
+
+    pub fn pollForSignatureConfirmationWithCommitmentAndTimeouts(
+        self: *RpcClient,
+        signature: []const u8,
+        min_confirmed_blocks: u64,
+        commitment: ?Commitment,
+        search_transaction_history: bool,
+        timeout_ms: u64,
+        poll_interval_ms: u64,
+    ) !u64 {
         const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
 
         while (std.time.milliTimestamp() < deadline) {
             const status = self.getSignatureStatusWithOptions(
                 signature,
-                if (search_transaction_history)
-                    SignatureStatusesQueryOptions{ .search_transaction_history = true }
+                if (search_transaction_history or commitment != null)
+                    SignatureStatusesQueryOptions{
+                        .search_transaction_history = search_transaction_history,
+                        .commitment = commitment,
+                    }
                 else
                     null,
             ) catch |err| switch (err) {
@@ -3992,6 +4030,10 @@ pub const RpcClient = struct {
             defer if (status.confirmation_status) |value| self.allocator.free(value);
 
             if (status.has_error) return error.TransactionFailed;
+            if (commitment != null and !confirmationSatisfiesCommitment(status.confirmation_status, commitment)) {
+                std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
+                continue;
+            }
 
             const confirmed_blocks = status.confirmations orelse max_lockout_history + 1;
             if (confirmed_blocks >= min_confirmed_blocks) return confirmed_blocks;
@@ -4318,6 +4360,39 @@ test "root.pollForSignatureConfirmationWithTimeouts waits for configured lockout
     try std.testing.expectEqual(@as(u64, 10), confirmed_blocks);
 }
 
+test "root.pollForSignatureConfirmationWithCommitmentAndTimeouts waits for commitment level" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":31},"value":[{"slot":31,"confirmations":1,"confirmationStatus":"confirmed","err":null}]},"id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":32},"value":[{"slot":32,"confirmations":10,"confirmationStatus":"finalized","err":null}]},"id":2}
+        ,
+    };
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const confirmed_blocks = try client.pollForSignatureConfirmationWithCommitmentAndTimeouts(
+        "Sig111111111111111111111111111111111111",
+        10,
+        .finalized,
+        false,
+        500,
+        10,
+    );
+    try std.testing.expectEqual(@as(u64, 10), confirmed_blocks);
+}
+
 test "root.getNumBlocksSinceSignatureConfirmation returns lockout fallback when confirmations missing" {
     const allocator = std.testing.allocator;
     var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
@@ -4337,6 +4412,32 @@ test "root.getNumBlocksSinceSignatureConfirmation returns lockout fallback when 
     defer client.deinit();
 
     const confirmed_blocks = try client.getNumBlocksSinceSignatureConfirmation("Sig111111111111111111111111111111111111", false);
+    try std.testing.expectEqual(@as(u64, max_lockout_history + 1), confirmed_blocks);
+}
+
+test "root.getNumBlocksSinceSignatureConfirmationWithCommitment passes commitment into signature status query" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_body =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":31},"value":[{"slot":31,"confirmationStatus":"confirmed","err":null}]},"id":1}
+    ;
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const confirmed_blocks = try client.getNumBlocksSinceSignatureConfirmationWithCommitment(
+        "Sig111111111111111111111111111111111111",
+        .confirmed,
+        false,
+    );
     try std.testing.expectEqual(@as(u64, max_lockout_history + 1), confirmed_blocks);
 }
 

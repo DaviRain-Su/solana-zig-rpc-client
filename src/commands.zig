@@ -400,9 +400,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            const confirmed_blocks = try rpc.pollForSignatureConfirmationWithTimeouts(
+            const confirmed_blocks = try rpc.pollForSignatureConfirmationWithCommitmentAndTimeouts(
                 signature_value,
                 min_confirmed_blocks,
+                commitment,
                 search_transaction_history,
                 status_timeout_ms,
                 status_poll_ms,
@@ -418,7 +419,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 std.debug.print("error: blocks-since-signature-confirmation requires <signature>\n", .{});
                 return error.InvalidCli;
             };
-            const confirmed_blocks = try rpc.getNumBlocksSinceSignatureConfirmation(signature_value, search_transaction_history);
+            const confirmed_blocks = try rpc.getNumBlocksSinceSignatureConfirmationWithCommitment(
+                signature_value,
+                commitment,
+                search_transaction_history,
+            );
             std.debug.print("signature {s} confirmed blocks: {}\n", .{ signature_value, confirmed_blocks });
         },
 
@@ -4323,6 +4328,8 @@ test "runCommand poll-for-signature-confirmation polls until min confirmed block
     var parsed = try cli.parseCliArgs(allocator, &.{
         "poll-for-signature-confirmation",
         "--search-transaction-history",
+        "--commitment",
+        "confirmed",
         "--timeout-ms",
         "200",
         "--poll-ms",
@@ -4351,14 +4358,14 @@ test "runCommand poll-for-signature-confirmation polls until min confirmed block
         request_captures.items[0],
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         true,
-        null,
+        "confirmed",
     );
     try expectGetSignatureStatusesRequest(
         allocator,
         request_captures.items[1],
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         true,
-        null,
+        "confirmed",
     );
     try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
     try std.testing.expectEqualStrings(
@@ -4389,6 +4396,8 @@ test "runCommand blocks-since-signature-confirmation prints confirmations" {
 
     var parsed = try cli.parseCliArgs(allocator, &.{
         "blocks-since-signature-confirmation",
+        "--commitment",
+        "confirmed",
         "Sig111111111111111111111111111111111111",
     });
     defer parsed.deinit(allocator);
@@ -4412,7 +4421,7 @@ test "runCommand blocks-since-signature-confirmation prints confirmations" {
         request_capture.items,
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         false,
-        null,
+        "confirmed",
     );
     try std.testing.expectEqualStrings(
         "signature Sig111111111111111111111111111111111111 confirmed blocks: 9\n",
