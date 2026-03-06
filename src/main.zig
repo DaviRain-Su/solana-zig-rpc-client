@@ -7,6 +7,7 @@ fn printUsage(out: *std.Io.Writer) !void {
             "  solana_client_zig [--rpc <url>] latest-blockhash\n" ++
             "  solana_client_zig [--rpc <url>] status <signature>\n" ++
             "  solana_client_zig [--rpc <url>] signature-status <signature>\n" ++
+            "  solana_client_zig [--rpc <url>] signature-statuses <signature-1> [signature-2 ...]\n" ++
             "  solana_client_zig [--rpc <url>] slot\n" ++
             "  solana_client_zig [--rpc <url>] block-height\n" ++
             "  solana_client_zig [--rpc <url>] transaction-count\n" ++
@@ -59,6 +60,7 @@ const Command = enum {
     latest_blockhash,
     status,
     signature_status,
+    signature_statuses,
     slot,
     block_height,
     transaction_count,
@@ -114,6 +116,8 @@ pub fn main() !void {
     var leader_schedule_identity_arg: ?[]const u8 = null;
     var lamports_arg: ?[]const u8 = null;
     var rent_bytes_arg: ?[]const u8 = null;
+    var signature_statuses: std.ArrayListUnmanaged([]const u8) = .{};
+    defer signature_statuses.deinit(allocator);
     var commitment: ?client.Commitment = null;
     var status_timeout_ms: u64 = 30_000;
     var status_poll_ms: u64 = 500;
@@ -154,6 +158,11 @@ pub fn main() !void {
 
         if (std.mem.eql(u8, arg, "signature-status")) {
             command = .signature_status;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "signature-statuses")) {
+            command = .signature_statuses;
             continue;
         }
 
@@ -322,6 +331,11 @@ pub fn main() !void {
                 return error.InvalidCli;
             },
 
+            .signature_statuses => {
+                signature_statuses.append(allocator, arg) catch return error.InvalidCli;
+                continue;
+            },
+
             .balance => if (account == null) {
                 account = arg;
                 continue;
@@ -438,6 +452,42 @@ pub fn main() !void {
                 if (status_info.confirmation_status) |value| value else "unknown",
             },
         );
+        return;
+    }
+
+    if (command == .signature_statuses) {
+        if (signature_statuses.items.len == 0) return error.InvalidCli;
+
+        const statuses = try rpc.getSignatureStatuses(signature_statuses.items, commitment);
+        defer {
+            for (statuses) |status| {
+                if (status) |entry| {
+                    if (entry.confirmation_status) |value| allocator.free(value);
+                }
+            }
+            allocator.free(statuses);
+        }
+
+        std.debug.print("signature statuses: {}\n", .{statuses.len});
+        for (statuses, 0..) |status, index| {
+            const signature_value = signature_statuses.items[index];
+
+            if (status == null) {
+                std.debug.print("  [{}] {s}: not found\n", .{ index, signature_value });
+                continue;
+            }
+
+            const entry = status.?;
+            std.debug.print(
+                "  [{}] {s}: error={s} confirmation={s}\n",
+                .{
+                    index,
+                    signature_value,
+                    if (entry.has_error) "true" else "false",
+                    if (entry.confirmation_status) |value| value else "unknown",
+                },
+            );
+        }
         return;
     }
 
@@ -894,6 +944,7 @@ test "printUsage includes new commands" {
 
     const usage = out.written();
     try std.testing.expect(std.mem.indexOf(u8, usage, "signature-status <signature>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "signature-statuses <signature-1> [signature-2 ...]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "cluster-nodes") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "leader-schedule [slot] [identity]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "vote-accounts") != null);

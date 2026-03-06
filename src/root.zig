@@ -1111,6 +1111,44 @@ pub const RpcClient = struct {
         };
     }
 
+    pub fn getSignatureStatuses(self: *RpcClient, signatures: []const []const u8, commitment: ?Commitment) ![]?SignatureStatus {
+        const SignatureStatusConfig = struct {
+            searchTransactionHistory: bool = true,
+            commitment: ?[]const u8 = null,
+        };
+
+        const params = .{
+            signatures,
+            SignatureStatusConfig{
+                .commitment = if (commitment) |value| commitmentToString(value) else null,
+            },
+        };
+
+        const params_json = try self.serializeParams(params);
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest("getSignatureStatuses", params_json);
+        defer self.allocator.free(response);
+
+        const result = try self.parseResponse(response, SignatureStatusesResult);
+        if (result.value.len == 0) return self.allocator.alloc(?SignatureStatus, 0);
+
+        const copied = try self.allocator.alloc(?SignatureStatus, result.value.len);
+
+        for (result.value, 0..) |entry, index| {
+            if (entry) |status| {
+                copied[index] = SignatureStatus{
+                    .confirmation_status = if (status.confirmationStatus) |value| try self.allocator.dupe(u8, value) else null,
+                    .has_error = status.err != null,
+                };
+            } else {
+                copied[index] = null;
+            }
+        }
+
+        return copied;
+    }
+
     pub fn waitForSignatureStatus(self: *RpcClient, signature: []const u8, commitment: ?Commitment, timeout_ms: u64, poll_interval_ms: u64) !void {
         const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
 
@@ -1379,6 +1417,32 @@ test "getSignatureStatus params serialization" {
     defer allocator.free(committed_json);
     try std.testing.expect(std.mem.indexOf(u8, committed_json, "\"signature\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, committed_json, "\"commitment\":\"confirmed\"") != null);
+}
+
+test "getSignatureStatuses params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const signatures = [_][]const u8{ "sig-1", "sig-2" };
+
+    const no_commitment = .{
+        signatures,
+        .{ .searchTransactionHistory = true },
+    };
+    const no_commitment_json = try client.serializeParams(no_commitment);
+    defer allocator.free(no_commitment_json);
+    try std.testing.expect(std.mem.indexOf(u8, no_commitment_json, "\"sig-1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, no_commitment_json, "\"sig-2\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, no_commitment_json, "searchTransactionHistory") != null);
+
+    const with_commitment = .{
+        signatures,
+        .{ .searchTransactionHistory = true, .commitment = commitmentToString(.finalized) },
+    };
+    const with_commitment_json = try client.serializeParams(with_commitment);
+    defer allocator.free(with_commitment_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"finalized\"") != null);
 }
 
 test "rpc error detail is captured" {
