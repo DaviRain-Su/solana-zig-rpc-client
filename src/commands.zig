@@ -9,6 +9,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const signature = args.signature;
     const account = args.account;
     const blockhash_arg = args.blockhash_arg;
+    const feature_key_arg = args.feature_key_arg;
+    const signatures_for_address_arg = args.signatures_for_address_arg;
+    const signatures_for_address_before_arg = args.signatures_for_address_before_arg;
+    const signatures_for_address_until_arg = args.signatures_for_address_until_arg;
+    const signatures_for_address_limit_arg = args.signatures_for_address_limit_arg;
     const slot_arg = args.slot_arg;
     const blocks_end_slot_arg = args.blocks_end_slot_arg;
     const message_arg = args.message_arg;
@@ -20,6 +25,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const rent_bytes_arg = args.rent_bytes_arg;
     const signed_tx_arg = args.signed_tx_arg;
     const signature_statuses = args.signature_statuses;
+    const blocks_limit_arg = args.blocks_limit_arg;
     const commitment = toClientCommitment(args.commitment);
     const status_timeout_ms = args.status_timeout_ms;
     const status_poll_ms = args.status_poll_ms;
@@ -38,6 +44,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
     if ((status_timeout_ms != 30_000 or status_poll_ms != 500) and command != .status and command != .send_transaction_and_confirm) {
         std.debug.print("error: status options (--timeout-ms, --poll-ms) require status or send-transaction-and-confirm\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((signatures_for_address_before_arg != null or signatures_for_address_until_arg != null or signatures_for_address_limit_arg != null) and
+        command != .signatures_for_address)
+    {
+        std.debug.print("error: --before, --until, --limit are only supported by signatures-for-address\n", .{});
         return error.InvalidCli;
     }
 
@@ -182,6 +195,26 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             std.debug.print("balance for {s}: {}\n", .{ account_value, balance });
         },
 
+        .account_info => {
+            const account_value = account orelse return error.InvalidCli;
+            const info = try rpc.getAccountInfo(account_value, commitment);
+            defer {
+                allocator.free(info.owner);
+                if (info.data) |value| allocator.free(value);
+                if (info.data_encoding) |value| allocator.free(value);
+            }
+
+            std.debug.print(
+                "account info for {s}: lamports={} executable={s} owner={s} rent_epoch={?d}\n",
+                .{ account_value, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch },
+            );
+            if (info.data) |value| {
+                std.debug.print("  data({s}) size={}\n", .{ info.data_encoding orelse "unknown", value.len });
+            } else {
+                std.debug.print("  data: unavailable\n", .{});
+            }
+        },
+
         .request_airdrop => {
             const account_value = account orelse return error.InvalidCli;
             const lamports_txt = lamports_arg orelse return error.InvalidCli;
@@ -268,11 +301,24 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             }
         },
 
+        .block => {
+            const slot_text = slot_arg orelse return error.InvalidCli;
+            const slot = std.fmt.parseInt(u64, slot_text, 10) catch return error.InvalidCli;
+
+            const block = try rpc.getBlock(slot, commitment);
+            if (block) |value| {
+                defer allocator.free(value);
+                std.debug.print("block {}: {s}\n", .{ slot, value });
+            } else {
+                std.debug.print("block {}: not found\n", .{slot});
+            }
+        },
+
         .blocks => {
             const start_slot_text = slot_arg orelse return error.InvalidCli;
             const start_slot = std.fmt.parseInt(u64, start_slot_text, 10) catch return error.InvalidCli;
             const end_slot = if (blocks_end_slot_arg) |raw| std.fmt.parseInt(u64, raw, 10) catch return error.InvalidCli else null;
-            const blocks = try rpc.getBlocks(start_slot, end_slot);
+            const blocks = try rpc.getBlocks(start_slot, end_slot, commitment);
             defer allocator.free(blocks);
 
             if (blocks.len == 0) {
@@ -281,6 +327,26 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             }
 
             std.debug.print("blocks from {}: {}\n", .{ start_slot, blocks.len });
+            for (blocks, 0..) |slot_value, index| {
+                std.debug.print("  [{}] slot={}\n", .{ index, slot_value });
+            }
+        },
+
+        .blocks_with_limit => {
+            const start_slot_text = slot_arg orelse return error.InvalidCli;
+            const start_slot = std.fmt.parseInt(u64, start_slot_text, 10) catch return error.InvalidCli;
+            const limit_text = blocks_limit_arg orelse return error.InvalidCli;
+            const limit = std.fmt.parseInt(u64, limit_text, 10) catch return error.InvalidCli;
+
+            const blocks = try rpc.getBlocksWithLimit(start_slot, limit, commitment);
+            defer allocator.free(blocks);
+
+            if (blocks.len == 0) {
+                std.debug.print("no blocks found from slot {} with limit {}\n", .{ start_slot, limit });
+                return;
+            }
+
+            std.debug.print("blocks with limit {} from slot {}: {}\n", .{ limit, start_slot, blocks.len });
             for (blocks, 0..) |slot_value, index| {
                 std.debug.print("  [{}] slot={}\n", .{ index, slot_value });
             }
@@ -565,6 +631,61 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             const is_valid = try rpc.isBlockhashValid(blockhash_value, commitment);
             std.debug.print("blockhash {s} valid: {s}\n", .{ blockhash_value, if (is_valid) "true" else "false" });
         },
+
+        .signatures_for_address => {
+            const address = signatures_for_address_arg orelse return error.InvalidCli;
+            const limit = if (signatures_for_address_limit_arg) |raw| std.fmt.parseInt(u64, raw, 10) catch return error.InvalidCli else null;
+            const signatures = try rpc.getSignaturesForAddress(
+                address,
+                signatures_for_address_before_arg,
+                signatures_for_address_until_arg,
+                limit,
+                commitment,
+            );
+            defer {
+                for (signatures) |signature_entry| {
+                    allocator.free(signature_entry.signature);
+                    if (signature_entry.confirmation_status) |status| allocator.free(status);
+                    if (signature_entry.memo) |memo| allocator.free(memo);
+                }
+                allocator.free(signatures);
+            }
+
+            if (signatures.len == 0) {
+                std.debug.print("no signatures found for {s}\n", .{address});
+                return;
+            }
+
+            std.debug.print("signatures for {s}: {}\n", .{ address, signatures.len });
+            for (signatures, 0..) |signature_entry, index| {
+                std.debug.print(
+                    "  [{}] signature={s} slot={} has_error={s} block_time={?d} confirmation={s}\n",
+                    .{
+                        index,
+                        signature_entry.signature,
+                        signature_entry.slot,
+                        if (signature_entry.has_error) "true" else "false",
+                        signature_entry.block_time,
+                        if (signature_entry.confirmation_status) |status| status else "none",
+                    },
+                );
+            }
+        },
+
+        .feature_activation_slot => {
+            const feature_key = feature_key_arg orelse return error.InvalidCli;
+            const slot = try rpc.getFeatureActivationSlot(feature_key, commitment);
+            if (slot) |value| {
+                std.debug.print("feature activation slot: {}\n", .{value});
+            } else {
+                std.debug.print("feature not activated\n", .{});
+            }
+        },
+
+        .stake_minimum_delegation => {
+            const minimum = try rpc.getStakeMinimumDelegation(commitment);
+            std.debug.print("stake minimum delegation: {}\n", .{minimum});
+        },
     }
 }
 
@@ -577,6 +698,114 @@ fn toClientCommitment(value: ?cli.Commitment) ?client.Commitment {
         };
     }
     return null;
+}
+
+fn runMockBlockServer(
+    listener: *std.net.Server,
+    allocator: Allocator,
+    request_capture: *std.ArrayList(u8),
+    response_body: []const u8,
+) void {
+    runMockBlockServerWithLifetime(listener, allocator, request_capture, response_body, false);
+}
+
+fn runMockBlockServerWithLifetime(
+    listener: *std.net.Server,
+    allocator: Allocator,
+    request_capture: *std.ArrayList(u8),
+    response_body: []const u8,
+    close_listener: bool,
+) void {
+    if (!close_listener) {
+        // keep alive for additional test requests in the same thread.
+    } else {
+        defer listener.deinit();
+    }
+
+    var connection = listener.accept() catch return;
+    defer connection.stream.close();
+
+    var receive_buffer: [4096]u8 = undefined;
+    var send_buffer: [4096]u8 = undefined;
+    var connection_reader = connection.stream.reader(&receive_buffer);
+    var connection_writer = connection.stream.writer(&send_buffer);
+    var http_server = std.http.Server.init(connection_reader.interface(), &connection_writer.interface);
+
+    var request = http_server.receiveHead() catch return;
+    const body_length = request.head.content_length orelse 0;
+    const request_body_reader = request.readerExpectNone(&receive_buffer);
+    const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
+    defer allocator.free(request_body);
+
+    request_capture.appendSlice(allocator, request_body) catch return;
+    request.respond(response_body, .{}) catch return;
+}
+
+fn expectGetBlockRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_slot: u64,
+    expected_commitment: ?[]const u8,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("getBlock", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    try std.testing.expectEqual(
+        if (expected_commitment != null) @as(usize, 2) else @as(usize, 1),
+        params.items.len,
+    );
+
+    switch (params.items[0]) {
+        .integer => |value| try std.testing.expectEqual(@as(i64, @intCast(expected_slot)), value),
+        else => return error.InvalidResponse,
+    }
+
+    if (expected_commitment) |expected| {
+        switch (params.items[1]) {
+            .object => |obj| {
+                const commitment_value = obj.get("commitment") orelse return error.InvalidResponse;
+                switch (commitment_value) {
+                    .string => |value| try std.testing.expectEqualStrings(expected, value),
+                    else => return error.InvalidResponse,
+                }
+            },
+            else => return error.InvalidResponse,
+        }
+    }
+}
+
+fn expectGetBlockRequestWithId(
+    allocator: Allocator,
+    body: []const u8,
+    expected_id: u64,
+    expected_slot: u64,
+    expected_commitment: ?[]const u8,
+) !void {
+    const ParsedRequest = struct {
+        id: u64 = 0,
+    };
+
+    try expectGetBlockRequest(allocator, body, expected_slot, expected_commitment);
+
+    const parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    try std.testing.expectEqual(expected_id, parsed_request.value.id);
 }
 
 test "runCommand validates send options on non-send commands" {
@@ -597,6 +826,189 @@ test "runCommand validates send options on non-send commands" {
     try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
 }
 
+test "runCommand executes block command and sends getBlock request" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":123,\"blockhash\":\"abc\"},\"id\":1}";
+    const server_thread = try std.Thread.spawn(.{}, runMockBlockServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block",
+        "123",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+    try expectGetBlockRequest(allocator, request_capture.items, 123, null);
+}
+
+test "runCommand executes block command with commitment and sends getBlock request" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body =
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":456,\"blockhash\":\"abc\"},\"id\":1}";
+    const server_thread = try std.Thread.spawn(.{}, runMockBlockServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block",
+        "456",
+        "--commitment",
+        "confirmed",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+    try expectGetBlockRequest(allocator, request_capture.items, 456, "confirmed");
+}
+
+test "runCommand handles block not found" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body = "{\"jsonrpc\":\"2.0\",\"result\":null,\"id\":1}";
+    const server_thread = try std.Thread.spawn(.{}, runMockBlockServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block",
+        "789",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+    try expectGetBlockRequest(allocator, request_capture.items, 789, null);
+}
+
+test "runCommand sends increasing request ids for block calls" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_capture_1 = std.ArrayList(u8).empty;
+    defer request_capture_1.deinit(allocator);
+
+    const response_body_1 =
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":111,\"blockhash\":\"abc\"},\"id\":1}";
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    {
+        const server_thread = try std.Thread.spawn(.{}, runMockBlockServerWithLifetime, .{ &listener, allocator, &request_capture_1, response_body_1, false });
+        defer server_thread.join();
+
+        var parsed_first = try cli.parseCliArgs(allocator, &.{
+            "block",
+            "111",
+        });
+        defer parsed_first.deinit(allocator);
+
+        try runCommand(allocator, &rpc, &parsed_first);
+        try expectGetBlockRequestWithId(allocator, request_capture_1.items, 1, 111, null);
+    }
+
+    var request_capture_2 = std.ArrayList(u8).empty;
+    defer request_capture_2.deinit(allocator);
+
+    const response_body_2 =
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":222,\"blockhash\":\"abc\"},\"id\":2}";
+
+    {
+        const server_thread = try std.Thread.spawn(.{}, runMockBlockServerWithLifetime, .{ &listener, allocator, &request_capture_2, response_body_2, false });
+        defer server_thread.join();
+
+        var parsed_second = try cli.parseCliArgs(allocator, &.{
+            "block",
+            "222",
+        });
+        defer parsed_second.deinit(allocator);
+
+        try runCommand(allocator, &rpc, &parsed_second);
+        try expectGetBlockRequestWithId(allocator, request_capture_2.items, 2, 222, null);
+    }
+}
+
+test "runCommand block not found prints message" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+    var request_capture = std.ArrayList(u8).empty;
+    defer request_capture.deinit(allocator);
+
+    const response_body = "{\"jsonrpc\":\"2.0\",\"result\":null,\"id\":1}";
+    const server_thread = try std.Thread.spawn(.{}, runMockBlockServer, .{ &listener, allocator, &request_capture, response_body });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block",
+        "789",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetBlockRequest(allocator, request_capture.items, 789, null);
+    try std.testing.expectEqualStrings("block 789: not found\n", captured);
+}
+
 test "runCommand validates status options on non-status commands" {
     const allocator = std.testing.allocator;
     var rpc = try client.RpcClient.init(allocator, "https://example.com");
@@ -608,6 +1020,305 @@ test "runCommand validates status options on non-status commands" {
         "1200",
         "--poll-ms",
         "300",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates blocks-with-limit requires required args" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "blocks-with-limit",
+        "123",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates blocks-with-limit start slot int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "blocks-with-limit",
+        "not-a-slot",
+        "25",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates blocks-with-limit limit int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "blocks-with-limit",
+        "123",
+        "not-a-number",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates blocks start slot int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "blocks",
+        "not-a-slot",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates blocks end slot int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "blocks",
+        "123",
+        "not-a-slot",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates slot-leaders start slot int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot-leaders",
+        "not-a-slot",
+        "10",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates slot-leaders limit int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot-leaders",
+        "100",
+        "not-a-number",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates block-time slot int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block-time",
+        "not-a-slot",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates block requires slot" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates block slot int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block",
+        "not-a-slot",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates status requires signature" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "status",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates signature-status requires signature" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "signature-status",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates signature-statuses requires at least one signature" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "signature-statuses",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates request-airdrop requires account" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "request-airdrop",
+        "1000",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates request-airdrop requires lamports" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "request-airdrop",
+        "Address11111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates request-airdrop lamports int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "request-airdrop",
+        "Address11111111111111111111111111111111",
+        "not-a-number",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates minimum-rent-exemption requires bytes" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "minimum-rent-exemption",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates minimum-rent-exemption bytes int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "minimum-rent-exemption",
+        "not-a-number",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates signatures-for-address requires address" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "signatures-for-address",
+        "--before",
+        "BeforeSig",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates signatures-for-address limit int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "signatures-for-address",
+        "Address11111111111111111111111111111111",
+        "--limit",
+        "not-a-number",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects signatures-for-address filters on non-signatures-for-address commands" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--before",
+        "BeforeSig",
     });
     defer parsed.deinit(allocator);
 

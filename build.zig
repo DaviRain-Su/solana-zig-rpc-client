@@ -169,6 +169,7 @@ pub fn build(b: *std.Build) void {
     // make the two of them run in parallel.
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
+    test_step.dependOn(&run_cli_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_commands_tests.step);
 

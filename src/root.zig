@@ -36,6 +36,24 @@ pub const SignatureStatus = struct {
     confirmations: ?u64 = null,
 };
 
+pub const AccountInfo = struct {
+    lamports: u64 = 0,
+    owner: []const u8 = "",
+    executable: bool = false,
+    rent_epoch: ?u64 = null,
+    data: ?[]const u8 = null,
+    data_encoding: ?[]const u8 = null,
+};
+
+pub const SignatureForAddress = struct {
+    signature: []const u8 = "",
+    slot: u64 = 0,
+    block_time: ?i64 = null,
+    confirmation_status: ?[]const u8 = null,
+    memo: ?[]const u8 = null,
+    has_error: bool = false,
+};
+
 pub const EpochInfo = struct {
     absolute_slot: ?u64 = null,
     block_height: ?u64 = null,
@@ -276,6 +294,25 @@ pub const RpcClient = struct {
         return parsed.value.result orelse error.InvalidResponse;
     }
 
+    fn captureRpcError(self: *RpcClient, body: []const u8) !void {
+        self.clearLastError();
+
+        const ParsedEnvelope = struct {
+            @"error": ?RpcErrorDetail = null,
+        };
+
+        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, body, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        if (parsed.value.@"error") |err| {
+            self.last_error = RpcErrorDetail{
+                .code = err.code,
+                .message = self.allocator.dupe(u8, err.message) catch return error.InvalidResponse,
+            };
+            return error.RpcError;
+        }
+    }
+
     pub fn getLatestBlockhash(self: *RpcClient, commitment: ?Commitment) !LatestBlockhash {
         const params = .{commitmentParams(commitment)};
         const params_json = try self.serializeParams(params);
@@ -309,6 +346,20 @@ pub const RpcClient = struct {
             .blockhash = try self.allocator.dupe(u8, result.value.blockhash),
             .last_valid_block_height = result.value.lastValidBlockHeight,
         };
+    }
+
+    pub fn getFeatureActivationSlot(self: *RpcClient, feature_pubkey: []const u8, commitment: ?Commitment) !?u64 {
+        const params = .{
+            feature_pubkey,
+            .{ .commitment = if (commitment) |value| commitmentToString(value) else null },
+        };
+        const params_json = try self.serializeParams(params);
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest("getFeatureActivationSlot", params_json);
+        defer self.allocator.free(response);
+
+        return try self.parseResponse(response, ?u64);
     }
 
     pub fn getSlot(self: *RpcClient, commitment: ?Commitment) !u64 {
@@ -366,6 +417,49 @@ pub const RpcClient = struct {
         return result.value;
     }
 
+    pub fn getAccountInfo(self: *RpcClient, account: []const u8, commitment: ?Commitment) !AccountInfo {
+        const params = .{
+            account,
+            commitmentParams(commitment),
+        };
+        const params_json = try self.serializeParams(params);
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest("getAccountInfo", params_json);
+        defer self.allocator.free(response);
+
+        const RpcResult = struct {
+            context: struct {
+                slot: u64 = 0,
+            } = .{ .slot = 0 },
+            value: ?struct {
+                data: ?[]const []const u8 = null,
+                executable: bool = false,
+                lamports: u64 = 0,
+                owner: []const u8 = "",
+                rentEpoch: ?u64 = null,
+            } = null,
+        };
+
+        const result = try self.parseResponse(response, RpcResult);
+        const source = result.value orelse return error.InvalidResponse;
+
+        return AccountInfo{
+            .lamports = source.lamports,
+            .owner = try self.allocator.dupe(u8, source.owner),
+            .executable = source.executable,
+            .rent_epoch = source.rentEpoch,
+            .data = if (source.data) |entry|
+                if (entry.len >= 1) try self.allocator.dupe(u8, entry[0]) else null
+            else
+                null,
+            .data_encoding = if (source.data) |entry|
+                if (entry.len >= 2) try self.allocator.dupe(u8, entry[1]) else null
+            else
+                null,
+        };
+    }
+
     pub fn getGenesisHash(self: *RpcClient) ![]const u8 {
         const response = try self.sendNoParamsRequest("getGenesisHash");
         defer self.allocator.free(response);
@@ -388,6 +482,17 @@ pub const RpcClient = struct {
         defer self.allocator.free(params_json);
 
         const response = try self.sendRequest("getFirstAvailableBlock", params_json);
+        defer self.allocator.free(response);
+
+        return try self.parseResponse(response, u64);
+    }
+
+    pub fn getStakeMinimumDelegation(self: *RpcClient, commitment: ?Commitment) !u64 {
+        const params = .{.{ .commitment = if (commitment) |value| commitmentToString(value) else null }};
+        const params_json = try self.serializeParams(params);
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest("getStakeMinimumDelegation", params_json);
         defer self.allocator.free(response);
 
         return try self.parseResponse(response, u64);
@@ -577,6 +682,38 @@ pub const RpcClient = struct {
         return try self.parseResponse(response, ?i64);
     }
 
+    pub fn getBlock(self: *RpcClient, slot: u64, commitment: ?Commitment) !?[]const u8 {
+        const params = if (commitment) |value| blk: {
+            const params = .{ slot, .{ .commitment = commitmentToString(value) } };
+            break :blk try self.serializeParams(params);
+        } else blk: {
+            const params = .{slot};
+            break :blk try self.serializeParams(params);
+        };
+        defer self.allocator.free(params);
+
+        const response = try self.sendRequest("getBlock", params);
+        defer self.allocator.free(response);
+
+        return try self.parseGetBlockResponse(response);
+    }
+
+    fn parseGetBlockResponse(self: *RpcClient, response: []const u8) !?[]const u8 {
+        const ParsedEnvelope = struct {
+            jsonrpc: []const u8 = "",
+            id: u64 = 0,
+            result: ?json.Value = null,
+        };
+
+        try self.captureRpcError(response);
+
+        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        const source = parsed.value.result orelse return null;
+        return try json.Stringify.valueAlloc(self.allocator, source, .{});
+    }
+
     pub fn getFeeForMessage(self: *RpcClient, encoded_message: []const u8, commitment: ?Commitment) !FeeForMessage {
         const params = .{
             encoded_message,
@@ -611,6 +748,8 @@ pub const RpcClient = struct {
         }
         defer self.allocator.free(response);
 
+        try self.captureRpcError(response);
+
         const PerformanceSampleResult = struct {
             slot: u64 = 0,
             numSlots: u64 = 0,
@@ -643,11 +782,19 @@ pub const RpcClient = struct {
         return copied;
     }
 
-    pub fn getBlocks(self: *RpcClient, start_slot: u64, end_slot: ?u64) ![]u64 {
+    pub fn getBlocks(self: *RpcClient, start_slot: u64, end_slot: ?u64, commitment: ?Commitment) ![]u64 {
         const params_json = if (end_slot) |value| blk: {
+            if (commitment) |value_commitment| {
+                const params = .{ start_slot, value, .{ .commitment = commitmentToString(value_commitment) } };
+                break :blk try self.serializeParams(params);
+            }
             const params = .{ start_slot, value };
             break :blk try self.serializeParams(params);
         } else blk: {
+            if (commitment) |value_commitment| {
+                const params = .{ start_slot, .{ .commitment = commitmentToString(value_commitment) } };
+                break :blk try self.serializeParams(params);
+            }
             const params = .{start_slot};
             break :blk try self.serializeParams(params);
         };
@@ -655,6 +802,38 @@ pub const RpcClient = struct {
 
         const response = try self.sendRequest("getBlocks", params_json);
         defer self.allocator.free(response);
+
+        try self.captureRpcError(response);
+
+        const ParsedEnvelope = struct {
+            jsonrpc: []const u8 = "",
+            id: u64 = 0,
+            result: ?[]u64 = null,
+        };
+
+        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        const source = parsed.value.result orelse return error.InvalidResponse;
+        const copied = try self.allocator.alloc(u64, source.len);
+        @memcpy(copied, source);
+        return copied;
+    }
+
+    pub fn getBlocksWithLimit(self: *RpcClient, start_slot: u64, limit: u64, commitment: ?Commitment) ![]u64 {
+        const params_json = if (commitment) |value| blk: {
+            const params = .{ start_slot, limit, .{ .commitment = commitmentToString(value) } };
+            break :blk try self.serializeParams(params);
+        } else blk: {
+            const params = .{ start_slot, limit };
+            break :blk try self.serializeParams(params);
+        };
+        defer self.allocator.free(params_json);
+
+        const response = try self.sendRequest("getBlocksWithLimit", params_json);
+        defer self.allocator.free(response);
+
+        try self.captureRpcError(response);
 
         const ParsedEnvelope = struct {
             jsonrpc: []const u8 = "",
@@ -679,6 +858,8 @@ pub const RpcClient = struct {
         const response = try self.sendRequest("getSlotLeaders", params_json);
         defer self.allocator.free(response);
 
+        try self.captureRpcError(response);
+
         const ParsedEnvelope = struct {
             jsonrpc: []const u8 = "",
             id: u64 = 0,
@@ -701,6 +882,8 @@ pub const RpcClient = struct {
     pub fn getRecentPrioritizationFees(self: *RpcClient) ![]RecentPrioritizationFee {
         const response = try self.sendNoParamsRequest("getRecentPrioritizationFees");
         defer self.allocator.free(response);
+
+        try self.captureRpcError(response);
 
         const PrioritizationFeeResult = struct {
             slot: u64 = 0,
@@ -800,6 +983,8 @@ pub const RpcClient = struct {
         const response = try self.sendNoParamsRequest("getClusterNodes");
         defer self.allocator.free(response);
 
+        try self.captureRpcError(response);
+
         const ClusterNodeResult = struct {
             featureSet: u64 = 0,
             gossip: ?[]const u8 = null,
@@ -862,6 +1047,8 @@ pub const RpcClient = struct {
 
         const response = if (schedule) |schedule_json| try self.sendRequest("getLeaderSchedule", schedule_json) else try self.sendNoParamsRequest("getLeaderSchedule");
         defer self.allocator.free(response);
+
+        try self.captureRpcError(response);
 
         const ParsedEnvelope = struct {
             jsonrpc: []const u8 = "",
@@ -939,6 +1126,8 @@ pub const RpcClient = struct {
         const response = try self.sendNoParamsRequest("getVoteAccounts");
         defer self.allocator.free(response);
 
+        try self.captureRpcError(response);
+
         const VoteAccountsResult = struct {
             current: []VoteAccountResult = &.{},
             delinquent: []VoteAccountResult = &.{},
@@ -969,6 +1158,8 @@ pub const RpcClient = struct {
 
         const response = if (params_json) |value| try self.sendRequest("getBlockProduction", value) else try self.sendNoParamsRequest("getBlockProduction");
         defer self.allocator.free(response);
+
+        try self.captureRpcError(response);
 
         const BlockProductionRange = struct {
             firstSlot: u64 = 0,
@@ -1155,6 +1346,71 @@ pub const RpcClient = struct {
         return copied;
     }
 
+    const SignatureForAddressResult = struct {
+        signature: []const u8 = "",
+        slot: u64 = 0,
+        err: ?json.Value = null,
+        memo: ?[]const u8 = null,
+        confirmationStatus: ?[]const u8 = null,
+        blockTime: ?i64 = null,
+    };
+
+    pub fn getSignaturesForAddress(
+        self: *RpcClient,
+        address: []const u8,
+        before: ?[]const u8,
+        until: ?[]const u8,
+        limit: ?u64,
+        commitment: ?Commitment,
+    ) ![]SignatureForAddress {
+        const params = if (before == null and until == null and limit == null and commitment == null) blk: {
+            const params = .{address};
+            break :blk try self.serializeParams(params);
+        } else blk: {
+            const params = .{
+                address,
+                .{
+                    .before = before,
+                    .until = until,
+                    .limit = limit,
+                    .commitment = if (commitment) |value| commitmentToString(value) else null,
+                },
+            };
+            break :blk try self.serializeParams(params);
+        };
+        defer self.allocator.free(params);
+
+        const response = try self.sendRequest("getSignaturesForAddress", params);
+        defer self.allocator.free(response);
+
+        try self.captureRpcError(response);
+
+        const ParsedEnvelope = struct {
+            jsonrpc: []const u8 = "",
+            id: u64 = 0,
+            result: ?[]SignatureForAddressResult = null,
+        };
+
+        const parsed = try json.parseFromSlice(ParsedEnvelope, self.allocator, response, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+
+        const source = parsed.value.result orelse return error.InvalidResponse;
+        const copied = try self.allocator.alloc(SignatureForAddress, source.len);
+
+        for (source, 0..) |entry, idx| {
+            copied[idx] = SignatureForAddress{
+                .signature = try self.allocator.dupe(u8, entry.signature),
+                .slot = entry.slot,
+                .block_time = entry.blockTime,
+                .confirmation_status = if (entry.confirmationStatus) |status| try self.allocator.dupe(u8, status) else null,
+                .memo = if (entry.memo) |memo| try self.allocator.dupe(u8, memo) else null,
+                .has_error = entry.err != null,
+            };
+        }
+
+        return copied;
+    }
+
     pub fn waitForSignatureStatus(self: *RpcClient, signature: []const u8, commitment: ?Commitment, timeout_ms: u64, poll_interval_ms: u64) !void {
         const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
 
@@ -1232,6 +1488,28 @@ test "root.balance params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"finalized\"") != null);
 }
 
+test "root.getAccountInfo params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const without_commitment = .{"Address11111111111111111111111111111111"};
+    const without_commitment_json = try client.serializeParams(without_commitment);
+    defer allocator.free(without_commitment_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, without_commitment_json, "\"Address11111111111111111111111111111111\"") != null);
+
+    const with_commitment = .{
+        "Address11111111111111111111111111111111",
+        .{ .commitment = commitmentToString(.confirmed) },
+    };
+    const with_commitment_json = try client.serializeParams(with_commitment);
+    defer allocator.free(with_commitment_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"Address11111111111111111111111111111111\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"confirmed\"") != null);
+}
+
 test "root.requestAirdrop params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
@@ -1265,6 +1543,22 @@ test "root.minimumBalanceForRentExemption params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"confirmed\"") != null);
 }
 
+test "root.featureActivationSlot params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const params = .{
+        "Feature11111111111111111111111111111111111111111",
+        .{ .commitment = commitmentToString(.processed) },
+    };
+    const params_json = try client.serializeParams(params);
+    defer allocator.free(params_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"Feature11111111111111111111111111111111111111111\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"processed\"") != null);
+}
+
 test "root.firstAvailableBlock params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
@@ -1275,6 +1569,18 @@ test "root.firstAvailableBlock params serialization" {
     defer allocator.free(params_json);
 
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"processed\"") != null);
+}
+
+test "root.getStakeMinimumDelegation params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const params = .{.{ .commitment = commitmentToString(.confirmed) }};
+    const params_json = try client.serializeParams(params);
+    defer allocator.free(params_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"confirmed\"") != null);
 }
 
 test "root.epochInfo params serialization" {
@@ -1313,6 +1619,115 @@ test "root.blockTime params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "123456") != null);
 }
 
+test "root.getBlock params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const params = .{123};
+    const params_json = try client.serializeParams(params);
+    defer allocator.free(params_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "123") != null);
+
+    const with_commitment = .{ 123, .{ .commitment = commitmentToString(.finalized) } };
+    const with_commitment_json = try client.serializeParams(with_commitment);
+    defer allocator.free(with_commitment_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "123") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"finalized\"") != null);
+}
+
+test "root.parseGetBlockResponse parses block object" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const body =
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"blockHeight\":123,\"parentSlot\":456},\"id\":1}";
+    const block = try client.parseGetBlockResponse(body);
+    defer allocator.free(block.?);
+
+    try std.testing.expect(block != null);
+    try std.testing.expect(std.mem.indexOf(u8, block.?, "\"blockHeight\":123") != null);
+    try std.testing.expect(std.mem.indexOf(u8, block.?, "\"parentSlot\":456") != null);
+}
+
+test "root.parseGetBlockResponse handles null block" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const body = "{\"jsonrpc\":\"2.0\",\"result\":null,\"id\":1}";
+    const block = try client.parseGetBlockResponse(body);
+
+    try std.testing.expect(block == null);
+}
+
+test "root.parseGetBlockResponse propagates rpc error" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const body =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32600,\"message\":\"invalid request\"}}";
+
+    try std.testing.expectError(error.RpcError, client.parseGetBlockResponse(body));
+
+    const last_error = client.getLastError() orelse return error.TestExpectedError;
+    try std.testing.expectEqual(@as(i64, -32600), last_error.code);
+    try std.testing.expect(std.mem.eql(u8, last_error.message, "invalid request"));
+}
+
+test "root.parseGetBlockResponse clears last error on successful parse" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const rpc_error_body =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32000,\"message\":\"not found\"}}";
+
+    _ = client.parseGetBlockResponse(rpc_error_body) catch {};
+    try std.testing.expect(client.getLastError() != null);
+
+    const success_body = "{\"jsonrpc\":\"2.0\",\"result\":{\"blockHeight\":789},\"id\":1}";
+    const block = try client.parseGetBlockResponse(success_body);
+    defer allocator.free(block.?);
+
+    try std.testing.expect(client.getLastError() == null);
+    try std.testing.expect(block != null);
+}
+
+test "root.captureRpcError stores rpc error detail" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const body =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32005,\"message\":\"custom rpc error\"}}";
+
+    try std.testing.expectError(error.RpcError, client.captureRpcError(body));
+
+    const last_error = client.getLastError() orelse return error.TestExpectedError;
+    try std.testing.expectEqual(@as(i64, -32005), last_error.code);
+    try std.testing.expect(std.mem.eql(u8, last_error.message, "custom rpc error"));
+}
+
+test "root.captureRpcError clears stale error on success" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const error_body =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32001,\"message\":\"stale error\"}}";
+    try std.testing.expectError(error.RpcError, client.captureRpcError(error_body));
+    try std.testing.expect(client.getLastError() != null);
+
+    const ok_body = "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":[]}";
+    try client.captureRpcError(ok_body);
+    try std.testing.expect(client.getLastError() == null);
+}
+
 test "root.getFeeForMessage params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
@@ -1349,6 +1764,35 @@ test "root.getBlocks params serialization" {
 
     try std.testing.expect(std.mem.indexOf(u8, params_json, "123") != null);
     try std.testing.expect(std.mem.indexOf(u8, params_json, "456") != null);
+
+    const with_end_only_commitment = .{ 123, 456, .{ .commitment = commitmentToString(.confirmed) } };
+    const with_end_only_commitment_json = try client.serializeParams(with_end_only_commitment);
+    defer allocator.free(with_end_only_commitment_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_end_only_commitment_json, "confirmed") != null);
+
+    const with_commitment = .{ 123, .{ .commitment = commitmentToString(.finalized) } };
+    const with_commitment_json = try client.serializeParams(with_commitment);
+    defer allocator.free(with_commitment_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "finalized") != null);
+}
+
+test "root.getBlocksWithLimit params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const params = .{ 123, 25 };
+    const params_json = try client.serializeParams(params);
+    defer allocator.free(params_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "123") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "25") != null);
+
+    const with_commitment = .{ 123, 25, .{ .commitment = commitmentToString(.finalized) } };
+    const with_commitment_json = try client.serializeParams(with_commitment);
+    defer allocator.free(with_commitment_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"finalized\"") != null);
 }
 
 test "root.getSlotLeaders params serialization" {
@@ -1449,6 +1893,46 @@ test "root.getSignatureStatuses params serialization" {
     const with_commitment_json = try client.serializeParams(with_commitment);
     defer allocator.free(with_commitment_json);
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"finalized\"") != null);
+}
+
+test "root.getSignaturesForAddress params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const without_commitment = .{"Address11111111111111111111111111111111"};
+    const without_commitment_json = try client.serializeParams(without_commitment);
+    defer allocator.free(without_commitment_json);
+    try std.testing.expect(std.mem.indexOf(u8, without_commitment_json, "\"Address11111111111111111111111111111111\"") != null);
+
+    const with_commitment = .{ "Address11111111111111111111111111111111", .{ .commitment = commitmentToString(.confirmed) } };
+    const with_commitment_json = try client.serializeParams(with_commitment);
+    defer allocator.free(with_commitment_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"Address11111111111111111111111111111111\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"confirmed\"") != null);
+}
+
+test "root.getSignaturesForAddress params serialization with filters" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const with_filters = .{
+        "Address11111111111111111111111111111111",
+        .{
+            .before = "BeforeSig",
+            .until = "UntilSig",
+            .limit = @as(u64, 50),
+            .commitment = commitmentToString(.finalized),
+        },
+    };
+    const with_filters_json = try client.serializeParams(with_filters);
+    defer allocator.free(with_filters_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"before\":\"BeforeSig\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"until\":\"UntilSig\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"limit\":50") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"commitment\":\"finalized\"") != null);
 }
 
 test "root.rpc error detail is captured" {
