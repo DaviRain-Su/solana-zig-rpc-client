@@ -3,6 +3,21 @@ const client = @import("solana_client_zig");
 const cli = @import("./cli.zig");
 
 const Allocator = std.mem.Allocator;
+const Ed25519 = std.crypto.sign.Ed25519;
+
+fn loadSecretKeyFromKeypairFile(allocator: Allocator, path: []const u8) ![]u8 {
+    const file_contents = try std.fs.cwd().readFileAlloc(allocator, path, 1 << 20);
+    defer allocator.free(file_contents);
+
+    const parsed = try std.json.parseFromSlice([]u8, allocator, file_contents, .{});
+    defer parsed.deinit();
+
+    if (parsed.value.len != Ed25519.SecretKey.encoded_length) {
+        return error.InvalidSecretKeyLength;
+    }
+
+    return try allocator.dupe(u8, parsed.value);
+}
 
 pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli.ParsedArgs) !void {
     const command = args.command;
@@ -47,11 +62,14 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const lamports_arg = args.lamports_arg;
     const mint_arg = args.mint_arg;
     const rent_bytes_arg = args.rent_bytes_arg;
+    const sender_keypair_path_arg = args.sender_keypair_path_arg;
+    const sender_secret_key_arg = args.sender_secret_key_arg;
     const signed_tx_arg = args.signed_tx_arg;
     const simulation_account_encoding_arg = args.simulation_account_encoding_arg;
     const simulation_min_context_slot_arg = args.simulation_min_context_slot_arg;
     const supply_exclude_non_circulating_accounts_list = args.supply_exclude_non_circulating_accounts_list;
     const token_program_id_arg = args.token_program_id_arg;
+    const transfer_recent_blockhash_arg = args.transfer_recent_blockhash_arg;
     const transaction_details_arg = args.transaction_details_arg;
     const vote_pubkey_arg = args.vote_pubkey_arg;
     const signature_statuses = args.signature_statuses;
@@ -73,7 +91,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const send_preflight_commitment = toClientCommitment(args.send_preflight_commitment);
 
     const is_balance_wait_command = command == .poll_balance or command == .wait_for_balance;
-    const is_send_command = command == .send_transaction or command == .send_transaction_and_confirm;
+    const is_send_command = command == .send_transaction or command == .send_transaction_and_confirm or command == .transfer;
     const is_account_min_context_command = command == .account_data or
         command == .account_info or
         command == .ui_account or
@@ -108,7 +126,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         status_poll_ms;
     if ((send_skip_preflight or send_max_retries != null or send_preflight_commitment != null) and !is_send_command) {
         std.debug.print(
-            "error: send options (--skip-preflight, --max-retries, --preflight-commitment) require send-transaction or send-transaction-and-confirm\n",
+            "error: send options (--skip-preflight, --max-retries, --preflight-commitment) require send-transaction, send-transaction-and-confirm, or transfer\n",
             .{},
         );
         return error.InvalidCli;
@@ -119,8 +137,18 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    if ((timeout_ms_overridden or poll_ms_overridden) and command != .status and command != .poll_balance and command != .wait_for_balance and command != .send_transaction_and_confirm and command != .poll_for_signature_confirmation) {
-        std.debug.print("error: wait options (--timeout-ms, --poll-ms) require status, poll-balance, wait-for-balance, poll-for-signature-confirmation, or send-transaction-and-confirm\n", .{});
+    if (transfer_recent_blockhash_arg != null and command != .transfer) {
+        std.debug.print("error: --transfer-recent-blockhash requires transfer\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (sender_keypair_path_arg != null and command != .transfer) {
+        std.debug.print("error: --sender-keypair requires transfer\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((timeout_ms_overridden or poll_ms_overridden) and command != .status and command != .poll_balance and command != .wait_for_balance and command != .send_transaction_and_confirm and command != .poll_for_signature_confirmation and command != .transfer) {
+        std.debug.print("error: wait options (--timeout-ms, --poll-ms) require status, poll-balance, wait-for-balance, poll-for-signature-confirmation, send-transaction-and-confirm, or transfer\n", .{});
         return error.InvalidCli;
     }
 
@@ -131,10 +159,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .signature_statuses and
         command != .blocks_since_signature_confirmation and
         command != .poll_for_signature_confirmation and
-        command != .send_transaction_and_confirm)
+        command != .send_transaction_and_confirm and
+        command != .transfer)
     {
         std.debug.print(
-            "error: --search-transaction-history requires status, confirm-transaction, signature-status, signature-statuses, blocks-since-signature-confirmation, poll-for-signature-confirmation, or send-transaction-and-confirm\n",
+            "error: --search-transaction-history requires status, confirm-transaction, signature-status, signature-statuses, blocks-since-signature-confirmation, poll-for-signature-confirmation, send-transaction-and-confirm, or transfer\n",
             .{},
         );
         return error.InvalidCli;
@@ -274,6 +303,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     else
         null;
 
+    const send_transaction_options = if (send_skip_preflight or send_max_retries != null or send_preflight_commitment != null or min_context_slot != null)
+        client.SendTransactionOptions{
+            .skip_preflight = send_skip_preflight,
+            .preflight_commitment = send_preflight_commitment,
+            .max_retries = send_max_retries,
+            .min_context_slot = min_context_slot,
+        }
+    else
+        null;
+
     switch (command) {
         .latest_blockhash => {
             if (with_context) {
@@ -299,7 +338,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 std.debug.print("error: status requires <signature>\n", .{});
                 return error.InvalidCli;
             };
-            try rpc.waitForSignatureStatus(signature_value, commitment, search_transaction_history, status_timeout_ms, status_poll_ms);
+            try rpc.waitForSignatureStatus(signature_value, commitment, search_transaction_history, status_timeout_ms, status_poll_ms, false);
             std.debug.print("signature confirmed\n", .{});
         },
 
@@ -433,17 +472,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            const options = if (send_skip_preflight or send_max_retries != null or send_preflight_commitment != null or min_context_slot != null)
-                client.SendTransactionOptions{
-                    .skip_preflight = send_skip_preflight,
-                    .preflight_commitment = send_preflight_commitment,
-                    .max_retries = send_max_retries,
-                    .min_context_slot = min_context_slot,
-                }
-            else
-                null;
-
-            const tx_signature = try rpc.sendTransaction(tx, options);
+            const tx_signature = try rpc.sendTransaction(tx, send_transaction_options);
             defer allocator.free(tx_signature);
 
             std.debug.print("signature: {s}\n", .{tx_signature});
@@ -455,19 +484,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            const options = if (send_skip_preflight or send_max_retries != null or send_preflight_commitment != null or min_context_slot != null)
-                client.SendTransactionOptions{
-                    .skip_preflight = send_skip_preflight,
-                    .preflight_commitment = send_preflight_commitment,
-                    .max_retries = send_max_retries,
-                    .min_context_slot = min_context_slot,
-                }
-            else
-                null;
-
             const tx_signature = try rpc.sendTransactionAndConfirm(
                 tx,
-                options,
+                send_transaction_options,
                 commitment,
                 search_transaction_history,
                 status_timeout_ms,
@@ -476,6 +495,71 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             defer allocator.free(tx_signature);
 
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
+        },
+
+        .transfer => {
+            if (sender_secret_key_arg != null and sender_keypair_path_arg != null) {
+                std.debug.print("error: transfer accepts either --sender-keypair <path> or <sender-secret-key>, not both\n", .{});
+                return error.InvalidCli;
+            }
+
+            const sender_secret_key = blk: {
+                if (sender_keypair_path_arg) |path| {
+                    const sender_secret_key_bytes = loadSecretKeyFromKeypairFile(allocator, path) catch |err| switch (err) {
+                        error.FileNotFound => {
+                            std.debug.print("error: sender keypair file not found: {s}\n", .{path});
+                            return error.InvalidCli;
+                        },
+                        error.InvalidSecretKeyLength => {
+                            std.debug.print("error: sender keypair file must contain {} secret-key bytes\n", .{Ed25519.SecretKey.encoded_length});
+                            return error.InvalidCli;
+                        },
+                        else => {
+                            std.debug.print("error: sender keypair file is not valid JSON byte array: {s}\n", .{path});
+                            return error.InvalidCli;
+                        },
+                    };
+                    defer allocator.free(sender_secret_key_bytes);
+
+                    break :blk try encodeBase58(allocator, sender_secret_key_bytes);
+                }
+
+                const value = sender_secret_key_arg orelse {
+                    std.debug.print("error: transfer requires (--sender-keypair <path> | <sender-secret-key>) <destination> <lamports>\n", .{});
+                    return error.InvalidCli;
+                };
+                break :blk try allocator.dupe(u8, value);
+            };
+            defer allocator.free(sender_secret_key);
+
+            const destination = account orelse {
+                std.debug.print("error: transfer requires (--sender-keypair <path> | <sender-secret-key>) <destination> <lamports>\n", .{});
+                return error.InvalidCli;
+            };
+            const lamports = if (lamports_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else {
+                std.debug.print("error: transfer requires (--sender-keypair <path> | <sender-secret-key>) <destination> <lamports>\n", .{});
+                return error.InvalidCli;
+            };
+
+            const tx_signature = try rpc.transferWithOptions(
+                sender_secret_key,
+                destination,
+                lamports,
+                .{
+                    .recent_blockhash = transfer_recent_blockhash_arg,
+                    .blockhash_commitment = if (transfer_recent_blockhash_arg == null) commitment orelse send_preflight_commitment else null,
+                    .send_transaction_options = send_transaction_options,
+                    .commitment = commitment,
+                    .search_transaction_history = search_transaction_history,
+                    .timeout_ms = status_timeout_ms,
+                    .poll_interval_ms = status_poll_ms,
+                },
+            );
+            defer allocator.free(tx_signature);
+
+            std.debug.print("confirmed transfer signature: {s}\n", .{tx_signature});
         },
 
         .simulate_transaction => {
@@ -2396,6 +2480,44 @@ fn runMockRequestSequenceServer(
     }
 }
 
+fn encodeBase58(allocator: Allocator, bytes: []const u8) ![]u8 {
+    const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+    var leading_zeroes: usize = 0;
+    while (leading_zeroes < bytes.len and bytes[leading_zeroes] == 0) : (leading_zeroes += 1) {}
+
+    var digits = std.ArrayList(u8).empty;
+    defer digits.deinit(allocator);
+
+    for (bytes) |byte| {
+        var carry: u32 = byte;
+        var index: usize = 0;
+        while (index < digits.items.len) : (index += 1) {
+            const value = @as(u32, digits.items[index]) * 256 + carry;
+            digits.items[index] = @intCast(value % 58);
+            carry = value / 58;
+        }
+        while (carry > 0) {
+            try digits.append(allocator, @intCast(carry % 58));
+            carry /= 58;
+        }
+    }
+
+    var encoded = std.ArrayList(u8).empty;
+    errdefer encoded.deinit(allocator);
+
+    for (0..leading_zeroes) |_| {
+        try encoded.append(allocator, '1');
+    }
+
+    var index = digits.items.len;
+    while (index > 0) : (index -= 1) {
+        try encoded.append(allocator, alphabet[digits.items[index - 1]]);
+    }
+
+    return try encoded.toOwnedSlice(allocator);
+}
+
 fn expectGetBlockRequest(
     allocator: Allocator,
     body: []const u8,
@@ -2746,6 +2868,121 @@ fn expectGetLatestBlockhashRequest(
         },
         else => return error.InvalidResponse,
     }
+}
+
+fn expectSendTransferTransactionRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_sender_public_key: [Ed25519.PublicKey.encoded_length]u8,
+    expected_destination_public_key: [Ed25519.PublicKey.encoded_length]u8,
+    expected_recent_blockhash: [32]u8,
+    expected_lamports: u64,
+    expected_skip_preflight: bool,
+    expected_max_retries: ?u32,
+    expected_preflight_commitment: ?[]const u8,
+    expected_min_context_slot: ?u64,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("sendTransaction", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+    try std.testing.expectEqual(@as(usize, 2), params.items.len);
+
+    const encoded_transaction = switch (params.items[0]) {
+        .string => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    const options = switch (params.items[1]) {
+        .object => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    switch (options.get("encoding") orelse return error.InvalidResponse) {
+        .string => |value| try std.testing.expectEqualStrings("base64", value),
+        else => return error.InvalidResponse,
+    }
+    switch (options.get("skipPreflight") orelse return error.InvalidResponse) {
+        .bool => |value| try std.testing.expectEqual(expected_skip_preflight, value),
+        else => return error.InvalidResponse,
+    }
+
+    if (expected_max_retries) |value| {
+        switch (options.get("maxRetries") orelse return error.InvalidResponse) {
+            .integer => |actual| try std.testing.expectEqual(@as(i64, @intCast(value)), actual),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("maxRetries") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
+    }
+
+    if (expected_preflight_commitment) |value| {
+        switch (options.get("preflightCommitment") orelse return error.InvalidResponse) {
+            .string => |actual| try std.testing.expectEqualStrings(value, actual),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("preflightCommitment") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
+    }
+
+    if (expected_min_context_slot) |value| {
+        switch (options.get("minContextSlot") orelse return error.InvalidResponse) {
+            .integer => |actual| try std.testing.expectEqual(@as(i64, @intCast(value)), actual),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("minContextSlot") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
+    }
+
+    const tx_bytes_len = try std.base64.standard.Decoder.calcSizeForSlice(encoded_transaction);
+    const tx_bytes = try allocator.alloc(u8, tx_bytes_len);
+    defer allocator.free(tx_bytes);
+    try std.base64.standard.Decoder.decode(tx_bytes, encoded_transaction);
+
+    try std.testing.expectEqual(@as(u8, 1), tx_bytes[0]);
+
+    const signature_offset = 1;
+    const signature_end = signature_offset + Ed25519.Signature.encoded_length;
+    const signature_array: [Ed25519.Signature.encoded_length]u8 = tx_bytes[signature_offset..signature_end][0..Ed25519.Signature.encoded_length].*;
+    const signature = Ed25519.Signature.fromBytes(signature_array);
+    const message = tx_bytes[signature_end..];
+    const sender_public_key = try Ed25519.PublicKey.fromBytes(expected_sender_public_key);
+    try Ed25519.Signature.verify(signature, message, sender_public_key);
+
+    try std.testing.expect(std.mem.eql(u8, message[4..36], &expected_sender_public_key));
+    try std.testing.expect(std.mem.eql(u8, message[36..68], &expected_destination_public_key));
+    try std.testing.expect(std.mem.eql(u8, message[100..132], &expected_recent_blockhash));
+    try std.testing.expectEqual(@as(u8, 1), message[132]);
+    try std.testing.expectEqual(@as(u8, 2), message[133]);
+    try std.testing.expectEqual(@as(u8, 2), message[134]);
+    try std.testing.expectEqual(@as(u8, 0), message[135]);
+    try std.testing.expectEqual(@as(u8, 1), message[136]);
+    try std.testing.expectEqual(@as(u8, 9), message[137]);
+    try std.testing.expectEqual(@as(u8, 2), message[138]);
+    try std.testing.expectEqual(expected_lamports, std.mem.readInt(u64, message[139..147], .little));
 }
 
 fn expectGetFeeForMessageRequest(
@@ -4425,6 +4662,239 @@ test "runCommand blocks-since-signature-confirmation prints confirmations" {
     );
     try std.testing.expectEqualStrings(
         "signature Sig111111111111111111111111111111111111 confirmed blocks: 9\n",
+        captured,
+    );
+}
+
+test "runCommand transfer fetches blockhash builds transaction and confirms signature" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_public_key = destination_key_pair.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x12} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| {
+            allocator.free(request);
+        }
+        request_captures.deinit(allocator);
+    }
+
+    const latest_blockhash_response = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":44}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":88}}}},\"id\":1}}",
+        .{recent_blockhash_base58},
+    );
+    defer allocator.free(latest_blockhash_response);
+
+    const send_transaction_response =
+        \\{"jsonrpc":"2.0","result":"Sig444444444444444444444444444444444444444444444444444444444444444444","id":2}
+    ;
+    const signature_status_response =
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":45},"value":[{"slot":45,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":3}
+    ;
+
+    const response_bodies = [_][]const u8{
+        latest_blockhash_response,
+        send_transaction_response,
+        signature_status_response,
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRequestSequenceServer, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "transfer",
+        "--commitment",
+        "confirmed",
+        "--search-transaction-history",
+        "--skip-preflight",
+        "--max-retries",
+        "2",
+        "--preflight-commitment",
+        "confirmed",
+        "--min-context-slot",
+        "123",
+        sender_secret_key_base58,
+        destination_base58,
+        "5000",
+    });
+    defer parsed.deinit(allocator);
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try std.testing.expectEqual(@as(usize, 3), request_captures.items.len);
+    try expectGetLatestBlockhashRequest(allocator, request_captures.items[0], "confirmed");
+    try expectSendTransferTransactionRequest(
+        allocator,
+        request_captures.items[1],
+        sender_key_pair.public_key.toBytes(),
+        destination_public_key,
+        recent_blockhash,
+        5_000,
+        true,
+        2,
+        "confirmed",
+        123,
+    );
+    try expectGetSignatureStatusesRequest(
+        allocator,
+        request_captures.items[2],
+        &[_][]const u8{"Sig444444444444444444444444444444444444444444444444444444444444444444"},
+        true,
+        "confirmed",
+    );
+    try std.testing.expectEqualStrings(
+        "confirmed transfer signature: Sig444444444444444444444444444444444444444444444444444444444444444444\n",
+        captured,
+    );
+}
+
+test "runCommand transfer accepts sender keypair file" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+
+    var keypair_json = std.io.Writer.Allocating.init(allocator);
+    defer keypair_json.deinit();
+    try keypair_json.writer.print("[", .{});
+    for (sender_secret_key, 0..) |byte, index| {
+        if (index != 0) try keypair_json.writer.print(",", .{});
+        try keypair_json.writer.print("{}", .{byte});
+    }
+    try keypair_json.writer.print("]", .{});
+
+    const keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-transfer-keypair-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(keypair_path);
+    defer std.fs.cwd().deleteFile(keypair_path) catch {};
+
+    {
+        const file = try std.fs.cwd().createFile(keypair_path, .{ .truncate = true });
+        defer file.close();
+        try file.writeAll(keypair_json.written());
+    }
+
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_public_key = destination_key_pair.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x56} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":"Sig666666666666666666666666666666666666666666666666666666666666666666","id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":46},"value":[{"slot":46,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":2}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRequestSequenceServer, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "transfer",
+        "--sender-keypair",
+        keypair_path,
+        "--transfer-recent-blockhash",
+        recent_blockhash_base58,
+        "--commitment",
+        "confirmed",
+        destination_base58,
+        "5000",
+    });
+    defer parsed.deinit(allocator);
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
+    try expectSendTransferTransactionRequest(
+        allocator,
+        request_captures.items[0],
+        sender_key_pair.public_key.toBytes(),
+        destination_public_key,
+        recent_blockhash,
+        5_000,
+        false,
+        null,
+        null,
+        null,
+    );
+    try expectGetSignatureStatusesRequest(
+        allocator,
+        request_captures.items[1],
+        &[_][]const u8{"Sig666666666666666666666666666666666666666666666666666666666666666666"},
+        false,
+        "confirmed",
+    );
+    try std.testing.expectEqualStrings(
+        "confirmed transfer signature: Sig666666666666666666666666666666666666666666666666666666666666666666\n",
         captured,
     );
 }

@@ -15,7 +15,7 @@ const wait_for_balance_error_retries: usize = 30;
 
 const base58_alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const base58_inverse = init: {
-    var table = [_]i16{ -1 } ** 256;
+    var table = [_]i16{-1} ** 256;
     for (base58_alphabet, 0..) |ch, index| {
         table[ch] = @intCast(index);
     }
@@ -104,6 +104,42 @@ fn decodeBase58WithLength(allocator: Allocator, encoded: []const u8, expected_le
         return error.InvalidBase58Length;
     }
     return decoded;
+}
+
+fn encodeBase58(allocator: Allocator, bytes: []const u8) ![]u8 {
+    var leading_zeroes: usize = 0;
+    while (leading_zeroes < bytes.len and bytes[leading_zeroes] == 0) : (leading_zeroes += 1) {}
+
+    var digits = std.ArrayList(u8).empty;
+    defer digits.deinit(allocator);
+
+    for (bytes) |byte| {
+        var carry: u32 = byte;
+        var index: usize = 0;
+        while (index < digits.items.len) : (index += 1) {
+            const value = @as(u32, digits.items[index]) * 256 + carry;
+            digits.items[index] = @intCast(value % 58);
+            carry = value / 58;
+        }
+        while (carry > 0) {
+            try digits.append(allocator, @intCast(carry % 58));
+            carry /= 58;
+        }
+    }
+
+    var encoded = std.ArrayList(u8).empty;
+    errdefer encoded.deinit(allocator);
+
+    for (0..leading_zeroes) |_| {
+        try encoded.append(allocator, '1');
+    }
+
+    var index = digits.items.len;
+    while (index > 0) : (index -= 1) {
+        try encoded.append(allocator, base58_alphabet[digits.items[index - 1]]);
+    }
+
+    return try encoded.toOwnedSlice(allocator);
 }
 
 fn writeCompactVecLen(bytes: *std.ArrayList(u8), allocator: Allocator, value: usize) !void {
@@ -617,6 +653,27 @@ pub const SendTransactionOptions = struct {
     preflight_commitment: ?Commitment = null,
     max_retries: ?u32 = null,
     min_context_slot: ?u64 = null,
+};
+
+pub const TransferBuildOptions = struct {
+    recent_blockhash: ?[]const u8 = null,
+    blockhash_commitment: ?Commitment = null,
+};
+
+pub const SendTransferOptions = struct {
+    recent_blockhash: ?[]const u8 = null,
+    blockhash_commitment: ?Commitment = null,
+    send_transaction_options: ?SendTransactionOptions = null,
+};
+
+pub const TransferOptions = struct {
+    recent_blockhash: ?[]const u8 = null,
+    blockhash_commitment: ?Commitment = null,
+    send_transaction_options: ?SendTransactionOptions = null,
+    commitment: ?Commitment = null,
+    search_transaction_history: bool = false,
+    timeout_ms: u64 = poll_for_signature_confirmation_timeout_ms,
+    poll_interval_ms: u64 = signature_poll_interval_ms,
 };
 
 pub const SignaturesForAddressOptions = struct {
@@ -3303,6 +3360,19 @@ pub const RpcClient = struct {
         return FeeForMessage{ .value = response.value };
     }
 
+    fn resolveTransferRecentBlockhash(
+        self: *RpcClient,
+        recent_blockhash: ?[]const u8,
+        blockhash_commitment: ?Commitment,
+    ) ![]const u8 {
+        if (recent_blockhash) |value| {
+            return try self.allocator.dupe(u8, value);
+        }
+
+        const latest_blockhash = try self.getLatestBlockhash(blockhash_commitment);
+        return latest_blockhash.blockhash;
+    }
+
     pub fn buildTransferTransaction(
         self: *RpcClient,
         sender_secret_key: []const u8,
@@ -3336,6 +3406,32 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn buildTransferTransactionWithOptions(
+        self: *RpcClient,
+        sender_secret_key: []const u8,
+        destination: []const u8,
+        lamports: u64,
+        options: ?TransferBuildOptions,
+    ) ![]const u8 {
+        const recent_blockhash = try self.resolveTransferRecentBlockhash(
+            if (options) |value| value.recent_blockhash else null,
+            if (options) |value| value.blockhash_commitment else null,
+        );
+        defer self.allocator.free(recent_blockhash);
+
+        return try self.buildTransferTransaction(sender_secret_key, destination, lamports, recent_blockhash);
+    }
+
+    pub fn buildTransferTransactionWithConfig(
+        self: *RpcClient,
+        sender_secret_key: []const u8,
+        destination: []const u8,
+        lamports: u64,
+        options: ?TransferBuildOptions,
+    ) ![]const u8 {
+        return try self.buildTransferTransactionWithOptions(sender_secret_key, destination, lamports, options);
+    }
+
     pub fn sendTransfer(
         self: *RpcClient,
         sender_secret_key: []const u8,
@@ -3343,9 +3439,49 @@ pub const RpcClient = struct {
         lamports: u64,
         recent_blockhash: []const u8,
     ) ![]const u8 {
-        const signed_tx_base64 = try self.buildTransferTransaction(sender_secret_key, destination, lamports, recent_blockhash);
+        return try self.sendTransferWithOptions(
+            sender_secret_key,
+            destination,
+            lamports,
+            .{ .recent_blockhash = recent_blockhash },
+        );
+    }
+
+    pub fn sendTransferWithOptions(
+        self: *RpcClient,
+        sender_secret_key: []const u8,
+        destination: []const u8,
+        lamports: u64,
+        options: ?SendTransferOptions,
+    ) ![]const u8 {
+        const signed_tx_base64 = try self.buildTransferTransactionWithOptions(
+            sender_secret_key,
+            destination,
+            lamports,
+            if (options) |value|
+                TransferBuildOptions{
+                    .recent_blockhash = value.recent_blockhash,
+                    .blockhash_commitment = value.blockhash_commitment,
+                }
+            else
+                null,
+        );
         defer self.allocator.free(signed_tx_base64);
-        return try self.sendTransaction(signed_tx_base64, null);
+
+        return try self.sendTransaction(
+            signed_tx_base64,
+            if (options) |value| value.send_transaction_options else null,
+        );
+    }
+
+    pub fn sendTransferWithConfig(
+        self: *RpcClient,
+        sender_secret_key: []const u8,
+        destination: []const u8,
+        lamports: u64,
+        options: ?SendTransferOptions,
+    ) ![]const u8 {
+        return try self.sendTransferWithOptions(sender_secret_key, destination, lamports, options);
     }
 
     pub fn transfer(
@@ -3357,21 +3493,57 @@ pub const RpcClient = struct {
         commitment: ?Commitment,
         options: ?SendTransactionOptions,
     ) ![]const u8 {
-        const signed_tx_base64 = try self.buildTransferTransaction(sender_secret_key, destination, lamports, recent_blockhash);
+        return try self.transferWithOptions(
+            sender_secret_key,
+            destination,
+            lamports,
+            .{
+                .recent_blockhash = recent_blockhash,
+                .send_transaction_options = options,
+                .commitment = commitment,
+            },
+        );
+    }
+
+    pub fn transferWithOptions(
+        self: *RpcClient,
+        sender_secret_key: []const u8,
+        destination: []const u8,
+        lamports: u64,
+        options: ?TransferOptions,
+    ) ![]const u8 {
+        const signed_tx_base64 = try self.buildTransferTransactionWithOptions(
+            sender_secret_key,
+            destination,
+            lamports,
+            if (options) |value|
+                TransferBuildOptions{
+                    .recent_blockhash = value.recent_blockhash,
+                    .blockhash_commitment = value.blockhash_commitment,
+                }
+            else
+                null,
+        );
         defer self.allocator.free(signed_tx_base64);
 
-        if (commitment) |value| {
-            if (options) |opts| {
-                return try self.sendAndConfirmTransactionWithCommitmentAndConfig(signed_tx_base64, value, opts);
-            }
-            return try self.sendAndConfirmTransactionWithCommitment(signed_tx_base64, value);
-        }
+        return try self.sendTransactionAndConfirm(
+            signed_tx_base64,
+            if (options) |value| value.send_transaction_options else null,
+            if (options) |value| value.commitment else null,
+            if (options) |value| value.search_transaction_history else false,
+            if (options) |value| value.timeout_ms else poll_for_signature_confirmation_timeout_ms,
+            if (options) |value| value.poll_interval_ms else signature_poll_interval_ms,
+        );
+    }
 
-        if (options) |opts| {
-            return try self.sendAndConfirmTransactionWithConfig(signed_tx_base64, opts);
-        }
-
-        return try self.sendAndConfirmTransaction(signed_tx_base64);
+    pub fn transferWithConfig(
+        self: *RpcClient,
+        sender_secret_key: []const u8,
+        destination: []const u8,
+        lamports: u64,
+        options: ?TransferOptions,
+    ) ![]const u8 {
+        return try self.transferWithOptions(sender_secret_key, destination, lamports, options);
     }
 
     pub fn getRecentPerformanceSamples(self: *RpcClient, limit: ?u64) ![]PerformanceSample {
@@ -4840,6 +5012,39 @@ fn runMockRootServerSequence(listener: *std.net.Server, allocator: Allocator, re
     }
 }
 
+fn runMockRootServerCaptureSequence(
+    listener: *std.net.Server,
+    allocator: Allocator,
+    request_captures: *std.ArrayList([]u8),
+    response_bodies: []const []const u8,
+) void {
+    for (response_bodies) |response_body| {
+        var connection = acceptMockRootConnection(listener) orelse return;
+        defer connection.stream.close();
+
+        var receive_buffer: [4096]u8 = undefined;
+        var request_body_buffer: [4096]u8 = undefined;
+        var send_buffer: [4096]u8 = undefined;
+        var connection_reader = connection.stream.reader(&receive_buffer);
+        var connection_writer = connection.stream.writer(&send_buffer);
+        var http_server = std.http.Server.init(connection_reader.interface(), &connection_writer.interface);
+
+        var request = http_server.receiveHead() catch return;
+        const body_length = request.head.content_length orelse 0;
+        const request_body_reader = request.readerExpectNone(&request_body_buffer);
+        const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
+        defer allocator.free(request_body);
+
+        const request_body_copy = allocator.dupe(u8, request_body) catch return;
+        request_captures.append(allocator, request_body_copy) catch {
+            allocator.free(request_body_copy);
+            return;
+        };
+
+        request.respond(response_body, .{}) catch return;
+    }
+}
+
 test "root.getLatestBlockhash params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
@@ -6122,6 +6327,19 @@ test "root.decodeBase58 validates characters and lengths" {
     );
 }
 
+test "root.encodeBase58 roundtrips decodeBase58" {
+    const allocator = std.testing.allocator;
+
+    const source = [_]u8{ 0, 0, 1, 2, 3, 250, 251, 252, 253, 254, 255 };
+    const encoded = try encodeBase58(allocator, &source);
+    defer allocator.free(encoded);
+
+    const decoded = try decodeBase58(allocator, encoded);
+    defer allocator.free(decoded);
+
+    try std.testing.expect(std.mem.eql(u8, &source, decoded));
+}
+
 test "root.buildLegacyTransferTransaction builds valid signed transfer payload" {
     const allocator = std.testing.allocator;
 
@@ -6190,6 +6408,151 @@ test "root.buildLegacyTransferTransaction builds valid signed transfer payload" 
     try std.testing.expectEqual(@as(u8, 0), message[instruction_data_len_offset + 6]);
     try std.testing.expectEqual(@as(u8, 0), message[instruction_data_len_offset + 7]);
     try std.testing.expectEqual(@as(u8, 0), message[instruction_data_len_offset + 8]);
+}
+
+test "root.buildTransferTransactionWithOptions fetches latest blockhash" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_public_key = destination_key_pair.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x12} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_body = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":9}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":55}}}},\"id\":1}}",
+        .{recent_blockhash_base58},
+    );
+    defer allocator.free(response_body);
+
+    const response_bodies = [_][]const u8{response_body};
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const encoded_transaction = try client.buildTransferTransactionWithOptions(
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        .{ .blockhash_commitment = .confirmed },
+    );
+    defer allocator.free(encoded_transaction);
+
+    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getLatestBlockhash\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"commitment\":\"confirmed\"") != null);
+
+    const tx_bytes_len = try std.base64.standard.Decoder.calcSizeForSlice(encoded_transaction);
+    var tx_bytes = try allocator.alloc(u8, tx_bytes_len);
+    defer allocator.free(tx_bytes);
+    try std.base64.standard.Decoder.decode(tx_bytes, encoded_transaction);
+
+    const message = tx_bytes[1 + Ed25519.Signature.encoded_length ..];
+    try std.testing.expect(std.mem.eql(u8, message[100..132], &recent_blockhash));
+}
+
+test "root.transferWithOptions fetches latest blockhash and confirms" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_public_key = destination_key_pair.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x34} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const latest_blockhash_response = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":12}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":77}}}},\"id\":1}}",
+        .{recent_blockhash_base58},
+    );
+    defer allocator.free(latest_blockhash_response);
+
+    const response_bodies = [_][]const u8{
+        latest_blockhash_response,
+        \\{"jsonrpc":"2.0","result":"Sig555555555555555555555555555555555555555555555555555555555555555555","id":2}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":13},"value":[{"slot":13,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":3}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var client = try RpcClient.init(allocator, rpc_url);
+    defer client.deinit();
+
+    const signature = try client.transferWithOptions(
+        sender_secret_key_base58,
+        destination_base58,
+        5_000,
+        .{
+            .blockhash_commitment = .confirmed,
+            .send_transaction_options = .{ .skip_preflight = true, .max_retries = 2 },
+            .commitment = .confirmed,
+            .search_transaction_history = true,
+            .timeout_ms = 200,
+            .poll_interval_ms = 10,
+        },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "Sig555555555555555555555555555555555555555555555555555555555555555555",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 3), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getLatestBlockhash\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"sendTransaction\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"maxRetries\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"method\":\"getSignatureStatuses\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"searchTransactionHistory\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"commitment\":\"confirmed\"") != null);
 }
 
 test "root.minimumBalanceForRentExemption params serialization" {
