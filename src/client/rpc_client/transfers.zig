@@ -1,9 +1,7 @@
-const std = @import("std");
 const sdk = @import("../sdk.zig");
 const rpc_types = @import("../rpc_types.zig");
 
-const Ed25519 = std.crypto.sign.Ed25519;
-
+const BlockhashQuery = rpc_types.BlockhashQuery;
 const Commitment = rpc_types.Commitment;
 const SendTransactionOptions = rpc_types.SendTransactionOptions;
 const SendTransferOptions = rpc_types.SendTransferOptions;
@@ -17,36 +15,62 @@ const LegacyTransaction = sdk.LegacyTransaction;
 const Pubkey = sdk.Pubkey;
 const SignedLegacyTransaction = sdk.SignedLegacyTransaction;
 const SystemProgram = sdk.SystemProgram;
-const buildLegacyTransferTransaction = sdk.buildLegacyTransferTransaction;
-const decodeBase58WithLength = sdk.decodeBase58WithLength;
 const poll_for_signature_confirmation_timeout_ms = sdk.poll_for_signature_confirmation_timeout_ms;
 const signature_poll_interval_ms = sdk.signature_poll_interval_ms;
 
-fn resolveTransferRecentBlockhash(
-    self: anytype,
-    recent_blockhash: ?[]const u8,
-    blockhash_commitment: ?Commitment,
-) ![]const u8 {
-    if (recent_blockhash) |value| {
-        return try self.allocator.dupe(u8, value);
+fn resolveTransferBlockhashQuery(options: ?TransferBuildOptions) BlockhashQuery {
+    if (options) |value| {
+        if (value.blockhash_query) |query| return query;
+        if (value.recent_blockhash) |blockhash| return .{ .fixed = blockhash };
+        return .{ .cluster = .{ .commitment = value.blockhash_commitment } };
     }
 
-    const latest_blockhash = try self.getLatestBlockhash(blockhash_commitment);
-    return latest_blockhash.blockhash;
+    return .{ .cluster = .{} };
 }
 
-pub fn buildTransferSignedTransaction(
+fn transferNonceAccountPubkey(query: BlockhashQuery) ?[]const u8 {
+    return switch (query) {
+        .nonce_account => |value| value.pubkey,
+        else => null,
+    };
+}
+
+fn buildTransferSignedTransactionWithResolvedBlockhash(
     self: anytype,
     sender_secret_key: []const u8,
     destination: []const u8,
     lamports: u64,
     recent_blockhash: []const u8,
+    nonce_account_pubkey: ?[]const u8,
 ) !SignedLegacyTransaction {
     const keypair = try Keypair.fromBase58SecretKey(self.allocator, sender_secret_key);
     const destination_pubkey = try Pubkey.fromBase58(self.allocator, destination);
     const blockhash = try Hash.fromBase58(self.allocator, recent_blockhash);
 
     const transfer_instruction = SystemProgram.transfer(keypair.public_key, destination_pubkey, lamports);
+
+    if (nonce_account_pubkey) |value| {
+        const nonce_pubkey = try Pubkey.fromBase58(self.allocator, value);
+        const nonce_instruction = try SystemProgram.advanceNonceAccount(
+            self.allocator,
+            nonce_pubkey,
+            keypair.public_key,
+        );
+        const instructions = [_]Instruction{
+            nonce_instruction.instruction(),
+            transfer_instruction.instruction(),
+        };
+        const transaction = LegacyTransaction{
+            .message = .{
+                .payer = keypair.public_key,
+                .recent_blockhash = blockhash,
+                .instructions = instructions[0..],
+            },
+        };
+
+        return try transaction.sign(self.allocator, &.{keypair});
+    }
+
     const instructions = [_]Instruction{transfer_instruction.instruction()};
     const transaction = LegacyTransaction{
         .message = .{
@@ -59,6 +83,23 @@ pub fn buildTransferSignedTransaction(
     return try transaction.sign(self.allocator, &.{keypair});
 }
 
+pub fn buildTransferSignedTransaction(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+) !SignedLegacyTransaction {
+    return try buildTransferSignedTransactionWithResolvedBlockhash(
+        self,
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+        null,
+    );
+}
+
 pub fn buildTransferSignedTransactionWithOptions(
     self: anytype,
     sender_secret_key: []const u8,
@@ -66,18 +107,17 @@ pub fn buildTransferSignedTransactionWithOptions(
     lamports: u64,
     options: ?TransferBuildOptions,
 ) !SignedLegacyTransaction {
-    const recent_blockhash = try resolveTransferRecentBlockhash(
-        self,
-        if (options) |value| value.recent_blockhash else null,
-        if (options) |value| value.blockhash_commitment else null,
-    );
-    defer self.allocator.free(recent_blockhash);
+    const blockhash_query = resolveTransferBlockhashQuery(options);
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
 
-    return try self.buildTransferSignedTransaction(
+    return try buildTransferSignedTransactionWithResolvedBlockhash(
+        self,
         sender_secret_key,
         destination,
         lamports,
-        recent_blockhash,
+        resolved.blockhash,
+        transferNonceAccountPubkey(blockhash_query),
     );
 }
 
@@ -98,30 +138,14 @@ pub fn buildTransferTransaction(
     lamports: u64,
     recent_blockhash: []const u8,
 ) ![]const u8 {
-    const sender_secret_key_bytes = try decodeBase58WithLength(
-        self.allocator,
+    var signed = try self.buildTransferSignedTransaction(
         sender_secret_key,
-        Ed25519.SecretKey.encoded_length,
-    );
-    defer self.allocator.free(sender_secret_key_bytes);
-
-    const destination_public_key = try decodeBase58WithLength(
-        self.allocator,
         destination,
-        Ed25519.PublicKey.encoded_length,
-    );
-    defer self.allocator.free(destination_public_key);
-
-    const recent_blockhash_bytes = try decodeBase58WithLength(self.allocator, recent_blockhash, 32);
-    defer self.allocator.free(recent_blockhash_bytes);
-
-    return try buildLegacyTransferTransaction(
-        self.allocator,
-        sender_secret_key_bytes,
-        destination_public_key,
-        recent_blockhash_bytes,
         lamports,
+        recent_blockhash,
     );
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
 }
 
 pub fn buildTransferTransactionWithOptions(
@@ -131,14 +155,14 @@ pub fn buildTransferTransactionWithOptions(
     lamports: u64,
     options: ?TransferBuildOptions,
 ) ![]const u8 {
-    const recent_blockhash = try resolveTransferRecentBlockhash(
-        self,
-        if (options) |value| value.recent_blockhash else null,
-        if (options) |value| value.blockhash_commitment else null,
+    var signed = try self.buildTransferSignedTransactionWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
     );
-    defer self.allocator.free(recent_blockhash);
-
-    return try self.buildTransferTransaction(sender_secret_key, destination, lamports, recent_blockhash);
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
 }
 
 pub fn buildTransferTransactionWithConfig(
@@ -181,6 +205,7 @@ pub fn sendTransferWithOptions(
             TransferBuildOptions{
                 .recent_blockhash = value.recent_blockhash,
                 .blockhash_commitment = value.blockhash_commitment,
+                .blockhash_query = value.blockhash_query,
             }
         else
             null,
@@ -239,6 +264,7 @@ pub fn transferWithOptions(
             TransferBuildOptions{
                 .recent_blockhash = value.recent_blockhash,
                 .blockhash_commitment = value.blockhash_commitment,
+                .blockhash_query = value.blockhash_query,
             }
         else
             null,

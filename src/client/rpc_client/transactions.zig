@@ -31,6 +31,55 @@ const accountEncodingToString = rpc_types.accountEncodingToString;
 const commitmentToString = rpc_types.commitmentToString;
 const confirmationSatisfiesCommitment = rpc_types.confirmationSatisfiesCommitment;
 
+const SpinnerPhase = enum {
+    waiting_for_observation,
+    waiting_for_commitment,
+    confirmed,
+};
+
+const SpinnerReporter = struct {
+    signature: []const u8,
+    commitment: ?Commitment,
+    last_phase: ?SpinnerPhase = null,
+
+    fn initSend(signature: []const u8, commitment: ?Commitment) SpinnerReporter {
+        std.debug.print("sending transaction...\n", .{});
+        std.debug.print("submitted transaction: {s}\n", .{signature});
+        return .{
+            .signature = signature,
+            .commitment = commitment,
+        };
+    }
+
+    fn initConfirm(signature: []const u8, commitment: ?Commitment) SpinnerReporter {
+        std.debug.print("confirming transaction: {s}\n", .{signature});
+        return .{
+            .signature = signature,
+            .commitment = commitment,
+        };
+    }
+
+    fn transition(self: *SpinnerReporter, phase: SpinnerPhase) void {
+        if (self.last_phase == phase) return;
+        self.last_phase = phase;
+
+        switch (phase) {
+            .waiting_for_observation => std.debug.print(
+                "waiting for transaction to be observed: {s}\n",
+                .{self.signature},
+            ),
+            .waiting_for_commitment => std.debug.print(
+                "waiting for {s} confirmation: {s}\n",
+                .{ commitmentToString(self.commitment orelse .processed), self.signature },
+            ),
+            .confirmed => std.debug.print(
+                "transaction confirmed: {s}\n",
+                .{self.signature},
+            ),
+        }
+    }
+};
+
 pub fn serializeSimulateTransactionParams(
     self: anytype,
     signed_tx_base64: []const u8,
@@ -849,10 +898,43 @@ pub fn waitForSignatureStatus(
     poll_interval_ms: u64,
     strict: bool,
 ) !void {
+    return try waitForSignatureStatusWithInitialTimeout(
+        self,
+        signature,
+        commitment,
+        search_transaction_history,
+        timeout_ms,
+        poll_interval_ms,
+        strict,
+        null,
+        null,
+    );
+}
+
+fn waitForSignatureStatusWithInitialTimeout(
+    self: anytype,
+    signature: []const u8,
+    commitment: ?Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+    strict: bool,
+    initial_transaction_not_found_timeout_ms: ?u64,
+    spinner: ?*SpinnerReporter,
+) !void {
     const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
     const resolved_commitment = self.resolveCommitment(commitment);
+    const initial_deadline = if (initial_transaction_not_found_timeout_ms) |value|
+        std.time.milliTimestamp() + @as(i64, @intCast(value))
+    else
+        deadline;
+    var confirmation_deadline: ?i64 = if (initial_transaction_not_found_timeout_ms == null) deadline else null;
 
-    while (std.time.milliTimestamp() < deadline) {
+    while (true) {
+        if (confirmation_deadline) |value| {
+            if (std.time.milliTimestamp() >= value) return error.TransactionNotConfirmed;
+        }
+
         const status_options = if (search_transaction_history or resolved_commitment != null)
             SignatureStatusesQueryOptions{
                 .search_transaction_history = search_transaction_history,
@@ -864,12 +946,21 @@ pub fn waitForSignatureStatus(
         const status = self.getSignatureStatusWithOptions(signature, status_options) catch |err| {
             switch (err) {
                 error.TransactionNotFound => {
+                    const effective_deadline = confirmation_deadline orelse initial_deadline;
+                    if (std.time.milliTimestamp() >= effective_deadline) {
+                        return error.TransactionNotConfirmed;
+                    }
+                    if (spinner) |value| value.transition(.waiting_for_observation);
                     std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
                     continue;
                 },
                 else => return err,
             }
         };
+
+        if (confirmation_deadline == null) {
+            confirmation_deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
+        }
 
         defer {
             if (status.confirmation_status) |value| {
@@ -879,11 +970,15 @@ pub fn waitForSignatureStatus(
 
         if (strict and status.has_error) return error.TransactionFailed;
         if (confirmationSatisfiesCommitment(status.confirmation_status, resolved_commitment)) {
+            if (spinner) |value| value.transition(.confirmed);
             return;
         }
         if (!strict and status.has_error and resolved_commitment == null) {
+            if (spinner) |value| value.transition(.confirmed);
             return;
         }
+
+        if (spinner) |value| value.transition(.waiting_for_commitment);
 
         std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
     }
@@ -997,16 +1092,197 @@ pub fn sendTransactionAndConfirm(
     const signature = try self.sendTransaction(signed_tx_base64, options);
     errdefer self.allocator.free(signature);
 
-    try self.waitForSignatureStatus(
+    try waitForSignatureStatusWithInitialTimeout(
+        self,
         signature,
         commitment,
         search_transaction_history,
         timeout_ms,
         poll_interval_ms,
         true,
+        self.getConfirmTransactionInitialTimeoutMs(),
+        null,
     );
 
     return signature;
+}
+
+fn sendTransactionAndConfirmWithSpinnerInternal(
+    self: anytype,
+    signed_tx_base64: []const u8,
+    options: ?SendTransactionOptions,
+    commitment: ?Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) ![]const u8 {
+    const signature = try self.sendTransaction(signed_tx_base64, options);
+    errdefer self.allocator.free(signature);
+
+    var spinner = SpinnerReporter.initSend(signature, self.resolveCommitment(commitment));
+    try waitForSignatureStatusWithInitialTimeout(
+        self,
+        signature,
+        commitment,
+        search_transaction_history,
+        timeout_ms,
+        poll_interval_ms,
+        true,
+        self.getConfirmTransactionInitialTimeoutMs(),
+        &spinner,
+    );
+
+    return signature;
+}
+
+pub fn sendAndConfirmTransactionWithSpinner(self: anytype, signed_tx_base64: []const u8) ![]const u8 {
+    return try sendTransactionAndConfirmWithSpinnerInternal(
+        self,
+        signed_tx_base64,
+        null,
+        null,
+        false,
+        poll_for_signature_confirmation_timeout_ms,
+        signature_poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmTransactionWithSpinnerAndCommitment(
+    self: anytype,
+    signed_tx_base64: []const u8,
+    commitment: Commitment,
+) ![]const u8 {
+    return try sendTransactionAndConfirmWithSpinnerInternal(
+        self,
+        signed_tx_base64,
+        null,
+        commitment,
+        false,
+        poll_for_signature_confirmation_timeout_ms,
+        signature_poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmTransactionWithSpinnerAndConfig(
+    self: anytype,
+    signed_tx_base64: []const u8,
+    options: ?SendTransactionOptions,
+) ![]const u8 {
+    return try sendTransactionAndConfirmWithSpinnerInternal(
+        self,
+        signed_tx_base64,
+        options,
+        null,
+        false,
+        poll_for_signature_confirmation_timeout_ms,
+        signature_poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmTransactionWithSpinnerAndCommitmentAndConfig(
+    self: anytype,
+    signed_tx_base64: []const u8,
+    commitment: Commitment,
+    options: ?SendTransactionOptions,
+) ![]const u8 {
+    return try sendTransactionAndConfirmWithSpinnerInternal(
+        self,
+        signed_tx_base64,
+        options,
+        commitment,
+        false,
+        poll_for_signature_confirmation_timeout_ms,
+        signature_poll_interval_ms,
+    );
+}
+
+pub fn confirmTransactionWithSpinner(
+    self: anytype,
+    signature: []const u8,
+    recent_blockhash: []const u8,
+    commitment: ?Commitment,
+) !void {
+    return try self.confirmTransactionWithSpinnerAndTimeouts(
+        signature,
+        recent_blockhash,
+        commitment,
+        poll_for_signature_confirmation_timeout_ms,
+        signature_poll_interval_ms,
+    );
+}
+
+pub fn confirmTransactionWithSpinnerAndTimeouts(
+    self: anytype,
+    signature: []const u8,
+    recent_blockhash: []const u8,
+    commitment: ?Commitment,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) !void {
+    const initial_timeout_ms = self.getConfirmTransactionInitialTimeoutMs() orelse 0;
+    const initial_deadline = std.time.milliTimestamp() + @as(i64, @intCast(initial_timeout_ms));
+    const resolved_commitment = self.resolveCommitment(commitment);
+    var spinner = SpinnerReporter.initConfirm(signature, resolved_commitment);
+
+    while (true) {
+        const observed_status = self.getSignatureStatusWithOptions(
+            signature,
+            .{ .commitment = .processed },
+        ) catch |err| switch (err) {
+            error.TransactionNotFound => null,
+            else => return err,
+        };
+
+        if (observed_status) |status| {
+            defer if (status.confirmation_status) |value| self.allocator.free(value);
+
+            if (status.has_error) return error.TransactionFailed;
+            if (confirmationSatisfiesCommitment(status.confirmation_status, resolved_commitment)) {
+                spinner.transition(.confirmed);
+                return;
+            }
+            spinner.transition(.waiting_for_commitment);
+            break;
+        }
+
+        spinner.transition(.waiting_for_observation);
+
+        const blockhash_still_valid = try self.isBlockhashValid(recent_blockhash, .processed);
+        if (!blockhash_still_valid and std.time.milliTimestamp() >= initial_deadline) {
+            return error.BlockhashExpired;
+        }
+
+        std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
+    }
+
+    const confirmation_deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
+    while (std.time.milliTimestamp() < confirmation_deadline) {
+        const status = self.getSignatureStatusWithOptions(
+            signature,
+            if (resolved_commitment != null)
+                SignatureStatusesQueryOptions{ .commitment = resolved_commitment }
+            else
+                null,
+        ) catch |err| switch (err) {
+            error.TransactionNotFound => {
+                std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
+                continue;
+            },
+            else => return err,
+        };
+        defer if (status.confirmation_status) |value| self.allocator.free(value);
+
+        if (status.has_error) return error.TransactionFailed;
+        if (confirmationSatisfiesCommitment(status.confirmation_status, resolved_commitment)) {
+            spinner.transition(.confirmed);
+            return;
+        }
+
+        spinner.transition(.waiting_for_commitment);
+        std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
+    }
+
+    return error.TransactionNotConfirmed;
 }
 
 pub fn sendTransactionAndConfirmTyped(
@@ -1030,6 +1306,28 @@ pub fn sendTransactionAndConfirmTyped(
     );
 }
 
+pub fn sendTransactionAndConfirmTypedWithSpinner(
+    self: anytype,
+    transaction: SignedLegacyTransaction,
+    options: ?SendTransactionOptions,
+    commitment: ?Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) ![]const u8 {
+    const encoded = try transaction.toBase64(self.allocator);
+    defer self.allocator.free(encoded);
+    return try sendTransactionAndConfirmWithSpinnerInternal(
+        self,
+        encoded,
+        options,
+        commitment,
+        search_transaction_history,
+        timeout_ms,
+        poll_interval_ms,
+    );
+}
+
 pub fn sendAndConfirmVersionedTransactionTyped(
     self: anytype,
     transaction: SignedVersionedTransaction,
@@ -1042,6 +1340,28 @@ pub fn sendAndConfirmVersionedTransactionTyped(
     const encoded = try transaction.toBase64(self.allocator);
     defer self.allocator.free(encoded);
     return try self.sendTransactionAndConfirm(
+        encoded,
+        options,
+        commitment,
+        search_transaction_history,
+        timeout_ms,
+        poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmVersionedTransactionTypedWithSpinner(
+    self: anytype,
+    transaction: SignedVersionedTransaction,
+    options: ?SendTransactionOptions,
+    commitment: ?Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) ![]const u8 {
+    const encoded = try transaction.toBase64(self.allocator);
+    defer self.allocator.free(encoded);
+    return try sendTransactionAndConfirmWithSpinnerInternal(
+        self,
         encoded,
         options,
         commitment,
@@ -1073,6 +1393,28 @@ pub fn sendAndConfirmLegacyTransaction(
     );
 }
 
+pub fn sendAndConfirmLegacyTransactionWithSpinner(
+    self: anytype,
+    transaction: LegacyTransaction,
+    signers: []const sdk.Keypair,
+    options: ?SendTransactionOptions,
+    commitment: ?Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) ![]const u8 {
+    var signed = try transaction.sign(self.allocator, signers);
+    defer signed.deinit(self.allocator);
+    return try self.sendTransactionAndConfirmTypedWithSpinner(
+        signed,
+        options,
+        commitment,
+        search_transaction_history,
+        timeout_ms,
+        poll_interval_ms,
+    );
+}
+
 pub fn sendAndConfirmVersionedTransaction(
     self: anytype,
     transaction: VersionedTransaction,
@@ -1086,6 +1428,28 @@ pub fn sendAndConfirmVersionedTransaction(
     var signed = try transaction.sign(self.allocator, signers);
     defer signed.deinit(self.allocator);
     return try self.sendAndConfirmVersionedTransactionTyped(
+        signed,
+        options,
+        commitment,
+        search_transaction_history,
+        timeout_ms,
+        poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmVersionedTransactionWithSpinner(
+    self: anytype,
+    transaction: VersionedTransaction,
+    signers: []const sdk.Keypair,
+    options: ?SendTransactionOptions,
+    commitment: ?Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) ![]const u8 {
+    var signed = try transaction.sign(self.allocator, signers);
+    defer signed.deinit(self.allocator);
+    return try self.sendAndConfirmVersionedTransactionTypedWithSpinner(
         signed,
         options,
         commitment,

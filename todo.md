@@ -1,7 +1,7 @@
 # solana-client-zig TODO
 
 Snapshot: 2026-03-06
-Current commit: `926a42d`
+Current commit: `22d0be0`
 
 ## Purpose
 
@@ -50,7 +50,7 @@ So "feature parity with Rust client" should be read in two layers:
 | `rpc_client` | Mostly implemented | Core blocking RPC surface is largely present and now split across `src/client/rpc_client/*.zig`. |
 | `rpc_config` / `rpc_filter` / `rpc_request` / `rpc_response` / `rpc_custom_error` | Partially implemented | Zig has many equivalent structs/options, but not a full Rust-style public module layout. |
 | `blockhash_query` | Partially implemented | Minimal `BlockhashQuery` / `resolveBlockhashQuery` support now exists, but the broader Rust helper surface is still incomplete. |
-| `nonce_utils` | Partially implemented | Nonce account parsing and nonce blockhash lookup now exist, but nonce-aware builders/instructions/utilities are still missing. |
+| `nonce_utils` | Partially implemented | Nonce account parsing, nonce blockhash lookup, and minimal nonce-aware transfer/instruction builders now exist, but the broader durable-nonce utility surface is still incomplete. |
 | `pubsub_client` | Not implemented | No websocket subscription client. |
 | `nonblocking` | Not implemented | No async RPC client surface. |
 | `connection_cache` | Not implemented | No QUIC/UDP connection cache abstraction. |
@@ -69,11 +69,11 @@ So "feature parity with Rust client" should be read in two layers:
 | UI convenience wrappers | Implemented | `getAccountData`, `getUiAccount*`, `getTokenAccount*`, `getProgramUiAccounts*`. |
 | `getNewLatestBlockhash` | Implemented | Library and CLI both expose it now. |
 | Send / simulate / send-and-confirm for encoded tx | Implemented | Base64 signed transaction path is available. |
-| Constructor semantic parity | Partial | Default commitment constructor args now persist and are used; request timeout semantics are still not wired into transport. |
+| Constructor semantic parity | Mostly implemented | Default commitment and HTTP request timeout constructor args now persist and affect transport behavior; `confirm_transaction_initial_timeout` now extends the initial "transaction not found" window for send-and-confirm convenience flows. |
 | Typed legacy transaction/message API | Implemented | Legacy typed SDK, signing, serialization, and typed send/simulate/fee wrappers now exist. |
-| Versioned transaction / v0 / ALT support | Partial | Minimal `VersionedMessageV0` / `VersionedTransaction` support exists, but high-level v0 compilation/builder ergonomics are still incomplete. |
-| Public raw RPC escape hatch | Partial | Public `sendRequest(method, params_json)` exists, but there is still no Rust-style `RpcRequest` + typed generic `send<T>`. |
-| Spinner variants | Missing | Rust `*_with_spinner*` variants are not present. |
+| Versioned transaction / v0 / ALT support | Mostly implemented | Minimal v0 typed support exists, a higher-level compiler from `Instruction` + ALT account input now exists, and SDK convenience builders can now directly sign v0 transactions; broader ergonomics are still incomplete. |
+| Public raw RPC escape hatch | Mostly implemented | Public `sendRequest(method, params_json)`, `sendRaw`, `sendJsonRpc`, `sendTyped`, and `RpcRequest` helpers now exist, though the request identifier surface is still lighter than Rust's full module layout. |
+| Spinner variants | Mostly implemented | High-level send-and-confirm spinner convenience methods and blockhash-aware `confirmTransactionWithSpinner` now exist; broader Rust spinner surface is still lighter than upstream. |
 | Mock constructors | Missing | No `new_mock*` or similar public test helpers. |
 | Async runtime / inner client accessors | Partial | `getDefaultCommitment()` now exists, but there is still no `get_inner_client()` / runtime equivalent. |
 
@@ -91,9 +91,11 @@ These APIs exist in Zig:
 Current state:
 
 - default commitment is now stored on `RpcClient` and used when call sites pass `null`
-- timeout arguments still do not affect HTTP request behavior
+- HTTP request timeout arguments now affect transport behavior via socket read/write timeouts
+- `confirm_transaction_initial_timeout` is now used by send-and-confirm convenience flows as an initial
+  "transaction not found" window
 
-So this remains a real parity gap, but only for timeout-related behavior now.
+So this remains a smaller parity gap focused on the confirmation-initial-timeout side.
 
 ### 2. Typed SDK Exists, But Is Not Yet Full-Fidelity
 
@@ -112,9 +114,8 @@ Current Zig client now supports:
 
 What is still missing:
 
-- higher-level v0 compilation from `Instruction` + account metas + ALT references
 - broader transaction-construction ergonomics beyond the current minimal SDK surface
-- nonce-aware builders / helpers
+- broader ownership-friendly / multi-signer builder coverage beyond the current helper set
 
 So the project has crossed the line into "minimal client SDK", but still does
 not yet match Rust's typed convenience end-to-end.
@@ -127,21 +128,28 @@ typed SDK structs, and it still has direct SOL transfer helpers.
 What it does not yet have is a high-level builder layer comparable to Rust's
 more ergonomic typed construction flow, especially for:
 
-- v0 compiled instruction assembly
-- address lookup table driven message compilation
-- nonce-aware message building
+- fuller transaction builder APIs around the current v0 compile/sign helpers
+- richer address lookup table driven message / transaction construction ergonomics
+- broader nonce-aware typed transaction helpers beyond the current prepend/build convenience layer
 
-### 4. Raw RPC Escape Hatch Exists, But Only at the Lowest Level
+### 4. Raw RPC Escape Hatch Exists, But Is Still Lighter Than Rust
 
-`sendRequest(method, params_json)` is now public, which helps with fast-following
-new RPC methods.
+The client now exposes:
 
-Still missing is a public equivalent of Rust's generic `send<T>(RpcRequest, params)`
-style API with:
+- `sendRequest(method, params_json)`
+- `sendRaw(method, params)`
+- `sendJsonRpc(method, params, ResultType)`
+- `sendTyped(RpcRequest, params, ResultType)`
+- `RpcRequest` method identifiers plus `RpcRequest.custom(...)`
 
-- typed request identifiers
-- typed result decoding
-- less manual JSON parameter construction at call sites
+That closes the biggest ergonomics gap, but it is still lighter than Rust's
+full request module layout.
+
+What is still missing here is mainly API breadth and polish rather than the
+core escape hatch itself:
+
+- broader parity in the request identifier catalog
+- deeper integration of the raw layer into all convenience paths
 
 ### 5. Agave `client` Transport Stack Is Largely Unstarted
 
@@ -183,8 +191,8 @@ Why this phase is first:
 - [x] Add minimal address lookup table reference structures.
 - [x] Extend typed send/simulate/fee helpers to support versioned transactions.
 - [x] Keep scope tight: enough to build, sign, serialize, and submit v0 txs.
-- [ ] Add a higher-level v0 builder that compiles from instruction/account meta input.
-- [ ] Add ergonomic ALT-driven message compilation helpers.
+- [x] Add a higher-level v0 builder that compiles from instruction/account meta input.
+- [x] Add ergonomic ALT-driven message compilation helpers.
 
 Why this phase is second:
 
@@ -194,16 +202,16 @@ Why this phase is second:
 ### Phase 3: Fix Core Client Semantics
 
 - [x] Make constructor commitment arguments actually persist as client defaults.
-- [ ] Make constructor timeout arguments actually affect request behavior.
-- [ ] Decide whether to add explicit `confirm_transaction_initial_timeout`
+- [x] Make constructor timeout arguments actually affect request behavior.
+- [x] Decide whether to add explicit `confirm_transaction_initial_timeout`
   semantics similar to Rust.
 - [x] Expose a low-level public raw RPC hook via `sendRequest(method, params_json)`.
-- [ ] Add a more Rust-like typed/raw RPC layer, for example:
-  - [ ] `sendRaw`
-  - [ ] or `sendJsonRpc`
-  - [ ] or `sendTyped(request, params, ResultType)`
+- [x] Add a more Rust-like typed/raw RPC layer, for example:
+  - [x] `sendRaw`
+  - [x] or `sendJsonRpc`
+  - [x] or `sendTyped(request, params, ResultType)`
 - [x] Add minimal nonce/blockhash query helpers once typed message support exists.
-- [ ] Extend nonce support into higher-level transaction/message builders.
+- [x] Extend nonce support into higher-level transaction/message builders.
 
 Why this phase is third:
 
@@ -220,7 +228,7 @@ These items are valid Agave features, but they should not be the next thing:
 - [ ] `tpu_client`
 - [ ] `transaction_executor`
 - [ ] `send_and_confirm_transactions_in_parallel`
-- [ ] Rust-style spinner helpers
+- [x] Rust-style spinner helpers
 - [ ] Rust-style mock sender surface
 
 Reason for defer:
@@ -233,12 +241,8 @@ Reason for defer:
 
 If work resumes from here, the best sequence is:
 
-1. Add durable nonce / blockhash query helpers.
-2. Add a higher-level v0 / ALT message builder from instruction input.
-3. Extend nonce support into nonce-aware builders and convenience flows.
-4. Add a more typed raw RPC escape hatch above `sendRequest`.
-5. Reassess real transport timeout support in the current Zig HTTP stack.
-6. Only then decide whether pubsub / async is worth starting before TPU/QUIC.
+1. Keep the project blocking-only for now and continue broadening blocking RPC/SDK parity.
+2. Focus next on higher-level typed builder ergonomics and testability before touching TPU/QUIC or pubsub.
 
 ## Notes
 
@@ -246,7 +250,21 @@ If work resumes from here, the best sequence is:
 - Do not treat `_with_timeout` naming alone as parity; actual transport behavior
   still matters.
 - The project now has a real minimal SDK and a cleaner test layout under `tests/`.
-- The project now also has a minimal nonce/blockhash query foundation, but not
-  yet full durable-nonce transaction ergonomics.
+- The project now also has a minimal nonce/blockhash query foundation and a
+  higher-level v0 compiler; it can also build durable-nonce transfer flows, but
+  it still does not expose the broader Rust durable-nonce helper surface.
+- The project now also has a real typed/raw JSON-RPC escape hatch above
+  `sendRequest`, so new RPC coverage no longer requires hand-written param JSON.
+- Constructor-level HTTP request timeouts now affect real network behavior in
+  transport, rather than existing as name-only placeholders.
+- `confirm_transaction_initial_timeout` now has concrete effect in the
+  high-level send-and-confirm path, without changing the semantics of the
+  lower-level confirm/poll helpers.
+- High-level spinner flows now cover both send-and-confirm and blockhash-aware
+  confirmation, including an explicit `BlockhashExpired` error when the
+  signature is never observed before the recent blockhash becomes invalid.
+- SDK convenience helpers now cover generic nonce-instruction prepending,
+  generic legacy durable-nonce message/sign flows, and direct v0 compile+sign
+  convenience for callers that do not want to wire those steps manually.
 - Prefer preserving the current project direction: blocking HTTP RPC first,
   minimal SDK second, heavy transport features last.

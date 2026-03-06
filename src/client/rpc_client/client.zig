@@ -3,6 +3,7 @@ const rpc_types = @import("../rpc_types.zig");
 
 const lifecycle_methods = @import("./lifecycle.zig");
 const owned_methods = @import("./owned.zig");
+const raw_methods = @import("./raw.zig");
 const response_methods = @import("./response.zig");
 const transport_methods = @import("./transport.zig");
 const account_methods = @import("./accounts.zig");
@@ -25,12 +26,18 @@ pub const RpcClient = struct {
     http_client: std.http.Client,
     request_id: u64,
     default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
     last_error: ?RpcErrorDetail,
     transport_stats: TransportStats,
 
     pub const serializeParams = response_methods.serializeParams;
     pub const parseResponse = response_methods.parseResponse;
+    pub const parseOwnedResponse = response_methods.parseOwnedResponse;
     pub const captureRpcError = response_methods.captureRpcError;
+    pub const sendRaw = raw_methods.sendRaw;
+    pub const sendJsonRpc = raw_methods.sendJsonRpc;
+    pub const sendTyped = raw_methods.sendTyped;
     pub const cloneAccountInfo = owned_methods.cloneAccountInfo;
     pub const freeOwnedAccountInfo = owned_methods.freeOwnedAccountInfo;
     pub const cloneOptionalAccountInfos = owned_methods.cloneOptionalAccountInfos;
@@ -218,6 +225,10 @@ pub const RpcClient = struct {
     pub const sendAndConfirmTransactionWithCommitment = transaction_methods.sendAndConfirmTransactionWithCommitment;
     pub const sendAndConfirmTransactionWithConfig = transaction_methods.sendAndConfirmTransactionWithConfig;
     pub const sendAndConfirmTransactionWithCommitmentAndConfig = transaction_methods.sendAndConfirmTransactionWithCommitmentAndConfig;
+    pub const sendAndConfirmTransactionWithSpinner = transaction_methods.sendAndConfirmTransactionWithSpinner;
+    pub const sendAndConfirmTransactionWithSpinnerAndCommitment = transaction_methods.sendAndConfirmTransactionWithSpinnerAndCommitment;
+    pub const sendAndConfirmTransactionWithSpinnerAndConfig = transaction_methods.sendAndConfirmTransactionWithSpinnerAndConfig;
+    pub const sendAndConfirmTransactionWithSpinnerAndCommitmentAndConfig = transaction_methods.sendAndConfirmTransactionWithSpinnerAndCommitmentAndConfig;
     pub const sendTransaction = transaction_methods.sendTransaction;
     pub const sendTransactionTyped = transaction_methods.sendTransactionTyped;
     pub const sendVersionedTransactionTyped = transaction_methods.sendVersionedTransactionTyped;
@@ -240,6 +251,8 @@ pub const RpcClient = struct {
     pub const getSignatureStatusesWithHistory = transaction_methods.getSignatureStatusesWithHistory;
     pub const getSignatureStatusesWithCommitmentAndHistory = transaction_methods.getSignatureStatusesWithCommitmentAndHistory;
     pub const confirmTransaction = transaction_methods.confirmTransaction;
+    pub const confirmTransactionWithSpinner = transaction_methods.confirmTransactionWithSpinner;
+    pub const confirmTransactionWithSpinnerAndTimeouts = transaction_methods.confirmTransactionWithSpinnerAndTimeouts;
     pub const getNumBlocksSinceSignatureConfirmation = transaction_methods.getNumBlocksSinceSignatureConfirmation;
     pub const getNumBlocksSinceSignatureConfirmationWithCommitment = transaction_methods.getNumBlocksSinceSignatureConfirmationWithCommitment;
     pub const getSignaturesForAddress = transaction_methods.getSignaturesForAddress;
@@ -256,12 +269,16 @@ pub const RpcClient = struct {
     pub const pollForSignatureConfirmation = transaction_methods.pollForSignatureConfirmation;
     pub const sendTransactionAndConfirm = transaction_methods.sendTransactionAndConfirm;
     pub const sendTransactionAndConfirmTyped = transaction_methods.sendTransactionAndConfirmTyped;
+    pub const sendTransactionAndConfirmTypedWithSpinner = transaction_methods.sendTransactionAndConfirmTypedWithSpinner;
     pub const sendAndConfirmVersionedTransactionTyped = transaction_methods.sendAndConfirmVersionedTransactionTyped;
+    pub const sendAndConfirmVersionedTransactionTypedWithSpinner = transaction_methods.sendAndConfirmVersionedTransactionTypedWithSpinner;
     pub const sendAndConfirmLegacyTransaction = transaction_methods.sendAndConfirmLegacyTransaction;
+    pub const sendAndConfirmLegacyTransactionWithSpinner = transaction_methods.sendAndConfirmLegacyTransactionWithSpinner;
     pub const sendAndConfirmVersionedTransaction = transaction_methods.sendAndConfirmVersionedTransaction;
+    pub const sendAndConfirmVersionedTransactionWithSpinner = transaction_methods.sendAndConfirmVersionedTransactionWithSpinner;
 
     pub fn init(allocator: Allocator, endpoint: []const u8) !RpcClient {
-        return lifecycle_methods.initClient(RpcClient, allocator, endpoint, null);
+        return lifecycle_methods.initClient(RpcClient, allocator, endpoint, null, null, null);
     }
 
     pub fn new(allocator: Allocator, endpoint: []const u8) !RpcClient {
@@ -273,12 +290,11 @@ pub const RpcClient = struct {
         endpoint: []const u8,
         commitment: ?Commitment,
     ) !RpcClient {
-        return lifecycle_methods.initClient(RpcClient, allocator, endpoint, commitment);
+        return lifecycle_methods.initClient(RpcClient, allocator, endpoint, commitment, null, null);
     }
 
     pub fn newWithTimeout(allocator: Allocator, endpoint: []const u8, timeout_ms: u64) !RpcClient {
-        _ = timeout_ms;
-        return RpcClient.init(allocator, endpoint);
+        return lifecycle_methods.initClient(RpcClient, allocator, endpoint, null, timeout_ms, null);
     }
 
     pub fn newWithTimeoutAndCommitment(
@@ -287,20 +303,24 @@ pub const RpcClient = struct {
         timeout_ms: u64,
         commitment: ?Commitment,
     ) !RpcClient {
-        _ = timeout_ms;
-        return lifecycle_methods.initClient(RpcClient, allocator, endpoint, commitment);
+        return lifecycle_methods.initClient(RpcClient, allocator, endpoint, commitment, timeout_ms, null);
     }
 
     pub fn newWithTimeoutsAndCommitment(
         allocator: Allocator,
         endpoint: []const u8,
-        send_timeout_ms: u64,
-        request_timeout_ms: u64,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
         commitment: ?Commitment,
     ) !RpcClient {
-        _ = send_timeout_ms;
-        _ = request_timeout_ms;
-        return lifecycle_methods.initClient(RpcClient, allocator, endpoint, commitment);
+        return lifecycle_methods.initClient(
+            RpcClient,
+            allocator,
+            endpoint,
+            commitment,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
     }
 
     pub fn newSender(allocator: Allocator, endpoint: []const u8) !RpcClient {
@@ -316,7 +336,7 @@ pub const RpcClient = struct {
         endpoint: []const u8,
         commitment: ?Commitment,
     ) !RpcClient {
-        return lifecycle_methods.initClient(RpcClient, allocator, endpoint, commitment);
+        return lifecycle_methods.initClient(RpcClient, allocator, endpoint, commitment, null, null);
     }
 
     pub fn newSocketWithTimeout(
@@ -324,8 +344,7 @@ pub const RpcClient = struct {
         endpoint: []const u8,
         timeout_ms: u64,
     ) !RpcClient {
-        _ = timeout_ms;
-        return RpcClient.init(allocator, endpoint);
+        return lifecycle_methods.initClient(RpcClient, allocator, endpoint, null, timeout_ms, null);
     }
 
     pub fn deinit(self: *RpcClient) void {
@@ -346,6 +365,14 @@ pub const RpcClient = struct {
 
     pub fn getDefaultCommitment(self: *const RpcClient) ?Commitment {
         return self.default_commitment;
+    }
+
+    pub fn getRequestTimeoutMs(self: *const RpcClient) ?u64 {
+        return self.request_timeout_ms;
+    }
+
+    pub fn getConfirmTransactionInitialTimeoutMs(self: *const RpcClient) ?u64 {
+        return self.confirm_transaction_initial_timeout_ms;
     }
 
     pub fn resolveCommitment(self: *const RpcClient, commitment_override: ?Commitment) ?Commitment {

@@ -286,6 +286,244 @@ test "root.sendTransactionAndConfirmTyped submits and confirms signed legacy tra
     try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"searchTransactionHistory\":true") != null);
 }
 
+test "root.sendTransactionAndConfirm uses initial transaction-not-found timeout from constructor" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":"SigInitialTimeout111111111111111111111111111111111111111111111111111111111","id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[null]},"id":2}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":11},"value":[null]},"id":3}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":[{"slot":12,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":4}
+    };
+
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var rpc = try RpcClient.newWithTimeoutsAndCommitment(allocator, rpc_url, 40, 80, null);
+    defer rpc.deinit();
+
+    const signature = try rpc.sendTransactionAndConfirm(
+        "SignedTransactionBase64==",
+        null,
+        null,
+        false,
+        40,
+        20,
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigInitialTimeout111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 4), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"sendTransaction\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"getSignatureStatuses\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"method\":\"getSignatureStatuses\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[3], "\"method\":\"getSignatureStatuses\"") != null);
+}
+
+test "root.sendAndConfirmTransactionWithSpinner prints progress and honors config" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":"SigSpinner11111111111111111111111111111111111111111111111111111111111111","id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[null]},"id":2}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":11},"value":[{"slot":11,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":3}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":[{"slot":12,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":4}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var rpc = try RpcClient.newWithTimeoutsAndCommitment(allocator, rpc_url, 200, 80, null);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const signature = try rpc.sendAndConfirmTransactionWithSpinnerAndCommitmentAndConfig(
+        "SignedTransactionBase64==",
+        .confirmed,
+        .{ .skip_preflight = true, .max_retries = 2 },
+    );
+    defer allocator.free(signature);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try std.testing.expectEqualStrings(
+        "SigSpinner11111111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 4), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"sendTransaction\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"maxRetries\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"getSignatureStatuses\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[3], "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expectEqualStrings(
+        \\sending transaction...
+        \\submitted transaction: SigSpinner11111111111111111111111111111111111111111111111111111111111111
+        \\waiting for transaction to be observed: SigSpinner11111111111111111111111111111111111111111111111111111111111111
+        \\waiting for confirmed confirmation: SigSpinner11111111111111111111111111111111111111111111111111111111111111
+        \\transaction confirmed: SigSpinner11111111111111111111111111111111111111111111111111111111111111
+        \\
+    , captured);
+}
+
+test "root.confirmTransactionWithSpinner waits for observation then commitment" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[null]},"id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":true,"id":2}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":[{"slot":12,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":3}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":13},"value":[{"slot":13,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":4}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var rpc = try RpcClient.newWithTimeoutsAndCommitment(allocator, rpc_url, 200, 80, null);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    try rpc.confirmTransactionWithSpinnerAndTimeouts(
+        "SigConfirmSpinner11111111111111111111111111111111111111111111111111111111",
+        "BlockhashConfirmSpinner1111111111111111111111111111111111111",
+        .confirmed,
+        200,
+        20,
+    );
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try std.testing.expectEqual(@as(usize, 4), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getSignatureStatuses\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"commitment\":\"processed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"isBlockhashValid\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"commitment\":\"processed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[3], "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expectEqualStrings(
+        \\confirming transaction: SigConfirmSpinner11111111111111111111111111111111111111111111111111111111
+        \\waiting for transaction to be observed: SigConfirmSpinner11111111111111111111111111111111111111111111111111111111
+        \\waiting for confirmed confirmation: SigConfirmSpinner11111111111111111111111111111111111111111111111111111111
+        \\transaction confirmed: SigConfirmSpinner11111111111111111111111111111111111111111111111111111111
+        \\
+    , captured);
+}
+
+test "root.confirmTransactionWithSpinner returns blockhash expired when not observed" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    const response_bodies = [_][]const u8{
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[null]},"id":1}
+        ,
+        \\{"jsonrpc":"2.0","result":false,"id":2}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var rpc = try RpcClient.newWithTimeoutsAndCommitment(allocator, rpc_url, 200, 0, null);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    try std.testing.expectError(
+        error.BlockhashExpired,
+        rpc.confirmTransactionWithSpinnerAndTimeouts(
+            "SigExpiredSpinner111111111111111111111111111111111111111111111111111111",
+            "BlockhashExpiredSpinner11111111111111111111111111111111111111",
+            .confirmed,
+            200,
+            20,
+        ),
+    );
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try std.testing.expectEqualStrings(
+        \\confirming transaction: SigExpiredSpinner111111111111111111111111111111111111111111111111111111
+        \\waiting for transaction to be observed: SigExpiredSpinner111111111111111111111111111111111111111111111111111111
+        \\
+    , captured);
+}
+
 test "root.sendAndConfirmTransactionWithConfig supports send options" {
     const allocator = std.testing.allocator;
     var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
@@ -967,6 +1205,94 @@ test "root.buildTransferSignedTransactionWithOptions fetches latest blockhash" {
     try std.testing.expect(std.mem.eql(u8, message[100..132], &recent_blockhash));
 }
 
+test "root.buildTransferSignedTransactionWithOptions supports nonce blockhash query" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+    const sender_public_key_base58 = try encodeBase58(allocator, &sender_key_pair.public_key.toBytes());
+    defer allocator.free(sender_public_key_base58);
+
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_public_key = destination_key_pair.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const nonce_account_key_pair = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const nonce_account_pubkey = nonce_account_key_pair.public_key.toBytes();
+    const nonce_account_base58 = try encodeBase58(allocator, &nonce_account_pubkey);
+    defer allocator.free(nonce_account_base58);
+
+    const nonce_blockhash = [_]u8{0x52} ** 32;
+    const nonce_blockhash_base58 = try encodeBase58(allocator, &nonce_blockhash);
+    defer allocator.free(nonce_blockhash_base58);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_body = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":42}},\"value\":{{\"data\":{{\"program\":\"system\",\"parsed\":{{\"type\":\"initialized\",\"info\":{{\"authority\":\"{s}\",\"blockhash\":\"{s}\",\"feeCalculator\":{{\"lamportsPerSignature\":5000}}}}}},\"space\":80}},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}}},\"id\":1}}",
+        .{ sender_public_key_base58, nonce_blockhash_base58 },
+    );
+    defer allocator.free(response_body);
+
+    const response_bodies = [_][]const u8{response_body};
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var rpc = try RpcClient.init(allocator, rpc_url);
+    defer rpc.deinit();
+
+    var signed = try rpc.buildTransferSignedTransactionWithOptions(
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        .{
+            .blockhash_query = .{
+                .nonce_account = .{
+                    .pubkey = nonce_account_base58,
+                    .commitment = .finalized,
+                },
+            },
+        },
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyTransferTransactionWithNonce(
+        allocator,
+        &sender_secret_key,
+        &nonce_account_pubkey,
+        &destination_public_key,
+        &nonce_blockhash,
+        1_000,
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getAccountInfo\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"encoding\":\"jsonParsed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"commitment\":\"finalized\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], nonce_account_base58) != null);
+    try std.testing.expect(std.mem.eql(u8, expected, encoded));
+}
+
 test "root.transferWithOptions fetches latest blockhash and confirms" {
     const allocator = std.testing.allocator;
 
@@ -1039,6 +1365,109 @@ test "root.transferWithOptions fetches latest blockhash and confirms" {
     try std.testing.expectEqual(@as(usize, 3), request_captures.items.len);
     try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getLatestBlockhash\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"sendTransaction\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"maxRetries\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"method\":\"getSignatureStatuses\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"searchTransactionHistory\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"commitment\":\"confirmed\"") != null);
+}
+
+test "root.transferWithOptions supports nonce blockhash query and confirms" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+    const sender_public_key_base58 = try encodeBase58(allocator, &sender_key_pair.public_key.toBytes());
+    defer allocator.free(sender_public_key_base58);
+
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_public_key = destination_key_pair.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const nonce_account_key_pair = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const nonce_account_pubkey = nonce_account_key_pair.public_key.toBytes();
+    const nonce_account_base58 = try encodeBase58(allocator, &nonce_account_pubkey);
+    defer allocator.free(nonce_account_base58);
+
+    const nonce_blockhash = [_]u8{0x34} ** 32;
+    const nonce_blockhash_base58 = try encodeBase58(allocator, &nonce_blockhash);
+    defer allocator.free(nonce_blockhash_base58);
+
+    const expected_encoded = try client.buildLegacyTransferTransactionWithNonce(
+        allocator,
+        &sender_secret_key,
+        &nonce_account_pubkey,
+        &destination_public_key,
+        &nonce_blockhash,
+        5_000,
+    );
+    defer allocator.free(expected_encoded);
+
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const nonce_account_response = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":12}},\"value\":{{\"data\":{{\"program\":\"system\",\"parsed\":{{\"type\":\"initialized\",\"info\":{{\"authority\":\"{s}\",\"blockhash\":\"{s}\",\"feeCalculator\":{{\"lamportsPerSignature\":5000}}}}}},\"space\":80}},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}}},\"id\":1}}",
+        .{ sender_public_key_base58, nonce_blockhash_base58 },
+    );
+    defer allocator.free(nonce_account_response);
+
+    const response_bodies = [_][]const u8{
+        nonce_account_response,
+        \\{"jsonrpc":"2.0","result":"Sig999999999999999999999999999999999999999999999999999999999999999999","id":2}
+        ,
+        \\{"jsonrpc":"2.0","result":{"context":{"slot":13},"value":[{"slot":13,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":3}
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(rpc_url);
+
+    var rpc = try RpcClient.init(allocator, rpc_url);
+    defer rpc.deinit();
+
+    const signature = try rpc.transferWithOptions(
+        sender_secret_key_base58,
+        destination_base58,
+        5_000,
+        .{
+            .blockhash_query = .{
+                .nonce_account = .{
+                    .pubkey = nonce_account_base58,
+                    .commitment = .confirmed,
+                },
+            },
+            .send_transaction_options = .{ .skip_preflight = true, .max_retries = 2 },
+            .commitment = .confirmed,
+            .search_transaction_history = true,
+            .timeout_ms = 200,
+            .poll_interval_ms = 10,
+        },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "Sig999999999999999999999999999999999999999999999999999999999999999999",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 3), request_captures.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getAccountInfo\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"sendTransaction\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], expected_encoded) != null);
     try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"skipPreflight\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"maxRetries\":2") != null);
     try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"method\":\"getSignatureStatuses\"") != null);

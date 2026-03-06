@@ -32,6 +32,7 @@ pub const RpcError = error{
     TransactionFailed,
     TransactionNotConfirmed,
     TransactionNotFound,
+    BlockhashExpired,
 };
 
 pub const SdkError = error{
@@ -282,6 +283,19 @@ pub const Instruction = struct {
     data: []const u8,
 };
 
+pub const OwnedInstructions = struct {
+    instructions: []Instruction,
+
+    pub fn deinit(self: *OwnedInstructions, allocator: Allocator) void {
+        for (self.instructions) |instruction| {
+            allocator.free(instruction.accounts);
+            allocator.free(instruction.data);
+        }
+        allocator.free(self.instructions);
+        self.* = undefined;
+    }
+};
+
 pub const LegacyMessageHeader = struct {
     num_required_signatures: u8,
     num_readonly_signed_accounts: u8,
@@ -387,12 +401,42 @@ pub const MessageAddressTableLookup = struct {
     readonly_indexes: []const u8,
 };
 
+pub const AddressLookupTableAccount = struct {
+    account_key: Pubkey,
+    addresses: []const Pubkey,
+
+    pub fn findAddressIndex(self: AddressLookupTableAccount, target: Pubkey) !?u8 {
+        for (self.addresses, 0..) |address, index| {
+            if (!address.eql(target)) continue;
+            if (index > std.math.maxInt(u8)) return error.TooManyLookupTableAddresses;
+            return @intCast(index);
+        }
+        return null;
+    }
+};
+
 pub const VersionedMessageV0 = struct {
     header: LegacyMessageHeader,
     account_keys: []const Pubkey,
     recent_blockhash: Hash,
     instructions: []const CompiledInstruction,
     address_table_lookups: []const MessageAddressTableLookup,
+
+    pub fn compile(
+        allocator: Allocator,
+        payer: Pubkey,
+        recent_blockhash: Hash,
+        instructions: []const Instruction,
+        address_lookup_tables: []const AddressLookupTableAccount,
+    ) !OwnedVersionedMessageV0 {
+        return try compileVersionedMessageV0(
+            allocator,
+            payer,
+            recent_blockhash,
+            instructions,
+            address_lookup_tables,
+        );
+    }
 
     pub fn serialize(self: VersionedMessageV0, allocator: Allocator) ![]u8 {
         var serialized = std.ArrayList(u8).empty;
@@ -453,6 +497,37 @@ pub const VersionedMessageV0 = struct {
             .signatures = signatures,
             .message_bytes = message_bytes,
         };
+    }
+};
+
+pub const OwnedVersionedMessageV0 = struct {
+    message: VersionedMessageV0,
+
+    pub fn deinit(self: *OwnedVersionedMessageV0, allocator: Allocator) void {
+        allocator.free(self.message.account_keys);
+        for (self.message.instructions) |instruction| {
+            allocator.free(instruction.account_indexes);
+            allocator.free(instruction.data);
+        }
+        allocator.free(self.message.instructions);
+        for (self.message.address_table_lookups) |lookup| {
+            allocator.free(lookup.writable_indexes);
+            allocator.free(lookup.readonly_indexes);
+        }
+        allocator.free(self.message.address_table_lookups);
+        self.* = undefined;
+    }
+
+    pub fn serialize(self: OwnedVersionedMessageV0, allocator: Allocator) ![]u8 {
+        return try self.message.serialize(allocator);
+    }
+
+    pub fn toBase64(self: OwnedVersionedMessageV0, allocator: Allocator) ![]u8 {
+        return try self.message.toBase64(allocator);
+    }
+
+    pub fn sign(self: OwnedVersionedMessageV0, allocator: Allocator, signers: []const Keypair) !SignedVersionedTransaction {
+        return try self.message.sign(allocator, signers);
     }
 };
 
@@ -524,6 +599,27 @@ pub const TransferInstruction = struct {
     }
 };
 
+pub const NonceAdvanceInstruction = struct {
+    accounts: [3]AccountMeta,
+    data: [1]u8,
+
+    pub fn instruction(self: *const NonceAdvanceInstruction) Instruction {
+        return .{
+            .program_id = SystemProgram.id(),
+            .accounts = self.accounts[0..],
+            .data = self.data[0..],
+        };
+    }
+};
+
+pub const Sysvar = struct {
+    pub const recent_blockhashes_base58 = "SysvarRecentB1ockHashes11111111111111111111";
+
+    pub fn recentBlockhashes(allocator: Allocator) !Pubkey {
+        return try Pubkey.fromBase58(allocator, recent_blockhashes_base58);
+    }
+};
+
 pub const SystemProgram = struct {
     pub fn id() Pubkey {
         return Pubkey.fromBytes(.{0} ** Ed25519.PublicKey.encoded_length);
@@ -541,12 +637,129 @@ pub const SystemProgram = struct {
             .data = instruction_data,
         };
     }
+
+    pub fn advanceNonceAccount(
+        allocator: Allocator,
+        nonce_account: Pubkey,
+        authority: Pubkey,
+    ) !NonceAdvanceInstruction {
+        return .{
+            .accounts = .{
+                AccountMeta.init(nonce_account, false, true),
+                AccountMeta.init(try Sysvar.recentBlockhashes(allocator), false, false),
+                AccountMeta.init(authority, true, false),
+            },
+            .data = .{4},
+        };
+    }
 };
+
+fn freeInstructionClones(allocator: Allocator, instructions: []Instruction, initialized_len: usize) void {
+    for (instructions[0..initialized_len]) |instruction| {
+        allocator.free(instruction.accounts);
+        allocator.free(instruction.data);
+    }
+    allocator.free(instructions);
+}
+
+fn cloneInstruction(allocator: Allocator, instruction: Instruction) !Instruction {
+    return .{
+        .program_id = instruction.program_id,
+        .accounts = try allocator.dupe(AccountMeta, instruction.accounts),
+        .data = try allocator.dupe(u8, instruction.data),
+    };
+}
+
+pub fn cloneInstructions(allocator: Allocator, instructions: []const Instruction) !OwnedInstructions {
+    const cloned = try allocator.alloc(Instruction, instructions.len);
+    var initialized_len: usize = 0;
+    errdefer freeInstructionClones(allocator, cloned, initialized_len);
+
+    for (instructions, 0..) |instruction, index| {
+        cloned[index] = try cloneInstruction(allocator, instruction);
+        initialized_len += 1;
+    }
+
+    return .{ .instructions = cloned };
+}
+
+pub fn prependNonceAdvanceInstruction(
+    allocator: Allocator,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    instructions: []const Instruction,
+) !OwnedInstructions {
+    const cloned = try allocator.alloc(Instruction, instructions.len + 1);
+    var initialized_len: usize = 0;
+    errdefer freeInstructionClones(allocator, cloned, initialized_len);
+
+    const advance = try SystemProgram.advanceNonceAccount(allocator, nonce_account, authority);
+    cloned[0] = try cloneInstruction(allocator, advance.instruction());
+    initialized_len = 1;
+
+    for (instructions, 0..) |instruction, index| {
+        cloned[index + 1] = try cloneInstruction(allocator, instruction);
+        initialized_len += 1;
+    }
+
+    return .{ .instructions = cloned };
+}
 
 const CompiledLegacyMessage = struct {
     header: LegacyMessageHeader,
     account_keys: []Pubkey,
     bytes: []u8,
+};
+
+const LookupBuildState = struct {
+    account_key: Pubkey,
+    writable_indexes: std.ArrayList(u8),
+    writable_addresses: std.ArrayList(Pubkey),
+    readonly_indexes: std.ArrayList(u8),
+    readonly_addresses: std.ArrayList(Pubkey),
+
+    fn init(account_key: Pubkey) LookupBuildState {
+        return .{
+            .account_key = account_key,
+            .writable_indexes = .empty,
+            .writable_addresses = .empty,
+            .readonly_indexes = .empty,
+            .readonly_addresses = .empty,
+        };
+    }
+
+    fn deinit(self: *LookupBuildState, allocator: Allocator) void {
+        self.writable_indexes.deinit(allocator);
+        self.writable_addresses.deinit(allocator);
+        self.readonly_indexes.deinit(allocator);
+        self.readonly_addresses.deinit(allocator);
+    }
+
+    fn append(
+        self: *LookupBuildState,
+        allocator: Allocator,
+        pubkey: Pubkey,
+        address_index: u8,
+        is_writable: bool,
+    ) !void {
+        if (containsPubkey(self.writable_addresses.items, pubkey) or containsPubkey(self.readonly_addresses.items, pubkey)) {
+            return;
+        }
+
+        if (is_writable) {
+            try self.writable_addresses.append(allocator, pubkey);
+            try self.writable_indexes.append(allocator, address_index);
+            return;
+        }
+
+        try self.readonly_addresses.append(allocator, pubkey);
+        try self.readonly_indexes.append(allocator, address_index);
+    }
+};
+
+const ResolvedLookupAddress = struct {
+    table_index: usize,
+    address_index: u8,
 };
 
 fn appendOrMergeAccountMeta(
@@ -579,13 +792,24 @@ fn findPubkeyIndex(keys: []const Pubkey, target: Pubkey) !u8 {
     return error.InstructionAccountNotFound;
 }
 
-fn compileLegacyMessage(allocator: Allocator, message: LegacyMessage) !CompiledLegacyMessage {
+fn containsPubkey(keys: []const Pubkey, target: Pubkey) bool {
+    for (keys) |key| {
+        if (key.eql(target)) return true;
+    }
+    return false;
+}
+
+fn collectOrderedAccountMetas(
+    allocator: Allocator,
+    payer: Pubkey,
+    instructions: []const Instruction,
+) ![]AccountMeta {
     var collected_metas = std.ArrayList(AccountMeta).empty;
     defer collected_metas.deinit(allocator);
 
-    try appendOrMergeAccountMeta(&collected_metas, allocator, AccountMeta.init(message.payer, true, true));
+    try appendOrMergeAccountMeta(&collected_metas, allocator, AccountMeta.init(payer, true, true));
 
-    for (message.instructions) |instruction| {
+    for (instructions) |instruction| {
         for (instruction.accounts) |account| {
             try appendOrMergeAccountMeta(&collected_metas, allocator, account);
         }
@@ -605,7 +829,15 @@ fn compileLegacyMessage(allocator: Allocator, message: LegacyMessage) !CompiledL
         }
     }
 
-    const ordered_meta_slice = try ordered_metas.toOwnedSlice(allocator);
+    return try ordered_metas.toOwnedSlice(allocator);
+}
+
+fn compileLegacyMessage(allocator: Allocator, message: LegacyMessage) !CompiledLegacyMessage {
+    const ordered_meta_slice = try collectOrderedAccountMetas(
+        allocator,
+        message.payer,
+        message.instructions,
+    );
     defer allocator.free(ordered_meta_slice);
 
     const account_keys = try allocator.alloc(Pubkey, ordered_meta_slice.len);
@@ -656,6 +888,194 @@ fn compileLegacyMessage(allocator: Allocator, message: LegacyMessage) !CompiledL
         .header = header,
         .account_keys = account_keys,
         .bytes = try serialized.toOwnedSlice(allocator),
+    };
+}
+
+fn instructionUsesProgramId(instructions: []const Instruction, target: Pubkey) bool {
+    for (instructions) |instruction| {
+        if (instruction.program_id.eql(target)) return true;
+    }
+    return false;
+}
+
+fn resolveLookupAddress(
+    address_lookup_tables: []const AddressLookupTableAccount,
+    target: Pubkey,
+) !?ResolvedLookupAddress {
+    for (address_lookup_tables, 0..) |table, table_index| {
+        if (try table.findAddressIndex(target)) |address_index| {
+            return .{
+                .table_index = table_index,
+                .address_index = address_index,
+            };
+        }
+    }
+    return null;
+}
+
+fn findLoadedAccountIndex(
+    lookup_states: []const LookupBuildState,
+    static_account_count: usize,
+    total_loaded_writable: usize,
+    target: Pubkey,
+) !?u8 {
+    var writable_base = static_account_count;
+    for (lookup_states) |state| {
+        for (state.writable_addresses.items, 0..) |address, index| {
+            if (!address.eql(target)) continue;
+            const resolved_index = writable_base + index;
+            if (resolved_index > std.math.maxInt(u8)) return error.TooManyAccountKeys;
+            return @intCast(resolved_index);
+        }
+        writable_base += state.writable_addresses.items.len;
+    }
+
+    var readonly_base = static_account_count + total_loaded_writable;
+    for (lookup_states) |state| {
+        for (state.readonly_addresses.items, 0..) |address, index| {
+            if (!address.eql(target)) continue;
+            const resolved_index = readonly_base + index;
+            if (resolved_index > std.math.maxInt(u8)) return error.TooManyAccountKeys;
+            return @intCast(resolved_index);
+        }
+        readonly_base += state.readonly_addresses.items.len;
+    }
+
+    return null;
+}
+
+pub fn compileVersionedMessageV0(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    const ordered_metas = try collectOrderedAccountMetas(allocator, payer, instructions);
+    defer allocator.free(ordered_metas);
+
+    var static_metas = std.ArrayList(AccountMeta).empty;
+    defer static_metas.deinit(allocator);
+
+    const lookup_states = try allocator.alloc(LookupBuildState, address_lookup_tables.len);
+    defer allocator.free(lookup_states);
+    for (address_lookup_tables, 0..) |table, index| {
+        lookup_states[index] = LookupBuildState.init(table.account_key);
+    }
+    defer for (lookup_states) |*state| state.deinit(allocator);
+
+    for (ordered_metas) |meta| {
+        if (!meta.is_signer and !instructionUsesProgramId(instructions, meta.pubkey)) {
+            if (try resolveLookupAddress(address_lookup_tables, meta.pubkey)) |resolved| {
+                try lookup_states[resolved.table_index].append(
+                    allocator,
+                    meta.pubkey,
+                    resolved.address_index,
+                    meta.is_writable,
+                );
+                continue;
+            }
+        }
+
+        try static_metas.append(allocator, meta);
+    }
+
+    var total_loaded_writable: usize = 0;
+    var total_loaded_readonly: usize = 0;
+    for (lookup_states) |state| {
+        total_loaded_writable += state.writable_addresses.items.len;
+        total_loaded_readonly += state.readonly_addresses.items.len;
+    }
+
+    if (static_metas.items.len + total_loaded_writable + total_loaded_readonly > std.math.maxInt(u8)) {
+        return error.TooManyAccountKeys;
+    }
+
+    const account_keys = try allocator.alloc(Pubkey, static_metas.items.len);
+    errdefer allocator.free(account_keys);
+
+    var header = LegacyMessageHeader{
+        .num_required_signatures = 0,
+        .num_readonly_signed_accounts = 0,
+        .num_readonly_unsigned_accounts = 0,
+    };
+
+    for (static_metas.items, 0..) |meta, index| {
+        account_keys[index] = meta.pubkey;
+        if (meta.is_signer) {
+            header.num_required_signatures += 1;
+            if (!meta.is_writable) header.num_readonly_signed_accounts += 1;
+        } else if (!meta.is_writable) {
+            header.num_readonly_unsigned_accounts += 1;
+        }
+    }
+
+    const compiled_instructions = try allocator.alloc(CompiledInstruction, instructions.len);
+    var compiled_instruction_count: usize = 0;
+    errdefer {
+        for (compiled_instructions[0..compiled_instruction_count]) |instruction| {
+            allocator.free(instruction.account_indexes);
+            allocator.free(instruction.data);
+        }
+        allocator.free(compiled_instructions);
+    }
+
+    for (instructions, 0..) |instruction, instruction_index| {
+        const account_indexes = try allocator.alloc(u8, instruction.accounts.len);
+        errdefer allocator.free(account_indexes);
+
+        for (instruction.accounts, 0..) |account, account_index| {
+            if (findPubkeyIndex(account_keys, account.pubkey)) |resolved_index| {
+                account_indexes[account_index] = resolved_index;
+                continue;
+            } else |_| {}
+
+            account_indexes[account_index] = (try findLoadedAccountIndex(
+                lookup_states,
+                account_keys.len,
+                total_loaded_writable,
+                account.pubkey,
+            )) orelse return error.InstructionAccountNotFound;
+        }
+
+        const instruction_data = try allocator.dupe(u8, instruction.data);
+        errdefer allocator.free(instruction_data);
+
+        compiled_instructions[instruction_index] = .{
+            .program_id_index = try findPubkeyIndex(account_keys, instruction.program_id),
+            .account_indexes = account_indexes,
+            .data = instruction_data,
+        };
+        compiled_instruction_count += 1;
+    }
+
+    var compiled_lookups = std.ArrayList(MessageAddressTableLookup).empty;
+    errdefer {
+        for (compiled_lookups.items) |lookup| {
+            allocator.free(lookup.writable_indexes);
+            allocator.free(lookup.readonly_indexes);
+        }
+        compiled_lookups.deinit(allocator);
+    }
+
+    for (lookup_states) |*state| {
+        if (state.writable_indexes.items.len == 0 and state.readonly_indexes.items.len == 0) continue;
+
+        try compiled_lookups.append(allocator, .{
+            .account_key = state.account_key,
+            .writable_indexes = try state.writable_indexes.toOwnedSlice(allocator),
+            .readonly_indexes = try state.readonly_indexes.toOwnedSlice(allocator),
+        });
+    }
+
+    return .{
+        .message = .{
+            .header = header,
+            .account_keys = account_keys,
+            .recent_blockhash = recent_blockhash,
+            .instructions = compiled_instructions,
+            .address_table_lookups = try compiled_lookups.toOwnedSlice(allocator),
+        },
     };
 }
 
@@ -721,6 +1141,31 @@ pub fn buildLegacyTransferMessage(
     return try message.serialize(allocator);
 }
 
+pub fn buildLegacyMessageWithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+) ![]u8 {
+    var owned_instructions = try prependNonceAdvanceInstruction(
+        allocator,
+        nonce_account,
+        nonce_authority,
+        instructions,
+    );
+    defer owned_instructions.deinit(allocator);
+
+    const message = LegacyMessage{
+        .payer = payer,
+        .recent_blockhash = recent_blockhash,
+        .instructions = owned_instructions.instructions,
+    };
+
+    return try message.serialize(allocator);
+}
+
 pub fn buildLegacyTransferTransaction(
     allocator: Allocator,
     secret_key: []const u8,
@@ -743,6 +1188,130 @@ pub fn buildLegacyTransferTransaction(
     };
 
     var signed = try transaction.sign(allocator, &.{keypair});
+    defer signed.deinit(allocator);
+
+    return try signed.toBase64(allocator);
+}
+
+pub fn buildSignedLegacyTransactionWithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+) !SignedLegacyTransaction {
+    var owned_instructions = try prependNonceAdvanceInstruction(
+        allocator,
+        nonce_account,
+        nonce_authority,
+        instructions,
+    );
+    defer owned_instructions.deinit(allocator);
+
+    const transaction = LegacyTransaction{
+        .message = .{
+            .payer = payer,
+            .recent_blockhash = recent_blockhash,
+            .instructions = owned_instructions.instructions,
+        },
+    };
+
+    return try transaction.sign(allocator, signers);
+}
+
+pub fn buildLegacyTransferMessageWithNonce(
+    allocator: Allocator,
+    sender_public_key: [Ed25519.PublicKey.encoded_length]u8,
+    nonce_account_public_key: [Ed25519.PublicKey.encoded_length]u8,
+    destination_public_key: [Ed25519.PublicKey.encoded_length]u8,
+    recent_blockhash: [32]u8,
+    lamports: u64,
+) ![]u8 {
+    const sender = Pubkey.fromBytes(sender_public_key);
+    const transfer_instruction = SystemProgram.transfer(
+        sender,
+        Pubkey.fromBytes(destination_public_key),
+        lamports,
+    );
+    const instructions = [_]Instruction{transfer_instruction.instruction()};
+    return try buildLegacyMessageWithNonceInstructions(
+        allocator,
+        sender,
+        Pubkey.fromBytes(nonce_account_public_key),
+        sender,
+        Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+    );
+}
+
+pub fn buildLegacyTransferTransactionWithNonce(
+    allocator: Allocator,
+    secret_key: []const u8,
+    nonce_account_public_key: []const u8,
+    destination_public_key: []const u8,
+    recent_blockhash: []const u8,
+    lamports: u64,
+) ![]u8 {
+    const keypair = try Keypair.fromSecretKeySlice(secret_key);
+    const nonce_account = try Pubkey.fromSlice(nonce_account_public_key);
+    const destination = try Pubkey.fromSlice(destination_public_key);
+    const blockhash = try Hash.fromSlice(recent_blockhash);
+
+    const transfer_instruction = SystemProgram.transfer(keypair.public_key, destination, lamports);
+    const instructions = [_]Instruction{transfer_instruction.instruction()};
+
+    var signed = try buildSignedLegacyTransactionWithNonceInstructions(
+        allocator,
+        keypair.public_key,
+        nonce_account,
+        keypair.public_key,
+        blockhash,
+        instructions[0..],
+        &.{keypair},
+    );
+    defer signed.deinit(allocator);
+
+    return try signed.toBase64(allocator);
+}
+
+pub fn buildSignedVersionedTransactionV0(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) !SignedVersionedTransaction {
+    var compiled = try compileVersionedMessageV0(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+    );
+    defer compiled.deinit(allocator);
+
+    return try compiled.sign(allocator, signers);
+}
+
+pub fn buildVersionedTransactionV0Base64(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) ![]u8 {
+    var signed = try buildSignedVersionedTransactionV0(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+        signers,
+    );
     defer signed.deinit(allocator);
 
     return try signed.toBase64(allocator);

@@ -10,6 +10,8 @@ pub fn initClient(
     allocator: std.mem.Allocator,
     endpoint: []const u8,
     default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
 ) !ClientType {
     return ClientType{
         .allocator = allocator,
@@ -17,6 +19,8 @@ pub fn initClient(
         .http_client = .{ .allocator = allocator },
         .request_id = 1,
         .default_commitment = default_commitment,
+        .request_timeout_ms = request_timeout_ms,
+        .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
         .last_error = null,
         .transport_stats = .{},
     };

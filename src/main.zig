@@ -40,6 +40,7 @@ fn run(allocator: std.mem.Allocator) !u8 {
         error.TransactionFailed => return printError("error: transaction failed\n"),
         error.TransactionNotConfirmed => return printError("error: transaction was not confirmed before timeout\n"),
         error.TransactionNotFound => return printError("error: transaction not found\n"),
+        error.BlockhashExpired => return printError("error: transaction blockhash expired before confirmation\n"),
         else => return printUnhandledError(err),
     };
 

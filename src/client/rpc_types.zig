@@ -38,6 +38,85 @@ pub const RpcErrorDetail = struct {
     message: []const u8 = "",
 };
 
+pub fn OwnedRpcResult(comptime ResultType: type) type {
+    return struct {
+        allocator: std.mem.Allocator,
+        arena: std.heap.ArenaAllocator,
+        response_body: []u8,
+        value: ResultType,
+
+        const Self = @This();
+
+        pub fn deinit(self: *Self) void {
+            self.arena.deinit();
+            self.allocator.free(self.response_body);
+            self.* = undefined;
+        }
+    };
+}
+
+pub const RpcRequest = struct {
+    method: []const u8,
+
+    pub fn custom(method: []const u8) RpcRequest {
+        return .{ .method = method };
+    }
+
+    pub const getAccountInfo: RpcRequest = .{ .method = "getAccountInfo" };
+    pub const getBalance: RpcRequest = .{ .method = "getBalance" };
+    pub const getBlock: RpcRequest = .{ .method = "getBlock" };
+    pub const getBlockCommitment: RpcRequest = .{ .method = "getBlockCommitment" };
+    pub const getBlockHeight: RpcRequest = .{ .method = "getBlockHeight" };
+    pub const getBlockProduction: RpcRequest = .{ .method = "getBlockProduction" };
+    pub const getBlockTime: RpcRequest = .{ .method = "getBlockTime" };
+    pub const getBlocks: RpcRequest = .{ .method = "getBlocks" };
+    pub const getBlocksWithLimit: RpcRequest = .{ .method = "getBlocksWithLimit" };
+    pub const getClusterNodes: RpcRequest = .{ .method = "getClusterNodes" };
+    pub const getEpochInfo: RpcRequest = .{ .method = "getEpochInfo" };
+    pub const getEpochSchedule: RpcRequest = .{ .method = "getEpochSchedule" };
+    pub const getFeatureActivationSlot: RpcRequest = .{ .method = "getFeatureActivationSlot" };
+    pub const getFeeForMessage: RpcRequest = .{ .method = "getFeeForMessage" };
+    pub const getFirstAvailableBlock: RpcRequest = .{ .method = "getFirstAvailableBlock" };
+    pub const getGenesisHash: RpcRequest = .{ .method = "getGenesisHash" };
+    pub const getHealth: RpcRequest = .{ .method = "getHealth" };
+    pub const getHighestSnapshotSlot: RpcRequest = .{ .method = "getHighestSnapshotSlot" };
+    pub const getIdentity: RpcRequest = .{ .method = "getIdentity" };
+    pub const getInflationGovernor: RpcRequest = .{ .method = "getInflationGovernor" };
+    pub const getInflationRate: RpcRequest = .{ .method = "getInflationRate" };
+    pub const getInflationReward: RpcRequest = .{ .method = "getInflationReward" };
+    pub const getLargestAccounts: RpcRequest = .{ .method = "getLargestAccounts" };
+    pub const getLatestBlockhash: RpcRequest = .{ .method = "getLatestBlockhash" };
+    pub const getLeaderSchedule: RpcRequest = .{ .method = "getLeaderSchedule" };
+    pub const getMaxRetransmitSlot: RpcRequest = .{ .method = "getMaxRetransmitSlot" };
+    pub const getMaxShredInsertSlot: RpcRequest = .{ .method = "getMaxShredInsertSlot" };
+    pub const minimumLedgerSlot: RpcRequest = .{ .method = "minimumLedgerSlot" };
+    pub const getMinimumBalanceForRentExemption: RpcRequest = .{ .method = "getMinimumBalanceForRentExemption" };
+    pub const getMultipleAccounts: RpcRequest = .{ .method = "getMultipleAccounts" };
+    pub const getProgramAccounts: RpcRequest = .{ .method = "getProgramAccounts" };
+    pub const getRecentPerformanceSamples: RpcRequest = .{ .method = "getRecentPerformanceSamples" };
+    pub const getRecentPrioritizationFees: RpcRequest = .{ .method = "getRecentPrioritizationFees" };
+    pub const getSignatureStatuses: RpcRequest = .{ .method = "getSignatureStatuses" };
+    pub const getSignaturesForAddress: RpcRequest = .{ .method = "getSignaturesForAddress" };
+    pub const getSlot: RpcRequest = .{ .method = "getSlot" };
+    pub const getSlotLeader: RpcRequest = .{ .method = "getSlotLeader" };
+    pub const getSlotLeaders: RpcRequest = .{ .method = "getSlotLeaders" };
+    pub const getStakeMinimumDelegation: RpcRequest = .{ .method = "getStakeMinimumDelegation" };
+    pub const getSupply: RpcRequest = .{ .method = "getSupply" };
+    pub const getTokenAccountBalance: RpcRequest = .{ .method = "getTokenAccountBalance" };
+    pub const getTokenAccountsByDelegate: RpcRequest = .{ .method = "getTokenAccountsByDelegate" };
+    pub const getTokenAccountsByOwner: RpcRequest = .{ .method = "getTokenAccountsByOwner" };
+    pub const getTokenLargestAccounts: RpcRequest = .{ .method = "getTokenLargestAccounts" };
+    pub const getTokenSupply: RpcRequest = .{ .method = "getTokenSupply" };
+    pub const getTransaction: RpcRequest = .{ .method = "getTransaction" };
+    pub const getTransactionCount: RpcRequest = .{ .method = "getTransactionCount" };
+    pub const getVersion: RpcRequest = .{ .method = "getVersion" };
+    pub const getVoteAccounts: RpcRequest = .{ .method = "getVoteAccounts" };
+    pub const isBlockhashValid: RpcRequest = .{ .method = "isBlockhashValid" };
+    pub const requestAirdrop: RpcRequest = .{ .method = "requestAirdrop" };
+    pub const sendTransaction: RpcRequest = .{ .method = "sendTransaction" };
+    pub const simulateTransaction: RpcRequest = .{ .method = "simulateTransaction" };
+};
+
 pub const LatestBlockhash = struct {
     blockhash: []const u8,
     last_valid_block_height: u64,
@@ -455,17 +534,20 @@ pub const SendTransactionOptions = struct {
 pub const TransferBuildOptions = struct {
     recent_blockhash: ?[]const u8 = null,
     blockhash_commitment: ?Commitment = null,
+    blockhash_query: ?BlockhashQuery = null,
 };
 
 pub const SendTransferOptions = struct {
     recent_blockhash: ?[]const u8 = null,
     blockhash_commitment: ?Commitment = null,
+    blockhash_query: ?BlockhashQuery = null,
     send_transaction_options: ?SendTransactionOptions = null,
 };
 
 pub const TransferOptions = struct {
     recent_blockhash: ?[]const u8 = null,
     blockhash_commitment: ?Commitment = null,
+    blockhash_query: ?BlockhashQuery = null,
     send_transaction_options: ?SendTransactionOptions = null,
     commitment: ?Commitment = null,
     search_transaction_history: bool = false,
