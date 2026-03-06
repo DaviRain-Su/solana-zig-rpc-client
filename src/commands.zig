@@ -8,6 +8,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const command = args.command;
     const signature = args.signature;
     const account = args.account;
+    const account_data_slice_length_arg = args.account_data_slice_length_arg;
+    const account_data_slice_offset_arg = args.account_data_slice_offset_arg;
+    const account_encoding_arg = args.account_encoding_arg;
     const blockhash_arg = args.blockhash_arg;
     const block_production_identity_arg = args.block_production_identity_arg;
     const block_production_first_slot_arg = args.block_production_first_slot_arg;
@@ -18,6 +21,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const feature_key_arg = args.feature_key_arg;
     const largest_filter_arg = args.largest_filter_arg;
     const max_supported_transaction_version_arg = args.max_supported_transaction_version_arg;
+    const min_context_slot_arg = args.min_context_slot_arg;
     const program_data_size_arg = args.program_data_size_arg;
     const program_data_slice_length_arg = args.program_data_slice_length_arg;
     const program_data_slice_offset_arg = args.program_data_slice_offset_arg;
@@ -39,17 +43,22 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const mint_arg = args.mint_arg;
     const rent_bytes_arg = args.rent_bytes_arg;
     const signed_tx_arg = args.signed_tx_arg;
+    const simulation_account_encoding_arg = args.simulation_account_encoding_arg;
+    const simulation_min_context_slot_arg = args.simulation_min_context_slot_arg;
     const supply_exclude_non_circulating_accounts_list = args.supply_exclude_non_circulating_accounts_list;
     const token_program_id_arg = args.token_program_id_arg;
     const transaction_details_arg = args.transaction_details_arg;
     const vote_pubkey_arg = args.vote_pubkey_arg;
     const signature_statuses = args.signature_statuses;
     const multiple_accounts = args.multiple_accounts;
+    const simulation_accounts = args.simulation_accounts;
     const blocks_limit_arg = args.blocks_limit_arg;
     const commitment = toClientCommitment(args.commitment);
     const status_timeout_ms = args.status_timeout_ms;
     const status_poll_ms = args.status_poll_ms;
+    const search_transaction_history = args.search_transaction_history;
     const send_skip_preflight = args.send_skip_preflight;
+    const simulate_inner_instructions = args.simulate_inner_instructions;
     const simulate_replace_recent_blockhash = args.simulate_replace_recent_blockhash;
     const simulate_sig_verify = args.simulate_sig_verify;
     const vote_keep_unstaked_delinquents = args.vote_keep_unstaked_delinquents;
@@ -70,6 +79,19 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
+    if (search_transaction_history and
+        command != .status and
+        command != .signature_status and
+        command != .signature_statuses and
+        command != .send_transaction_and_confirm)
+    {
+        std.debug.print(
+            "error: --search-transaction-history requires status, signature-status, signature-statuses, or send-transaction-and-confirm\n",
+            .{},
+        );
+        return error.InvalidCli;
+    }
+
     if ((signatures_for_address_before_arg != null or signatures_for_address_until_arg != null or signatures_for_address_limit_arg != null) and
         command != .signatures_for_address)
     {
@@ -77,8 +99,28 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
+    if (min_context_slot_arg != null and !is_send_command and command != .signatures_for_address) {
+        std.debug.print("error: --min-context-slot requires send-transaction, send-transaction-and-confirm, or signatures-for-address\n", .{});
+        return error.InvalidCli;
+    }
+
     if ((simulate_sig_verify or simulate_replace_recent_blockhash) and command != .simulate_transaction) {
         std.debug.print("error: --sig-verify and --replace-recent-blockhash require simulate-transaction\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((simulate_inner_instructions or simulation_account_encoding_arg != null or simulation_min_context_slot_arg != null or simulation_accounts.items.len > 0) and
+        command != .simulate_transaction)
+    {
+        std.debug.print(
+            "error: simulation query options require simulate-transaction\n",
+            .{},
+        );
+        return error.InvalidCli;
+    }
+
+    if (simulation_account_encoding_arg != null and simulation_accounts.items.len == 0) {
+        std.debug.print("error: --simulation-account-encoding requires at least one --simulation-account\n", .{});
         return error.InvalidCli;
     }
 
@@ -154,6 +196,19 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
+    const has_account_query_filters = account_encoding_arg != null or
+        account_data_slice_offset_arg != null or
+        account_data_slice_length_arg != null;
+    if (has_account_query_filters and command != .account_info and command != .multiple_accounts) {
+        std.debug.print("error: account query filters require account-info or multiple-accounts\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((account_data_slice_offset_arg == null) != (account_data_slice_length_arg == null)) {
+        std.debug.print("error: --account-data-slice-offset and --account-data-slice-length must be used together\n", .{});
+        return error.InvalidCli;
+    }
+
     switch (command) {
         .latest_blockhash => {
             const blockhash = try rpc.getLatestBlockhash(commitment);
@@ -169,7 +224,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 std.debug.print("error: status requires <signature>\n", .{});
                 return error.InvalidCli;
             };
-            try rpc.waitForSignatureStatus(signature_value, commitment, status_timeout_ms, status_poll_ms);
+            try rpc.waitForSignatureStatus(signature_value, commitment, search_transaction_history, status_timeout_ms, status_poll_ms);
             std.debug.print("signature confirmed\n", .{});
         },
 
@@ -178,7 +233,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 std.debug.print("error: signature-status requires <signature>\n", .{});
                 return error.InvalidCli;
             };
-            const status_info = try rpc.getSignatureStatus(signature_value, commitment);
+            const status_info = try rpc.getSignatureStatusWithOptions(
+                signature_value,
+                if (search_transaction_history)
+                    client.SignatureStatusesQueryOptions{ .search_transaction_history = true }
+                else
+                    null,
+            );
             defer if (status_info.confirmation_status) |value| allocator.free(value);
 
             std.debug.print(
@@ -198,7 +259,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             }
 
-            const statuses = try rpc.getSignatureStatuses(signature_statuses.items, commitment);
+            const statuses = try rpc.getSignatureStatusesWithOptions(
+                signature_statuses.items,
+                if (search_transaction_history)
+                    client.SignatureStatusesQueryOptions{ .search_transaction_history = true }
+                else
+                    null,
+            );
             defer {
                 for (statuses) |status| {
                     if (status) |entry| {
@@ -238,11 +305,17 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            const options = if (send_skip_preflight or send_max_retries != null or send_preflight_commitment != null)
+            const min_context_slot = if (min_context_slot_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+
+            const options = if (send_skip_preflight or send_max_retries != null or send_preflight_commitment != null or min_context_slot != null)
                 client.SendTransactionOptions{
                     .skip_preflight = send_skip_preflight,
                     .preflight_commitment = send_preflight_commitment,
                     .max_retries = send_max_retries,
+                    .min_context_slot = min_context_slot,
                 }
             else
                 null;
@@ -259,16 +332,29 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            const options = if (send_skip_preflight or send_max_retries != null or send_preflight_commitment != null)
+            const min_context_slot = if (min_context_slot_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+
+            const options = if (send_skip_preflight or send_max_retries != null or send_preflight_commitment != null or min_context_slot != null)
                 client.SendTransactionOptions{
                     .skip_preflight = send_skip_preflight,
                     .preflight_commitment = send_preflight_commitment,
                     .max_retries = send_max_retries,
+                    .min_context_slot = min_context_slot,
                 }
             else
                 null;
 
-            const tx_signature = try rpc.sendTransactionAndConfirm(tx, options, commitment, status_timeout_ms, status_poll_ms);
+            const tx_signature = try rpc.sendTransactionAndConfirm(
+                tx,
+                options,
+                commitment,
+                search_transaction_history,
+                status_timeout_ms,
+                status_poll_ms,
+            );
             defer allocator.free(tx_signature);
 
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
@@ -280,11 +366,35 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            const options = if (simulate_sig_verify or simulate_replace_recent_blockhash or commitment != null)
+            const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
+                parseAccountEncoding(value) orelse return error.InvalidCli
+            else
+                null;
+            const simulation_min_context_slot = if (simulation_min_context_slot_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const simulation_accounts_options = if (simulation_accounts.items.len > 0)
+                client.SimulationAccountsOptions{
+                    .addresses = simulation_accounts.items,
+                    .encoding = simulation_account_encoding,
+                }
+            else
+                null;
+
+            const options = if (simulate_sig_verify or
+                simulate_replace_recent_blockhash or
+                simulate_inner_instructions or
+                commitment != null or
+                simulation_min_context_slot != null or
+                simulation_accounts_options != null)
                 client.SimulateTransactionOptions{
                     .sig_verify = simulate_sig_verify,
                     .replace_recent_blockhash = simulate_replace_recent_blockhash,
                     .commitment = commitment,
+                    .min_context_slot = simulation_min_context_slot,
+                    .inner_instructions = simulate_inner_instructions,
+                    .accounts = simulation_accounts_options,
                 }
             else
                 null;
@@ -293,9 +403,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             defer freeSimulatedTransaction(allocator, simulation);
 
             std.debug.print(
-                "simulation: err={s} units_consumed={?d} loaded_accounts_data_size={?d}\n",
+                "simulation: slot={} err={s} fee={?d} units_consumed={?d} loaded_accounts_data_size={?d}\n",
                 .{
+                    simulation.context_slot,
                     if (simulation.err_json) |value| value else "null",
+                    simulation.fee,
                     simulation.units_consumed,
                     simulation.loaded_accounts_data_size,
                 },
@@ -315,6 +427,42 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             } else {
                 std.debug.print("logs: 0\n", .{});
+            }
+
+            if (simulation.accounts) |accounts| {
+                std.debug.print("accounts: {}\n", .{accounts.len});
+                for (accounts, 0..) |maybe_info, index| {
+                    if (maybe_info) |info| {
+                        std.debug.print(
+                            "  [{}] lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                            .{ index, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
+                        );
+                        if (info.data) |value| {
+                            std.debug.print("      data({s}) size={}\n", .{ info.data_encoding orelse "unknown", value.len });
+                        } else {
+                            std.debug.print("      data: unavailable\n", .{});
+                        }
+                    } else {
+                        std.debug.print("  [{}] not found\n", .{index});
+                    }
+                }
+            } else {
+                std.debug.print("accounts: 0\n", .{});
+            }
+
+            if (simulation.return_data) |value| {
+                std.debug.print(
+                    "return data: program_id={s} encoding={s} size={}\n",
+                    .{ value.program_id, value.data_encoding orelse "unknown", if (value.data) |data| data.len else @as(usize, 0) },
+                );
+            } else {
+                std.debug.print("return data: unavailable\n", .{});
+            }
+
+            if (simulation.inner_instructions_json) |value| {
+                std.debug.print("inner instructions: {s}\n", .{value});
+            } else {
+                std.debug.print("inner instructions: unavailable\n", .{});
             }
         },
 
@@ -369,7 +517,24 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .account_info => {
             const account_value = account orelse return error.InvalidCli;
-            const info = try rpc.getAccountInfo(account_value, commitment);
+            const encoding = if (account_encoding_arg) |value| parseAccountEncoding(value) orelse return error.InvalidCli else null;
+            const data_slice_offset = if (account_data_slice_offset_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const data_slice_length = if (account_data_slice_length_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const info = if (encoding != null or data_slice_offset != null or commitment != null)
+                try rpc.getAccountInfoWithOptions(account_value, .{
+                    .commitment = commitment,
+                    .encoding = encoding,
+                    .data_slice_offset = data_slice_offset,
+                    .data_slice_length = data_slice_length,
+                })
+            else
+                try rpc.getAccountInfo(account_value, commitment);
             defer {
                 freeAccountInfo(allocator, info);
             }
@@ -391,7 +556,24 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             }
 
-            const infos = try rpc.getMultipleAccounts(multiple_accounts.items, commitment);
+            const encoding = if (account_encoding_arg) |value| parseAccountEncoding(value) orelse return error.InvalidCli else null;
+            const data_slice_offset = if (account_data_slice_offset_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const data_slice_length = if (account_data_slice_length_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const infos = if (encoding != null or data_slice_offset != null or commitment != null)
+                try rpc.getMultipleAccountsWithOptions(multiple_accounts.items, .{
+                    .commitment = commitment,
+                    .encoding = encoding,
+                    .data_slice_offset = data_slice_offset,
+                    .data_slice_length = data_slice_length,
+                })
+            else
+                try rpc.getMultipleAccounts(multiple_accounts.items, commitment);
             defer {
                 for (infos) |maybe_info| {
                     if (maybe_info) |info| freeAccountInfo(allocator, info);
@@ -1133,12 +1315,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         .signatures_for_address => {
             const address = signatures_for_address_arg orelse return error.InvalidCli;
             const limit = if (signatures_for_address_limit_arg) |raw| std.fmt.parseInt(u64, raw, 10) catch return error.InvalidCli else null;
-            const signatures = try rpc.getSignaturesForAddress(
+            const min_context_slot = if (min_context_slot_arg) |raw| std.fmt.parseInt(u64, raw, 10) catch return error.InvalidCli else null;
+            const signatures = try rpc.getSignaturesForAddressWithOptions(
                 address,
-                signatures_for_address_before_arg,
-                signatures_for_address_until_arg,
-                limit,
-                commitment,
+                .{
+                    .before = signatures_for_address_before_arg,
+                    .until = signatures_for_address_until_arg,
+                    .limit = limit,
+                    .commitment = commitment,
+                    .min_context_slot = min_context_slot,
+                },
             );
             defer {
                 for (signatures) |signature_entry| {
@@ -1215,12 +1401,24 @@ fn freeJsonParsedAccountInfo(allocator: Allocator, info: client.JsonParsedAccoun
 }
 
 fn freeSimulatedTransaction(allocator: Allocator, simulation: client.SimulatedTransaction) void {
+    if (simulation.accounts) |accounts| {
+        for (accounts) |maybe_info| {
+            if (maybe_info) |info| freeAccountInfo(allocator, info);
+        }
+        allocator.free(accounts);
+    }
     if (simulation.err_json) |value| allocator.free(value);
+    if (simulation.inner_instructions_json) |value| allocator.free(value);
     if (simulation.logs) |logs| {
         for (logs) |entry| allocator.free(entry);
         allocator.free(logs);
     }
     if (simulation.replacement_blockhash) |value| allocator.free(value.blockhash);
+    if (simulation.return_data) |value| {
+        allocator.free(value.program_id);
+        if (value.data) |entry| allocator.free(entry);
+        if (value.data_encoding) |entry| allocator.free(entry);
+    }
 }
 
 fn freeBlockCommitment(allocator: Allocator, commitment: client.BlockCommitment) void {
@@ -1269,6 +1467,12 @@ fn parseBoolArg(value: []const u8) ?bool {
 fn parseLargestAccountsFilter(value: []const u8) ?client.LargestAccountsFilter {
     if (std.mem.eql(u8, value, "circulating")) return .circulating;
     if (std.mem.eql(u8, value, "non-circulating")) return .non_circulating;
+    return null;
+}
+
+fn parseAccountEncoding(value: []const u8) ?client.AccountEncoding {
+    if (std.mem.eql(u8, value, "base58")) return .base58;
+    if (std.mem.eql(u8, value, "base64")) return .base64;
     return null;
 }
 
@@ -1392,6 +1596,51 @@ test "runCommand validates send options on non-send commands" {
         "1",
         "--preflight-commitment",
         "confirmed",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects search transaction history on unsupported commands" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--search-transaction-history",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects min context slot on unsupported commands" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--min-context-slot",
+        "123",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates send min context slot int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-transaction",
+        "--min-context-slot",
+        "bogus",
+        "signed-raw-transaction",
     });
     defer parsed.deinit(allocator);
 
@@ -1909,6 +2158,22 @@ test "runCommand validates signatures-for-address limit int" {
     try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
 }
 
+test "runCommand validates signatures-for-address min context slot int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "signatures-for-address",
+        "Address11111111111111111111111111111111",
+        "--min-context-slot",
+        "not-a-number",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
 test "runCommand rejects signatures-for-address filters on non-signatures-for-address commands" {
     const allocator = std.testing.allocator;
     var rpc = try client.RpcClient.init(allocator, "https://example.com");
@@ -2028,6 +2293,52 @@ test "runCommand rejects program account filters on unsupported commands" {
     try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
 }
 
+test "runCommand rejects account query filters on unsupported commands" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--account-encoding",
+        "base64",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects simulation query filters on unsupported commands" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--simulation-account",
+        "Account11111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects simulation account encoding without accounts" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-transaction",
+        "--simulation-account-encoding",
+        "base64",
+        "signed-raw-transaction",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
 test "runCommand rejects incomplete program memcmp filter" {
     const allocator = std.testing.allocator;
     var rpc = try client.RpcClient.init(allocator, "https://example.com");
@@ -2038,6 +2349,22 @@ test "runCommand rejects incomplete program memcmp filter" {
         "Program1111111111111111111111111111111111",
         "--program-memcmp-offset",
         "32",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects incomplete account data slice filter" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "account-info",
+        "Address11111111111111111111111111111111",
+        "--account-data-slice-offset",
+        "0",
     });
     defer parsed.deinit(allocator);
 
@@ -2134,6 +2461,40 @@ test "runCommand validates transaction encoding" {
     try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
 }
 
+test "runCommand validates simulation account encoding" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-transaction",
+        "--simulation-account",
+        "Account11111111111111111111111111111111",
+        "--simulation-account-encoding",
+        "bogus",
+        "signed-raw-transaction",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates simulation min context slot int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-transaction",
+        "--simulation-min-context-slot",
+        "bogus",
+        "signed-raw-transaction",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
 test "runCommand validates block rewards bool" {
     const allocator = std.testing.allocator;
     var rpc = try client.RpcClient.init(allocator, "https://example.com");
@@ -2190,6 +2551,40 @@ test "runCommand validates program account data size int" {
         "Program1111111111111111111111111111111111",
         "--program-data-size",
         "bogus",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates account query encoding" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "multiple-accounts",
+        "--account-encoding",
+        "bogus",
+        "Address11111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates account query data slice offset int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "account-info",
+        "Address11111111111111111111111111111111",
+        "--account-data-slice-offset",
+        "bogus",
+        "--account-data-slice-length",
+        "32",
     });
     defer parsed.deinit(allocator);
 

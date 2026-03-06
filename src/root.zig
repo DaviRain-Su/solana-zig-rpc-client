@@ -26,6 +26,11 @@ pub const TransactionEncoding = enum {
     base64,
 };
 
+pub const AccountEncoding = enum {
+    base58,
+    base64,
+};
+
 pub const TransactionDetails = enum {
     full,
     accounts,
@@ -94,6 +99,18 @@ pub const ProgramAccountsQueryOptions = struct {
     memcmp_bytes: ?[]const u8 = null,
     data_slice_offset: ?u64 = null,
     data_slice_length: ?u64 = null,
+};
+
+pub const AccountQueryOptions = struct {
+    commitment: ?Commitment = null,
+    encoding: ?AccountEncoding = null,
+    data_slice_offset: ?u64 = null,
+    data_slice_length: ?u64 = null,
+};
+
+pub const SimulationAccountsOptions = struct {
+    addresses: []const []const u8 = &.{},
+    encoding: ?AccountEncoding = null,
 };
 
 pub const LargestAccountsQueryOptions = struct {
@@ -249,12 +266,19 @@ const RpcJsonParsedProgramAccountResult = struct {
 };
 
 const RpcSimulatedTransactionResult = struct {
+    accounts: ?[]?RpcAccountInfoResult = null,
     err: ?json.Value = null,
+    fee: ?u64 = null,
+    innerInstructions: ?json.Value = null,
     logs: ?[]const []const u8 = null,
     loadedAccountsDataSize: ?u32 = null,
     replacementBlockhash: ?struct {
         blockhash: []const u8 = "",
         lastValidBlockHeight: u64 = 0,
+    } = null,
+    returnData: ?struct {
+        programId: []const u8 = "",
+        data: ?[]const []const u8 = null,
     } = null,
     unitsConsumed: ?u64 = null,
 };
@@ -331,19 +355,46 @@ pub const SendTransactionOptions = struct {
     skip_preflight: bool = false,
     preflight_commitment: ?Commitment = null,
     max_retries: ?u32 = null,
+    min_context_slot: ?u64 = null,
+};
+
+pub const SignaturesForAddressOptions = struct {
+    before: ?[]const u8 = null,
+    until: ?[]const u8 = null,
+    limit: ?u64 = null,
+    commitment: ?Commitment = null,
+    min_context_slot: ?u64 = null,
+};
+
+pub const SignatureStatusesQueryOptions = struct {
+    search_transaction_history: bool = false,
 };
 
 pub const SimulateTransactionOptions = struct {
     sig_verify: bool = false,
     replace_recent_blockhash: bool = false,
     commitment: ?Commitment = null,
+    min_context_slot: ?u64 = null,
+    inner_instructions: bool = false,
+    accounts: ?SimulationAccountsOptions = null,
+};
+
+pub const SimulationReturnData = struct {
+    program_id: []const u8 = "",
+    data: ?[]const u8 = null,
+    data_encoding: ?[]const u8 = null,
 };
 
 pub const SimulatedTransaction = struct {
+    context_slot: u64 = 0,
+    accounts: ?[]?AccountInfo = null,
     err_json: ?[]const u8 = null,
+    fee: ?u64 = null,
+    inner_instructions_json: ?[]const u8 = null,
     logs: ?[][]const u8 = null,
     loaded_accounts_data_size: ?u32 = null,
     replacement_blockhash: ?LatestBlockhash = null,
+    return_data: ?SimulationReturnData = null,
     units_consumed: ?u64 = null,
 };
 
@@ -378,10 +429,39 @@ fn commitmentToString(c: Commitment) []const u8 {
     };
 }
 
+fn commitmentRank(value: Commitment) u8 {
+    return switch (value) {
+        .processed => 0,
+        .confirmed => 1,
+        .finalized => 2,
+    };
+}
+
+fn confirmationStatusRank(value: []const u8) ?u8 {
+    if (std.mem.eql(u8, value, "processed")) return 0;
+    if (std.mem.eql(u8, value, "confirmed")) return 1;
+    if (std.mem.eql(u8, value, "finalized")) return 2;
+    return null;
+}
+
+fn confirmationSatisfiesCommitment(status: ?[]const u8, commitment: ?Commitment) bool {
+    const status_value = status orelse return false;
+    const status_rank = confirmationStatusRank(status_value) orelse return false;
+    const required_rank = if (commitment) |value| commitmentRank(value) else commitmentRank(.processed);
+    return status_rank >= required_rank;
+}
+
 fn transactionEncodingToString(value: TransactionEncoding) []const u8 {
     return switch (value) {
         .json => "json",
         .jsonParsed => "jsonParsed",
+        .base58 => "base58",
+        .base64 => "base64",
+    };
+}
+
+fn accountEncodingToString(value: AccountEncoding) []const u8 {
+    return switch (value) {
         .base58 => "base58",
         .base64 => "base64",
     };
@@ -548,6 +628,28 @@ pub const RpcClient = struct {
             else
                 null,
         };
+    }
+
+    fn cloneOptionalAccountInfos(self: *RpcClient, source: []const ?RpcAccountInfoResult) ![]?AccountInfo {
+        const copied = try self.allocator.alloc(?AccountInfo, source.len);
+        var copied_len: usize = 0;
+        errdefer {
+            for (copied[0..copied_len]) |maybe_info| {
+                if (maybe_info) |info| {
+                    self.allocator.free(info.owner);
+                    if (info.data) |value| self.allocator.free(value);
+                    if (info.data_encoding) |value| self.allocator.free(value);
+                }
+            }
+            self.allocator.free(copied);
+        }
+
+        for (source, 0..) |maybe_info, index| {
+            copied[index] = if (maybe_info) |info| try self.cloneAccountInfo(info) else null;
+            copied_len += 1;
+        }
+
+        return copied;
     }
 
     fn cloneTokenAmount(self: *RpcClient, source: RpcTokenAmountResult) !TokenAmount {
@@ -748,12 +850,182 @@ pub const RpcClient = struct {
         return result.value;
     }
 
-    pub fn getAccountInfo(self: *RpcClient, account: []const u8, commitment: ?Commitment) !AccountInfo {
-        const params = .{
-            account,
-            commitmentParams(commitment),
+    fn serializeAccountParams(self: *RpcClient, account: []const u8, options: ?AccountQueryOptions) ![]u8 {
+        const DataSlice = struct {
+            offset: u64,
+            length: u64,
         };
-        const params_json = try self.serializeParams(params);
+
+        if (options) |value| {
+            const has_data_slice = value.data_slice_offset != null and value.data_slice_length != null;
+            const params = .{
+                account,
+                .{
+                    .commitment = if (value.commitment) |entry| commitmentToString(entry) else null,
+                    .encoding = if (value.encoding) |entry| accountEncodingToString(entry) else null,
+                    .dataSlice = if (has_data_slice)
+                        DataSlice{
+                            .offset = value.data_slice_offset.?,
+                            .length = value.data_slice_length.?,
+                        }
+                    else
+                        null,
+                },
+            };
+            return try self.serializeParams(params);
+        }
+
+        return try self.serializeParams(.{account});
+    }
+
+    fn serializeMultipleAccountsParams(self: *RpcClient, accounts: []const []const u8, options: ?AccountQueryOptions) ![]u8 {
+        const DataSlice = struct {
+            offset: u64,
+            length: u64,
+        };
+
+        if (options) |value| {
+            const has_data_slice = value.data_slice_offset != null and value.data_slice_length != null;
+            const params = .{
+                accounts,
+                .{
+                    .commitment = if (value.commitment) |entry| commitmentToString(entry) else null,
+                    .encoding = if (value.encoding) |entry| accountEncodingToString(entry) else null,
+                    .dataSlice = if (has_data_slice)
+                        DataSlice{
+                            .offset = value.data_slice_offset.?,
+                            .length = value.data_slice_length.?,
+                        }
+                    else
+                        null,
+                },
+            };
+            return try self.serializeParams(params);
+        }
+
+        return try self.serializeParams(.{accounts});
+    }
+
+    fn serializeSimulateTransactionParams(
+        self: *RpcClient,
+        signed_tx_base64: []const u8,
+        options: ?SimulateTransactionOptions,
+    ) ![]u8 {
+        const SimulationAccountsConfig = struct {
+            addresses: []const []const u8 = &.{},
+            encoding: ?[]const u8 = null,
+        };
+
+        const SimulateOptions = struct {
+            commitment: ?[]const u8 = null,
+            encoding: []const u8 = "base64",
+            replaceRecentBlockhash: bool = false,
+            sigVerify: bool = false,
+            minContextSlot: ?u64 = null,
+            innerInstructions: bool = false,
+            accounts: ?SimulationAccountsConfig = null,
+        };
+
+        const params = .{
+            signed_tx_base64,
+            SimulateOptions{
+                .commitment = if (options) |opts| if (opts.commitment) |value| commitmentToString(value) else null else null,
+                .replaceRecentBlockhash = if (options) |opts| opts.replace_recent_blockhash else false,
+                .sigVerify = if (options) |opts| opts.sig_verify else false,
+                .minContextSlot = if (options) |opts| opts.min_context_slot else null,
+                .innerInstructions = if (options) |opts| opts.inner_instructions else false,
+                .accounts = if (options) |opts|
+                    if (opts.accounts) |accounts|
+                        SimulationAccountsConfig{
+                            .addresses = accounts.addresses,
+                            .encoding = if (accounts.encoding) |value| accountEncodingToString(value) else null,
+                        }
+                    else
+                        null
+                else
+                    null,
+            },
+        };
+
+        return try self.serializeParams(params);
+    }
+
+    fn serializeSendTransactionParams(
+        self: *RpcClient,
+        signed_tx_base64: []const u8,
+        options: ?SendTransactionOptions,
+    ) ![]u8 {
+        const SendOptions = struct {
+            encoding: []const u8 = "base64",
+            skipPreflight: bool,
+            maxRetries: ?u32 = null,
+            preflightCommitment: ?[]const u8 = null,
+            minContextSlot: ?u64 = null,
+        };
+
+        const params = .{
+            signed_tx_base64,
+            SendOptions{
+                .skipPreflight = if (options) |opts| opts.skip_preflight else false,
+                .maxRetries = if (options) |opts| opts.max_retries else null,
+                .preflightCommitment = if (options) |opts|
+                    if (opts.preflight_commitment) |value| commitmentToString(value) else null
+                else
+                    null,
+                .minContextSlot = if (options) |opts| opts.min_context_slot else null,
+            },
+        };
+
+        return try self.serializeParams(params);
+    }
+
+    fn serializeSignaturesForAddressParams(
+        self: *RpcClient,
+        address: []const u8,
+        options: ?SignaturesForAddressOptions,
+    ) ![]u8 {
+        if (options) |value| {
+            if (value.before == null and value.until == null and value.limit == null and value.commitment == null and value.min_context_slot == null) {
+                return try self.serializeParams(.{address});
+            }
+
+            const params = .{
+                address,
+                .{
+                    .before = value.before,
+                    .until = value.until,
+                    .limit = value.limit,
+                    .commitment = if (value.commitment) |entry| commitmentToString(entry) else null,
+                    .minContextSlot = value.min_context_slot,
+                },
+            };
+            return try self.serializeParams(params);
+        }
+
+        return try self.serializeParams(.{address});
+    }
+
+    fn serializeSignatureStatusesParams(
+        self: *RpcClient,
+        signatures: []const []const u8,
+        options: ?SignatureStatusesQueryOptions,
+    ) ![]u8 {
+        if (options) |value| {
+            if (!value.search_transaction_history) {
+                return try self.serializeParams(.{signatures});
+            }
+
+            return try self.serializeParams(.{
+                signatures,
+                .{ .searchTransactionHistory = true },
+            });
+        }
+
+        return try self.serializeParams(.{signatures});
+    }
+
+    pub fn getAccountInfoWithOptions(self: *RpcClient, account: []const u8, options: ?AccountQueryOptions) !AccountInfo {
+        const params_json = try self.serializeAccountParams(account, options);
         defer self.allocator.free(params_json);
 
         const response = try self.sendRequest("getAccountInfo", params_json);
@@ -771,14 +1043,15 @@ pub const RpcClient = struct {
         return try self.cloneAccountInfo(source);
     }
 
-    pub fn getMultipleAccounts(self: *RpcClient, accounts: []const []const u8, commitment: ?Commitment) ![]?AccountInfo {
-        const params_json = if (commitment) |value| blk: {
-            const params = .{ accounts, .{ .commitment = commitmentToString(value) } };
-            break :blk try self.serializeParams(params);
-        } else blk: {
-            const params = .{accounts};
-            break :blk try self.serializeParams(params);
-        };
+    pub fn getAccountInfo(self: *RpcClient, account: []const u8, commitment: ?Commitment) !AccountInfo {
+        return try self.getAccountInfoWithOptions(
+            account,
+            if (commitment) |value| AccountQueryOptions{ .commitment = value } else null,
+        );
+    }
+
+    pub fn getMultipleAccountsWithOptions(self: *RpcClient, accounts: []const []const u8, options: ?AccountQueryOptions) ![]?AccountInfo {
+        const params_json = try self.serializeMultipleAccountsParams(accounts, options);
         defer self.allocator.free(params_json);
 
         const response = try self.sendRequest("getMultipleAccounts", params_json);
@@ -812,6 +1085,13 @@ pub const RpcClient = struct {
         }
 
         return copied;
+    }
+
+    pub fn getMultipleAccounts(self: *RpcClient, accounts: []const []const u8, commitment: ?Commitment) ![]?AccountInfo {
+        return try self.getMultipleAccountsWithOptions(
+            accounts,
+            if (commitment) |value| AccountQueryOptions{ .commitment = value } else null,
+        );
     }
 
     fn serializeProgramAccountsParams(self: *RpcClient, program_id: []const u8, options: ?ProgramAccountsQueryOptions) ![]u8 {
@@ -2221,28 +2501,7 @@ pub const RpcClient = struct {
     }
 
     pub fn sendTransaction(self: *RpcClient, signed_tx_base64: []const u8, options: ?SendTransactionOptions) ![]const u8 {
-        const encoded_commitment = if (options) |opts| if (opts.preflight_commitment) |value|
-            commitmentToString(value)
-        else
-            null else null;
-
-        const SendOptions = struct {
-            encoding: []const u8 = "base64",
-            skipPreflight: bool,
-            maxRetries: ?u32 = null,
-            preflightCommitment: ?[]const u8 = null,
-        };
-
-        const params = .{
-            signed_tx_base64,
-            SendOptions{
-                .skipPreflight = if (options) |opts| opts.skip_preflight else false,
-                .maxRetries = if (options) |opts| opts.max_retries else null,
-                .preflightCommitment = encoded_commitment,
-            },
-        };
-
-        const params_json = try self.serializeParams(params);
+        const params_json = try self.serializeSendTransactionParams(signed_tx_base64, options);
         defer self.allocator.free(params_json);
 
         const response = try self.sendRequest("sendTransaction", params_json);
@@ -2258,27 +2517,7 @@ pub const RpcClient = struct {
         signed_tx_base64: []const u8,
         options: ?SimulateTransactionOptions,
     ) !SimulatedTransaction {
-        const encoded_commitment = if (options) |opts| if (opts.commitment) |value|
-            commitmentToString(value)
-        else
-            null else null;
-
-        const SimulateOptions = struct {
-            commitment: ?[]const u8 = null,
-            encoding: []const u8 = "base64",
-            replaceRecentBlockhash: bool = false,
-            sigVerify: bool = false,
-        };
-
-        const params = .{
-            signed_tx_base64,
-            SimulateOptions{
-                .commitment = encoded_commitment,
-                .replaceRecentBlockhash = if (options) |opts| opts.replace_recent_blockhash else false,
-                .sigVerify = if (options) |opts| opts.sig_verify else false,
-            },
-        };
-        const params_json = try self.serializeParams(params);
+        const params_json = try self.serializeSimulateTransactionParams(signed_tx_base64, options);
         defer self.allocator.free(params_json);
 
         const response = try self.sendRequest("simulateTransaction", params_json);
@@ -2303,12 +2542,34 @@ pub const RpcClient = struct {
         const result = parsed.value.result orelse return error.InvalidResponse;
         var simulation = SimulatedTransaction{};
         errdefer {
+            if (simulation.accounts) |accounts| {
+                for (accounts) |maybe_info| {
+                    if (maybe_info) |info| {
+                        self.allocator.free(info.owner);
+                        if (info.data) |value| self.allocator.free(value);
+                        if (info.data_encoding) |value| self.allocator.free(value);
+                    }
+                }
+                self.allocator.free(accounts);
+            }
             if (simulation.err_json) |value| self.allocator.free(value);
+            if (simulation.inner_instructions_json) |value| self.allocator.free(value);
             if (simulation.logs) |logs| {
                 for (logs) |entry| self.allocator.free(entry);
                 self.allocator.free(logs);
             }
             if (simulation.replacement_blockhash) |value| self.allocator.free(value.blockhash);
+            if (simulation.return_data) |value| {
+                self.allocator.free(value.program_id);
+                if (value.data) |entry| self.allocator.free(entry);
+                if (value.data_encoding) |entry| self.allocator.free(entry);
+            }
+        }
+
+        simulation.context_slot = result.context.slot;
+
+        if (result.value.accounts) |accounts| {
+            simulation.accounts = try self.cloneOptionalAccountInfos(accounts);
         }
 
         if (result.value.err) |value| {
@@ -2317,6 +2578,12 @@ pub const RpcClient = struct {
                 .string => |text| try self.allocator.dupe(u8, text),
                 else => try json.Stringify.valueAlloc(self.allocator, value, .{}),
             };
+        }
+
+        simulation.fee = result.value.fee;
+
+        if (result.value.innerInstructions) |value| {
+            simulation.inner_instructions_json = try json.Stringify.valueAlloc(self.allocator, value, .{});
         }
 
         if (result.value.logs) |logs| {
@@ -2329,6 +2596,21 @@ pub const RpcClient = struct {
             LatestBlockhash{
                 .blockhash = try self.allocator.dupe(u8, value.blockhash),
                 .last_valid_block_height = value.lastValidBlockHeight,
+            }
+        else
+            null;
+
+        simulation.return_data = if (result.value.returnData) |value|
+            SimulationReturnData{
+                .program_id = try self.allocator.dupe(u8, value.programId),
+                .data = if (value.data) |entry|
+                    if (entry.len >= 1) try self.allocator.dupe(u8, entry[0]) else null
+                else
+                    null,
+                .data_encoding = if (value.data) |entry|
+                    if (entry.len >= 2) try self.allocator.dupe(u8, entry[1]) else null
+                else
+                    null,
             }
         else
             null;
@@ -2350,20 +2632,13 @@ pub const RpcClient = struct {
         value: []?SignatureStatusEntry = &.{},
     };
 
-    pub fn getSignatureStatus(self: *RpcClient, signature: []const u8, commitment: ?Commitment) !SignatureStatus {
-        const SignatureStatusConfig = struct {
-            searchTransactionHistory: bool = true,
-            commitment: ?[]const u8 = null,
-        };
-
-        const params = .{
-            [_][]const u8{signature},
-            SignatureStatusConfig{
-                .commitment = if (commitment) |value| commitmentToString(value) else null,
-            },
-        };
-
-        const params_json = try self.serializeParams(params);
+    pub fn getSignatureStatusWithOptions(
+        self: *RpcClient,
+        signature: []const u8,
+        options: ?SignatureStatusesQueryOptions,
+    ) !SignatureStatus {
+        const signatures = [_][]const u8{signature};
+        const params_json = try self.serializeSignatureStatusesParams(signatures[0..], options);
         defer self.allocator.free(params_json);
 
         const response = try self.sendRequest("getSignatureStatuses", params_json);
@@ -2382,20 +2657,21 @@ pub const RpcClient = struct {
         };
     }
 
-    pub fn getSignatureStatuses(self: *RpcClient, signatures: []const []const u8, commitment: ?Commitment) ![]?SignatureStatus {
-        const SignatureStatusConfig = struct {
-            searchTransactionHistory: bool = true,
-            commitment: ?[]const u8 = null,
-        };
+    pub fn getSignatureStatus(self: *RpcClient, signature: []const u8, commitment: ?Commitment) !SignatureStatus {
+        _ = commitment;
+        return try self.getSignatureStatusWithOptions(signature, null);
+    }
 
-        const params = .{
-            signatures,
-            SignatureStatusConfig{
-                .commitment = if (commitment) |value| commitmentToString(value) else null,
-            },
-        };
+    pub fn getSignatureStatusWithHistory(self: *RpcClient, signature: []const u8) !SignatureStatus {
+        return try self.getSignatureStatusWithOptions(signature, .{ .search_transaction_history = true });
+    }
 
-        const params_json = try self.serializeParams(params);
+    pub fn getSignatureStatusesWithOptions(
+        self: *RpcClient,
+        signatures: []const []const u8,
+        options: ?SignatureStatusesQueryOptions,
+    ) ![]?SignatureStatus {
+        const params_json = try self.serializeSignatureStatusesParams(signatures, options);
         defer self.allocator.free(params_json);
 
         const response = try self.sendRequest("getSignatureStatuses", params_json);
@@ -2422,6 +2698,15 @@ pub const RpcClient = struct {
         return copied;
     }
 
+    pub fn getSignatureStatuses(self: *RpcClient, signatures: []const []const u8, commitment: ?Commitment) ![]?SignatureStatus {
+        _ = commitment;
+        return try self.getSignatureStatusesWithOptions(signatures, null);
+    }
+
+    pub fn getSignatureStatusesWithHistory(self: *RpcClient, signatures: []const []const u8) ![]?SignatureStatus {
+        return try self.getSignatureStatusesWithOptions(signatures, .{ .search_transaction_history = true });
+    }
+
     const SignatureForAddressResult = struct {
         signature: []const u8 = "",
         slot: u64 = 0,
@@ -2439,21 +2724,23 @@ pub const RpcClient = struct {
         limit: ?u64,
         commitment: ?Commitment,
     ) ![]SignatureForAddress {
-        const params = if (before == null and until == null and limit == null and commitment == null) blk: {
-            const params = .{address};
-            break :blk try self.serializeParams(params);
-        } else blk: {
-            const params = .{
-                address,
-                .{
-                    .before = before,
-                    .until = until,
-                    .limit = limit,
-                    .commitment = if (commitment) |value| commitmentToString(value) else null,
-                },
-            };
-            break :blk try self.serializeParams(params);
-        };
+        return try self.getSignaturesForAddressWithOptions(
+            address,
+            .{
+                .before = before,
+                .until = until,
+                .limit = limit,
+                .commitment = commitment,
+            },
+        );
+    }
+
+    pub fn getSignaturesForAddressWithOptions(
+        self: *RpcClient,
+        address: []const u8,
+        options: ?SignaturesForAddressOptions,
+    ) ![]SignatureForAddress {
+        const params = try self.serializeSignaturesForAddressParams(address, options);
         defer self.allocator.free(params);
 
         const response = try self.sendRequest("getSignaturesForAddress", params);
@@ -2487,11 +2774,24 @@ pub const RpcClient = struct {
         return copied;
     }
 
-    pub fn waitForSignatureStatus(self: *RpcClient, signature: []const u8, commitment: ?Commitment, timeout_ms: u64, poll_interval_ms: u64) !void {
+    pub fn waitForSignatureStatus(
+        self: *RpcClient,
+        signature: []const u8,
+        commitment: ?Commitment,
+        search_transaction_history: bool,
+        timeout_ms: u64,
+        poll_interval_ms: u64,
+    ) !void {
         const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
 
         while (std.time.milliTimestamp() < deadline) {
-            const status = self.getSignatureStatus(signature, commitment) catch |err| {
+            const status = self.getSignatureStatusWithOptions(
+                signature,
+                if (search_transaction_history)
+                    SignatureStatusesQueryOptions{ .search_transaction_history = true }
+                else
+                    null,
+            ) catch |err| {
                 switch (err) {
                     error.TransactionNotFound => {
                         std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
@@ -2508,8 +2808,8 @@ pub const RpcClient = struct {
             }
 
             if (status.has_error) return error.TransactionFailed;
-            if (status.confirmation_status) |value| {
-                if (value.len > 0) return;
+            if (confirmationSatisfiesCommitment(status.confirmation_status, commitment)) {
+                return;
             }
 
             std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
@@ -2523,13 +2823,14 @@ pub const RpcClient = struct {
         signed_tx_base64: []const u8,
         options: ?SendTransactionOptions,
         commitment: ?Commitment,
+        search_transaction_history: bool,
         timeout_ms: u64,
         poll_interval_ms: u64,
     ) ![]const u8 {
         const signature = try self.sendTransaction(signed_tx_base64, options);
         errdefer self.allocator.free(signature);
 
-        try self.waitForSignatureStatus(signature, commitment, timeout_ms, poll_interval_ms);
+        try self.waitForSignatureStatus(signature, commitment, search_transaction_history, timeout_ms, poll_interval_ms);
 
         return signature;
     }
@@ -2569,21 +2870,36 @@ test "root.getAccountInfo params serialization" {
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
 
-    const without_commitment = .{"Address11111111111111111111111111111111"};
-    const without_commitment_json = try client.serializeParams(without_commitment);
+    const without_commitment_json = try client.serializeAccountParams(
+        "Address11111111111111111111111111111111",
+        null,
+    );
     defer allocator.free(without_commitment_json);
 
     try std.testing.expect(std.mem.indexOf(u8, without_commitment_json, "\"Address11111111111111111111111111111111\"") != null);
 
-    const with_commitment = .{
+    const with_commitment_json = try client.serializeAccountParams(
         "Address11111111111111111111111111111111",
-        .{ .commitment = commitmentToString(.confirmed) },
-    };
-    const with_commitment_json = try client.serializeParams(with_commitment);
+        .{ .commitment = .confirmed },
+    );
     defer allocator.free(with_commitment_json);
 
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"Address11111111111111111111111111111111\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"confirmed\"") != null);
+
+    const with_options_json = try client.serializeAccountParams(
+        "Address11111111111111111111111111111111",
+        .{
+            .commitment = .finalized,
+            .encoding = .base64,
+            .data_slice_offset = 0,
+            .data_slice_length = 32,
+        },
+    );
+    defer allocator.free(with_options_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_options_json, "\"encoding\":\"base64\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_options_json, "\"dataSlice\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_options_json, "\"length\":32") != null);
 }
 
 test "root.getMultipleAccounts params serialization" {
@@ -2596,16 +2912,25 @@ test "root.getMultipleAccounts params serialization" {
         "Address22222222222222222222222222222222",
     };
 
-    const without_commitment = .{addresses};
-    const without_commitment_json = try client.serializeParams(without_commitment);
+    const without_commitment_json = try client.serializeMultipleAccountsParams(addresses[0..], null);
     defer allocator.free(without_commitment_json);
     try std.testing.expect(std.mem.indexOf(u8, without_commitment_json, "\"Address11111111111111111111111111111111\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, without_commitment_json, "\"Address22222222222222222222222222222222\"") != null);
 
-    const with_commitment = .{ addresses, .{ .commitment = commitmentToString(.finalized) } };
-    const with_commitment_json = try client.serializeParams(with_commitment);
+    const with_commitment_json = try client.serializeMultipleAccountsParams(
+        addresses[0..],
+        .{
+            .commitment = .finalized,
+            .encoding = .base58,
+            .data_slice_offset = 4,
+            .data_slice_length = 16,
+        },
+    );
     defer allocator.free(with_commitment_json);
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"finalized\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"encoding\":\"base58\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"offset\":4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"length\":16") != null);
 }
 
 test "root.getProgramAccounts params serialization" {
@@ -2889,21 +3214,52 @@ test "root.getTokenAccountsByDelegate params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"processed\"") != null);
 }
 
+test "root.sendTransaction params serialization" {
+    const allocator = std.testing.allocator;
+    var client = try RpcClient.init(allocator, "https://example.com");
+    defer client.deinit();
+
+    const params_json = try client.serializeSendTransactionParams(
+        "signed-transaction-base64",
+        .{
+            .skip_preflight = true,
+            .preflight_commitment = .confirmed,
+            .max_retries = 3,
+            .min_context_slot = 456,
+        },
+    );
+    defer allocator.free(params_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"signed-transaction-base64\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"encoding\":\"base64\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"preflightCommitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"maxRetries\":3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"minContextSlot\":456") != null);
+}
+
 test "root.simulateTransaction params serialization" {
     const allocator = std.testing.allocator;
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
 
-    const params = .{
+    const params_json = try client.serializeSimulateTransactionParams(
         "signed-transaction-base64",
         .{
-            .commitment = commitmentToString(.finalized),
-            .encoding = "base64",
-            .replaceRecentBlockhash = true,
-            .sigVerify = true,
+            .sig_verify = true,
+            .replace_recent_blockhash = true,
+            .commitment = .finalized,
+            .min_context_slot = 123,
+            .inner_instructions = true,
+            .accounts = .{
+                .addresses = &.{
+                    "Account11111111111111111111111111111111",
+                    "Account22222222222222222222222222222222",
+                },
+                .encoding = .base64,
+            },
         },
-    };
-    const params_json = try client.serializeParams(params);
+    );
     defer allocator.free(params_json);
 
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"signed-transaction-base64\"") != null);
@@ -2911,6 +3267,9 @@ test "root.simulateTransaction params serialization" {
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"replaceRecentBlockhash\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"sigVerify\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"finalized\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"minContextSlot\":123") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"innerInstructions\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, params_json, "\"addresses\":[\"Account11111111111111111111111111111111\",\"Account22222222222222222222222222222222\"]") != null);
 }
 
 test "root.blockTime params serialization" {
@@ -3297,24 +3656,21 @@ test "root.getSignatureStatus params serialization" {
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
 
-    const required = .{
-        [_][]const u8{"signature"},
-        .{ .searchTransactionHistory = true },
-    };
-    const required_json = try client.serializeParams(required);
-    defer allocator.free(required_json);
-    try std.testing.expect(std.mem.indexOf(u8, required_json, "\"signature\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, required_json, "searchTransactionHistory") != null);
-    try std.testing.expect(std.mem.indexOf(u8, required_json, "true") != null);
+    const signatures = [_][]const u8{"signature"};
 
-    const committed = .{
-        [_][]const u8{"signature"},
-        .{ .searchTransactionHistory = true, .commitment = commitmentToString(.confirmed) },
-    };
-    const committed_json = try client.serializeParams(committed);
-    defer allocator.free(committed_json);
-    try std.testing.expect(std.mem.indexOf(u8, committed_json, "\"signature\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, committed_json, "\"commitment\":\"confirmed\"") != null);
+    const default_json = try client.serializeSignatureStatusesParams(signatures[0..], null);
+    defer allocator.free(default_json);
+    try std.testing.expect(std.mem.indexOf(u8, default_json, "\"signature\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, default_json, "searchTransactionHistory") == null);
+
+    const with_history_json = try client.serializeSignatureStatusesParams(
+        signatures[0..],
+        .{ .search_transaction_history = true },
+    );
+    defer allocator.free(with_history_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_history_json, "\"signature\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_history_json, "searchTransactionHistory") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_history_json, "true") != null);
 }
 
 test "root.getSignatureStatuses params serialization" {
@@ -3324,23 +3680,28 @@ test "root.getSignatureStatuses params serialization" {
 
     const signatures = [_][]const u8{ "sig-1", "sig-2" };
 
-    const no_commitment = .{
-        signatures,
-        .{ .searchTransactionHistory = true },
-    };
-    const no_commitment_json = try client.serializeParams(no_commitment);
-    defer allocator.free(no_commitment_json);
-    try std.testing.expect(std.mem.indexOf(u8, no_commitment_json, "\"sig-1\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, no_commitment_json, "\"sig-2\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, no_commitment_json, "searchTransactionHistory") != null);
+    const default_json = try client.serializeSignatureStatusesParams(signatures[0..], null);
+    defer allocator.free(default_json);
+    try std.testing.expect(std.mem.indexOf(u8, default_json, "\"sig-1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, default_json, "\"sig-2\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, default_json, "searchTransactionHistory") == null);
 
-    const with_commitment = .{
-        signatures,
-        .{ .searchTransactionHistory = true, .commitment = commitmentToString(.finalized) },
-    };
-    const with_commitment_json = try client.serializeParams(with_commitment);
-    defer allocator.free(with_commitment_json);
-    try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"finalized\"") != null);
+    const with_history_json = try client.serializeSignatureStatusesParams(
+        signatures[0..],
+        .{ .search_transaction_history = true },
+    );
+    defer allocator.free(with_history_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_history_json, "\"sig-1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_history_json, "\"sig-2\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_history_json, "searchTransactionHistory") != null);
+}
+
+test "root.confirmationSatisfiesCommitment" {
+    try std.testing.expect(confirmationSatisfiesCommitment("processed", null));
+    try std.testing.expect(confirmationSatisfiesCommitment("confirmed", .processed));
+    try std.testing.expect(confirmationSatisfiesCommitment("finalized", .confirmed));
+    try std.testing.expect(!confirmationSatisfiesCommitment("processed", .confirmed));
+    try std.testing.expect(!confirmationSatisfiesCommitment(null, .processed));
 }
 
 test "root.getSignaturesForAddress params serialization" {
@@ -3348,13 +3709,17 @@ test "root.getSignaturesForAddress params serialization" {
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
 
-    const without_commitment = .{"Address11111111111111111111111111111111"};
-    const without_commitment_json = try client.serializeParams(without_commitment);
+    const without_commitment_json = try client.serializeSignaturesForAddressParams(
+        "Address11111111111111111111111111111111",
+        null,
+    );
     defer allocator.free(without_commitment_json);
     try std.testing.expect(std.mem.indexOf(u8, without_commitment_json, "\"Address11111111111111111111111111111111\"") != null);
 
-    const with_commitment = .{ "Address11111111111111111111111111111111", .{ .commitment = commitmentToString(.confirmed) } };
-    const with_commitment_json = try client.serializeParams(with_commitment);
+    const with_commitment_json = try client.serializeSignaturesForAddressParams(
+        "Address11111111111111111111111111111111",
+        .{ .commitment = .confirmed },
+    );
     defer allocator.free(with_commitment_json);
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"Address11111111111111111111111111111111\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"confirmed\"") != null);
@@ -3365,22 +3730,23 @@ test "root.getSignaturesForAddress params serialization with filters" {
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
 
-    const with_filters = .{
+    const with_filters_json = try client.serializeSignaturesForAddressParams(
         "Address11111111111111111111111111111111",
         .{
             .before = "BeforeSig",
             .until = "UntilSig",
             .limit = @as(u64, 50),
-            .commitment = commitmentToString(.finalized),
+            .commitment = .finalized,
+            .min_context_slot = 789,
         },
-    };
-    const with_filters_json = try client.serializeParams(with_filters);
+    );
     defer allocator.free(with_filters_json);
 
     try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"before\":\"BeforeSig\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"until\":\"UntilSig\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"limit\":50") != null);
     try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"commitment\":\"finalized\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"minContextSlot\":789") != null);
 }
 
 test "root.rpc error detail is captured" {
