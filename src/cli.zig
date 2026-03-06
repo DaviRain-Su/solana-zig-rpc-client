@@ -93,6 +93,11 @@ pub const usage_text =
     "  --range-first-slot <slot> First slot for block-production range\n" ++
     "  --range-last-slot <slot>  Last slot for block-production range\n" ++
     "  --exclude-non-circulating-accounts-list Exclude non-circulating account list from supply\n" ++
+    "  --program-data-size <bytes> Filter program-accounts by account data size\n" ++
+    "  --program-memcmp-offset <offset> Memcmp offset for program-accounts filter\n" ++
+    "  --program-memcmp-bytes <bytes>  Memcmp bytes for program-accounts filter\n" ++
+    "  --program-data-slice-offset <offset> Data slice offset for program-accounts\n" ++
+    "  --program-data-slice-length <length> Data slice length for program-accounts\n" ++
     "  --mint <mint>            Token account filter by mint (token-accounts-by-*)\n" ++
     "  --token-program-id <program-id> Token account filter by token program (token-accounts-by-*)\n";
 
@@ -124,6 +129,11 @@ pub const ParsedArgs = struct {
     feature_key_arg: ?[]const u8,
     largest_filter_arg: ?[]const u8,
     max_supported_transaction_version_arg: ?[]const u8,
+    program_data_size_arg: ?[]const u8,
+    program_data_slice_length_arg: ?[]const u8,
+    program_data_slice_offset_arg: ?[]const u8,
+    program_memcmp_bytes_arg: ?[]const u8,
+    program_memcmp_offset_arg: ?[]const u8,
     signatures_for_address_arg: ?[]const u8,
     signatures_for_address_before_arg: ?[]const u8,
     signatures_for_address_until_arg: ?[]const u8,
@@ -181,6 +191,11 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .feature_key_arg = null,
         .largest_filter_arg = null,
         .max_supported_transaction_version_arg = null,
+        .program_data_size_arg = null,
+        .program_data_slice_length_arg = null,
+        .program_data_slice_offset_arg = null,
+        .program_memcmp_bytes_arg = null,
+        .program_memcmp_offset_arg = null,
         .signatures_for_address_arg = null,
         .signatures_for_address_before_arg = null,
         .signatures_for_address_until_arg = null,
@@ -358,6 +373,41 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         if (std.mem.eql(u8, arg, "--range-last-slot")) {
             if (index >= args.len or parsed.block_production_last_slot_arg != null) return error.InvalidCli;
             parsed.block_production_last_slot_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--program-data-size")) {
+            if (index >= args.len or parsed.program_data_size_arg != null) return error.InvalidCli;
+            parsed.program_data_size_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--program-memcmp-offset")) {
+            if (index >= args.len or parsed.program_memcmp_offset_arg != null) return error.InvalidCli;
+            parsed.program_memcmp_offset_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--program-memcmp-bytes")) {
+            if (index >= args.len or parsed.program_memcmp_bytes_arg != null) return error.InvalidCli;
+            parsed.program_memcmp_bytes_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--program-data-slice-offset")) {
+            if (index >= args.len or parsed.program_data_slice_offset_arg != null) return error.InvalidCli;
+            parsed.program_data_slice_offset_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--program-data-slice-length")) {
+            if (index >= args.len or parsed.program_data_slice_length_arg != null) return error.InvalidCli;
+            parsed.program_data_slice_length_arg = args[index];
             index += 1;
             continue;
         }
@@ -1008,6 +1058,11 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "--range-first-slot <slot>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--range-last-slot <slot>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--exclude-non-circulating-accounts-list") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--program-data-size <bytes>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--program-memcmp-offset <offset>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--program-memcmp-bytes <bytes>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--program-data-slice-offset <offset>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--program-data-slice-length <length>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--mint <mint>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--token-program-id <program-id>") != null);
 }
@@ -1415,6 +1470,35 @@ test "cli.parseCliArgs parses program accounts" {
 
     try std.testing.expectEqual(Command.program_accounts, parsed.command);
     try std.testing.expectEqualStrings("Program1111111111111111111111111111111111", parsed.account orelse "");
+}
+
+test "cli.parseCliArgs parses program accounts with filters" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "program-accounts",
+        "--program-data-size",
+        "165",
+        "--program-memcmp-offset",
+        "32",
+        "--program-memcmp-bytes",
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "--program-data-slice-offset",
+        "0",
+        "--program-data-slice-length",
+        "32",
+        "--commitment",
+        "confirmed",
+        "Program1111111111111111111111111111111111",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.program_accounts, parsed.command);
+    try std.testing.expectEqualStrings("Program1111111111111111111111111111111111", parsed.account orelse "");
+    try std.testing.expectEqualStrings("165", parsed.program_data_size_arg orelse "");
+    try std.testing.expectEqualStrings("32", parsed.program_memcmp_offset_arg orelse "");
+    try std.testing.expectEqualStrings("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", parsed.program_memcmp_bytes_arg orelse "");
+    try std.testing.expectEqualStrings("0", parsed.program_data_slice_offset_arg orelse "");
+    try std.testing.expectEqualStrings("32", parsed.program_data_slice_length_arg orelse "");
+    try std.testing.expectEqual(Commitment.confirmed, parsed.commitment orelse .processed);
 }
 
 test "cli.parseCliArgs parses largest accounts" {

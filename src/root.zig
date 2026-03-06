@@ -87,6 +87,15 @@ pub const LargestAccountsFilter = enum {
     non_circulating,
 };
 
+pub const ProgramAccountsQueryOptions = struct {
+    commitment: ?Commitment = null,
+    data_size: ?u64 = null,
+    memcmp_offset: ?u64 = null,
+    memcmp_bytes: ?[]const u8 = null,
+    data_slice_offset: ?u64 = null,
+    data_slice_length: ?u64 = null,
+};
+
 pub const LargestAccountsQueryOptions = struct {
     commitment: ?Commitment = null,
     filter: ?LargestAccountsFilter = null,
@@ -805,14 +814,141 @@ pub const RpcClient = struct {
         return copied;
     }
 
-    pub fn getProgramAccounts(self: *RpcClient, program_id: []const u8, commitment: ?Commitment) ![]ProgramAccount {
-        const params_json = if (commitment) |value| blk: {
-            const params = .{ program_id, .{ .commitment = commitmentToString(value) } };
-            break :blk try self.serializeParams(params);
-        } else blk: {
-            const params = .{program_id};
-            break :blk try self.serializeParams(params);
+    fn serializeProgramAccountsParams(self: *RpcClient, program_id: []const u8, options: ?ProgramAccountsQueryOptions) ![]u8 {
+        const DataSlice = struct {
+            offset: u64,
+            length: u64,
         };
+        const DataSizeFilter = struct {
+            dataSize: u64,
+        };
+        const MemcmpFilter = struct {
+            memcmp: struct {
+                offset: u64,
+                bytes: []const u8,
+            },
+        };
+
+        if (options) |value| {
+            const commitment = if (value.commitment) |entry| commitmentToString(entry) else null;
+            const has_data_size = value.data_size != null;
+            const has_memcmp = value.memcmp_offset != null and value.memcmp_bytes != null;
+            const has_data_slice = value.data_slice_offset != null and value.data_slice_length != null;
+
+            if (!has_data_size and !has_memcmp and !has_data_slice and commitment == null) {
+                return try self.serializeParams(.{program_id});
+            }
+
+            if (has_data_size and has_memcmp and has_data_slice) {
+                const params = .{
+                    program_id,
+                    .{
+                        .commitment = commitment,
+                        .dataSlice = DataSlice{
+                            .offset = value.data_slice_offset.?,
+                            .length = value.data_slice_length.?,
+                        },
+                        .filters = .{
+                            DataSizeFilter{ .dataSize = value.data_size.? },
+                            MemcmpFilter{ .memcmp = .{ .offset = value.memcmp_offset.?, .bytes = value.memcmp_bytes.? } },
+                        },
+                    },
+                };
+                return try self.serializeParams(params);
+            }
+
+            if (has_data_size and has_memcmp) {
+                const params = .{
+                    program_id,
+                    .{
+                        .commitment = commitment,
+                        .filters = .{
+                            DataSizeFilter{ .dataSize = value.data_size.? },
+                            MemcmpFilter{ .memcmp = .{ .offset = value.memcmp_offset.?, .bytes = value.memcmp_bytes.? } },
+                        },
+                    },
+                };
+                return try self.serializeParams(params);
+            }
+
+            if (has_data_size and has_data_slice) {
+                const params = .{
+                    program_id,
+                    .{
+                        .commitment = commitment,
+                        .dataSlice = DataSlice{
+                            .offset = value.data_slice_offset.?,
+                            .length = value.data_slice_length.?,
+                        },
+                        .filters = .{DataSizeFilter{ .dataSize = value.data_size.? }},
+                    },
+                };
+                return try self.serializeParams(params);
+            }
+
+            if (has_memcmp and has_data_slice) {
+                const params = .{
+                    program_id,
+                    .{
+                        .commitment = commitment,
+                        .dataSlice = DataSlice{
+                            .offset = value.data_slice_offset.?,
+                            .length = value.data_slice_length.?,
+                        },
+                        .filters = .{MemcmpFilter{ .memcmp = .{ .offset = value.memcmp_offset.?, .bytes = value.memcmp_bytes.? } }},
+                    },
+                };
+                return try self.serializeParams(params);
+            }
+
+            if (has_data_size) {
+                const params = .{
+                    program_id,
+                    .{
+                        .commitment = commitment,
+                        .filters = .{DataSizeFilter{ .dataSize = value.data_size.? }},
+                    },
+                };
+                return try self.serializeParams(params);
+            }
+
+            if (has_memcmp) {
+                const params = .{
+                    program_id,
+                    .{
+                        .commitment = commitment,
+                        .filters = .{MemcmpFilter{ .memcmp = .{ .offset = value.memcmp_offset.?, .bytes = value.memcmp_bytes.? } }},
+                    },
+                };
+                return try self.serializeParams(params);
+            }
+
+            if (has_data_slice) {
+                const params = .{
+                    program_id,
+                    .{
+                        .commitment = commitment,
+                        .dataSlice = DataSlice{
+                            .offset = value.data_slice_offset.?,
+                            .length = value.data_slice_length.?,
+                        },
+                    },
+                };
+                return try self.serializeParams(params);
+            }
+
+            const params = .{
+                program_id,
+                .{ .commitment = commitment },
+            };
+            return try self.serializeParams(params);
+        }
+
+        return try self.serializeParams(.{program_id});
+    }
+
+    pub fn getProgramAccountsWithOptions(self: *RpcClient, program_id: []const u8, options: ?ProgramAccountsQueryOptions) ![]ProgramAccount {
+        const params_json = try self.serializeProgramAccountsParams(program_id, options);
         defer self.allocator.free(params_json);
 
         const response = try self.sendRequest("getProgramAccounts", params_json);
@@ -831,6 +967,14 @@ pub const RpcClient = struct {
 
         const source = parsed.value.result orelse return error.InvalidResponse;
         return try self.cloneProgramAccounts(source);
+    }
+
+    pub fn getProgramAccounts(self: *RpcClient, program_id: []const u8, commitment: ?Commitment) ![]ProgramAccount {
+        const options = if (commitment) |value|
+            ProgramAccountsQueryOptions{ .commitment = value }
+        else
+            null;
+        return try self.getProgramAccountsWithOptions(program_id, options);
     }
 
     pub fn getGenesisHash(self: *RpcClient) ![]const u8 {
@@ -2469,18 +2613,38 @@ test "root.getProgramAccounts params serialization" {
     var client = try RpcClient.init(allocator, "https://example.com");
     defer client.deinit();
 
-    const without_commitment = .{"Program1111111111111111111111111111111111"};
-    const without_commitment_json = try client.serializeParams(without_commitment);
+    const without_commitment_json = try client.serializeProgramAccountsParams(
+        "Program1111111111111111111111111111111111",
+        null,
+    );
     defer allocator.free(without_commitment_json);
     try std.testing.expect(std.mem.indexOf(u8, without_commitment_json, "\"Program1111111111111111111111111111111111\"") != null);
 
-    const with_commitment = .{
+    const with_commitment_json = try client.serializeProgramAccountsParams(
         "Program1111111111111111111111111111111111",
-        .{ .commitment = commitmentToString(.confirmed) },
-    };
-    const with_commitment_json = try client.serializeParams(with_commitment);
+        .{ .commitment = .confirmed },
+    );
     defer allocator.free(with_commitment_json);
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"confirmed\"") != null);
+
+    const with_filters_json = try client.serializeProgramAccountsParams(
+        "Program1111111111111111111111111111111111",
+        .{
+            .commitment = .finalized,
+            .data_size = 165,
+            .memcmp_offset = 32,
+            .memcmp_bytes = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            .data_slice_offset = 0,
+            .data_slice_length = 32,
+        },
+    );
+    defer allocator.free(with_filters_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"commitment\":\"finalized\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"dataSize\":165") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"offset\":32") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"bytes\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"dataSlice\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_filters_json, "\"length\":32") != null);
 }
 
 test "root.requestAirdrop params serialization" {

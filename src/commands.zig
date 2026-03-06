@@ -18,6 +18,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const feature_key_arg = args.feature_key_arg;
     const largest_filter_arg = args.largest_filter_arg;
     const max_supported_transaction_version_arg = args.max_supported_transaction_version_arg;
+    const program_data_size_arg = args.program_data_size_arg;
+    const program_data_slice_length_arg = args.program_data_slice_length_arg;
+    const program_data_slice_offset_arg = args.program_data_slice_offset_arg;
+    const program_memcmp_bytes_arg = args.program_memcmp_bytes_arg;
+    const program_memcmp_offset_arg = args.program_memcmp_offset_arg;
     const signatures_for_address_arg = args.signatures_for_address_arg;
     const signatures_for_address_before_arg = args.signatures_for_address_before_arg;
     const signatures_for_address_until_arg = args.signatures_for_address_until_arg;
@@ -126,6 +131,26 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
     if (supply_exclude_non_circulating_accounts_list and command != .supply) {
         std.debug.print("error: --exclude-non-circulating-accounts-list requires supply\n", .{});
+        return error.InvalidCli;
+    }
+
+    const has_program_accounts_filters = program_data_size_arg != null or
+        program_memcmp_offset_arg != null or
+        program_memcmp_bytes_arg != null or
+        program_data_slice_offset_arg != null or
+        program_data_slice_length_arg != null;
+    if (has_program_accounts_filters and command != .program_accounts) {
+        std.debug.print("error: program account filters require program-accounts\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((program_memcmp_offset_arg == null) != (program_memcmp_bytes_arg == null)) {
+        std.debug.print("error: --program-memcmp-offset and --program-memcmp-bytes must be used together\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((program_data_slice_offset_arg == null) != (program_data_slice_length_arg == null)) {
+        std.debug.print("error: --program-data-slice-offset and --program-data-slice-length must be used together\n", .{});
         return error.InvalidCli;
     }
 
@@ -393,7 +418,33 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .program_accounts => {
             const program_id = account orelse return error.InvalidCli;
-            const accounts_for_program = try rpc.getProgramAccounts(program_id, commitment);
+            const data_size = if (program_data_size_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const memcmp_offset = if (program_memcmp_offset_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const data_slice_offset = if (program_data_slice_offset_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const data_slice_length = if (program_data_slice_length_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const accounts_for_program = if (data_size != null or memcmp_offset != null or data_slice_offset != null or commitment != null)
+                try rpc.getProgramAccountsWithOptions(program_id, .{
+                    .commitment = commitment,
+                    .data_size = data_size,
+                    .memcmp_offset = memcmp_offset,
+                    .memcmp_bytes = program_memcmp_bytes_arg,
+                    .data_slice_offset = data_slice_offset,
+                    .data_slice_length = data_slice_length,
+                })
+            else
+                try rpc.getProgramAccounts(program_id, commitment);
             defer {
                 for (accounts_for_program) |entry| {
                     allocator.free(entry.pubkey);
@@ -1962,6 +2013,53 @@ test "runCommand rejects supply exclude list flag on unsupported commands" {
     try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
 }
 
+test "runCommand rejects program account filters on unsupported commands" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--program-data-size",
+        "165",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects incomplete program memcmp filter" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "program-accounts",
+        "Program1111111111111111111111111111111111",
+        "--program-memcmp-offset",
+        "32",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects incomplete program data slice filter" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "program-accounts",
+        "Program1111111111111111111111111111111111",
+        "--program-data-slice-offset",
+        "0",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
 test "runCommand rejects block-only flags on transaction command" {
     const allocator = std.testing.allocator;
     var rpc = try client.RpcClient.init(allocator, "https://example.com");
@@ -2076,6 +2174,40 @@ test "runCommand validates block production first slot int" {
         "block-production",
         "--range-first-slot",
         "bogus",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates program account data size int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "program-accounts",
+        "Program1111111111111111111111111111111111",
+        "--program-data-size",
+        "bogus",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates program account memcmp offset int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "program-accounts",
+        "Program1111111111111111111111111111111111",
+        "--program-memcmp-offset",
+        "bogus",
+        "--program-memcmp-bytes",
+        "abc",
     });
     defer parsed.deinit(allocator);
 
