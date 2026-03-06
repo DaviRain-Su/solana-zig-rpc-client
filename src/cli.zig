@@ -11,13 +11,14 @@ pub const Commitment = enum {
 pub const usage_text =
     "Usage:\n" ++
     "  solana_client_zig [--rpc <url>] latest-blockhash\n" ++
+    "  solana_client_zig [--rpc <url>] new-latest-blockhash <blockhash>\n" ++
     "  solana_client_zig [--rpc <url>] status <signature>\n" ++
     "  solana_client_zig [--rpc <url>] confirm-transaction <signature>\n" ++
     "  solana_client_zig [--rpc <url>] signature-status <signature>\n" ++
     "  solana_client_zig [--rpc <url>] signature-statuses <signature-1> [signature-2 ...]\n" ++
     "  solana_client_zig [--rpc <url>] send-transaction <signed-tx-base64>\n" ++
     "  solana_client_zig [--rpc <url>] send-transaction-and-confirm <signed-tx-base64>\n" ++
-    "  solana_client_zig [--rpc <url>] transfer (--sender-keypair <path> | <sender-secret-key>) <destination> <lamports>\n" ++
+    "  solana_client_zig [--rpc <url>] transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-transaction <signed-tx-base64>\n" ++
     "  solana_client_zig [--rpc <url>] slot\n" ++
     "  solana_client_zig [--rpc <url>] block-height\n" ++
@@ -98,7 +99,7 @@ pub const usage_text =
     "  --max-retries <count>    Max tx retries before giving up\n" ++
     "  --preflight-commitment <level>  Commitment for tx preflight checks\n" ++
     "  --airdrop-recent-blockhash <blockhash> Recent blockhash override for request-airdrop\n" ++
-    "  --sender-keypair <path> Transfer sender keypair JSON file\n" ++
+    "  --sender-keypair <path> Transfer sender keypair JSON file (default: ~/.config/solana/id.json)\n" ++
     "  --transfer-recent-blockhash <blockhash> Recent blockhash override for transfer\n" ++
     "  --epoch <epoch>          Epoch override for inflation-reward\n" ++
     "  --encoding <mode>        json|jsonParsed|base58|base64 (block and transaction)\n" ++
@@ -617,6 +618,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "new-latest-blockhash")) {
+                parsed.command = .new_latest_blockhash;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "status")) {
                 parsed.command = .status;
                 parsed.has_command = true;
@@ -1109,7 +1116,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 return error.InvalidCli;
             },
 
-            .blockhash_valid => if (parsed.blockhash_arg == null) {
+            .new_latest_blockhash, .blockhash_valid => if (parsed.blockhash_arg == null) {
                 parsed.blockhash_arg = arg;
             } else {
                 return error.InvalidCli;
@@ -1185,11 +1192,23 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         }
     }
 
+    if (parsed.command == .transfer and
+        parsed.sender_keypair_path_arg == null and
+        parsed.sender_secret_key_arg != null and
+        parsed.account != null and
+        parsed.lamports_arg == null)
+    {
+        parsed.lamports_arg = parsed.account;
+        parsed.account = parsed.sender_secret_key_arg;
+        parsed.sender_secret_key_arg = null;
+    }
+
     return parsed;
 }
 
 pub const Command = enum {
     latest_blockhash,
+    new_latest_blockhash,
     account_info,
     account_data,
     ui_account,
@@ -1271,6 +1290,7 @@ test "cli.printUsage includes new commands" {
     try printUsage(&out.writer);
 
     const usage = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, usage, "new-latest-blockhash <blockhash>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "signature-status <signature>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "signature-statuses <signature-1> [signature-2 ...]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "confirm-transaction <signature>") != null);
@@ -1303,7 +1323,7 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "inflation-reward <address-1> [address-2 ...] [--epoch <epoch>]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transaction <signature>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-transaction <signed-tx-base64>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "transfer (--sender-keypair <path> | <sender-secret-key>) <destination> <lamports>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "poll-balance <account>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "wait-for-balance <account> <expected-lamports>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "token-accounts-by-owner <owner>") != null);
@@ -1322,7 +1342,7 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "--max-retries <count>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--preflight-commitment") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--airdrop-recent-blockhash <blockhash>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-keypair <path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-keypair <path> Transfer sender keypair JSON file (default: ~/.config/solana/id.json)") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--transfer-recent-blockhash <blockhash>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--epoch <epoch>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--encoding <mode>") != null);
@@ -1400,6 +1420,17 @@ test "cli.parseCliArgs parses send-transaction with preflight options" {
     try std.testing.expectEqual(Commitment.confirmed, parsed.send_preflight_commitment orelse .processed);
 }
 
+test "cli.parseCliArgs parses new-latest-blockhash" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "new-latest-blockhash",
+        "Blockhash11111111111111111111111111111111",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.new_latest_blockhash, parsed.command);
+    try std.testing.expectEqualStrings("Blockhash11111111111111111111111111111111", parsed.blockhash_arg orelse "");
+}
+
 test "cli.parseCliArgs parses transfer with recent blockhash" {
     var parsed = try parseCliArgs(std.testing.allocator, &.{
         "transfer",
@@ -1438,6 +1469,21 @@ test "cli.parseCliArgs parses transfer with sender keypair path" {
 
     try std.testing.expectEqual(Command.transfer, parsed.command);
     try std.testing.expectEqualStrings("/tmp/test-transfer-keypair.json", parsed.sender_keypair_path_arg orelse "");
+    try std.testing.expect(parsed.sender_secret_key_arg == null);
+    try std.testing.expectEqualStrings("Destination111111111111111111111111111111", parsed.account orelse "");
+    try std.testing.expectEqualStrings("12345", parsed.lamports_arg orelse "");
+}
+
+test "cli.parseCliArgs parses transfer with default sender keypair" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "transfer",
+        "Destination111111111111111111111111111111",
+        "12345",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.transfer, parsed.command);
+    try std.testing.expect(parsed.sender_keypair_path_arg == null);
     try std.testing.expect(parsed.sender_secret_key_arg == null);
     try std.testing.expectEqualStrings("Destination111111111111111111111111111111", parsed.account orelse "");
     try std.testing.expectEqualStrings("12345", parsed.lamports_arg orelse "");

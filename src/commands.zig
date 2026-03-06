@@ -4,6 +4,7 @@ const cli = @import("./cli.zig");
 
 const Allocator = std.mem.Allocator;
 const Ed25519 = std.crypto.sign.Ed25519;
+const default_solana_keypair_path = ".config/solana/id.json";
 
 fn loadSecretKeyFromKeypairFile(allocator: Allocator, path: []const u8) ![]u8 {
     const file_contents = try std.fs.cwd().readFileAlloc(allocator, path, 1 << 20);
@@ -17,6 +18,54 @@ fn loadSecretKeyFromKeypairFile(allocator: Allocator, path: []const u8) ![]u8 {
     }
 
     return try allocator.dupe(u8, parsed.value);
+}
+
+fn defaultSolanaKeypairPathForHome(allocator: Allocator, home_dir: []const u8) ![]u8 {
+    return try std.fs.path.join(allocator, &.{ home_dir, default_solana_keypair_path });
+}
+
+fn expandUserPathForHome(allocator: Allocator, path: []const u8, home_dir: ?[]const u8) ![]u8 {
+    if (std.mem.eql(u8, path, "~")) {
+        const home = home_dir orelse return error.HomeDirectoryNotFound;
+        return try allocator.dupe(u8, home);
+    }
+
+    if (std.mem.startsWith(u8, path, "~/")) {
+        const home = home_dir orelse return error.HomeDirectoryNotFound;
+        return try std.fs.path.join(allocator, &.{ home, path[2..] });
+    }
+
+    return try allocator.dupe(u8, path);
+}
+
+fn resolveTransferSenderSecretKey(
+    allocator: Allocator,
+    sender_keypair_path_arg: ?[]const u8,
+    sender_secret_key_arg: ?[]const u8,
+    home_dir: ?[]const u8,
+) ![]u8 {
+    if (sender_keypair_path_arg) |path| {
+        const resolved_path = try expandUserPathForHome(allocator, path, home_dir);
+        defer allocator.free(resolved_path);
+
+        const sender_secret_key_bytes = try loadSecretKeyFromKeypairFile(allocator, resolved_path);
+        defer allocator.free(sender_secret_key_bytes);
+
+        return try encodeBase58(allocator, sender_secret_key_bytes);
+    }
+
+    if (sender_secret_key_arg) |value| {
+        return try allocator.dupe(u8, value);
+    }
+
+    const home = home_dir orelse return error.HomeDirectoryNotFound;
+    const default_path = try defaultSolanaKeypairPathForHome(allocator, home);
+    defer allocator.free(default_path);
+
+    const sender_secret_key_bytes = try loadSecretKeyFromKeypairFile(allocator, default_path);
+    defer allocator.free(sender_secret_key_bytes);
+
+    return try encodeBase58(allocator, sender_secret_key_bytes);
 }
 
 pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli.ParsedArgs) !void {
@@ -333,6 +382,18 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             }
         },
 
+        .new_latest_blockhash => {
+            const blockhash = blockhash_arg orelse {
+                std.debug.print("error: new-latest-blockhash requires <blockhash>\n", .{});
+                return error.InvalidCli;
+            };
+
+            const latest = try rpc.getNewLatestBlockhash(blockhash);
+            defer allocator.free(latest);
+
+            std.debug.print("Latest blockhash: {s}\n", .{latest});
+        },
+
         .status => {
             const signature_value = signature orelse {
                 std.debug.print("error: status requires <signature>\n", .{});
@@ -504,42 +565,53 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             }
 
             const sender_secret_key = blk: {
-                if (sender_keypair_path_arg) |path| {
-                    const sender_secret_key_bytes = loadSecretKeyFromKeypairFile(allocator, path) catch |err| switch (err) {
-                        error.FileNotFound => {
-                            std.debug.print("error: sender keypair file not found: {s}\n", .{path});
-                            return error.InvalidCli;
-                        },
-                        error.InvalidSecretKeyLength => {
-                            std.debug.print("error: sender keypair file must contain {} secret-key bytes\n", .{Ed25519.SecretKey.encoded_length});
-                            return error.InvalidCli;
-                        },
-                        else => {
-                            std.debug.print("error: sender keypair file is not valid JSON byte array: {s}\n", .{path});
-                            return error.InvalidCli;
-                        },
-                    };
-                    defer allocator.free(sender_secret_key_bytes);
-
-                    break :blk try encodeBase58(allocator, sender_secret_key_bytes);
-                }
-
-                const value = sender_secret_key_arg orelse {
-                    std.debug.print("error: transfer requires (--sender-keypair <path> | <sender-secret-key>) <destination> <lamports>\n", .{});
-                    return error.InvalidCli;
+                const home_dir = std.process.getEnvVarOwned(allocator, "HOME") catch |err| switch (err) {
+                    error.EnvironmentVariableNotFound => null,
+                    else => return err,
                 };
-                break :blk try allocator.dupe(u8, value);
+                defer if (home_dir) |value| allocator.free(value);
+
+                break :blk resolveTransferSenderSecretKey(allocator, sender_keypair_path_arg, sender_secret_key_arg, home_dir) catch |err| switch (err) {
+                    error.FileNotFound => {
+                        const missing_path = if (sender_keypair_path_arg) |path|
+                            path
+                        else if (home_dir) |value|
+                            defaultSolanaKeypairPathForHome(allocator, value) catch return err
+                        else
+                            default_solana_keypair_path;
+                        defer if (sender_keypair_path_arg == null and home_dir != null) allocator.free(missing_path);
+
+                        std.debug.print("error: sender keypair file not found: {s}\n", .{missing_path});
+                        return error.InvalidCli;
+                    },
+                    error.HomeDirectoryNotFound => {
+                        std.debug.print("error: HOME is not set; transfer requires --sender-keypair <path> or <sender-secret-key>\n", .{});
+                        return error.InvalidCli;
+                    },
+                    error.InvalidSecretKeyLength => {
+                        std.debug.print("error: sender keypair file must contain {} secret-key bytes\n", .{Ed25519.SecretKey.encoded_length});
+                        return error.InvalidCli;
+                    },
+                    else => {
+                        if (sender_keypair_path_arg) |path| {
+                            std.debug.print("error: sender keypair file is not valid JSON byte array: {s}\n", .{path});
+                        } else {
+                            std.debug.print("error: default sender keypair file is not valid JSON byte array: {s}\n", .{default_solana_keypair_path});
+                        }
+                        return error.InvalidCli;
+                    },
+                };
             };
             defer allocator.free(sender_secret_key);
 
             const destination = account orelse {
-                std.debug.print("error: transfer requires (--sender-keypair <path> | <sender-secret-key>) <destination> <lamports>\n", .{});
+                std.debug.print("error: transfer requires [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>\n", .{});
                 return error.InvalidCli;
             };
             const lamports = if (lamports_arg) |value|
                 std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
             else {
-                std.debug.print("error: transfer requires (--sender-keypair <path> | <sender-secret-key>) <destination> <lamports>\n", .{});
+                std.debug.print("error: transfer requires [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>\n", .{});
                 return error.InvalidCli;
             };
 
@@ -2518,6 +2590,25 @@ fn encodeBase58(allocator: Allocator, bytes: []const u8) ![]u8 {
     return try encoded.toOwnedSlice(allocator);
 }
 
+fn writeKeypairJsonFile(allocator: Allocator, path: []const u8, secret_key: []const u8) !void {
+    if (std.fs.path.dirname(path)) |parent_path| {
+        try std.fs.cwd().makePath(parent_path);
+    }
+
+    var keypair_json = std.io.Writer.Allocating.init(allocator);
+    defer keypair_json.deinit();
+    try keypair_json.writer.print("[", .{});
+    for (secret_key, 0..) |byte, index| {
+        if (index != 0) try keypair_json.writer.print(",", .{});
+        try keypair_json.writer.print("{}", .{byte});
+    }
+    try keypair_json.writer.print("]", .{});
+
+    const file = try std.fs.cwd().createFile(path, .{ .truncate = true });
+    defer file.close();
+    try file.writeAll(keypair_json.written());
+}
+
 fn expectGetBlockRequest(
     allocator: Allocator,
     body: []const u8,
@@ -3815,6 +3906,60 @@ test "runCommand latest-blockhash with context prints slot and value" {
     );
 }
 
+test "runCommand new-latest-blockhash waits for updated value" {
+    const allocator = std.testing.allocator;
+    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    defer listener.deinit();
+    const port = listener.listen_address.getPort();
+
+    var request_captures = std.ArrayList([]u8).empty;
+    defer {
+        for (request_captures.items) |request| allocator.free(request);
+        request_captures.deinit(allocator);
+    }
+
+    const response_bodies = [_][]const u8{
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":{\"blockhash\":\"Blockhash111111111111111111111111111111111111\",\"lastValidBlockHeight\":77}},\"id\":1}",
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":45},\"value\":{\"blockhash\":\"Blockhash222222222222222222222222222222222222\",\"lastValidBlockHeight\":88}},\"id\":2}",
+    };
+    const server_thread = try std.Thread.spawn(.{}, runMockRequestSequenceServer, .{ &listener, allocator, &request_captures, &response_bodies });
+    defer server_thread.join();
+
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
+    defer allocator.free(endpoint);
+
+    var rpc = try client.RpcClient.init(allocator, endpoint);
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "new-latest-blockhash",
+        "Blockhash111111111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
+    try expectGetLatestBlockhashRequest(allocator, request_captures.items[0], null);
+    try expectGetLatestBlockhashRequest(allocator, request_captures.items[1], null);
+    try std.testing.expectEqualStrings(
+        "Latest blockhash: Blockhash222222222222222222222222222222222222\n",
+        captured,
+    );
+}
+
 test "runCommand fee-for-message with context prints slot and value" {
     const allocator = std.testing.allocator;
     var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
@@ -4666,6 +4811,68 @@ test "runCommand blocks-since-signature-confirmation prints confirmations" {
     );
 }
 
+test "commands.expandUserPathForHome expands tilde prefixes" {
+    const allocator = std.testing.allocator;
+
+    const expanded_home = try expandUserPathForHome(allocator, "~", "/tmp/test-home");
+    defer allocator.free(expanded_home);
+    try std.testing.expectEqualStrings("/tmp/test-home", expanded_home);
+
+    const expanded_nested = try expandUserPathForHome(allocator, "~/keys/id.json", "/tmp/test-home");
+    defer allocator.free(expanded_nested);
+    try std.testing.expectEqualStrings("/tmp/test-home/keys/id.json", expanded_nested);
+}
+
+test "commands.resolveTransferSenderSecretKey loads default Solana id.json" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const expected_secret_key = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(expected_secret_key);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const home_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/home", .{tmp.sub_path});
+    defer allocator.free(home_path);
+
+    const keypair_path = try std.fs.path.join(allocator, &.{ home_path, default_solana_keypair_path });
+    defer allocator.free(keypair_path);
+    try writeKeypairJsonFile(allocator, keypair_path, &sender_secret_key);
+
+    const sender_secret_key_base58 = try resolveTransferSenderSecretKey(allocator, null, null, home_path);
+    defer allocator.free(sender_secret_key_base58);
+
+    try std.testing.expectEqualStrings(expected_secret_key, sender_secret_key_base58);
+}
+
+test "commands.resolveTransferSenderSecretKey expands sender keypair tilde path" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{9} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const expected_secret_key = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(expected_secret_key);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const home_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/home", .{tmp.sub_path});
+    defer allocator.free(home_path);
+
+    const keypair_path = try std.fs.path.join(allocator, &.{ home_path, "custom", "id.json" });
+    defer allocator.free(keypair_path);
+    try writeKeypairJsonFile(allocator, keypair_path, &sender_secret_key);
+
+    const sender_secret_key_base58 = try resolveTransferSenderSecretKey(allocator, "~/custom/id.json", null, home_path);
+    defer allocator.free(sender_secret_key_base58);
+
+    try std.testing.expectEqualStrings(expected_secret_key, sender_secret_key_base58);
+}
+
 test "runCommand transfer fetches blockhash builds transaction and confirms signature" {
     const allocator = std.testing.allocator;
 
@@ -4790,15 +4997,6 @@ test "runCommand transfer accepts sender keypair file" {
     const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
     const sender_secret_key = sender_key_pair.secret_key.toBytes();
 
-    var keypair_json = std.io.Writer.Allocating.init(allocator);
-    defer keypair_json.deinit();
-    try keypair_json.writer.print("[", .{});
-    for (sender_secret_key, 0..) |byte, index| {
-        if (index != 0) try keypair_json.writer.print(",", .{});
-        try keypair_json.writer.print("{}", .{byte});
-    }
-    try keypair_json.writer.print("]", .{});
-
     const keypair_path = try std.fmt.allocPrint(
         allocator,
         ".zig-cache/test-transfer-keypair-{d}.json",
@@ -4806,12 +5004,7 @@ test "runCommand transfer accepts sender keypair file" {
     );
     defer allocator.free(keypair_path);
     defer std.fs.cwd().deleteFile(keypair_path) catch {};
-
-    {
-        const file = try std.fs.cwd().createFile(keypair_path, .{ .truncate = true });
-        defer file.close();
-        try file.writeAll(keypair_json.written());
-    }
+    try writeKeypairJsonFile(allocator, keypair_path, &sender_secret_key);
 
     const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
     const destination_public_key = destination_key_pair.public_key.toBytes();
