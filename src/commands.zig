@@ -9,9 +9,14 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const signature = args.signature;
     const account = args.account;
     const blockhash_arg = args.blockhash_arg;
+    const block_production_identity_arg = args.block_production_identity_arg;
+    const block_production_first_slot_arg = args.block_production_first_slot_arg;
+    const block_production_last_slot_arg = args.block_production_last_slot_arg;
+    const delinquent_slot_distance_arg = args.delinquent_slot_distance_arg;
     const encoding_arg = args.encoding_arg;
     const epoch_arg = args.epoch_arg;
     const feature_key_arg = args.feature_key_arg;
+    const largest_filter_arg = args.largest_filter_arg;
     const max_supported_transaction_version_arg = args.max_supported_transaction_version_arg;
     const signatures_for_address_arg = args.signatures_for_address_arg;
     const signatures_for_address_before_arg = args.signatures_for_address_before_arg;
@@ -29,8 +34,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const mint_arg = args.mint_arg;
     const rent_bytes_arg = args.rent_bytes_arg;
     const signed_tx_arg = args.signed_tx_arg;
+    const supply_exclude_non_circulating_accounts_list = args.supply_exclude_non_circulating_accounts_list;
     const token_program_id_arg = args.token_program_id_arg;
     const transaction_details_arg = args.transaction_details_arg;
+    const vote_pubkey_arg = args.vote_pubkey_arg;
     const signature_statuses = args.signature_statuses;
     const multiple_accounts = args.multiple_accounts;
     const blocks_limit_arg = args.blocks_limit_arg;
@@ -40,6 +47,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const send_skip_preflight = args.send_skip_preflight;
     const simulate_replace_recent_blockhash = args.simulate_replace_recent_blockhash;
     const simulate_sig_verify = args.simulate_sig_verify;
+    const vote_keep_unstaked_delinquents = args.vote_keep_unstaked_delinquents;
     const send_max_retries = args.send_max_retries;
     const send_preflight_commitment = toClientCommitment(args.send_preflight_commitment);
 
@@ -98,6 +106,26 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
     if (epoch_arg != null and command != .inflation_reward) {
         std.debug.print("error: --epoch requires inflation-reward\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((vote_pubkey_arg != null or vote_keep_unstaked_delinquents or delinquent_slot_distance_arg != null) and command != .vote_accounts) {
+        std.debug.print("error: vote account filters require vote-accounts\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (largest_filter_arg != null and command != .largest_accounts) {
+        std.debug.print("error: --largest-filter requires largest-accounts\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((block_production_identity_arg != null or block_production_first_slot_arg != null or block_production_last_slot_arg != null) and command != .block_production) {
+        std.debug.print("error: block production filters require block-production\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (supply_exclude_non_circulating_accounts_list and command != .supply) {
+        std.debug.print("error: --exclude-non-circulating-accounts-list requires supply\n", .{});
         return error.InvalidCli;
     }
 
@@ -717,7 +745,19 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .vote_accounts => {
-            const accounts = try rpc.getVoteAccounts();
+            const delinquent_slot_distance = if (delinquent_slot_distance_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const accounts = if (commitment != null or vote_pubkey_arg != null or vote_keep_unstaked_delinquents or delinquent_slot_distance != null)
+                try rpc.getVoteAccountsWithOptions(.{
+                    .commitment = commitment,
+                    .vote_pubkey = vote_pubkey_arg,
+                    .keep_unstaked_delinquents = if (vote_keep_unstaked_delinquents) true else null,
+                    .delinquent_slot_distance = delinquent_slot_distance,
+                })
+            else
+                try rpc.getVoteAccounts();
             defer {
                 for (accounts.current) |vote_account| {
                     allocator.free(vote_account.vote_pubkey);
@@ -774,7 +814,32 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .block_production => {
-            const production = try rpc.getBlockProduction(commitment);
+            const first_slot = if (block_production_first_slot_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const last_slot = if (block_production_last_slot_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            if (last_slot != null and first_slot == null) {
+                std.debug.print("error: --range-last-slot requires --range-first-slot\n", .{});
+                return error.InvalidCli;
+            }
+            if (first_slot != null and last_slot != null and last_slot.? < first_slot.?) {
+                std.debug.print("error: --range-last-slot must be >= --range-first-slot\n", .{});
+                return error.InvalidCli;
+            }
+
+            const production = if (commitment != null or block_production_identity_arg != null or first_slot != null or last_slot != null)
+                try rpc.getBlockProductionWithOptions(.{
+                    .commitment = commitment,
+                    .identity = block_production_identity_arg,
+                    .first_slot = first_slot,
+                    .last_slot = last_slot,
+                })
+            else
+                try rpc.getBlockProduction(commitment);
             defer {
                 for (production.by_identity) |identity| {
                     allocator.free(identity.identity);
@@ -861,15 +926,34 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .supply => {
-            const supply = try rpc.getSupply(commitment);
+            const supply = if (supply_exclude_non_circulating_accounts_list)
+                try rpc.getSupplyWithOptions(.{
+                    .commitment = commitment,
+                    .exclude_non_circulating_accounts_list = true,
+                })
+            else
+                try rpc.getSupply(commitment);
+            defer freeSupply(allocator, supply);
             std.debug.print(
-                "supply: total={} circulating={} non-circulating={}\n",
-                .{ supply.total, supply.circulating, supply.non_circulating },
+                "supply: total={} circulating={} non-circulating={} non-circulating-accounts={}\n",
+                .{
+                    supply.total,
+                    supply.circulating,
+                    supply.non_circulating,
+                    if (supply.non_circulating_accounts) |accounts| accounts.len else @as(usize, 0),
+                },
             );
         },
 
         .largest_accounts => {
-            const largest_accounts = try rpc.getLargestAccounts(commitment);
+            const filter = if (largest_filter_arg) |value| parseLargestAccountsFilter(value) orelse return error.InvalidCli else null;
+            const largest_accounts = if (filter != null)
+                try rpc.getLargestAccountsWithOptions(.{
+                    .commitment = commitment,
+                    .filter = filter,
+                })
+            else
+                try rpc.getLargestAccounts(commitment);
             defer {
                 for (largest_accounts) |entry| {
                     allocator.free(entry.address);
@@ -1092,6 +1176,13 @@ fn freeBlockCommitment(allocator: Allocator, commitment: client.BlockCommitment)
     if (commitment.commitment) |values| allocator.free(values);
 }
 
+fn freeSupply(allocator: Allocator, supply: client.Supply) void {
+    if (supply.non_circulating_accounts) |accounts| {
+        for (accounts) |entry| allocator.free(entry);
+        allocator.free(accounts);
+    }
+}
+
 fn toTokenAccountsFilter(mint_arg: ?[]const u8, token_program_id_arg: ?[]const u8) ?client.TokenAccountsFilter {
     if (mint_arg) |mint| {
         return .{ .mint = mint };
@@ -1121,6 +1212,12 @@ fn parseTransactionDetails(value: []const u8) ?client.TransactionDetails {
 fn parseBoolArg(value: []const u8) ?bool {
     if (std.mem.eql(u8, value, "true")) return true;
     if (std.mem.eql(u8, value, "false")) return false;
+    return null;
+}
+
+fn parseLargestAccountsFilter(value: []const u8) ?client.LargestAccountsFilter {
+    if (std.mem.eql(u8, value, "circulating")) return .circulating;
+    if (std.mem.eql(u8, value, "non-circulating")) return .non_circulating;
     return null;
 }
 
@@ -1806,6 +1903,65 @@ test "runCommand rejects epoch flag on unsupported commands" {
     try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
 }
 
+test "runCommand rejects vote account filters on unsupported commands" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--vote-pubkey",
+        "Vote111111111111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects largest filter on unsupported commands" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--largest-filter",
+        "circulating",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects block production filters on unsupported commands" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--block-production-identity",
+        "Identity1111111111111111111111111111111111",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand rejects supply exclude list flag on unsupported commands" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "slot",
+        "--exclude-non-circulating-accounts-list",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
 test "runCommand rejects block-only flags on transaction command" {
     const allocator = std.testing.allocator;
     var rpc = try client.RpcClient.init(allocator, "https://example.com");
@@ -1889,6 +2045,100 @@ test "runCommand validates block rewards bool" {
         "block",
         "123",
         "--rewards",
+        "bogus",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates vote account delinquent slot distance int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "vote-accounts",
+        "--delinquent-slot-distance",
+        "bogus",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates block production first slot int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block-production",
+        "--range-first-slot",
+        "bogus",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates block production last slot int" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block-production",
+        "--range-first-slot",
+        "100",
+        "--range-last-slot",
+        "bogus",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates block production last slot requires first slot" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block-production",
+        "--range-last-slot",
+        "200",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates block production slot range ordering" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "block-production",
+        "--range-first-slot",
+        "300",
+        "--range-last-slot",
+        "200",
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvalidCli, runCommand(allocator, &rpc, &parsed));
+}
+
+test "runCommand validates largest accounts filter value" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "largest-accounts",
+        "--largest-filter",
         "bogus",
     });
     defer parsed.deinit(allocator);

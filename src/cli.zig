@@ -85,6 +85,14 @@ pub const usage_text =
     "  --max-supported-transaction-version <n>  Max supported tx version (block and transaction)\n" ++
     "  --transaction-details <mode>  full|accounts|signatures|none (block)\n" ++
     "  --rewards <true|false>   Include rewards in block response\n" ++
+    "  --vote-pubkey <pubkey>   Filter vote-accounts by vote pubkey\n" ++
+    "  --keep-unstaked-delinquents  Keep unstaked delinquents in vote-accounts\n" ++
+    "  --delinquent-slot-distance <n> Delinquent slot distance for vote-accounts\n" ++
+    "  --largest-filter <mode>  circulating|non-circulating (largest-accounts)\n" ++
+    "  --block-production-identity <pubkey> Filter block-production by identity\n" ++
+    "  --range-first-slot <slot> First slot for block-production range\n" ++
+    "  --range-last-slot <slot>  Last slot for block-production range\n" ++
+    "  --exclude-non-circulating-accounts-list Exclude non-circulating account list from supply\n" ++
     "  --mint <mint>            Token account filter by mint (token-accounts-by-*)\n" ++
     "  --token-program-id <program-id> Token account filter by token program (token-accounts-by-*)\n";
 
@@ -107,9 +115,14 @@ pub const ParsedArgs = struct {
     signature: ?[]const u8,
     account: ?[]const u8,
     blockhash_arg: ?[]const u8,
+    block_production_identity_arg: ?[]const u8,
+    block_production_first_slot_arg: ?[]const u8,
+    block_production_last_slot_arg: ?[]const u8,
+    delinquent_slot_distance_arg: ?[]const u8,
     encoding_arg: ?[]const u8,
     epoch_arg: ?[]const u8,
     feature_key_arg: ?[]const u8,
+    largest_filter_arg: ?[]const u8,
     max_supported_transaction_version_arg: ?[]const u8,
     signatures_for_address_arg: ?[]const u8,
     signatures_for_address_before_arg: ?[]const u8,
@@ -128,8 +141,10 @@ pub const ParsedArgs = struct {
     mint_arg: ?[]const u8,
     rent_bytes_arg: ?[]const u8,
     signed_tx_arg: ?[]const u8,
+    supply_exclude_non_circulating_accounts_list: bool,
     token_program_id_arg: ?[]const u8,
     transaction_details_arg: ?[]const u8,
+    vote_pubkey_arg: ?[]const u8,
     signature_statuses: std.ArrayListUnmanaged([]const u8),
     multiple_accounts: std.ArrayListUnmanaged([]const u8),
     commitment: ?Commitment,
@@ -138,6 +153,7 @@ pub const ParsedArgs = struct {
     send_skip_preflight: bool,
     simulate_replace_recent_blockhash: bool,
     simulate_sig_verify: bool,
+    vote_keep_unstaked_delinquents: bool,
     send_max_retries: ?u32,
     send_preflight_commitment: ?Commitment,
 
@@ -156,9 +172,14 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .signature = null,
         .account = null,
         .blockhash_arg = null,
+        .block_production_identity_arg = null,
+        .block_production_first_slot_arg = null,
+        .block_production_last_slot_arg = null,
+        .delinquent_slot_distance_arg = null,
         .encoding_arg = null,
         .epoch_arg = null,
         .feature_key_arg = null,
+        .largest_filter_arg = null,
         .max_supported_transaction_version_arg = null,
         .signatures_for_address_arg = null,
         .signatures_for_address_before_arg = null,
@@ -177,8 +198,10 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .mint_arg = null,
         .rent_bytes_arg = null,
         .signed_tx_arg = null,
+        .supply_exclude_non_circulating_accounts_list = false,
         .token_program_id_arg = null,
         .transaction_details_arg = null,
+        .vote_pubkey_arg = null,
         .signature_statuses = .{},
         .multiple_accounts = .{},
         .commitment = null,
@@ -187,6 +210,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .send_skip_preflight = false,
         .simulate_replace_recent_blockhash = false,
         .simulate_sig_verify = false,
+        .vote_keep_unstaked_delinquents = false,
         .send_max_retries = null,
         .send_preflight_commitment = null,
     };
@@ -244,6 +268,16 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
             continue;
         }
 
+        if (std.mem.eql(u8, arg, "--keep-unstaked-delinquents")) {
+            parsed.vote_keep_unstaked_delinquents = true;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--exclude-non-circulating-accounts-list")) {
+            parsed.supply_exclude_non_circulating_accounts_list = true;
+            continue;
+        }
+
         if (std.mem.eql(u8, arg, "--max-retries")) {
             if (index >= args.len) return error.InvalidCli;
             parsed.send_max_retries = std.fmt.parseInt(u32, args[index], 10) catch return error.InvalidCli;
@@ -282,6 +316,48 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         if (std.mem.eql(u8, arg, "--rewards")) {
             if (index >= args.len or parsed.rewards_arg != null) return error.InvalidCli;
             parsed.rewards_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--vote-pubkey")) {
+            if (index >= args.len or parsed.vote_pubkey_arg != null) return error.InvalidCli;
+            parsed.vote_pubkey_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--delinquent-slot-distance")) {
+            if (index >= args.len or parsed.delinquent_slot_distance_arg != null) return error.InvalidCli;
+            parsed.delinquent_slot_distance_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--largest-filter")) {
+            if (index >= args.len or parsed.largest_filter_arg != null) return error.InvalidCli;
+            parsed.largest_filter_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--block-production-identity")) {
+            if (index >= args.len or parsed.block_production_identity_arg != null) return error.InvalidCli;
+            parsed.block_production_identity_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--range-first-slot")) {
+            if (index >= args.len or parsed.block_production_first_slot_arg != null) return error.InvalidCli;
+            parsed.block_production_first_slot_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--range-last-slot")) {
+            if (index >= args.len or parsed.block_production_last_slot_arg != null) return error.InvalidCli;
+            parsed.block_production_last_slot_arg = args[index];
             index += 1;
             continue;
         }
@@ -924,6 +1000,14 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "--max-supported-transaction-version <n>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--transaction-details <mode>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--rewards <true|false>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--vote-pubkey <pubkey>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--keep-unstaked-delinquents") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--delinquent-slot-distance <n>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--largest-filter <mode>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--block-production-identity <pubkey>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--range-first-slot <slot>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--range-last-slot <slot>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--exclude-non-circulating-accounts-list") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--mint <mint>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--token-program-id <program-id>") != null);
 }
@@ -1083,6 +1167,47 @@ test "cli.parseCliArgs parses recent prioritization fees with accounts" {
 
     try std.testing.expectEqual(Command.recent_prioritization_fees, parsed.command);
     try std.testing.expectEqual(@as(usize, 2), parsed.multiple_accounts.items.len);
+}
+
+test "cli.parseCliArgs parses vote accounts with filters" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "vote-accounts",
+        "--vote-pubkey",
+        "Vote111111111111111111111111111111111111111",
+        "--keep-unstaked-delinquents",
+        "--delinquent-slot-distance",
+        "64",
+        "--commitment",
+        "confirmed",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.vote_accounts, parsed.command);
+    try std.testing.expectEqualStrings("Vote111111111111111111111111111111111111111", parsed.vote_pubkey_arg orelse "");
+    try std.testing.expect(parsed.vote_keep_unstaked_delinquents);
+    try std.testing.expectEqualStrings("64", parsed.delinquent_slot_distance_arg orelse "");
+    try std.testing.expectEqual(Commitment.confirmed, parsed.commitment orelse .processed);
+}
+
+test "cli.parseCliArgs parses block production with filters" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "block-production",
+        "--block-production-identity",
+        "Identity1111111111111111111111111111111111",
+        "--range-first-slot",
+        "100",
+        "--range-last-slot",
+        "200",
+        "--commitment",
+        "processed",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.block_production, parsed.command);
+    try std.testing.expectEqualStrings("Identity1111111111111111111111111111111111", parsed.block_production_identity_arg orelse "");
+    try std.testing.expectEqualStrings("100", parsed.block_production_first_slot_arg orelse "");
+    try std.testing.expectEqualStrings("200", parsed.block_production_last_slot_arg orelse "");
+    try std.testing.expectEqual(Commitment.processed, parsed.commitment orelse .confirmed);
 }
 
 test "cli.parseCliArgs parses slot leader with commitment" {
@@ -1299,6 +1424,29 @@ test "cli.parseCliArgs parses largest accounts" {
     defer parsed.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(Command.largest_accounts, parsed.command);
+}
+
+test "cli.parseCliArgs parses largest accounts with filter" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "largest-accounts",
+        "--largest-filter",
+        "non-circulating",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.largest_accounts, parsed.command);
+    try std.testing.expectEqualStrings("non-circulating", parsed.largest_filter_arg orelse "");
+}
+
+test "cli.parseCliArgs parses supply exclude list flag" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "supply",
+        "--exclude-non-circulating-accounts-list",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.supply, parsed.command);
+    try std.testing.expect(parsed.supply_exclude_non_circulating_accounts_list);
 }
 
 test "cli.parseCliArgs parses token account balance" {

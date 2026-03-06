@@ -82,6 +82,16 @@ pub const LargestAccount = struct {
     lamports: u64 = 0,
 };
 
+pub const LargestAccountsFilter = enum {
+    circulating,
+    non_circulating,
+};
+
+pub const LargestAccountsQueryOptions = struct {
+    commitment: ?Commitment = null,
+    filter: ?LargestAccountsFilter = null,
+};
+
 pub const BlockCommitment = struct {
     commitment: ?[]u64 = null,
     total_stake: u64 = 0,
@@ -127,6 +137,7 @@ pub const Supply = struct {
     total: u64 = 0,
     circulating: u64 = 0,
     non_circulating: u64 = 0,
+    non_circulating_accounts: ?[][]const u8 = null,
 };
 
 pub const FeeForMessage = struct {
@@ -276,6 +287,25 @@ pub const VoteAccounts = struct {
     delinquent: []VoteAccount = &.{},
 };
 
+pub const VoteAccountsQueryOptions = struct {
+    commitment: ?Commitment = null,
+    vote_pubkey: ?[]const u8 = null,
+    keep_unstaked_delinquents: ?bool = null,
+    delinquent_slot_distance: ?u64 = null,
+};
+
+pub const BlockProductionQueryOptions = struct {
+    commitment: ?Commitment = null,
+    identity: ?[]const u8 = null,
+    first_slot: ?u64 = null,
+    last_slot: ?u64 = null,
+};
+
+pub const SupplyQueryOptions = struct {
+    commitment: ?Commitment = null,
+    exclude_non_circulating_accounts_list: ?bool = null,
+};
+
 pub const BlockProduction = struct {
     first_slot: u64 = 0,
     last_slot: u64 = 0,
@@ -354,6 +384,13 @@ fn transactionDetailsToString(value: TransactionDetails) []const u8 {
         .accounts => "accounts",
         .signatures => "signatures",
         .none => "none",
+    };
+}
+
+fn largestAccountsFilterToString(value: LargestAccountsFilter) []const u8 {
+    return switch (value) {
+        .circulating => "circulating",
+        .non_circulating => "nonCirculating",
     };
 }
 
@@ -919,8 +956,28 @@ pub const RpcClient = struct {
     }
 
     pub fn getSupply(self: *RpcClient, commitment: ?Commitment) !Supply {
-        const params = .{commitmentParams(commitment)};
-        const params_json = try self.serializeParams(params);
+        return try self.getSupplyWithOptions(if (commitment) |value|
+            SupplyQueryOptions{ .commitment = value }
+        else
+            null);
+    }
+
+    pub fn getSupplyWithOptions(self: *RpcClient, options: ?SupplyQueryOptions) !Supply {
+        const SupplyConfig = struct {
+            commitment: ?[]const u8 = null,
+            excludeNonCirculatingAccountsList: ?bool = null,
+        };
+
+        const params_json = if (options) |value| blk: {
+            const params = .{SupplyConfig{
+                .commitment = if (value.commitment) |entry| commitmentToString(entry) else null,
+                .excludeNonCirculatingAccountsList = value.exclude_non_circulating_accounts_list,
+            }};
+            break :blk try self.serializeParams(params);
+        } else blk: {
+            const params = .{};
+            break :blk try self.serializeParams(params);
+        };
         defer self.allocator.free(params_json);
 
         const response = try self.sendRequest("getSupply", params_json);
@@ -934,10 +991,12 @@ pub const RpcClient = struct {
                 total: u64 = 0,
                 circulating: u64 = 0,
                 nonCirculating: u64 = 0,
+                nonCirculatingAccounts: ?[][]const u8 = null,
             } = .{
                 .total = 0,
                 .circulating = 0,
                 .nonCirculating = 0,
+                .nonCirculatingAccounts = null,
             },
         };
 
@@ -946,12 +1005,21 @@ pub const RpcClient = struct {
             .total = result.value.total,
             .circulating = result.value.circulating,
             .non_circulating = result.value.nonCirculating,
+            .non_circulating_accounts = if (result.value.nonCirculatingAccounts) |value| try self.cloneStringList(value) else null,
         };
     }
 
-    pub fn getLargestAccounts(self: *RpcClient, commitment: ?Commitment) ![]LargestAccount {
-        const params_json = if (commitment) |value| blk: {
-            const params = .{.{ .commitment = commitmentToString(value) }};
+    pub fn getLargestAccountsWithOptions(self: *RpcClient, options: ?LargestAccountsQueryOptions) ![]LargestAccount {
+        const LargestAccountsConfig = struct {
+            commitment: ?[]const u8 = null,
+            filter: ?[]const u8 = null,
+        };
+
+        const params_json = if (options) |value| blk: {
+            const params = .{LargestAccountsConfig{
+                .commitment = if (value.commitment) |entry| commitmentToString(entry) else null,
+                .filter = if (value.filter) |entry| largestAccountsFilterToString(entry) else null,
+            }};
             break :blk try self.serializeParams(params);
         } else null;
         defer if (params_json) |value| self.allocator.free(value);
@@ -991,6 +1059,13 @@ pub const RpcClient = struct {
         }
 
         return copied;
+    }
+
+    pub fn getLargestAccounts(self: *RpcClient, commitment: ?Commitment) ![]LargestAccount {
+        return try self.getLargestAccountsWithOptions(if (commitment) |value|
+            LargestAccountsQueryOptions{ .commitment = value }
+        else
+            null);
     }
 
     pub fn getTokenAccountBalance(self: *RpcClient, token_account: []const u8, commitment: ?Commitment) !TokenAmount {
@@ -1848,8 +1923,26 @@ pub const RpcClient = struct {
         return copied;
     }
 
-    pub fn getVoteAccounts(self: *RpcClient) !VoteAccounts {
-        const response = try self.sendNoParamsRequest("getVoteAccounts");
+    pub fn getVoteAccountsWithOptions(self: *RpcClient, options: ?VoteAccountsQueryOptions) !VoteAccounts {
+        const VoteAccountsConfig = struct {
+            commitment: ?[]const u8 = null,
+            votePubkey: ?[]const u8 = null,
+            keepUnstakedDelinquents: ?bool = null,
+            delinquentSlotDistance: ?u64 = null,
+        };
+
+        const params_json = if (options) |value| blk: {
+            const params = .{VoteAccountsConfig{
+                .commitment = if (value.commitment) |entry| commitmentToString(entry) else null,
+                .votePubkey = value.vote_pubkey,
+                .keepUnstakedDelinquents = value.keep_unstaked_delinquents,
+                .delinquentSlotDistance = value.delinquent_slot_distance,
+            }};
+            break :blk try self.serializeParams(params);
+        } else null;
+        defer if (params_json) |value| self.allocator.free(value);
+
+        const response = if (params_json) |value| try self.sendRequest("getVoteAccounts", value) else try self.sendNoParamsRequest("getVoteAccounts");
         defer self.allocator.free(response);
 
         try self.captureRpcError(response);
@@ -1875,9 +1968,32 @@ pub const RpcClient = struct {
         return VoteAccounts{ .current = current, .delinquent = delinquent };
     }
 
-    pub fn getBlockProduction(self: *RpcClient, commitment: ?Commitment) !BlockProduction {
-        const params_json = if (commitment) |value| blk: {
-            const params = .{.{ .commitment = commitmentToString(value) }};
+    pub fn getVoteAccounts(self: *RpcClient) !VoteAccounts {
+        return try self.getVoteAccountsWithOptions(null);
+    }
+
+    pub fn getBlockProductionWithOptions(self: *RpcClient, options: ?BlockProductionQueryOptions) !BlockProduction {
+        const BlockProductionConfig = struct {
+            commitment: ?[]const u8 = null,
+            identity: ?[]const u8 = null,
+            range: ?struct {
+                firstSlot: u64,
+                lastSlot: ?u64 = null,
+            } = null,
+        };
+
+        const params_json = if (options) |value| blk: {
+            const params = .{BlockProductionConfig{
+                .commitment = if (value.commitment) |entry| commitmentToString(entry) else null,
+                .identity = value.identity,
+                .range = if (value.first_slot) |first_slot|
+                    .{
+                        .firstSlot = first_slot,
+                        .lastSlot = value.last_slot,
+                    }
+                else
+                    null,
+            }};
             break :blk try self.serializeParams(params);
         } else null;
         defer if (params_json) |params| self.allocator.free(params);
@@ -1937,6 +2053,13 @@ pub const RpcClient = struct {
             .last_slot = range.lastSlot,
             .by_identity = by_identity,
         };
+    }
+
+    pub fn getBlockProduction(self: *RpcClient, commitment: ?Commitment) !BlockProduction {
+        return try self.getBlockProductionWithOptions(if (commitment) |value|
+            BlockProductionQueryOptions{ .commitment = value }
+        else
+            null);
     }
 
     pub fn isBlockhashValid(self: *RpcClient, blockhash: []const u8, commitment: ?Commitment) !bool {
@@ -2455,6 +2578,16 @@ test "root.getSupply params serialization" {
     defer allocator.free(params_json);
 
     try std.testing.expect(std.mem.indexOf(u8, params_json, "\"commitment\":\"processed\"") != null);
+
+    const with_option = .{.{
+        .commitment = commitmentToString(.confirmed),
+        .excludeNonCirculatingAccountsList = true,
+    }};
+    const with_option_json = try client.serializeParams(with_option);
+    defer allocator.free(with_option_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, with_option_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_option_json, "\"excludeNonCirculatingAccountsList\":true") != null);
 }
 
 test "root.getLargestAccounts params serialization" {
@@ -2471,6 +2604,15 @@ test "root.getLargestAccounts params serialization" {
     const with_commitment_json = try client.serializeParams(with_commitment);
     defer allocator.free(with_commitment_json);
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"confirmed\"") != null);
+
+    const with_filter = .{.{
+        .commitment = commitmentToString(.finalized),
+        .filter = largestAccountsFilterToString(.non_circulating),
+    }};
+    const with_filter_json = try client.serializeParams(with_filter);
+    defer allocator.free(with_filter_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_filter_json, "\"commitment\":\"finalized\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_filter_json, "\"filter\":\"nonCirculating\"") != null);
 }
 
 test "root.getTokenAccountBalance params serialization" {
@@ -3144,6 +3286,20 @@ test "root.getVoteAccounts params serialization" {
     defer allocator.free(params_json);
 
     try std.testing.expect(std.mem.eql(u8, params_json, "[]"));
+
+    const with_config = .{.{
+        .commitment = commitmentToString(.confirmed),
+        .votePubkey = "Vote111111111111111111111111111111111111111",
+        .keepUnstakedDelinquents = true,
+        .delinquentSlotDistance = @as(u64, 128),
+    }};
+    const with_config_json = try client.serializeParams(with_config);
+    defer allocator.free(with_config_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, with_config_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_config_json, "\"votePubkey\":\"Vote111111111111111111111111111111111111111\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_config_json, "\"keepUnstakedDelinquents\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_config_json, "\"delinquentSlotDistance\":128") != null);
 }
 
 test "root.getBlockProduction params serialization" {
@@ -3160,4 +3316,19 @@ test "root.getBlockProduction params serialization" {
     const with_commitment_json = try client.serializeParams(with_commitment);
     defer allocator.free(with_commitment_json);
     try std.testing.expect(std.mem.indexOf(u8, with_commitment_json, "\"commitment\":\"processed\"") != null);
+
+    const with_config = .{.{
+        .commitment = commitmentToString(.confirmed),
+        .identity = "Identity1111111111111111111111111111111111",
+        .range = .{
+            .firstSlot = @as(u64, 100),
+            .lastSlot = @as(u64, 200),
+        },
+    }};
+    const with_config_json = try client.serializeParams(with_config);
+    defer allocator.free(with_config_json);
+    try std.testing.expect(std.mem.indexOf(u8, with_config_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_config_json, "\"identity\":\"Identity1111111111111111111111111111111111\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_config_json, "\"firstSlot\":100") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_config_json, "\"lastSlot\":200") != null);
 }
