@@ -246,6 +246,14 @@ fn logsCallback(
     tracker.last_signature = notification.notification.value.signature;
 }
 
+fn slowLogsCallback(
+    context: ?*anyopaque,
+    notification: client.OwnedPubsubNotification(client.LogsNotificationValue),
+) void {
+    std.time.sleep(20 * std.time.ns_per_ms);
+    logsCallback(context, notification);
+}
+
 fn programCallback(
     context: ?*anyopaque,
     notification: client.OwnedPubsubNotification(client.ProgramNotificationValue),
@@ -2262,6 +2270,53 @@ test "root.PubsubClient logsSubscribeWithCallback invokes callback and unsubscri
         defer tracker.mutex.unlock();
         try std.testing.expectEqual(@as(usize, 1), tracker.count);
         try std.testing.expect(tracker.last_signature != null);
+    }
+
+    try std.testing.expect(app.logs_unsubscribe_seen);
+}
+
+test "root.PubsubClient logsSubscribeWithCallback reports droppedCount when queue overflows" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .subscription_queue_limit = 1,
+        .queue_overflow_policy = .drop_oldest,
+    });
+    defer pubsub.deinit();
+
+    var tracker = LogsCallbackTracker{};
+    {
+        var subscription = try pubsub.logsSubscribeWithCallback(
+            .all,
+            .{ .commitment = .confirmed },
+            &tracker,
+            slowLogsCallback,
+        );
+        defer subscription.deinit();
+
+        const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(2000 * std.time.ns_per_ms));
+        while (std.time.nanoTimestamp() < deadline) {
+            if (subscription.droppedCount() > 0) break;
+            std.Thread.sleep(5 * std.time.ns_per_ms);
+        }
+
+        tracker.mutex.lock();
+        defer tracker.mutex.unlock();
+        try std.testing.expect(tracker.count > 0);
+        try std.testing.expect(subscription.droppedCount() > 0);
     }
 
     try std.testing.expect(app.logs_unsubscribe_seen);
