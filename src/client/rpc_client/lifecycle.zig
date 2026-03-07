@@ -10,23 +10,9 @@ const MockResponse = mock_methods.MockResponse;
 const MockRequestHandler = mock_methods.MockRequestHandler;
 const MockSender = mock_methods.MockSender;
 const RequestSender = sender_methods.RequestSender;
-const RequestSenderRequest = sender_methods.RequestSenderRequest;
-
-fn mockRequestSenderCallback(
-    context_ptr: ?*anyopaque,
-    allocator: std.mem.Allocator,
-    request: RequestSenderRequest,
-) ![]u8 {
-    _ = allocator;
-    const sender: *MockSender = @ptrCast(@alignCast(context_ptr.?));
-    return sender.dispatchRequest(request.id, request.method, request.params_json, request.request_body);
-}
 
 pub fn makeMockRequestSender(sender: *MockSender) RequestSender {
-    return .{
-        .context = sender,
-        .callback = mockRequestSenderCallback,
-    };
+    return RequestSender.fromMockSender(sender);
 }
 
 pub fn initClient(

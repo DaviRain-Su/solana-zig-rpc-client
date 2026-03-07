@@ -2,6 +2,7 @@ const std = @import("std");
 const mock_methods = @import("./mock.zig");
 
 const Allocator = std.mem.Allocator;
+const MockSender = mock_methods.MockSender;
 
 pub const RequestSenderRequest = struct {
     id: u64,
@@ -15,10 +16,46 @@ pub const RequestSender = struct {
     callback: *const fn (context: ?*anyopaque, allocator: Allocator, request: RequestSenderRequest) anyerror![]u8,
     deinit_callback: ?*const fn (context: ?*anyopaque, allocator: Allocator) void = null,
 
+    pub fn fromMockSender(sender: *MockSender) RequestSender {
+        return .{
+            .context = sender,
+            .callback = mockSenderRequestCallback,
+        };
+    }
+
+    pub fn fromOwnedMockSender(allocator: Allocator, sender: MockSender) !RequestSender {
+        var owned_sender = sender;
+        errdefer owned_sender.deinit();
+
+        const sender_ptr = try allocator.create(MockSender);
+        sender_ptr.* = owned_sender;
+        return .{
+            .context = sender_ptr,
+            .callback = mockSenderRequestCallback,
+            .deinit_callback = ownedMockSenderDeinit,
+        };
+    }
+
     pub fn deinit(self: RequestSender, allocator: Allocator) void {
         if (self.deinit_callback) |callback| callback(self.context, allocator);
     }
 };
+
+fn mockSenderRequestCallback(
+    context_ptr: ?*anyopaque,
+    allocator: Allocator,
+    request: RequestSenderRequest,
+) ![]u8 {
+    _ = allocator;
+    const sender: *MockSender = @ptrCast(@alignCast(context_ptr.?));
+    return sender.dispatchRequest(request.id, request.method, request.params_json, request.request_body);
+}
+
+fn ownedMockSenderDeinit(context_ptr: ?*anyopaque, allocator: Allocator) void {
+    const sender: *MockSender = @ptrCast(@alignCast(context_ptr.?));
+    sender.deinit();
+    allocator.destroy(sender);
+}
 
 fn encodeJsonString(allocator: Allocator, value: []const u8) ![]u8 {
     var out = std.io.Writer.Allocating.init(allocator);

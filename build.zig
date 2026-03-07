@@ -25,6 +25,7 @@ fn createRootTestModule(
     root_source_file: []const u8,
     client_module: *std.Build.Module,
     root_test_support_module: *std.Build.Module,
+    request_sender_test_support_module: *std.Build.Module,
     websocket_module: *std.Build.Module,
 ) *std.Build.Module {
     return b.createModule(.{
@@ -34,6 +35,7 @@ fn createRootTestModule(
         .imports = &.{
             .{ .name = "solana_client_zig", .module = client_module },
             .{ .name = "root_test_support", .module = root_test_support_module },
+            .{ .name = "request_sender_test_support", .module = request_sender_test_support_module },
             .{ .name = "websocket", .module = websocket_module },
         },
     });
@@ -179,6 +181,15 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const request_sender_test_support_module = b.createModule(.{
+        .root_source_file = b.path("tests/support/request_sender_helpers.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "solana_client_zig", .module = mod },
+        },
+    });
+
     const root_test_sources = [_][]const u8{
         "tests/root/sdk.zig",
         "tests/root/ledger.zig",
@@ -199,6 +210,7 @@ pub fn build(b: *std.Build) void {
             source,
             mod,
             root_test_support_module,
+            request_sender_test_support_module,
             websocket_module,
         );
         run_root_tests[index] = addRunTestForModule(b, module);
@@ -225,14 +237,24 @@ pub fn build(b: *std.Build) void {
     // A run step that will run CLI-only tests.
     const run_cli_tests = b.addRunArtifact(cli_tests);
 
-    const commands_tests_module = createImportedModule(
-        b,
-        target,
-        optimize,
-        "src/commands.zig",
-        "solana_client_zig",
-        mod,
-    );
+    const command_test_support_module = b.createModule(.{
+        .root_source_file = b.path("tests/support/command_test_sender.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "solana_client_zig", .module = mod },
+        },
+    });
+
+    const commands_tests_module = b.createModule(.{
+        .root_source_file = b.path("src/commands.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "solana_client_zig", .module = mod },
+            .{ .name = "command_test_support", .module = command_test_support_module },
+        },
+    });
 
     const run_commands_tests = addRunTestForModule(b, commands_tests_module);
 
