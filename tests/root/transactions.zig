@@ -1207,6 +1207,177 @@ test "root.buildTransferSignedTransactionWithOptions supports nonce blockhash qu
     try std.testing.expect(std.mem.eql(u8, expected, encoded));
 }
 
+test "root.buildVersionedTransferSignedTransactionWithOptions fetches latest blockhash" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_public_key = destination_key_pair.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x12} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    const response_body = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":11}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":42}}}},\"id\":1}}",
+        .{recent_blockhash_base58},
+    );
+    defer allocator.free(response_body);
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockJsonResponse(response_body);
+
+    var signed = try rpc.buildVersionedTransferSignedTransactionWithOptions(
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        &.{},
+        .{ .blockhash_commitment = .confirmed },
+    );
+    defer signed.deinit(allocator);
+
+    const tx_bytes = try signed.serialize(allocator);
+    defer allocator.free(tx_bytes);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
+
+    const message = tx_bytes[1 + Ed25519.Signature.encoded_length ..];
+    try std.testing.expectEqual(@as(u8, 0x80), message[0]);
+    const recent_blockhash_offset = 1 + 3 + 1 + (3 * Ed25519.PublicKey.encoded_length);
+    try std.testing.expect(std.mem.eql(u8, message[recent_blockhash_offset .. recent_blockhash_offset + 32], &recent_blockhash));
+}
+
+test "root.sendVersionedTransferWithOptions resolves latest blockhash and sends" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_public_key = destination_key_pair.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x12} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    const latest_blockhash_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":11}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":42}}}},\"id\":1}}",
+        .{recent_blockhash_base58},
+    );
+    defer allocator.free(latest_blockhash_json);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = latest_blockhash_json },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"SigVersioned111111111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
+    });
+    defer rpc.deinit();
+
+    const signature = try rpc.sendVersionedTransferWithOptions(
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        &.{},
+        .{
+            .blockhash_commitment = .confirmed,
+            .send_transaction_options = .{
+                .skip_preflight = true,
+                .preflight_commitment = .confirmed,
+            },
+        },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigVersioned111111111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"preflightCommitment\":\"confirmed\"") != null);
+}
+
+test "root.versionedTransferWithOptions resolves blockhash and confirms" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_public_key = destination_key_pair.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x22} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockLatestBlockhashSendAndSignatureStatusPollFlow(
+        11,
+        recent_blockhash_base58,
+        42,
+        "SigVersionedConfirm111111111111111111111111111111111111111111111111111111111",
+        &.{
+            .{
+                .context_slot = 10,
+                .status = .{
+                    .slot = 10,
+                    .confirmations = 1,
+                    .confirmation_status = "finalized",
+                    .has_error = false,
+                },
+            },
+        },
+    );
+
+    const signature = try rpc.versionedTransferWithOptions(
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        &.{},
+        .{
+            .blockhash_commitment = .confirmed,
+            .send_transaction_options = .{
+                .skip_preflight = true,
+            },
+            .commitment = .confirmed,
+            .search_transaction_history = true,
+            .timeout_ms = 2_000,
+            .poll_interval_ms = 20,
+        },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigVersionedConfirm111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 3), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[1].method);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[2].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"searchTransactionHistory\":true") != null);
+}
+
 test "root.buildNonceTransferSignedTransactionWithOptions supports distinct payer sender and nonce authority" {
     const allocator = std.testing.allocator;
 
