@@ -2343,6 +2343,12 @@ test "root.PubsubClient slotSubscribeWithCallback invokes callback and unsubscri
         try std.testing.expect(subscription.getLastError() == null);
         subscription.clearLastError();
         try std.testing.expect(subscription.getLastError() == null);
+
+        const receiver = subscription.receiver();
+        try std.testing.expectEqual(subscription.subscriptionId(), receiver.subscriptionId());
+
+        const typed_receiver = subscription.typed(client.SlotNotificationValue);
+        try std.testing.expectEqual(receiver.subscriptionId(), typed_receiver.subscriptionId());
     }
 
     try std.testing.expect(app.slot_unsubscribe_seen);

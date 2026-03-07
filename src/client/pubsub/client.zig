@@ -825,6 +825,22 @@ pub const PubsubSlotsUpdatesSubscriptionWithCallback = struct {
         return self.subscription.closeReason();
     }
 
+    pub fn receiver(self: *Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn rawReceiver(self: *const Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn typedReceiver(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.subscription.typedReceiver(ValueType);
+    }
+
+    pub fn typed(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.typedReceiver(ValueType);
+    }
+
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
         return self.subscription.getLastError();
     }
@@ -897,6 +913,22 @@ pub const PubsubRootSubscriptionWithCallback = struct {
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.subscription.closeReason();
+    }
+
+    pub fn receiver(self: *Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn rawReceiver(self: *const Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn typedReceiver(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.subscription.typedReceiver(ValueType);
+    }
+
+    pub fn typed(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.typedReceiver(ValueType);
     }
 
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
@@ -973,6 +1005,22 @@ pub const PubsubVoteSubscriptionWithCallback = struct {
         return self.subscription.closeReason();
     }
 
+    pub fn receiver(self: *Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn rawReceiver(self: *const Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn typedReceiver(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.subscription.typedReceiver(ValueType);
+    }
+
+    pub fn typed(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.typedReceiver(ValueType);
+    }
+
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
         return self.subscription.getLastError();
     }
@@ -1045,6 +1093,22 @@ pub const PubsubBlockSubscriptionWithCallback = struct {
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.subscription.closeReason();
+    }
+
+    pub fn receiver(self: *Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn rawReceiver(self: *const Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn typedReceiver(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.subscription.typedReceiver(ValueType);
+    }
+
+    pub fn typed(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.typedReceiver(ValueType);
     }
 
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
@@ -1121,6 +1185,22 @@ pub const PubsubSignatureSubscriptionWithCallback = struct {
         return self.subscription.closeReason();
     }
 
+    pub fn receiver(self: *Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn rawReceiver(self: *const Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn typedReceiver(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.subscription.typedReceiver(ValueType);
+    }
+
+    pub fn typed(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.typedReceiver(ValueType);
+    }
+
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
         return self.subscription.getLastError();
     }
@@ -1193,6 +1273,22 @@ pub const PubsubAccountSubscriptionWithCallback = struct {
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.subscription.closeReason();
+    }
+
+    pub fn receiver(self: *Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn rawReceiver(self: *const Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn typedReceiver(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.subscription.typedReceiver(ValueType);
+    }
+
+    pub fn typed(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.typedReceiver(ValueType);
     }
 
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
@@ -1269,6 +1365,22 @@ pub const PubsubLogsSubscriptionWithCallback = struct {
         return self.subscription.closeReason();
     }
 
+    pub fn receiver(self: *Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn rawReceiver(self: *const Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn typedReceiver(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.subscription.typedReceiver(ValueType);
+    }
+
+    pub fn typed(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.typedReceiver(ValueType);
+    }
+
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
         return self.subscription.getLastError();
     }
@@ -1343,6 +1455,22 @@ pub const PubsubProgramSubscriptionWithCallback = struct {
         return self.subscription.closeReason();
     }
 
+    pub fn receiver(self: *Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn rawReceiver(self: *const Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn typedReceiver(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.subscription.typedReceiver(ValueType);
+    }
+
+    pub fn typed(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.typedReceiver(ValueType);
+    }
+
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
         return self.subscription.getLastError();
     }
@@ -1415,6 +1543,22 @@ pub const PubsubSlotSubscriptionWithCallback = struct {
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.subscription.closeReason();
+    }
+
+    pub fn receiver(self: *Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn rawReceiver(self: *const Self) PubsubReceiver {
+        return self.subscription.receiver();
+    }
+
+    pub fn typedReceiver(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.subscription.typedReceiver(ValueType);
+    }
+
+    pub fn typed(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.typedReceiver(ValueType);
     }
 
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
