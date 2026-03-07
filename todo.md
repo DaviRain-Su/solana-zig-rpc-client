@@ -1,7 +1,7 @@
 # solana-client-zig TODO
 
 Snapshot: 2026-03-07
-Current commit: `1960a78`
+Current commit: `322a77a`
 
 ## Purpose
 
@@ -12,6 +12,10 @@ Primary upstream references:
 
 - `agave/client`: <https://github.com/anza-xyz/agave/tree/master/client>
 - `agave/rpc-client`: <https://github.com/anza-xyz/agave/tree/master/rpc-client>
+- `agave/pubsub-client`: <https://github.com/anza-xyz/agave/tree/master/pubsub-client>
+- `agave/rpc-client-nonce-utils`: <https://github.com/anza-xyz/agave/tree/master/rpc-client-nonce-utils>
+- `agave/connection-cache`: <https://github.com/anza-xyz/agave/tree/master/connection-cache>
+- `agave/send-transaction-service`: <https://github.com/anza-xyz/agave/tree/master/send-transaction-service>
 - `rpc-client/src/rpc_client.rs`: <https://github.com/anza-xyz/agave/blob/master/rpc-client/src/rpc_client.rs>
 - `client/src/lib.rs`: <https://github.com/anza-xyz/agave/blob/master/client/src/lib.rs>
 
@@ -32,8 +36,12 @@ to the full `client` crate.
 That distinction matters:
 
 - `rpc-client` is mostly JSON-RPC request/response, polling, and convenience wrappers.
-- `client` also includes TPU/QUIC sending, connection cache, async/nonblocking,
-  pubsub, nonce helpers, and parallel transaction execution.
+- Agave's broader "client stack" also includes sibling crates such as
+  `pubsub-client`, `rpc-client-nonce-utils`, `connection-cache`, and
+  `send-transaction-service`, not just the `client/` directory itself.
+- So parity with modern Agave client behavior is spread across blocking RPC,
+  websocket pubsub, nonce helpers, mock/test sender surfaces, and the heavier
+  TPU/QUIC/background-send layers.
 
 So "feature parity with Rust client" should be read in two layers:
 
@@ -71,15 +79,15 @@ So "feature parity with Rust client" should be read in two layers:
 
 ## Comparison Summary
 
-### Module-Level Parity
+### Crate / Module-Level Parity
 
-| Rust module | Status in Zig | Notes |
+| Agave crate / module | Status in Zig | Notes |
 | --- | --- | --- |
 | `rpc_client` | Mostly implemented | Core blocking RPC surface is largely present and now split across `src/client/rpc_client/*.zig`. |
 | `rpc_config` / `rpc_filter` / `rpc_request` / `rpc_response` / `rpc_custom_error` | Partially implemented | Zig has many equivalent structs/options, but not a full Rust-style public module layout. |
 | `blockhash_query` | Partially implemented | Minimal `BlockhashQuery` / `resolveBlockhashQuery` support now exists, but the broader Rust helper surface is still incomplete. |
 | `nonce_utils` | Partially implemented | Nonce account parsing, nonce blockhash lookup, durable nonce system instruction helpers (`advance` / `initialize` / `authorize` / `withdraw`), nonce-aware typed builders, and higher-level blocking RPC convenience for both durable nonce transfer and nonce account lifecycle operations now exist, including signed/base64/send/send-and-confirm helper families, a flexible legacy nonce transfer path with distinct fee payer, sender, and nonce authority, and standalone lifecycle helpers for `advance` / `initialize` / `authorize` / `withdraw`; the broader durable-nonce utility surface is still incomplete. |
-| `pubsub_client` | Partially implemented | A minimal websocket-based pubsub client now exists with `signatureSubscribe`, `logsSubscribe`, `accountSubscribe`, `programSubscribe`, `slotSubscribe`, `rootSubscribe`, `slotsUpdatesSubscribe`, `voteSubscribe`, and `blockSubscribe`, plus subscription dispatch, typed notification helpers, typed subscription/channel convenience, public typed receiver views with timeout and unsubscribe/lifecycle access, summary typed helpers for `signature`/`logs`/`account`/`program`/`block`, stronger typed `block` notifications for `transactionDetails=signatures`, `transactionDetails=accounts`, and `transactionDetails=full`, including deeper full-transaction counts for account keys, instructions, address table lookups, and loaded addresses; account/program summaries including common `parsed.info` fields, bounded per-subscription queues with overflow policies and close reasons, heartbeat ping/pong keepalive, reconnect backoff, automatic reconnect/re-subscribe support, explicit subscribe/unsubscribe RPC error propagation, per-subscription `last error` tracking, and reconnect-aware local unsubscribe semantics, all covered by integration tests; the broader Rust pubsub surface is still incomplete. |
+| `pubsub_client` | Partially implemented | A minimal websocket-based pubsub client now exists with `signatureSubscribe`, `logsSubscribe`, `accountSubscribe`, `programSubscribe`, `slotSubscribe`, `rootSubscribe`, `slotsUpdatesSubscribe`, `voteSubscribe`, and `blockSubscribe`, plus subscription dispatch, typed notification helpers, typed subscription/channel convenience, public typed receiver views with timeout and unsubscribe/lifecycle access, `waitClosed` / `waitClosedTimeout` lifecycle waiting, public `subscriptionId()` access on subscription/receiver/typed handles, typed `withReceiver` convenience handles, direct typed notification helpers on `withReceiver` handles, safer raw receiver/subscription access on typed handles, summary typed helpers for `signature`/`logs`/`account`/`program`/`block`, stronger typed `block` notifications for `transactionDetails=signatures`, `transactionDetails=accounts`, and `transactionDetails=full`, including deeper full-transaction counts for account keys, instructions, address table lookups, and loaded addresses; account/program summaries including common `parsed.info` fields, bounded per-subscription queues with overflow policies and close reasons, heartbeat ping/pong keepalive, reconnect backoff, automatic reconnect/re-subscribe support, explicit subscribe/unsubscribe RPC error propagation, per-subscription `last error` tracking, and reconnect-aware local unsubscribe semantics, all covered by integration tests; the broader Rust pubsub surface is still incomplete. |
 | `nonblocking` | Not implemented | No async RPC client surface. |
 | `connection_cache` | Not implemented | No QUIC/UDP connection cache abstraction. |
 | `tpu_client` | Not implemented | No direct-to-leader TPU sending path. |
@@ -179,7 +187,7 @@ core escape hatch itself:
 - broader parity in the request identifier catalog
 - deeper integration of the raw layer into all convenience paths
 
-### 5. Agave `client` Transport Stack Is Largely Unstarted
+### 5. Agave Client Transport Stack Is Still Largely Unstarted
 
 The following are still absent and should be treated as a separate effort:
 
@@ -187,8 +195,13 @@ The following are still absent and should be treated as a separate effort:
 - TPU client
 - pending transaction executor
 - parallel send-and-confirm helpers
-- pubsub websocket client
 - async/nonblocking client
+
+What is no longer absent:
+
+- a minimal websocket-based pubsub client now exists and is usable
+- nonce/blockhash-query helpers now exist in minimal blocking form
+- mock/test sender infrastructure is now much stronger than the original HTTP-only mock server approach
 
 ## Next-Stage Implementation Checklist
 
@@ -256,12 +269,15 @@ These items are valid Agave features, but they should not be the next thing:
   `rootSubscribe` / `slotsUpdatesSubscribe` / `voteSubscribe` /
   `blockSubscribe` is now in place, and basic automatic reconnect/re-subscribe
   is now implemented. receiver views, timeout-based receive convenience,
-  public typed receiver views, and typed subscription/channel helpers now exist
-  too, including a stronger typed block summary path above the raw block
+  public typed receiver views, `waitClosed` / `waitClosedTimeout` lifecycle
+  waiting, public `subscriptionId()` access on subscription/receiver/typed
+  handles, typed `withReceiver` convenience handles, direct typed notification
+  helpers on `withReceiver` handles, and typed subscription/channel helpers now
+  exist too, including a stronger typed block summary path above the raw block
   notification payload and stronger account/program summary paths above the raw
   json-parsed notification payloads, including common `parsed.info` fields for
-  nonce and token-account style data. still missing broader subscription coverage,
-  and a more Rust-like receiver/channel surface.
+  nonce and token-account style data. still missing broader subscription
+  coverage, and a more Rust-like receiver/channel surface.
 - [ ] `nonblocking` async client
 - [ ] `connection_cache`
 - [ ] `tpu_client`

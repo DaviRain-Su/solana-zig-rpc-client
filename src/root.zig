@@ -242,4 +242,5 @@ pub const PubsubSubscription = pubsub_client.PubsubSubscription;
 pub const PubsubReceiver = pubsub_client.PubsubReceiver;
 pub const TypedPubsubReceiver = pubsub_client.TypedPubsubReceiver;
 pub const PubsubSubscriptionWithReceiver = pubsub_client.PubsubSubscriptionWithReceiver;
+pub const TypedPubsubSubscriptionWithReceiver = pubsub_client.TypedPubsubSubscriptionWithReceiver;
 pub const TypedPubsubSubscription = pubsub_client.TypedPubsubSubscription;

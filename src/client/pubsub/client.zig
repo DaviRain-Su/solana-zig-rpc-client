@@ -133,6 +133,12 @@ pub const PubsubSubscription = struct {
         return .{ .subscription = self };
     }
 
+    pub fn subscriptionId(self: *Self) u64 {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        return self.id;
+    }
+
     pub fn typedReceiver(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
         return self.receiver().typedReceiver(ValueType);
     }
@@ -146,6 +152,37 @@ pub const PubsubSubscription = struct {
     pub fn closeReason(self: *Self) PubsubCloseReason {
         self.mutex.lock();
         defer self.mutex.unlock();
+        return self.close_reason;
+    }
+
+    pub fn waitClosed(self: *Self) PubsubCloseReason {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        while (!self.closed) {
+            self.cond.wait(&self.mutex);
+        }
+
+        return self.close_reason;
+    }
+
+    pub fn waitClosedTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseReason {
+        const timeout_ns = timeout_ms * std.time.ns_per_ms;
+        const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ns));
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        while (!self.closed) {
+            const now = std.time.nanoTimestamp();
+            if (now >= deadline) return error.Timeout;
+
+            const remaining_ns = @as(u64, @intCast(deadline - now));
+            self.cond.timedWait(&self.mutex, remaining_ns) catch |err| switch (err) {
+                error.Timeout => if (!self.closed) return error.Timeout,
+            };
+        }
+
         return self.close_reason;
     }
 
@@ -455,12 +492,24 @@ pub const PubsubReceiver = struct {
         return self.subscription.queuedCount();
     }
 
+    pub fn subscriptionId(self: *Self) u64 {
+        return self.subscription.subscriptionId();
+    }
+
     pub fn droppedCount(self: *const Self) usize {
         return self.subscription.droppedCount();
     }
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.subscription.closeReason();
+    }
+
+    pub fn waitClosed(self: *Self) PubsubCloseReason {
+        return self.subscription.waitClosed();
+    }
+
+    pub fn waitClosedTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseReason {
+        return self.subscription.waitClosedTimeout(timeout_ms);
     }
 
     pub fn typedReceiver(self: *const Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
@@ -785,12 +834,24 @@ pub fn TypedPubsubReceiver(comptime ValueType: type) type {
             return self.receiver.queuedCount();
         }
 
+        pub fn subscriptionId(self: *Self) u64 {
+            return self.receiver.subscriptionId();
+        }
+
         pub fn droppedCount(self: *const Self) usize {
             return self.receiver.droppedCount();
         }
 
         pub fn closeReason(self: *const Self) PubsubCloseReason {
             return self.receiver.closeReason();
+        }
+
+        pub fn waitClosed(self: *Self) PubsubCloseReason {
+            return self.receiver.waitClosed();
+        }
+
+        pub fn waitClosedTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseReason {
+            return self.receiver.waitClosedTimeout(timeout_ms);
         }
 
         pub fn getLastError(self: *Self) ?RpcErrorDetail {
@@ -841,12 +902,24 @@ pub const PubsubSubscriptionWithReceiver = struct {
         return self.receiver.queuedCount();
     }
 
+    pub fn subscriptionId(self: *Self) u64 {
+        return self.subscription.subscriptionId();
+    }
+
     pub fn droppedCount(self: *const Self) usize {
         return self.receiver.droppedCount();
     }
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.receiver.closeReason();
+    }
+
+    pub fn waitClosed(self: *Self) PubsubCloseReason {
+        return self.receiver.waitClosed();
+    }
+
+    pub fn waitClosedTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseReason {
+        return self.receiver.waitClosedTimeout(timeout_ms);
     }
 
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
@@ -857,8 +930,302 @@ pub const PubsubSubscriptionWithReceiver = struct {
         self.subscription.clearLastError();
     }
 
+    pub fn rawReceiver(self: *const Self) PubsubReceiver {
+        return self.receiver;
+    }
+
+    pub fn recv(self: *Self) ![]u8 {
+        return self.receiver.recv();
+    }
+
+    pub fn tryRecv(self: *Self) ?[]u8 {
+        return self.receiver.tryRecv();
+    }
+
+    pub fn recvTimeout(self: *Self, timeout_ms: u64) error{ Closed, Timeout }![]u8 {
+        return self.receiver.recvTimeout(timeout_ms);
+    }
+
+    pub fn recvParsed(self: *Self, comptime ValueType: type) !pubsub_types.OwnedPubsubNotification(ValueType) {
+        return self.receiver.recvParsed(ValueType);
+    }
+
+    pub fn tryRecvParsed(self: *Self, comptime ValueType: type) !?pubsub_types.OwnedPubsubNotification(ValueType) {
+        return self.receiver.tryRecvParsed(ValueType);
+    }
+
+    pub fn recvParsedTimeout(
+        self: *Self,
+        comptime ValueType: type,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(ValueType) {
+        return self.receiver.recvParsedTimeout(ValueType, timeout_ms);
+    }
+
+    pub fn recvSignatureNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.SignatureNotificationValue) {
+        return self.receiver.recvSignatureNotification();
+    }
+
+    pub fn tryRecvSignatureNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.SignatureNotificationValue) {
+        return self.receiver.tryRecvSignatureNotification();
+    }
+
+    pub fn recvSignatureNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.SignatureNotificationValue) {
+        return self.receiver.recvSignatureNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvSignatureSummaryNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.SignatureNotificationSummaryValue) {
+        return self.receiver.recvSignatureSummaryNotification();
+    }
+
+    pub fn tryRecvSignatureSummaryNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.SignatureNotificationSummaryValue) {
+        return self.receiver.tryRecvSignatureSummaryNotification();
+    }
+
+    pub fn recvSignatureSummaryNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.SignatureNotificationSummaryValue) {
+        return self.receiver.recvSignatureSummaryNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvAccountNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.AccountNotificationValue) {
+        return self.receiver.recvAccountNotification();
+    }
+
+    pub fn tryRecvAccountNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.AccountNotificationValue) {
+        return self.receiver.tryRecvAccountNotification();
+    }
+
+    pub fn recvAccountNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.AccountNotificationValue) {
+        return self.receiver.recvAccountNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvAccountSummaryNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.AccountNotificationSummaryValue) {
+        return self.receiver.recvAccountSummaryNotification();
+    }
+
+    pub fn tryRecvAccountSummaryNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.AccountNotificationSummaryValue) {
+        return self.receiver.tryRecvAccountSummaryNotification();
+    }
+
+    pub fn recvAccountSummaryNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.AccountNotificationSummaryValue) {
+        return self.receiver.recvAccountSummaryNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvLogsNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.LogsNotificationValue) {
+        return self.receiver.recvLogsNotification();
+    }
+
+    pub fn tryRecvLogsNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.LogsNotificationValue) {
+        return self.receiver.tryRecvLogsNotification();
+    }
+
+    pub fn recvLogsNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.LogsNotificationValue) {
+        return self.receiver.recvLogsNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvLogsSummaryNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.LogsNotificationSummaryValue) {
+        return self.receiver.recvLogsSummaryNotification();
+    }
+
+    pub fn tryRecvLogsSummaryNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.LogsNotificationSummaryValue) {
+        return self.receiver.tryRecvLogsSummaryNotification();
+    }
+
+    pub fn recvLogsSummaryNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.LogsNotificationSummaryValue) {
+        return self.receiver.recvLogsSummaryNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvProgramNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.ProgramNotificationValue) {
+        return self.receiver.recvProgramNotification();
+    }
+
+    pub fn tryRecvProgramNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.ProgramNotificationValue) {
+        return self.receiver.tryRecvProgramNotification();
+    }
+
+    pub fn recvProgramNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.ProgramNotificationValue) {
+        return self.receiver.recvProgramNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvProgramSummaryNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.ProgramNotificationSummaryValue) {
+        return self.receiver.recvProgramSummaryNotification();
+    }
+
+    pub fn tryRecvProgramSummaryNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.ProgramNotificationSummaryValue) {
+        return self.receiver.tryRecvProgramSummaryNotification();
+    }
+
+    pub fn recvProgramSummaryNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.ProgramNotificationSummaryValue) {
+        return self.receiver.recvProgramSummaryNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvSlotNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.SlotNotificationValue) {
+        return self.receiver.recvSlotNotification();
+    }
+
+    pub fn tryRecvSlotNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.SlotNotificationValue) {
+        return self.receiver.tryRecvSlotNotification();
+    }
+
+    pub fn recvSlotNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.SlotNotificationValue) {
+        return self.receiver.recvSlotNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvRootNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.RootNotificationValue) {
+        return self.receiver.recvRootNotification();
+    }
+
+    pub fn tryRecvRootNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.RootNotificationValue) {
+        return self.receiver.tryRecvRootNotification();
+    }
+
+    pub fn recvRootNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.RootNotificationValue) {
+        return self.receiver.recvRootNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvSlotsUpdatesNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.SlotsUpdatesNotificationValue) {
+        return self.receiver.recvSlotsUpdatesNotification();
+    }
+
+    pub fn tryRecvSlotsUpdatesNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.SlotsUpdatesNotificationValue) {
+        return self.receiver.tryRecvSlotsUpdatesNotification();
+    }
+
+    pub fn recvSlotsUpdatesNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.SlotsUpdatesNotificationValue) {
+        return self.receiver.recvSlotsUpdatesNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvVoteNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.VoteNotificationValue) {
+        return self.receiver.recvVoteNotification();
+    }
+
+    pub fn tryRecvVoteNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.VoteNotificationValue) {
+        return self.receiver.tryRecvVoteNotification();
+    }
+
+    pub fn recvVoteNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.VoteNotificationValue) {
+        return self.receiver.recvVoteNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvBlockNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationValue) {
+        return self.receiver.recvBlockNotification();
+    }
+
+    pub fn tryRecvBlockNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationValue) {
+        return self.receiver.tryRecvBlockNotification();
+    }
+
+    pub fn recvBlockNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationValue) {
+        return self.receiver.recvBlockNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvBlockSignaturesNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationSignaturesValue) {
+        return self.receiver.recvBlockSignaturesNotification();
+    }
+
+    pub fn tryRecvBlockSignaturesNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationSignaturesValue) {
+        return self.receiver.tryRecvBlockSignaturesNotification();
+    }
+
+    pub fn recvBlockSignaturesNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationSignaturesValue) {
+        return self.receiver.recvBlockSignaturesNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvBlockAccountsNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationAccountsValue) {
+        return self.receiver.recvBlockAccountsNotification();
+    }
+
+    pub fn tryRecvBlockAccountsNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationAccountsValue) {
+        return self.receiver.tryRecvBlockAccountsNotification();
+    }
+
+    pub fn recvBlockAccountsNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationAccountsValue) {
+        return self.receiver.recvBlockAccountsNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvBlockTransactionSummariesNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationTransactionSummariesValue) {
+        return self.receiver.recvBlockTransactionSummariesNotification();
+    }
+
+    pub fn tryRecvBlockTransactionSummariesNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationTransactionSummariesValue) {
+        return self.receiver.tryRecvBlockTransactionSummariesNotification();
+    }
+
+    pub fn recvBlockTransactionSummariesNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationTransactionSummariesValue) {
+        return self.receiver.recvBlockTransactionSummariesNotificationTimeout(timeout_ms);
+    }
+
+    pub fn recvBlockSummaryNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationSummaryValue) {
+        return self.receiver.recvBlockSummaryNotification();
+    }
+
+    pub fn tryRecvBlockSummaryNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationSummaryValue) {
+        return self.receiver.tryRecvBlockSummaryNotification();
+    }
+
+    pub fn recvBlockSummaryNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationSummaryValue) {
+        return self.receiver.recvBlockSummaryNotificationTimeout(timeout_ms);
+    }
+
     pub fn typedReceiver(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
         return self.receiver.typedReceiver(ValueType);
+    }
+
+    pub fn typed(self: *Self, comptime ValueType: type) TypedPubsubSubscriptionWithReceiver(ValueType) {
+        return .{
+            .subscription = self.subscription,
+            .receiver = self.receiver.typedReceiver(ValueType),
+        };
     }
 
     pub fn unsubscribe(self: *Self) !bool {
@@ -870,6 +1237,80 @@ pub const PubsubSubscriptionWithReceiver = struct {
         self.* = undefined;
     }
 };
+
+pub fn TypedPubsubSubscriptionWithReceiver(comptime ValueType: type) type {
+    return struct {
+        subscription: *PubsubSubscription,
+        receiver: TypedPubsubReceiver(ValueType),
+
+        const Self = @This();
+
+        pub fn isClosed(self: *const Self) bool {
+            return self.subscription.isClosed();
+        }
+
+        pub fn queuedCount(self: *const Self) usize {
+            return self.receiver.queuedCount();
+        }
+
+        pub fn subscriptionId(self: *Self) u64 {
+            return self.receiver.subscriptionId();
+        }
+
+        pub fn droppedCount(self: *const Self) usize {
+            return self.receiver.droppedCount();
+        }
+
+        pub fn closeReason(self: *const Self) PubsubCloseReason {
+            return self.receiver.closeReason();
+        }
+
+        pub fn waitClosed(self: *Self) PubsubCloseReason {
+            return self.receiver.waitClosed();
+        }
+
+        pub fn waitClosedTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseReason {
+            return self.receiver.waitClosedTimeout(timeout_ms);
+        }
+
+        pub fn getLastError(self: *Self) ?RpcErrorDetail {
+            return self.receiver.getLastError();
+        }
+
+        pub fn clearLastError(self: *Self) void {
+            self.receiver.clearLastError();
+        }
+
+        pub fn recv(self: *Self) !pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.receiver.recv();
+        }
+
+        pub fn tryRecv(self: *Self) !?pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.receiver.tryRecv();
+        }
+
+        pub fn recvTimeout(self: *Self, timeout_ms: u64) !pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.receiver.recvTimeout(timeout_ms);
+        }
+
+        pub fn unsubscribe(self: *Self) !bool {
+            return self.subscription.unsubscribe();
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.subscription.deinit();
+            self.* = undefined;
+        }
+
+        pub fn rawSubscription(self: *const Self) *PubsubSubscription {
+            return self.subscription;
+        }
+
+        pub fn rawReceiver(self: *const Self) TypedPubsubReceiver(ValueType) {
+            return self.receiver;
+        }
+    };
+}
 
 pub fn TypedPubsubSubscription(comptime ValueType: type) type {
     return struct {
@@ -886,12 +1327,24 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
             return self.receiver.queuedCount();
         }
 
+        pub fn subscriptionId(self: *Self) u64 {
+            return self.receiver.subscriptionId();
+        }
+
         pub fn droppedCount(self: *const Self) usize {
             return self.receiver.droppedCount();
         }
 
         pub fn closeReason(self: *const Self) PubsubCloseReason {
             return self.receiver.closeReason();
+        }
+
+        pub fn waitClosed(self: *Self) PubsubCloseReason {
+            return self.receiver.waitClosed();
+        }
+
+        pub fn waitClosedTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseReason {
+            return self.receiver.waitClosedTimeout(timeout_ms);
         }
 
         pub fn getLastError(self: *Self) ?RpcErrorDetail {
@@ -1891,6 +2344,16 @@ pub const PubsubClient = struct {
         };
     }
 
+    fn typedSubscriptionWithReceiver(
+        comptime ValueType: type,
+        subscription: *PubsubSubscription,
+    ) TypedPubsubSubscriptionWithReceiver(ValueType) {
+        return .{
+            .subscription = subscription,
+            .receiver = subscription.typedReceiver(ValueType),
+        };
+    }
+
     pub fn init(allocator: Allocator, endpoint: []const u8) !Self {
         return Self.initWithOptions(allocator, endpoint, .{});
     }
@@ -1964,6 +2427,22 @@ pub const PubsubClient = struct {
         return .{ .subscription = subscription, .receiver = subscription.receiver() };
     }
 
+    pub fn signatureSubscribeWithTypedReceiver(
+        self: *Self,
+        signature: []const u8,
+        options: SignatureSubscribeOptions,
+    ) !TypedPubsubSubscriptionWithReceiver(pubsub_types.SignatureNotificationValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.SignatureNotificationValue, try self.signatureSubscribe(signature, options));
+    }
+
+    pub fn signatureSubscribeSummaryWithTypedReceiver(
+        self: *Self,
+        signature: []const u8,
+        options: SignatureSubscribeOptions,
+    ) !TypedPubsubSubscriptionWithReceiver(pubsub_types.SignatureNotificationSummaryValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.SignatureNotificationSummaryValue, try self.signatureSubscribe(signature, options));
+    }
+
     pub fn signatureSubscribeTyped(
         self: *Self,
         signature: []const u8,
@@ -1995,6 +2474,22 @@ pub const PubsubClient = struct {
     ) !PubsubSubscriptionWithReceiver {
         const subscription = try self.accountSubscribe(account, options);
         return .{ .subscription = subscription, .receiver = subscription.receiver() };
+    }
+
+    pub fn accountSubscribeWithTypedReceiver(
+        self: *Self,
+        account: []const u8,
+        options: AccountSubscribeOptions,
+    ) !TypedPubsubSubscriptionWithReceiver(pubsub_types.AccountNotificationValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.AccountNotificationValue, try self.accountSubscribe(account, options));
+    }
+
+    pub fn accountSubscribeSummaryWithTypedReceiver(
+        self: *Self,
+        account: []const u8,
+        options: AccountSubscribeOptions,
+    ) !TypedPubsubSubscriptionWithReceiver(pubsub_types.AccountNotificationSummaryValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.AccountNotificationSummaryValue, try self.accountSubscribe(account, options));
     }
 
     pub fn accountSubscribeTyped(
@@ -2030,6 +2525,22 @@ pub const PubsubClient = struct {
         return .{ .subscription = subscription, .receiver = subscription.receiver() };
     }
 
+    pub fn logsSubscribeWithTypedReceiver(
+        self: *Self,
+        filter: LogsSubscribeFilter,
+        options: LogsSubscribeOptions,
+    ) !TypedPubsubSubscriptionWithReceiver(pubsub_types.LogsNotificationValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.LogsNotificationValue, try self.logsSubscribe(filter, options));
+    }
+
+    pub fn logsSubscribeSummaryWithTypedReceiver(
+        self: *Self,
+        filter: LogsSubscribeFilter,
+        options: LogsSubscribeOptions,
+    ) !TypedPubsubSubscriptionWithReceiver(pubsub_types.LogsNotificationSummaryValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.LogsNotificationSummaryValue, try self.logsSubscribe(filter, options));
+    }
+
     pub fn logsSubscribeTyped(
         self: *Self,
         filter: LogsSubscribeFilter,
@@ -2063,6 +2574,22 @@ pub const PubsubClient = struct {
         return .{ .subscription = subscription, .receiver = subscription.receiver() };
     }
 
+    pub fn programSubscribeWithTypedReceiver(
+        self: *Self,
+        program_id: []const u8,
+        options: ProgramSubscribeOptions,
+    ) !TypedPubsubSubscriptionWithReceiver(pubsub_types.ProgramNotificationValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.ProgramNotificationValue, try self.programSubscribe(program_id, options));
+    }
+
+    pub fn programSubscribeSummaryWithTypedReceiver(
+        self: *Self,
+        program_id: []const u8,
+        options: ProgramSubscribeOptions,
+    ) !TypedPubsubSubscriptionWithReceiver(pubsub_types.ProgramNotificationSummaryValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.ProgramNotificationSummaryValue, try self.programSubscribe(program_id, options));
+    }
+
     pub fn programSubscribeTyped(
         self: *Self,
         program_id: []const u8,
@@ -2088,6 +2615,10 @@ pub const PubsubClient = struct {
         return .{ .subscription = subscription, .receiver = subscription.receiver() };
     }
 
+    pub fn slotSubscribeWithTypedReceiver(self: *Self) !TypedPubsubSubscriptionWithReceiver(pubsub_types.SlotNotificationValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.SlotNotificationValue, try self.slotSubscribe());
+    }
+
     pub fn slotSubscribeTyped(self: *Self) !TypedPubsubSubscription(pubsub_types.SlotNotificationValue) {
         return typedSubscription(pubsub_types.SlotNotificationValue, try self.slotSubscribe());
     }
@@ -2099,6 +2630,10 @@ pub const PubsubClient = struct {
     pub fn rootSubscribeWithReceiver(self: *Self) !PubsubSubscriptionWithReceiver {
         const subscription = try self.rootSubscribe();
         return .{ .subscription = subscription, .receiver = subscription.receiver() };
+    }
+
+    pub fn rootSubscribeWithTypedReceiver(self: *Self) !TypedPubsubSubscriptionWithReceiver(pubsub_types.RootNotificationValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.RootNotificationValue, try self.rootSubscribe());
     }
 
     pub fn rootSubscribeTyped(self: *Self) !TypedPubsubSubscription(pubsub_types.RootNotificationValue) {
@@ -2114,6 +2649,10 @@ pub const PubsubClient = struct {
         return .{ .subscription = subscription, .receiver = subscription.receiver() };
     }
 
+    pub fn slotsUpdatesSubscribeWithTypedReceiver(self: *Self) !TypedPubsubSubscriptionWithReceiver(pubsub_types.SlotsUpdatesNotificationValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.SlotsUpdatesNotificationValue, try self.slotsUpdatesSubscribe());
+    }
+
     pub fn slotsUpdatesSubscribeTyped(self: *Self) !TypedPubsubSubscription(pubsub_types.SlotsUpdatesNotificationValue) {
         return typedSubscription(pubsub_types.SlotsUpdatesNotificationValue, try self.slotsUpdatesSubscribe());
     }
@@ -2125,6 +2664,10 @@ pub const PubsubClient = struct {
     pub fn voteSubscribeWithReceiver(self: *Self) !PubsubSubscriptionWithReceiver {
         const subscription = try self.voteSubscribe();
         return .{ .subscription = subscription, .receiver = subscription.receiver() };
+    }
+
+    pub fn voteSubscribeWithTypedReceiver(self: *Self) !TypedPubsubSubscriptionWithReceiver(pubsub_types.VoteNotificationValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.VoteNotificationValue, try self.voteSubscribe());
     }
 
     pub fn voteSubscribeTyped(self: *Self) !TypedPubsubSubscription(pubsub_types.VoteNotificationValue) {
@@ -2146,6 +2689,46 @@ pub const PubsubClient = struct {
     ) !PubsubSubscriptionWithReceiver {
         const subscription = try self.blockSubscribe(filter, options);
         return .{ .subscription = subscription, .receiver = subscription.receiver() };
+    }
+
+    pub fn blockSubscribeWithTypedReceiver(
+        self: *Self,
+        filter: BlockSubscribeFilter,
+        options: BlockSubscribeOptions,
+    ) !TypedPubsubSubscriptionWithReceiver(pubsub_types.BlockNotificationValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.BlockNotificationValue, try self.blockSubscribe(filter, options));
+    }
+
+    pub fn blockSubscribeSignaturesWithTypedReceiver(
+        self: *Self,
+        filter: BlockSubscribeFilter,
+        options: BlockSubscribeOptions,
+    ) !TypedPubsubSubscriptionWithReceiver(pubsub_types.BlockNotificationSignaturesValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.BlockNotificationSignaturesValue, try self.blockSubscribe(filter, options));
+    }
+
+    pub fn blockSubscribeAccountsWithTypedReceiver(
+        self: *Self,
+        filter: BlockSubscribeFilter,
+        options: BlockSubscribeOptions,
+    ) !TypedPubsubSubscriptionWithReceiver(pubsub_types.BlockNotificationAccountsValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.BlockNotificationAccountsValue, try self.blockSubscribe(filter, options));
+    }
+
+    pub fn blockSubscribeTransactionSummariesWithTypedReceiver(
+        self: *Self,
+        filter: BlockSubscribeFilter,
+        options: BlockSubscribeOptions,
+    ) !TypedPubsubSubscriptionWithReceiver(pubsub_types.BlockNotificationTransactionSummariesValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.BlockNotificationTransactionSummariesValue, try self.blockSubscribe(filter, options));
+    }
+
+    pub fn blockSubscribeSummaryWithTypedReceiver(
+        self: *Self,
+        filter: BlockSubscribeFilter,
+        options: BlockSubscribeOptions,
+    ) !TypedPubsubSubscriptionWithReceiver(pubsub_types.BlockNotificationSummaryValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.BlockNotificationSummaryValue, try self.blockSubscribe(filter, options));
     }
 
     pub fn blockSubscribeTyped(

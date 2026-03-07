@@ -1717,7 +1717,7 @@ test "root.PubsubClient subscribeWithReceiver convenience returns handle and rec
     );
     defer subscribed.subscription.deinit();
 
-    var notification = try subscribed.receiver.recvLogsNotificationTimeout(1000);
+    var notification = try subscribed.recvLogsNotificationTimeout(1000);
     defer notification.deinit();
 
     try std.testing.expectEqual(@as(u64, 52), notification.notification.subscription);
@@ -1725,8 +1725,49 @@ test "root.PubsubClient subscribeWithReceiver convenience returns handle and rec
     try std.testing.expectEqualStrings("5h6x", notification.notification.value.signature);
     try std.testing.expectEqual(@as(usize, 1), notification.notification.value.logs.len);
 
+    try std.testing.expectEqual(@as(u64, 52), subscribed.subscriptionId());
     try std.testing.expectEqual(@as(usize, 0), subscribed.queuedCount());
+    try std.testing.expect(subscribed.rawReceiver().rawSubscription() == subscribed.subscription);
     try std.testing.expect(!subscribed.isClosed());
+    try std.testing.expect(try subscribed.unsubscribe());
+    try std.testing.expect(subscribed.isClosed());
+}
+
+test "root.PubsubSubscriptionWithReceiver forwards generic receive helpers" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var subscribed = try pubsub.logsSubscribeWithReceiver(
+        .{ .mentions = "11111111111111111111111111111111" },
+        .{ .commitment = .finalized },
+    );
+    defer subscribed.subscription.deinit();
+
+    var notification = try subscribed.recvParsedTimeout(client.LogsNotificationValue, 1000);
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 52), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, 123), notification.notification.context_slot);
+    try std.testing.expectEqualStrings("5h6x", notification.notification.value.signature);
+    try std.testing.expect(subscribed.rawReceiver().rawSubscription() == subscribed.subscription);
+    try std.testing.expectEqual(@as(usize, 0), subscribed.queuedCount());
+    try std.testing.expectError(error.Timeout, subscribed.recvTimeout(10));
+
     try std.testing.expect(try subscribed.unsubscribe());
     try std.testing.expect(subscribed.isClosed());
 }
@@ -1763,6 +1804,7 @@ test "root.PubsubSubscription typedReceiver provides typed receive and lifecycle
     try std.testing.expectEqual(@as(u64, 41), notification.notification.subscription);
     try std.testing.expectEqual(@as(?u64, 99), notification.notification.context_slot);
     try std.testing.expect(notification.notification.value.err == null);
+    try std.testing.expectEqual(@as(u64, 41), receiver.subscriptionId());
     try std.testing.expect(receiver.rawSubscription() == subscription);
     try std.testing.expect(receiver.rawReceiver().rawSubscription() == subscription);
     try std.testing.expectEqual(@as(usize, 0), receiver.queuedCount());
@@ -1816,6 +1858,157 @@ test "root.PubsubSubscriptionWithReceiver typedReceiver shares receiver lifecycl
     try std.testing.expect(subscribed.isClosed());
     try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, subscribed.closeReason());
     try std.testing.expect(app.logs_unsubscribe_seen);
+}
+
+test "root.PubsubSubscription waitClosedTimeout reports unsubscribe close reason" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.signatureSubscribe(
+        "3vQB7B6MrGQZaxCuFg4oh",
+        .{ .commitment = .confirmed },
+    );
+    defer subscription.deinit();
+
+    try std.testing.expectError(error.Timeout, subscription.waitClosedTimeout(10));
+    try std.testing.expect(try subscription.unsubscribe());
+    try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, try subscription.waitClosedTimeout(1000));
+    try std.testing.expect(app.signature_unsubscribe_seen);
+}
+
+test "root.PubsubClient signatureSubscribeWithTypedReceiver returns typed handle and receiver" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var subscribed = try pubsub.signatureSubscribeWithTypedReceiver(
+        "3vQB7B6MrGQZaxCuFg4oh",
+        .{ .commitment = .confirmed },
+    );
+    defer subscribed.deinit();
+
+    var notification = try subscribed.recvTimeout(1000);
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 41), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, 99), notification.notification.context_slot);
+    try std.testing.expect(notification.notification.value.err == null);
+    try std.testing.expectEqual(@as(u64, 41), subscribed.subscriptionId());
+    try std.testing.expect(subscribed.rawReceiver().rawSubscription() == subscribed.rawSubscription());
+    try std.testing.expectEqual(@as(usize, 0), subscribed.queuedCount());
+    try std.testing.expectError(error.Timeout, subscribed.recvTimeout(10));
+
+    try std.testing.expect(try subscribed.unsubscribe());
+    try std.testing.expect(subscribed.isClosed());
+    try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, subscribed.closeReason());
+    try std.testing.expect(app.signature_unsubscribe_seen);
+}
+
+test "root.TypedPubsubSubscriptionWithReceiver waitClosedTimeout reports unsubscribe close reason" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var subscribed = try pubsub.signatureSubscribeWithTypedReceiver(
+        "3vQB7B6MrGQZaxCuFg4oh",
+        .{ .commitment = .confirmed },
+    );
+    defer subscribed.deinit();
+
+    try std.testing.expectError(error.Timeout, subscribed.waitClosedTimeout(10));
+    try std.testing.expect(try subscribed.unsubscribe());
+    try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, try subscribed.waitClosedTimeout(1000));
+    try std.testing.expect(app.signature_unsubscribe_seen);
+}
+
+test "root.PubsubClient blockSubscribeSummaryWithTypedReceiver returns typed summary handle" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var subscribed = try pubsub.blockSubscribeSummaryWithTypedReceiver(
+        .{ .mentions_account_or_program = "11111111111111111111111111111111" },
+        .{
+            .commitment = .finalized,
+            .encoding = .json,
+            .transaction_details = .signatures,
+            .max_supported_transaction_version = 0,
+            .show_rewards = false,
+        },
+    );
+    defer subscribed.deinit();
+
+    var notification = try subscribed.recvTimeout(1000);
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 75), notification.notification.subscription);
+    try std.testing.expectEqual(@as(u64, 900), notification.notification.value.slot);
+    try std.testing.expect(notification.notification.value.block != null);
+    try std.testing.expectEqual(@as(?usize, 1), notification.notification.value.block.?.transactionsCount);
+    try std.testing.expectEqual(@as(?usize, 0), notification.notification.value.block.?.rewardsCount);
+    try std.testing.expect(subscribed.rawReceiver().rawSubscription() == subscribed.rawSubscription());
+    try std.testing.expectEqual(@as(usize, 0), subscribed.queuedCount());
+
+    try std.testing.expect(try subscribed.unsubscribe());
+    try std.testing.expect(subscribed.isClosed());
+    try std.testing.expect(app.block_unsubscribe_seen);
 }
 
 test "root.PubsubClient auto reconnects and re-subscribes active subscriptions" {
