@@ -1593,6 +1593,48 @@ test "cli.loadDefaultSolanaCliConfig resolves custom override path" {
     try std.testing.expectEqual(Commitment.confirmed, config.commitment orelse .processed);
 }
 
+test "cli.loadDefaultSolanaCliConfig expands home in override path" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const home_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer allocator.free(home_path);
+
+    const override_path = "~/.solana_config_override.yml";
+    const expanded_path = try expandUserPathForHome(
+        allocator,
+        override_path,
+        home_path,
+    );
+    defer allocator.free(expanded_path);
+
+    const parent_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/.solana",
+        .{home_path},
+    );
+    defer allocator.free(parent_path);
+    try std.fs.cwd().makePath(parent_path);
+
+    try writeTextFile(
+        expanded_path,
+        \\json_rpc_url: "https://api.expand.solana.com"
+        \\commitment: processed
+    );
+
+    var config = try loadDefaultSolanaCliConfig(allocator, .{
+        .home_dir = home_path,
+        .config_path_override = override_path,
+    });
+    defer config.deinit(allocator);
+
+    try std.testing.expectEqualStrings(expanded_path, config.path orelse "");
+    try std.testing.expectEqualStrings("https://api.expand.solana.com", config.json_rpc_url orelse "");
+    try std.testing.expectEqual(Commitment.processed, config.commitment orelse .finalized);
+}
+
 test "cli.applySolanaCliConfigDefaults applies config defaults without overriding explicit rpc" {
     const allocator = std.testing.allocator;
 
