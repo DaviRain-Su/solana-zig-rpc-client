@@ -16,6 +16,28 @@ pub const RequestSender = struct {
     callback: *const fn (context: ?*anyopaque, allocator: Allocator, request: RequestSenderRequest) anyerror![]u8,
     deinit_callback: ?*const fn (context: ?*anyopaque, allocator: Allocator) void = null,
 
+    pub fn init(
+        context: ?*anyopaque,
+        callback: *const fn (context: ?*anyopaque, allocator: Allocator, request: RequestSenderRequest) anyerror![]u8,
+    ) RequestSender {
+        return .{
+            .context = context,
+            .callback = callback,
+        };
+    }
+
+    pub fn initWithDeinit(
+        context: ?*anyopaque,
+        callback: *const fn (context: ?*anyopaque, allocator: Allocator, request: RequestSenderRequest) anyerror![]u8,
+        deinit_callback: *const fn (context: ?*anyopaque, allocator: Allocator) void,
+    ) RequestSender {
+        return .{
+            .context = context,
+            .callback = callback,
+            .deinit_callback = deinit_callback,
+        };
+    }
+
     pub fn fromMockSender(sender: *MockSender) RequestSender {
         return .{
             .context = sender,
