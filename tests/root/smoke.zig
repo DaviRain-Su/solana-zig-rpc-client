@@ -705,6 +705,55 @@ test "root.newWithRequestSenderAndOptions injects generic request sender" {
     try std.testing.expectEqual(@as(usize, 1), context.deinit_count);
 }
 
+test "root.newWithRequestSenderAndCommitment applies commitment default" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{
+        .base_slot = 1100,
+    };
+
+    {
+        var rpc = try client.RpcClient.newWithRequestSenderAndCommitment(
+            allocator,
+            client.RequestSender.init(
+                &context,
+                customRequestSender,
+            ),
+            .confirmed,
+        );
+        defer rpc.deinit();
+
+        const slot = try rpc.getSlot(null);
+        try std.testing.expectEqual(@as(u64, 1101), slot);
+        try std.testing.expect(context.saw_confirmed_commitment);
+    }
+}
+
+test "root.newWithRequestSenderAndTimeouts forwards both request and confirm timeout" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{
+        .base_slot = 1200,
+    };
+
+    {
+        var rpc = try client.RpcClient.newWithRequestSenderAndTimeouts(
+            allocator,
+            client.RequestSender.init(
+                &context,
+                customRequestSender,
+            ),
+            5_000,
+            10_000,
+        );
+        defer rpc.deinit();
+
+        try std.testing.expectEqual(@as(?u64, 5_000), rpc.getRequestTimeoutMs());
+        try std.testing.expectEqual(@as(?u64, 10_000), rpc.getConfirmTransactionInitialTimeoutMs());
+
+        const slot = try rpc.getSlot(.processed);
+        try std.testing.expectEqual(@as(u64, 1201), slot);
+    }
+}
+
 test "root.replaceRequestSender resets stats and deinitializes previous sender" {
     const allocator = std.testing.allocator;
     var first_context = RequestSenderContext{ .base_slot = 700 };
