@@ -109,14 +109,11 @@ test "root.inner accessors expose inner client handles" {
     const allocator = std.testing.allocator;
 
     var sender_context = RequestSenderContext{ .base_slot = 1000 };
-    var rpc_with_sender = try client.RpcClient.newWithRequestSender(
-        allocator,
-        client.RequestSender.initWithDeinit(
-            &sender_context,
-            customRequestSender,
-            customRequestSenderDeinit,
-        )
-    );
+    var rpc_with_sender = try client.RpcClient.newWithRequestSender(allocator, client.RequestSender.initWithDeinit(
+        &sender_context,
+        customRequestSender,
+        customRequestSenderDeinit,
+    ));
     defer rpc_with_sender.deinit();
 
     const inner_client = rpc_with_sender.getInnerClient();
@@ -574,6 +571,88 @@ test "root.newMockWithSenderAndOptions accepts prebuilt sender and structured mo
     try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
 }
 
+test "root.newMockWithSenderAndCommitment applies commitment default" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(123);
+
+    var rpc = try client.RpcClient.newMockWithSenderAndCommitment(
+        allocator,
+        sender,
+        .confirmed,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expect(rpc.getRequestTimeoutMs() == null);
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 123), slot);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
+}
+
+test "root.newMockWithSenderAndTimeout preserves timeout settings" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushHealthOk();
+
+    var rpc = try client.RpcClient.newMockWithSenderAndTimeout(
+        allocator,
+        sender,
+        12_345,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(@as(?u64, 12_345), rpc.getRequestTimeoutMs());
+    try std.testing.expect(rpc.getDefaultCommitment() == null);
+    const health = try rpc.getHealth();
+    defer allocator.free(health);
+    try std.testing.expectEqualStrings("ok", health);
+}
+
+test "root.newMockWithSenderAndTimeouts forwards both timeout values" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(345);
+
+    var rpc = try client.RpcClient.newMockWithSenderAndTimeouts(
+        allocator,
+        sender,
+        5_000,
+        8_000,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(@as(?u64, 5_000), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 8_000), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 345), slot);
+}
+
+test "root.newMockWithSenderAndCommitmentAndTimeouts aliases timeout/commitment order" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushHealthOk();
+
+    var rpc = try client.RpcClient.newMockWithSenderAndCommitmentAndTimeouts(
+        allocator,
+        sender,
+        .processed,
+        1_234,
+        4_567,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 1_234), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 4_567), rpc.getConfirmTransactionInitialTimeoutMs());
+    const health = try rpc.getHealth();
+    defer allocator.free(health);
+    try std.testing.expectEqualStrings("ok", health);
+}
+
 test "root.mock common response helpers cover common RPC methods" {
     const allocator = std.testing.allocator;
 
@@ -759,14 +838,11 @@ test "root.replaceRequestSender resets stats and deinitializes previous sender" 
     var first_context = RequestSenderContext{ .base_slot = 700 };
     var second_context = RequestSenderContext{ .base_slot = 900 };
 
-    var rpc = try client.RpcClient.newWithRequestSender(
-        allocator,
-        client.RequestSender.initWithDeinit(
-            &first_context,
-            customRequestSender,
-            customRequestSenderDeinit,
-        )
-    );
+    var rpc = try client.RpcClient.newWithRequestSender(allocator, client.RequestSender.initWithDeinit(
+        &first_context,
+        customRequestSender,
+        customRequestSenderDeinit,
+    ));
     defer rpc.deinit();
 
     const first_slot = try rpc.getSlot(.processed);

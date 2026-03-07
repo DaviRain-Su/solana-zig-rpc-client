@@ -614,6 +614,110 @@ pub const RpcClient = struct {
         return RpcClient.newMockWithSenderAndOptions(allocator, sender, .{});
     }
 
+    pub fn newMockWithSenderAndCommitment(
+        allocator: Allocator,
+        sender: MockSenderType,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newMockWithSenderAndOptions(
+            allocator,
+            sender,
+            .{ .commitment = commitment },
+        );
+    }
+
+    pub fn newMockWithSenderAndTimeout(
+        allocator: Allocator,
+        sender: MockSenderType,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newMockWithSenderAndOptions(
+            allocator,
+            sender,
+            .{ .request_timeout_ms = timeout_ms },
+        );
+    }
+
+    pub fn newMockWithSenderAndTimeouts(
+        allocator: Allocator,
+        sender: MockSenderType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newMockWithSenderAndOptions(
+            allocator,
+            sender,
+            .{
+                .request_timeout_ms = timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+            },
+        );
+    }
+
+    pub fn newMockWithSenderAndCommitmentAndTimeout(
+        allocator: Allocator,
+        sender: MockSenderType,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newMockWithSenderAndTimeoutAndCommitment(
+            allocator,
+            sender,
+            timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn newMockWithSenderAndTimeoutAndCommitment(
+        allocator: Allocator,
+        sender: MockSenderType,
+        timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newMockWithSenderAndOptions(
+            allocator,
+            sender,
+            .{
+                .request_timeout_ms = timeout_ms,
+                .commitment = commitment,
+            },
+        );
+    }
+
+    pub fn newMockWithSenderAndTimeoutsAndCommitment(
+        allocator: Allocator,
+        sender: MockSenderType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newMockWithSenderAndOptions(
+            allocator,
+            sender,
+            .{
+                .commitment = commitment,
+                .request_timeout_ms = timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+            },
+        );
+    }
+
+    pub fn newMockWithSenderAndCommitmentAndTimeouts(
+        allocator: Allocator,
+        sender: MockSenderType,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newMockWithSenderAndTimeoutsAndCommitment(
+            allocator,
+            sender,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
     pub fn newMockWithSenderAndOptions(
         allocator: Allocator,
         sender: MockSenderType,
