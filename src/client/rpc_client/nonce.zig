@@ -393,6 +393,94 @@ pub fn buildLegacyTransactionBase64WithBlockhashQuery(
     };
 }
 
+pub fn sendLegacyInstructionsWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+    options: ?SendTransactionOptions,
+) ![]const u8 {
+    var signed = try self.buildSignedLegacyTransactionWithBlockhashQuery(
+        payer,
+        instructions,
+        signers,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer signed.deinit(self.allocator);
+
+    return try self.sendTransactionTyped(
+        signed,
+        options,
+    );
+}
+
+pub fn sendAndConfirmLegacyInstructionsWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+    options: ?SendTransactionOptions,
+    commitment: ?Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) ![]const u8 {
+    var signed = try self.buildSignedLegacyTransactionWithBlockhashQuery(
+        payer,
+        instructions,
+        signers,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer signed.deinit(self.allocator);
+
+    return try self.sendTransactionAndConfirmTyped(
+        signed,
+        options,
+        commitment,
+        search_transaction_history,
+        timeout_ms,
+        poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmLegacyInstructionsWithBlockhashQueryWithSpinner(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+    options: ?SendTransactionOptions,
+    commitment: ?Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) ![]const u8 {
+    var signed = try self.buildSignedLegacyTransactionWithBlockhashQuery(
+        payer,
+        instructions,
+        signers,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer signed.deinit(self.allocator);
+
+    return try self.sendTransactionAndConfirmTypedWithSpinner(
+        signed,
+        options,
+        commitment,
+        search_transaction_history,
+        timeout_ms,
+        poll_interval_ms,
+    );
+}
+
 pub fn buildInitializeNonceAccountSignedTransactionWithOptions(
     self: anytype,
     fee_payer_secret_key: []const u8,
