@@ -60,11 +60,12 @@ So "feature parity with Rust client" should be read in two layers:
 
 - Full Agave `client` parity is not complete.
 - The heavy transport/client-stack features are still absent:
-  `pubsub_client`, `nonblocking`, `connection_cache`, `tpu_client`,
+  `nonblocking`, `connection_cache`, `tpu_client`,
   `transaction_executor`, and `send_and_confirm_transactions_in_parallel`.
 - Some parity areas are only partial rather than complete:
-  `blockhash_query`, `nonce_utils`, Rust-style mock sender helpers, full raw
-  request catalog breadth, and broader typed builder ergonomics.
+  `pubsub_client`, `blockhash_query`, `nonce_utils`, Rust-style mock sender
+  helpers, full raw request catalog breadth, and broader typed builder
+  ergonomics.
 - So the current state is: blocking Zig client roadmap mostly done, full Rust
   Agave client parity still incomplete.
 
@@ -78,7 +79,7 @@ So "feature parity with Rust client" should be read in two layers:
 | `rpc_config` / `rpc_filter` / `rpc_request` / `rpc_response` / `rpc_custom_error` | Partially implemented | Zig has many equivalent structs/options, but not a full Rust-style public module layout. |
 | `blockhash_query` | Partially implemented | Minimal `BlockhashQuery` / `resolveBlockhashQuery` support now exists, but the broader Rust helper surface is still incomplete. |
 | `nonce_utils` | Partially implemented | Nonce account parsing, nonce blockhash lookup, and minimal nonce-aware transfer/instruction builders now exist, but the broader durable-nonce utility surface is still incomplete. |
-| `pubsub_client` | Not implemented | No websocket subscription client. |
+| `pubsub_client` | Partially implemented | A minimal websocket-based pubsub client now exists with `signatureSubscribe`, `logsSubscribe`, `accountSubscribe`, `programSubscribe`, `slotSubscribe`, and `rootSubscribe`, plus subscription dispatch, typed notification helpers, and integration tests; the broader Rust pubsub surface is still incomplete. |
 | `nonblocking` | Not implemented | No async RPC client surface. |
 | `connection_cache` | Not implemented | No QUIC/UDP connection cache abstraction. |
 | `tpu_client` | Not implemented | No direct-to-leader TPU sending path. |
@@ -250,6 +251,11 @@ Why this phase is third:
 These items are valid Agave features, but they should not be the next thing:
 
 - [ ] `pubsub_client`
+  minimal websocket-based `signatureSubscribe` / `logsSubscribe` /
+  `accountSubscribe` / `programSubscribe` / `slotSubscribe` /
+  `rootSubscribe` is now in place.
+  still missing broader subscription coverage, reconnect/re-subscribe behavior,
+  and a more Rust-like receiver/channel surface.
 - [ ] `nonblocking` async client
 - [ ] `connection_cache`
 - [ ] `tpu_client`

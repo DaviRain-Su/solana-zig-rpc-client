@@ -25,6 +25,7 @@ fn createRootTestModule(
     root_source_file: []const u8,
     client_module: *std.Build.Module,
     root_test_support_module: *std.Build.Module,
+    websocket_module: *std.Build.Module,
 ) *std.Build.Module {
     return b.createModule(.{
         .root_source_file = b.path(root_source_file),
@@ -33,6 +34,7 @@ fn createRootTestModule(
         .imports = &.{
             .{ .name = "solana_client_zig", .module = client_module },
             .{ .name = "root_test_support", .module = root_test_support_module },
+            .{ .name = "websocket", .module = websocket_module },
         },
     });
 }
@@ -60,6 +62,15 @@ pub fn build(b: *std.Build) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
+
+    const websocket_module = b.createModule(.{
+        .root_source_file = b.path("vendor/websocket.zig/src/websocket.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const websocket_build_options = b.addOptions();
+    websocket_build_options.addOption(bool, "websocket_blocking", false);
+    websocket_module.addOptions("build", websocket_build_options);
     // It's also possible to define more custom flags to toggle optional features
     // of this build script using `b.option()`. All defined flags (including
     // target and optimize options) will be listed when running `zig build --help`
@@ -83,6 +94,9 @@ pub fn build(b: *std.Build) void {
         // Later on we'll use this module as the root module of a test executable
         // which requires us to specify a target.
         .target = target,
+        .imports = &.{
+            .{ .name = "websocket", .module = websocket_module },
+        },
     });
 
     // Here we define an executable. An executable needs to have a root module
@@ -173,6 +187,7 @@ pub fn build(b: *std.Build) void {
         "tests/root/assets.zig",
         "tests/root/accounts.zig",
         "tests/root/smoke.zig",
+        "tests/root/pubsub.zig",
         "tests/root/transactions.zig",
     };
     var run_root_tests: [root_test_sources.len]*std.Build.Step.Run = undefined;
@@ -184,6 +199,7 @@ pub fn build(b: *std.Build) void {
             source,
             mod,
             root_test_support_module,
+            websocket_module,
         );
         run_root_tests[index] = addRunTestForModule(b, module);
     }

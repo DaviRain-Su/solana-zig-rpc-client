@@ -1,6 +1,8 @@
 pub const sdk = @import("./client/sdk.zig");
 pub const rpc_types = @import("./client/rpc_types.zig");
+pub const pubsub_types = @import("./client/pubsub/types.zig");
 const rpc_client = @import("./client/rpc_client/client.zig");
+const pubsub_client = @import("./client/pubsub/client.zig");
 
 pub const max_lockout_history = sdk.max_lockout_history;
 pub const poll_for_signature_timeout_ms = sdk.poll_for_signature_timeout_ms;
@@ -158,3 +160,23 @@ pub const largestAccountsFilterToString = rpc_types.largestAccountsFilterToStrin
 pub const tokenAccountsFilterParams = rpc_types.tokenAccountsFilterParams;
 
 pub const RpcClient = rpc_client.RpcClient;
+pub const PubsubClientOptions = pubsub_types.PubsubClientOptions;
+pub const SignatureSubscribeOptions = pubsub_types.SignatureSubscribeOptions;
+pub const PubsubAccountEncoding = pubsub_types.PubsubAccountEncoding;
+pub const AccountSubscribeOptions = pubsub_types.AccountSubscribeOptions;
+pub const LogsSubscribeFilter = pubsub_types.LogsSubscribeFilter;
+pub const LogsSubscribeOptions = pubsub_types.LogsSubscribeOptions;
+pub const ProgramSubscribeOptions = pubsub_types.ProgramSubscribeOptions;
+pub const PubsubContext = pubsub_types.PubsubContext;
+pub const SignatureNotificationValue = pubsub_types.SignatureNotificationValue;
+pub const AccountNotificationValue = pubsub_types.AccountNotificationValue;
+pub const LogsNotificationValue = pubsub_types.LogsNotificationValue;
+pub const ProgramNotificationValue = pubsub_types.ProgramNotificationValue;
+pub const SlotNotificationValue = pubsub_types.SlotNotificationValue;
+pub const RootNotificationValue = pubsub_types.RootNotificationValue;
+pub const PubsubNotification = pubsub_types.PubsubNotification;
+pub const OwnedPubsubNotification = pubsub_types.OwnedPubsubNotification;
+pub const parseOwnedPubsubNotification = pubsub_types.parseOwnedPubsubNotification;
+pub const pubsubAccountEncodingToString = pubsub_types.pubsubAccountEncodingToString;
+pub const PubsubClient = pubsub_client.PubsubClient;
+pub const PubsubSubscription = pubsub_client.PubsubSubscription;
