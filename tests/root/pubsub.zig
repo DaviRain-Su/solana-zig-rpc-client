@@ -1408,6 +1408,48 @@ test "root.PubsubClient reconnect backoff increases delay across retries" {
     try std.testing.expect(third_time_ns - second_time_ns >= 30 * std.time.ns_per_ms);
 }
 
+test "root.PubsubClient auto_reconnect setter can enable reconnect at runtime" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .auto_reconnect = false,
+        .reconnect_delay_ms = 0,
+    });
+    defer pubsub.deinit();
+
+    try std.testing.expect(!pubsub.isAutoReconnectEnabled());
+    pubsub.setAutoReconnectEnabled(true);
+    try std.testing.expect(pubsub.isAutoReconnectEnabled());
+
+    const subscription = try pubsub.signatureSubscribe(
+        "Reconnect1111111111111111111111111111111111111",
+        .{ .commitment = .confirmed },
+    );
+    defer subscription.deinit();
+
+    var first_notification = try subscription.recvSignatureNotification();
+    defer first_notification.deinit();
+    try std.testing.expectEqual(@as(?u64, 501), first_notification.notification.context_slot);
+
+    var second_notification = try subscription.recvParsedTimeout(client.SignatureNotificationValue, 5000);
+    defer second_notification.deinit();
+    try std.testing.expectEqual(@as(?u64, 777), second_notification.notification.context_slot);
+    try std.testing.expectEqual(@as(usize, 2), app.reconnect_signature_subscribe_count);
+}
+
 test "root.PubsubClient reconnect respects configured maximum attempts" {
     const port = try reservePort();
     var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
