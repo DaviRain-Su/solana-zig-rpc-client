@@ -85,6 +85,7 @@ const TestApp = struct {
     account_unsubscribe_seen: bool = false,
     program_unsubscribe_seen: bool = false,
     slot_unsubscribe_seen: bool = false,
+    slot_subscribe_error_seen: bool = false,
     slot_subscribe_with_commitment_seen: bool = false,
     root_unsubscribe_seen: bool = false,
     slots_updates_unsubscribe_seen: bool = false,
@@ -747,6 +748,18 @@ const TestHandler = struct {
         }
 
         if (std.mem.eql(u8, parsed.value.method, "slotSubscribe")) {
+            if (std.mem.indexOf(u8, data, "\"commitment\":\"processed\"") != null) {
+                self.app.slot_subscribe_error_seen = true;
+                const response = try std.fmt.allocPrint(
+                    self.app.allocator,
+                    "{{\"jsonrpc\":\"2.0\",\"error\":{{\"code\":-32010,\"message\":\"slot subscribe failed\"}},\"id\":{}}}",
+                    .{parsed.value.id},
+                );
+                defer self.app.allocator.free(response);
+                try self.conn.write(response);
+                return;
+            }
+
             if (std.mem.indexOf(u8, data, "\"commitment\"") != null) {
                 self.app.slot_subscribe_with_commitment_seen = true;
             }
@@ -2327,9 +2340,47 @@ test "root.PubsubClient slotSubscribeWithCallback invokes callback and unsubscri
         defer tracker.mutex.unlock();
         try std.testing.expectEqual(@as(usize, 1), tracker.count);
         try std.testing.expectEqual(@as(u64, 12), tracker.last_slot.?);
+        try std.testing.expect(subscription.getLastError() == null);
+        subscription.clearLastError();
+        try std.testing.expect(subscription.getLastError() == null);
     }
 
     try std.testing.expect(app.slot_unsubscribe_seen);
+}
+
+test "root.PubsubClient slotSubscribeWithOptionsWithCallback surfaces subscribe errors" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var tracker = SlotCallbackTracker{};
+    try std.testing.expectError(
+        error.SubscribeRpcError,
+        pubsub.slotSubscribeWithOptionsWithCallback(
+            .{ .commitment = .processed },
+            &tracker,
+            slotCallback,
+        ),
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), app.slot_subscribe_error_seen);
+    const last_error = pubsub.getLastError() orelse return error.TestExpectedError;
+    try std.testing.expectEqual(@as(i64, -32010), last_error.code);
+    try std.testing.expectEqualStrings("slot subscribe failed", last_error.message);
 }
 
 test "root.PubsubClient voteSubscribe receives vote notifications" {
