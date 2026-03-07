@@ -2,10 +2,35 @@ const std = @import("std");
 
 const Allocator = std.mem.Allocator;
 
+pub const default_solana_rpc_url = "https://api.mainnet-beta.solana.com";
+pub const default_solana_cli_config_path = ".config/solana/cli/config.yml";
+pub const default_solana_keypair_path = ".config/solana/id.json";
+
 pub const Commitment = enum {
     processed,
     confirmed,
     finalized,
+};
+
+pub const SolanaCliConfig = struct {
+    path: ?[]u8 = null,
+    json_rpc_url: ?[]u8 = null,
+    websocket_url: ?[]u8 = null,
+    keypair_path: ?[]u8 = null,
+    commitment: ?Commitment = null,
+
+    pub fn deinit(self: *SolanaCliConfig, allocator: Allocator) void {
+        if (self.path) |value| allocator.free(value);
+        if (self.json_rpc_url) |value| allocator.free(value);
+        if (self.websocket_url) |value| allocator.free(value);
+        if (self.keypair_path) |value| allocator.free(value);
+        self.* = .{};
+    }
+};
+
+pub const SolanaCliConfigLoadOptions = struct {
+    home_dir: ?[]const u8 = null,
+    config_path_override: ?[]const u8 = null,
 };
 
 pub const usage_text =
@@ -80,8 +105,8 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] blockhash-valid <blockhash>\n" ++
     "\n" ++
     "Optional flags:\n" ++
-    "  --rpc <url>             RPC endpoint to use\n" ++
-    "  --commitment <level>     processed|confirmed|finalized\n" ++
+    "  --rpc <url>             RPC endpoint to use (default: Solana CLI config json_rpc_url or mainnet-beta)\n" ++
+    "  --commitment <level>     processed|confirmed|finalized (default: Solana CLI config commitment when present)\n" ++
     "  --timeout-ms <ms>        Wait timeout (status, poll/wait balance, poll-for-signature-confirmation, send-transaction-and-confirm)\n" ++
     "  --poll-ms <ms>           Poll interval in ms (status, poll/wait balance, poll-for-signature-confirmation, send-transaction-and-confirm)\n" ++
     "  --before <signature>     Filter signatures after this older signature (signatures-for-address)\n" ++
@@ -99,7 +124,7 @@ pub const usage_text =
     "  --max-retries <count>    Max tx retries before giving up\n" ++
     "  --preflight-commitment <level>  Commitment for tx preflight checks\n" ++
     "  --airdrop-recent-blockhash <blockhash> Recent blockhash override for request-airdrop\n" ++
-    "  --sender-keypair <path> Transfer sender keypair JSON file (default: ~/.config/solana/id.json)\n" ++
+    "  --sender-keypair <path> Transfer sender keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)\n" ++
     "  --transfer-recent-blockhash <blockhash> Recent blockhash override for transfer\n" ++
     "  --epoch <epoch>          Epoch override for inflation-reward\n" ++
     "  --encoding <mode>        json|jsonParsed|base58|base64 (block and transaction)\n" ++
@@ -138,11 +163,135 @@ pub fn parseCommitment(value: []const u8) ?Commitment {
     return null;
 }
 
+fn expandUserPathForHome(allocator: Allocator, path: []const u8, home_dir: ?[]const u8) ![]u8 {
+    if (std.mem.eql(u8, path, "~")) {
+        const home = home_dir orelse return error.HomeDirectoryNotFound;
+        return try allocator.dupe(u8, home);
+    }
+
+    if (std.mem.startsWith(u8, path, "~/")) {
+        const home = home_dir orelse return error.HomeDirectoryNotFound;
+        return try std.fs.path.join(allocator, &.{ home, path[2..] });
+    }
+
+    return try allocator.dupe(u8, path);
+}
+
+pub fn defaultSolanaCliConfigPathForHome(allocator: Allocator, home_dir: []const u8) ![]u8 {
+    return try std.fs.path.join(allocator, &.{ home_dir, default_solana_cli_config_path });
+}
+
+fn trimYamlValue(raw_value: []const u8) []const u8 {
+    var value = std.mem.trim(u8, raw_value, " \t\r");
+    if (value.len == 0) return value;
+
+    if (value[0] != '"' and value[0] != '\'') {
+        if (std.mem.indexOf(u8, value, " #")) |index| {
+            value = std.mem.trimRight(u8, value[0..index], " \t");
+        }
+    }
+
+    if (value.len >= 2) {
+        const first = value[0];
+        const last = value[value.len - 1];
+        if ((first == '"' and last == '"') or (first == '\'' and last == '\'')) {
+            value = value[1 .. value.len - 1];
+        }
+    }
+
+    return value;
+}
+
+fn parseTopLevelYamlKeyValue(line: []const u8) ?struct { key: []const u8, value: []const u8 } {
+    const trimmed = std.mem.trim(u8, line, " \t\r");
+    if (trimmed.len == 0) return null;
+    if (trimmed[0] == '#') return null;
+    if (std.mem.eql(u8, trimmed, "---")) return null;
+    if (line.len > 0 and (line[0] == ' ' or line[0] == '\t')) return null;
+
+    const colon_index = std.mem.indexOfScalar(u8, trimmed, ':') orelse return null;
+    const key = std.mem.trim(u8, trimmed[0..colon_index], " \t\r");
+    if (key.len == 0) return null;
+
+    return .{
+        .key = key,
+        .value = trimYamlValue(trimmed[colon_index + 1 ..]),
+    };
+}
+
+pub fn loadDefaultSolanaCliConfig(allocator: Allocator, options: SolanaCliConfigLoadOptions) !SolanaCliConfig {
+    const config_path = if (options.config_path_override) |override_path|
+        try expandUserPathForHome(allocator, override_path, options.home_dir)
+    else if (options.home_dir) |home_dir|
+        try defaultSolanaCliConfigPathForHome(allocator, home_dir)
+    else
+        return .{};
+    errdefer allocator.free(config_path);
+
+    const file_contents = std.fs.cwd().readFileAlloc(allocator, config_path, 1 << 20) catch |err| switch (err) {
+        error.FileNotFound => {
+            allocator.free(config_path);
+            return .{};
+        },
+        else => return err,
+    };
+    defer allocator.free(file_contents);
+
+    var config = SolanaCliConfig{
+        .path = config_path,
+    };
+    errdefer config.deinit(allocator);
+
+    var line_iterator = std.mem.splitScalar(u8, file_contents, '\n');
+    while (line_iterator.next()) |line| {
+        const entry = parseTopLevelYamlKeyValue(line) orelse continue;
+        if (std.mem.eql(u8, entry.key, "json_rpc_url")) {
+            if (config.json_rpc_url) |value| allocator.free(value);
+            if (entry.value.len != 0) config.json_rpc_url = try allocator.dupe(u8, entry.value);
+            continue;
+        }
+
+        if (std.mem.eql(u8, entry.key, "websocket_url")) {
+            if (config.websocket_url) |value| allocator.free(value);
+            if (entry.value.len != 0) config.websocket_url = try allocator.dupe(u8, entry.value);
+            continue;
+        }
+
+        if (std.mem.eql(u8, entry.key, "keypair_path")) {
+            if (config.keypair_path) |value| allocator.free(value);
+            if (entry.value.len != 0) config.keypair_path = try allocator.dupe(u8, entry.value);
+            continue;
+        }
+
+        if (std.mem.eql(u8, entry.key, "commitment")) {
+            config.commitment = parseCommitment(entry.value);
+            continue;
+        }
+    }
+
+    return config;
+}
+
+pub fn applySolanaCliConfigDefaults(parsed: *ParsedArgs, config: *const SolanaCliConfig) void {
+    if (!parsed.rpc_url_overridden) {
+        if (config.json_rpc_url) |rpc_url| parsed.rpc_url = rpc_url;
+    }
+
+    if (parsed.commitment == null) {
+        parsed.commitment = config.commitment;
+    }
+
+    if (config.keypair_path) |keypair_path| {
+        parsed.default_sender_keypair_path = keypair_path;
+    }
+}
+
 pub const ParsedArgs = struct {
     command: Command,
     has_command: bool,
     show_usage: bool,
     rpc_url: []const u8,
+    rpc_url_overridden: bool,
     signature: ?[]const u8,
     account: ?[]const u8,
     expected_balance_arg: ?[]const u8,
@@ -183,6 +332,7 @@ pub const ParsedArgs = struct {
     leader_schedule_slot_arg: ?[]const u8,
     leader_schedule_identity_arg: ?[]const u8,
     lamports_arg: ?[]const u8,
+    default_sender_keypair_path: ?[]const u8,
     mint_arg: ?[]const u8,
     rent_bytes_arg: ?[]const u8,
     sender_keypair_path_arg: ?[]const u8,
@@ -224,7 +374,8 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .command = .latest_blockhash,
         .has_command = false,
         .show_usage = false,
-        .rpc_url = "https://api.mainnet-beta.solana.com",
+        .rpc_url = default_solana_rpc_url,
+        .rpc_url_overridden = false,
         .signature = null,
         .account = null,
         .expected_balance_arg = null,
@@ -265,6 +416,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .leader_schedule_slot_arg = null,
         .leader_schedule_identity_arg = null,
         .lamports_arg = null,
+        .default_sender_keypair_path = null,
         .mint_arg = null,
         .rent_bytes_arg = null,
         .sender_keypair_path_arg = null,
@@ -303,6 +455,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         if (std.mem.eql(u8, arg, "--rpc")) {
             if (index >= args.len) return error.InvalidCli;
             parsed.rpc_url = args[index];
+            parsed.rpc_url_overridden = true;
             index += 1;
             continue;
         }
@@ -1342,7 +1495,9 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "--max-retries <count>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--preflight-commitment") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--airdrop-recent-blockhash <blockhash>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-keypair <path> Transfer sender keypair JSON file (default: ~/.config/solana/id.json)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--rpc <url>             RPC endpoint to use (default: Solana CLI config json_rpc_url or mainnet-beta)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--commitment <level>     processed|confirmed|finalized (default: Solana CLI config commitment when present)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-keypair <path> Transfer sender keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--transfer-recent-blockhash <blockhash>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--epoch <epoch>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--encoding <mode>") != null);
@@ -1369,6 +1524,71 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "--account-data-slice-length <length>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--mint <mint>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--token-program-id <program-id>") != null);
+}
+
+fn writeTextFile(path: []const u8, data: []const u8) !void {
+    if (std.fs.path.dirname(path)) |parent_path| {
+        try std.fs.cwd().makePath(parent_path);
+    }
+    try std.fs.cwd().writeFile(.{ .sub_path = path, .data = data });
+}
+
+test "cli.loadDefaultSolanaCliConfig parses standard Solana config file" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const home_path = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}/home", .{tmp.sub_path});
+    defer allocator.free(home_path);
+
+    const config_path = try std.fs.path.join(allocator, &.{ home_path, default_solana_cli_config_path });
+    defer allocator.free(config_path);
+
+    try writeTextFile(config_path,
+        \\json_rpc_url: "https://api.devnet.solana.com"
+        \\websocket_url: wss://api.devnet.solana.com/
+        \\keypair_path: ~/keys/devnet.json
+        \\commitment: finalized
+        \\address_labels:
+        \\  test: Example11111111111111111111111111111111111
+        \\
+    );
+
+    var config = try loadDefaultSolanaCliConfig(allocator, .{ .home_dir = home_path });
+    defer config.deinit(allocator);
+
+    try std.testing.expectEqualStrings(config_path, config.path orelse "");
+    try std.testing.expectEqualStrings("https://api.devnet.solana.com", config.json_rpc_url orelse "");
+    try std.testing.expectEqualStrings("wss://api.devnet.solana.com/", config.websocket_url orelse "");
+    try std.testing.expectEqualStrings("~/keys/devnet.json", config.keypair_path orelse "");
+    try std.testing.expectEqual(Commitment.finalized, config.commitment orelse .processed);
+}
+
+test "cli.applySolanaCliConfigDefaults applies config defaults without overriding explicit rpc" {
+    const allocator = std.testing.allocator;
+
+    var config = SolanaCliConfig{
+        .json_rpc_url = try allocator.dupe(u8, "https://api.devnet.solana.com"),
+        .keypair_path = try allocator.dupe(u8, "/tmp/devnet-id.json"),
+        .commitment = .confirmed,
+    };
+    defer config.deinit(allocator);
+
+    var parsed = try parseCliArgs(allocator, &.{
+        "--rpc",
+        "https://override.solana.invalid",
+        "transfer",
+        "Destination111111111111111111111111111111",
+        "12345",
+    });
+    defer parsed.deinit(allocator);
+
+    applySolanaCliConfigDefaults(&parsed, &config);
+
+    try std.testing.expectEqualStrings("https://override.solana.invalid", parsed.rpc_url);
+    try std.testing.expectEqual(Commitment.confirmed, parsed.commitment orelse .processed);
+    try std.testing.expectEqualStrings("/tmp/devnet-id.json", parsed.default_sender_keypair_path orelse "");
 }
 
 test "cli.parseCliArgs leaves command unset for empty args" {

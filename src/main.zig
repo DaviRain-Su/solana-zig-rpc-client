@@ -23,12 +23,35 @@ fn run(allocator: std.mem.Allocator) !u8 {
     };
     defer parsed.deinit(allocator);
 
+    const home_dir = std.process.getEnvVarOwned(allocator, "HOME") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => null,
+        else => return err,
+    };
+    defer if (home_dir) |value| allocator.free(value);
+
+    const solana_config_override = std.process.getEnvVarOwned(allocator, "SOLANA_CONFIG") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => null,
+        else => return err,
+    };
+    defer if (solana_config_override) |value| allocator.free(value);
+
+    var solana_cli_config = try cli.loadDefaultSolanaCliConfig(allocator, .{
+        .home_dir = home_dir,
+        .config_path_override = solana_config_override,
+    });
+    defer solana_cli_config.deinit(allocator);
+
+    cli.applySolanaCliConfigDefaults(&parsed, &solana_cli_config);
+
     if (parsed.show_usage or !parsed.has_command) {
         std.debug.print("{s}", .{cli.usage_text});
         return 0;
     }
 
-    var rpc = try client.RpcClient.init(allocator, parsed.rpc_url);
+    var rpc = if (commands.toClientCommitment(parsed.commitment)) |commitment|
+        try client.RpcClient.newWithCommitment(allocator, parsed.rpc_url, commitment)
+    else
+        try client.RpcClient.init(allocator, parsed.rpc_url);
     defer rpc.deinit();
 
     commands.runCommand(allocator, &rpc, &parsed) catch |err| switch (err) {
