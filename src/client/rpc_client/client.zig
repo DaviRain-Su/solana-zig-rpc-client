@@ -645,6 +645,14 @@ pub const RpcClient = struct {
         return lifecycle_methods.getTransportStats(self);
     }
 
+    pub fn getInnerClient(self: *const RpcClient) *const std.http.Client {
+        return &self.http_client;
+    }
+
+    pub fn getInnerClientMut(self: *RpcClient) *std.http.Client {
+        return &self.http_client;
+    }
+
     pub fn isMock(self: *const RpcClient) bool {
         return self.mock_sender != null;
     }
@@ -690,6 +698,16 @@ pub const RpcClient = struct {
     }
 
     pub fn requestSender(self: *RpcClient) !*RequestSenderType {
+        if (self.mock_sender != null) return error.NoRequestSender;
+        return if (self.request_sender) |*sender| sender else error.NoRequestSender;
+    }
+
+    pub fn getInnerRequestSender(self: *const RpcClient) !*const RequestSenderType {
+        if (self.mock_sender != null) return error.NoRequestSender;
+        return if (self.request_sender) |*sender| sender else error.NoRequestSender;
+    }
+
+    pub fn getInnerRequestSenderMut(self: *RpcClient) !*RequestSenderType {
         if (self.mock_sender != null) return error.NoRequestSender;
         return if (self.request_sender) |*sender| sender else error.NoRequestSender;
     }

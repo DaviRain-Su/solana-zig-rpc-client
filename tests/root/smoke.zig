@@ -105,6 +105,41 @@ test "root.new constructors initialize endpoint" {
     try std.testing.expect(socket_timeout_rpc.getConfirmTransactionInitialTimeoutMs() == null);
 }
 
+test "root.inner accessors expose inner client handles" {
+    const allocator = std.testing.allocator;
+
+    var sender_context = RequestSenderContext{ .base_slot = 1000 };
+    var rpc_with_sender = try client.RpcClient.newWithRequestSender(
+        allocator,
+        .{
+            .context = &sender_context,
+            .callback = customRequestSender,
+            .deinit_callback = customRequestSenderDeinit,
+        },
+    );
+    defer rpc_with_sender.deinit();
+
+    const inner_client = rpc_with_sender.getInnerClient();
+    try std.testing.expect(inner_client.allocator.ptr == allocator.ptr);
+    try std.testing.expect(rpc_with_sender.getInnerClientMut().allocator.ptr == allocator.ptr);
+
+    const inner_sender = try rpc_with_sender.getInnerRequestSender();
+    const inner_sender_mut = try rpc_with_sender.getInnerRequestSenderMut();
+    const request_sender = try rpc_with_sender.requestSender();
+    try std.testing.expectEqual(@as(usize, @intFromPtr(inner_sender)), @as(usize, @intFromPtr(request_sender)));
+    try std.testing.expectEqual(@as(usize, @intFromPtr(inner_sender_mut)), @as(usize, @intFromPtr(request_sender)));
+
+    const slot = try rpc_with_sender.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 1001), slot);
+
+    var rpc_mock = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc_mock.deinit();
+
+    try std.testing.expect(rpc_mock.getInnerClient().allocator.ptr == allocator.ptr);
+    try std.testing.expectError(error.NoRequestSender, rpc_mock.requestSender());
+    try std.testing.expectError(error.NoRequestSender, rpc_mock.getInnerRequestSender());
+}
+
 test "root.newWithCommitment applies default commitment to null params" {
     const allocator = std.testing.allocator;
     var rpc = try client.RpcClient.newMockWithCommitment(

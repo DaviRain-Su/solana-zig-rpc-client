@@ -111,7 +111,7 @@ So "feature parity with Rust client" should be read in two layers:
 | Public raw RPC escape hatch | Mostly implemented | Public `sendRequest(method, params_json)`, `sendRaw`, `sendJsonRpc`, `sendTyped`, and `RpcRequest` helpers now exist, though the request identifier surface is still lighter than Rust's full module layout. |
 | Spinner variants | Mostly implemented | High-level send-and-confirm spinner convenience methods and blockhash-aware `confirmTransactionWithSpinner` now exist; broader Rust spinner surface is still lighter than upstream. |
 | Mock constructors | Partially implemented | `newMock`, commitment/timeout variants, `newMockWithHandler*`, `newMockWithSenderAndOptions`, and generic `newWithRequestSenderAndOptions` now exist, along with request capture, response queue helpers, route/matcher helpers, structured result/error helpers, direct `mockSender()` access, and runtime handler mutation; broader Rust-style sender polymorphism is still missing. |
-| Async runtime / inner client accessors | Partial | `getDefaultCommitment()` now exists, but there is still no `get_inner_client()` / runtime equivalent. |
+| Async runtime / inner client accessors | Partial | `getDefaultCommitment()` now exists, and `getInnerClient`, `getInnerClientMut`, `getInnerRequestSender`, and `getInnerRequestSenderMut` are now exposed. Remaining runtime-level parity is still tracked separately. |
 
 ## Known Gaps Worth Tracking Explicitly
 
