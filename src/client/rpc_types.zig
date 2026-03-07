@@ -584,6 +584,33 @@ pub const NonceAccountBuildOptions = struct {
     blockhash_commitment: ?Commitment = null,
 };
 
+pub const LegacyInstructionsBuildOptions = struct {
+    recent_blockhash: ?[]const u8 = null,
+    blockhash_commitment: ?Commitment = null,
+    blockhash_query: ?BlockhashQuery = null,
+    nonce_authority: ?sdk.Pubkey = null,
+};
+
+pub const SendLegacyInstructionsOptions = struct {
+    recent_blockhash: ?[]const u8 = null,
+    blockhash_commitment: ?Commitment = null,
+    blockhash_query: ?BlockhashQuery = null,
+    nonce_authority: ?sdk.Pubkey = null,
+    send_transaction_options: ?SendTransactionOptions = null,
+};
+
+pub const LegacyInstructionsOptions = struct {
+    recent_blockhash: ?[]const u8 = null,
+    blockhash_commitment: ?Commitment = null,
+    blockhash_query: ?BlockhashQuery = null,
+    nonce_authority: ?sdk.Pubkey = null,
+    send_transaction_options: ?SendTransactionOptions = null,
+    commitment: ?Commitment = null,
+    search_transaction_history: bool = false,
+    timeout_ms: u64 = sdk.poll_for_signature_confirmation_timeout_ms,
+    poll_interval_ms: u64 = sdk.signature_poll_interval_ms,
+};
+
 pub const SendNonceAccountOptions = struct {
     recent_blockhash: ?[]const u8 = null,
     blockhash_commitment: ?Commitment = null,

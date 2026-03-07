@@ -445,6 +445,42 @@ test "root.simulateLegacyInstructionsWithBlockhashQuery supports fixed blockhash
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"sigVerify\":true") != null);
 }
 
+test "root.buildLegacyMessageBase64WithOptions uses explicit recent blockhash without blockhash RPC" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{23} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{24} ** 32);
+    const recent_blockhash = [_]u8{0x4C} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+
+    const payer = try Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer.public_key, destination, 888);
+    const instructions = [_]client.Instruction{transfer.instruction()};
+
+    const encoded = try rpc.buildLegacyMessageBase64WithOptions(
+        payer.public_key,
+        instructions[0..],
+        .{ .recent_blockhash = recent_blockhash_base58 },
+    );
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyMessageBase64(
+        allocator,
+        payer.public_key,
+        Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+    try std.testing.expectEqual(@as(usize, 0), rpc.mockRequestCount());
+}
+
 test "root.sendAndConfirmLegacyInstructionsWithBlockhashQuery supports nonce account queries for arbitrary instructions" {
     const allocator = std.testing.allocator;
 
@@ -526,6 +562,86 @@ test "root.sendAndConfirmLegacyInstructionsWithBlockhashQuery supports nonce acc
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"maxRetries\":3") != null);
     try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[2].method);
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"commitment\":\"confirmed\"") != null);
+}
+
+test "root.sendAndConfirmLegacyInstructionsWithOptions resolves cluster blockhash and honors send/confirm options" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{25} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{26} ** 32);
+    const recent_blockhash = [_]u8{0x4D} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockLatestBlockhashResponse(97, recent_blockhash_base58, 7001);
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "SigGenericOptions11111111111111111111111111111111111111111111111111111111",
+        &.{
+            .{ .context_slot = 98, .status = null },
+            .{ .context_slot = 99, .status = .{
+                .slot = 99,
+                .confirmations = 1,
+                .confirmation_status = "processed",
+                .has_error = false,
+            } },
+            .{ .context_slot = 100, .status = .{
+                .slot = 100,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+
+    const payer = try Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer.public_key, destination, 999);
+    const instructions = [_]client.Instruction{transfer.instruction()};
+
+    var expected_signed = try client.buildSignedLegacyTransaction(
+        allocator,
+        payer.public_key,
+        Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+        &.{payer},
+    );
+    defer expected_signed.deinit(allocator);
+    const expected_encoded = try expected_signed.toBase64(allocator);
+    defer allocator.free(expected_encoded);
+
+    const signature = try rpc.sendAndConfirmLegacyInstructionsWithOptions(
+        payer.public_key,
+        instructions[0..],
+        &.{payer},
+        .{
+            .blockhash_commitment = .confirmed,
+            .send_transaction_options = .{ .skip_preflight = true, .max_retries = 4 },
+            .commitment = .confirmed,
+            .search_transaction_history = true,
+            .timeout_ms = 200,
+            .poll_interval_ms = 0,
+        },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigGenericOptions11111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 5), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].request_body, expected_encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"maxRetries\":4") != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[2].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"searchTransactionHistory\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[3].method);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[4].method);
 }
 
 test "root.sendAndConfirmLegacyInstructionsWithBlockhashQueryWithSpinner supports fixed blockhashes" {

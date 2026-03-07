@@ -6,11 +6,14 @@ const BlockhashQuery = rpc_types.BlockhashQuery;
 const Commitment = rpc_types.Commitment;
 const FeeForMessage = rpc_types.FeeForMessage;
 const FeeForMessageResponse = rpc_types.FeeForMessageResponse;
+const LegacyInstructionsBuildOptions = rpc_types.LegacyInstructionsBuildOptions;
+const LegacyInstructionsOptions = rpc_types.LegacyInstructionsOptions;
 const NonceAccountBuildOptions = rpc_types.NonceAccountBuildOptions;
 const NonceAccountOptions = rpc_types.NonceAccountOptions;
 const NonceAccount = rpc_types.NonceAccount;
 const NonceAccountResponse = rpc_types.NonceAccountResponse;
 const ResolvedBlockhash = rpc_types.ResolvedBlockhash;
+const SendLegacyInstructionsOptions = rpc_types.SendLegacyInstructionsOptions;
 const SendNonceAccountOptions = rpc_types.SendNonceAccountOptions;
 const SendTransactionOptions = rpc_types.SendTransactionOptions;
 const SimulateTransactionOptions = rpc_types.SimulateTransactionOptions;
@@ -61,6 +64,42 @@ fn nonceAccountBuildOptionsFromOptions(options: ?NonceAccountOptions) ?NonceAcco
         return NonceAccountBuildOptions{
             .recent_blockhash = value.recent_blockhash,
             .blockhash_commitment = value.blockhash_commitment,
+        };
+    }
+
+    return null;
+}
+
+fn resolveLegacyInstructionsBuildQuery(options: ?LegacyInstructionsBuildOptions) BlockhashQuery {
+    if (options) |value| {
+        if (value.blockhash_query) |query| return query;
+        if (value.recent_blockhash) |blockhash| return .{ .fixed = blockhash };
+        return .{ .cluster = .{ .commitment = value.blockhash_commitment } };
+    }
+
+    return .{ .cluster = .{} };
+}
+
+fn legacyInstructionsBuildOptionsFromSendOptions(options: ?SendLegacyInstructionsOptions) ?LegacyInstructionsBuildOptions {
+    if (options) |value| {
+        return LegacyInstructionsBuildOptions{
+            .recent_blockhash = value.recent_blockhash,
+            .blockhash_commitment = value.blockhash_commitment,
+            .blockhash_query = value.blockhash_query,
+            .nonce_authority = value.nonce_authority,
+        };
+    }
+
+    return null;
+}
+
+fn legacyInstructionsBuildOptionsFromOptions(options: ?LegacyInstructionsOptions) ?LegacyInstructionsBuildOptions {
+    if (options) |value| {
+        return LegacyInstructionsBuildOptions{
+            .recent_blockhash = value.recent_blockhash,
+            .blockhash_commitment = value.blockhash_commitment,
+            .blockhash_query = value.blockhash_query,
+            .nonce_authority = value.nonce_authority,
         };
     }
 
@@ -287,6 +326,29 @@ pub fn buildOwnedLegacyMessageWithBlockhashQuery(
     };
 }
 
+pub fn buildOwnedLegacyMessageWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    options: ?LegacyInstructionsBuildOptions,
+) !OwnedLegacyMessage {
+    return try self.buildOwnedLegacyMessageWithBlockhashQuery(
+        payer,
+        instructions,
+        resolveLegacyInstructionsBuildQuery(options),
+        if (options) |value| value.nonce_authority else null,
+    );
+}
+
+pub fn buildOwnedLegacyMessageWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    options: ?LegacyInstructionsBuildOptions,
+) !OwnedLegacyMessage {
+    return try self.buildOwnedLegacyMessageWithOptions(payer, instructions, options);
+}
+
 pub fn buildSignedLegacyTransactionWithBlockhashQuery(
     self: anytype,
     payer: Pubkey,
@@ -323,6 +385,37 @@ pub fn buildSignedLegacyTransactionWithBlockhashQuery(
     };
 }
 
+pub fn buildSignedLegacyTransactionWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    options: ?LegacyInstructionsBuildOptions,
+) !SignedLegacyTransaction {
+    return try self.buildSignedLegacyTransactionWithBlockhashQuery(
+        payer,
+        instructions,
+        signers,
+        resolveLegacyInstructionsBuildQuery(options),
+        if (options) |value| value.nonce_authority else null,
+    );
+}
+
+pub fn buildSignedLegacyTransactionWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    options: ?LegacyInstructionsBuildOptions,
+) !SignedLegacyTransaction {
+    return try self.buildSignedLegacyTransactionWithOptions(
+        payer,
+        instructions,
+        signers,
+        options,
+    );
+}
+
 pub fn buildLegacyMessageBytesWithBlockhashQuery(
     self: anytype,
     payer: Pubkey,
@@ -341,6 +434,31 @@ pub fn buildLegacyMessageBytesWithBlockhashQuery(
     return try owned.serialize(self.allocator);
 }
 
+pub fn buildLegacyMessageBytesWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    options: ?LegacyInstructionsBuildOptions,
+) ![]u8 {
+    var owned = try self.buildOwnedLegacyMessageWithOptions(
+        payer,
+        instructions,
+        options,
+    );
+    defer owned.deinit(self.allocator);
+
+    return try owned.serialize(self.allocator);
+}
+
+pub fn buildLegacyMessageBytesWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    options: ?LegacyInstructionsBuildOptions,
+) ![]u8 {
+    return try self.buildLegacyMessageBytesWithOptions(payer, instructions, options);
+}
+
 pub fn buildLegacyMessageBase64WithBlockhashQuery(
     self: anytype,
     payer: Pubkey,
@@ -357,6 +475,31 @@ pub fn buildLegacyMessageBase64WithBlockhashQuery(
     defer owned.deinit(self.allocator);
 
     return try owned.toBase64(self.allocator);
+}
+
+pub fn buildLegacyMessageBase64WithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    options: ?LegacyInstructionsBuildOptions,
+) ![]u8 {
+    var owned = try self.buildOwnedLegacyMessageWithOptions(
+        payer,
+        instructions,
+        options,
+    );
+    defer owned.deinit(self.allocator);
+
+    return try owned.toBase64(self.allocator);
+}
+
+pub fn buildLegacyMessageBase64WithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    options: ?LegacyInstructionsBuildOptions,
+) ![]u8 {
+    return try self.buildLegacyMessageBase64WithOptions(payer, instructions, options);
 }
 
 pub fn buildLegacyTransactionBase64WithBlockhashQuery(
@@ -397,6 +540,38 @@ pub fn buildLegacyTransactionBase64WithBlockhashQuery(
     };
 }
 
+pub fn buildLegacyTransactionBase64WithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    options: ?LegacyInstructionsBuildOptions,
+) ![]u8 {
+    var signed = try self.buildSignedLegacyTransactionWithOptions(
+        payer,
+        instructions,
+        signers,
+        options,
+    );
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
+}
+
+pub fn buildLegacyTransactionBase64WithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    options: ?LegacyInstructionsBuildOptions,
+) ![]u8 {
+    return try self.buildLegacyTransactionBase64WithOptions(
+        payer,
+        instructions,
+        signers,
+        options,
+    );
+}
+
 pub fn getFeeForLegacyInstructionsResponseWithBlockhashQuery(
     self: anytype,
     payer: Pubkey,
@@ -416,6 +591,37 @@ pub fn getFeeForLegacyInstructionsResponseWithBlockhashQuery(
     return try self.getFeeForMessageResponseTyped(owned.message, commitment);
 }
 
+pub fn getFeeForLegacyInstructionsResponseWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    options: ?LegacyInstructionsBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForLegacyInstructionsResponseWithBlockhashQuery(
+        payer,
+        instructions,
+        resolveLegacyInstructionsBuildQuery(options),
+        if (options) |value| value.nonce_authority else null,
+        commitment,
+    );
+}
+
+pub fn getFeeForLegacyInstructionsResponseWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    options: ?LegacyInstructionsBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForLegacyInstructionsResponseWithOptions(
+        payer,
+        instructions,
+        options,
+        commitment,
+    );
+}
+
 pub fn getFeeForLegacyInstructionsWithBlockhashQuery(
     self: anytype,
     payer: Pubkey,
@@ -433,6 +639,37 @@ pub fn getFeeForLegacyInstructionsWithBlockhashQuery(
     defer owned.deinit(self.allocator);
 
     return try self.getFeeForMessageTyped(owned.message, commitment);
+}
+
+pub fn getFeeForLegacyInstructionsWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    options: ?LegacyInstructionsBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    return try self.getFeeForLegacyInstructionsWithBlockhashQuery(
+        payer,
+        instructions,
+        resolveLegacyInstructionsBuildQuery(options),
+        if (options) |value| value.nonce_authority else null,
+        commitment,
+    );
+}
+
+pub fn getFeeForLegacyInstructionsWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    options: ?LegacyInstructionsBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    return try self.getFeeForLegacyInstructionsWithOptions(
+        payer,
+        instructions,
+        options,
+        commitment,
+    );
 }
 
 pub fn simulateLegacyInstructionsWithBlockhashQuery(
@@ -459,6 +696,41 @@ pub fn simulateLegacyInstructionsWithBlockhashQuery(
     );
 }
 
+pub fn simulateLegacyInstructionsWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    build_options: ?LegacyInstructionsBuildOptions,
+    options: ?SimulateTransactionOptions,
+) !SimulatedTransaction {
+    return try self.simulateLegacyInstructionsWithBlockhashQuery(
+        payer,
+        instructions,
+        signers,
+        resolveLegacyInstructionsBuildQuery(build_options),
+        if (build_options) |value| value.nonce_authority else null,
+        options,
+    );
+}
+
+pub fn simulateLegacyInstructionsWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    build_options: ?LegacyInstructionsBuildOptions,
+    options: ?SimulateTransactionOptions,
+) !SimulatedTransaction {
+    return try self.simulateLegacyInstructionsWithOptions(
+        payer,
+        instructions,
+        signers,
+        build_options,
+        options,
+    );
+}
+
 pub fn sendLegacyInstructionsWithBlockhashQuery(
     self: anytype,
     payer: Pubkey,
@@ -479,6 +751,38 @@ pub fn sendLegacyInstructionsWithBlockhashQuery(
 
     return try self.sendTransactionTyped(
         signed,
+        options,
+    );
+}
+
+pub fn sendLegacyInstructionsWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    options: ?SendLegacyInstructionsOptions,
+) ![]const u8 {
+    return try self.sendLegacyInstructionsWithBlockhashQuery(
+        payer,
+        instructions,
+        signers,
+        resolveLegacyInstructionsBuildQuery(legacyInstructionsBuildOptionsFromSendOptions(options)),
+        if (options) |value| value.nonce_authority else null,
+        if (options) |value| value.send_transaction_options else null,
+    );
+}
+
+pub fn sendLegacyInstructionsWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    options: ?SendLegacyInstructionsOptions,
+) ![]const u8 {
+    return try self.sendLegacyInstructionsWithOptions(
+        payer,
+        instructions,
+        signers,
         options,
     );
 }
@@ -515,6 +819,42 @@ pub fn sendAndConfirmLegacyInstructionsWithBlockhashQuery(
     );
 }
 
+pub fn sendAndConfirmLegacyInstructionsWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    options: ?LegacyInstructionsOptions,
+) ![]const u8 {
+    return try self.sendAndConfirmLegacyInstructionsWithBlockhashQuery(
+        payer,
+        instructions,
+        signers,
+        resolveLegacyInstructionsBuildQuery(legacyInstructionsBuildOptionsFromOptions(options)),
+        if (options) |value| value.nonce_authority else null,
+        if (options) |value| value.send_transaction_options else null,
+        if (options) |value| value.commitment else null,
+        if (options) |value| value.search_transaction_history else false,
+        if (options) |value| value.timeout_ms else poll_for_signature_confirmation_timeout_ms,
+        if (options) |value| value.poll_interval_ms else signature_poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmLegacyInstructionsWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    options: ?LegacyInstructionsOptions,
+) ![]const u8 {
+    return try self.sendAndConfirmLegacyInstructionsWithOptions(
+        payer,
+        instructions,
+        signers,
+        options,
+    );
+}
+
 pub fn sendAndConfirmLegacyInstructionsWithBlockhashQueryWithSpinner(
     self: anytype,
     payer: Pubkey,
@@ -544,6 +884,42 @@ pub fn sendAndConfirmLegacyInstructionsWithBlockhashQueryWithSpinner(
         search_transaction_history,
         timeout_ms,
         poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmLegacyInstructionsWithSpinnerAndOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    options: ?LegacyInstructionsOptions,
+) ![]const u8 {
+    return try self.sendAndConfirmLegacyInstructionsWithBlockhashQueryWithSpinner(
+        payer,
+        instructions,
+        signers,
+        resolveLegacyInstructionsBuildQuery(legacyInstructionsBuildOptionsFromOptions(options)),
+        if (options) |value| value.nonce_authority else null,
+        if (options) |value| value.send_transaction_options else null,
+        if (options) |value| value.commitment else null,
+        if (options) |value| value.search_transaction_history else false,
+        if (options) |value| value.timeout_ms else poll_for_signature_confirmation_timeout_ms,
+        if (options) |value| value.poll_interval_ms else signature_poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmLegacyInstructionsWithSpinnerAndConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    options: ?LegacyInstructionsOptions,
+) ![]const u8 {
+    return try self.sendAndConfirmLegacyInstructionsWithSpinnerAndOptions(
+        payer,
+        instructions,
+        signers,
+        options,
     );
 }
 
