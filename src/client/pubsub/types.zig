@@ -32,6 +32,12 @@ pub const PubsubCloseReason = enum {
     deinitialized,
 };
 
+pub const PubsubCloseResult = struct {
+    reason: PubsubCloseReason,
+    dropped_messages: usize = 0,
+    last_error: ?rpc_types.RpcErrorDetail = null,
+};
+
 pub const SignatureSubscribeOptions = struct {
     commitment: ?rpc_types.Commitment = null,
     enable_received_notification: bool = false,

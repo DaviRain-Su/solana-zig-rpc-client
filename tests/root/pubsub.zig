@@ -688,6 +688,12 @@ test "root.PubsubSubscription unsubscribe surfaces RPC errors and leaves subscri
     const client_error = pubsub.getLastError() orelse return error.TestExpectedError;
     try std.testing.expectEqual(@as(i64, -32011), client_error.code);
     try std.testing.expectEqualStrings("signature unsubscribe failed", client_error.message);
+
+    const close_result = subscription.closeResult();
+    try std.testing.expectEqual(client.PubsubCloseReason.none, close_result.reason);
+    try std.testing.expectEqual(@as(usize, 0), close_result.dropped_messages);
+    try std.testing.expect(close_result.last_error != null);
+    try std.testing.expectEqual(@as(i64, -32011), close_result.last_error.?.code);
 }
 
 test "root.PubsubClient logsSubscribe parses log notifications" {
@@ -1888,6 +1894,10 @@ test "root.PubsubSubscription waitClosedTimeout reports unsubscribe close reason
     try std.testing.expectError(error.Timeout, subscription.waitClosedTimeout(10));
     try std.testing.expect(try subscription.unsubscribe());
     try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, try subscription.waitClosedTimeout(1000));
+    const close_result = try subscription.waitClosedResultTimeout(1000);
+    try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, close_result.reason);
+    try std.testing.expectEqual(@as(usize, 0), close_result.dropped_messages);
+    try std.testing.expect(close_result.last_error == null);
     try std.testing.expect(app.signature_unsubscribe_seen);
 }
 

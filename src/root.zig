@@ -196,6 +196,7 @@ pub const encodeJsonRpcErrorEnvelope = rpc_client.RpcClient.encodeJsonRpcErrorEn
 pub const PubsubClientOptions = pubsub_types.PubsubClientOptions;
 pub const PubsubQueueOverflowPolicy = pubsub_types.PubsubQueueOverflowPolicy;
 pub const PubsubCloseReason = pubsub_types.PubsubCloseReason;
+pub const PubsubCloseResult = pubsub_types.PubsubCloseResult;
 pub const SignatureSubscribeOptions = pubsub_types.SignatureSubscribeOptions;
 pub const PubsubAccountEncoding = pubsub_types.PubsubAccountEncoding;
 pub const AccountSubscribeOptions = pubsub_types.AccountSubscribeOptions;

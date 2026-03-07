@@ -17,6 +17,7 @@ const ProgramSubscribeOptions = pubsub_types.ProgramSubscribeOptions;
 const BlockSubscribeFilter = pubsub_types.BlockSubscribeFilter;
 const BlockSubscribeOptions = pubsub_types.BlockSubscribeOptions;
 const PubsubCloseReason = pubsub_types.PubsubCloseReason;
+const PubsubCloseResult = pubsub_types.PubsubCloseResult;
 
 fn jsonValueToU64(value: json.Value) !u64 {
     return switch (value) {
@@ -162,6 +163,12 @@ pub const PubsubSubscription = struct {
         return self.close_reason;
     }
 
+    pub fn closeResult(self: *Self) PubsubCloseResult {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.closeResultLocked();
+    }
+
     pub fn waitClosed(self: *Self) PubsubCloseReason {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -171,6 +178,17 @@ pub const PubsubSubscription = struct {
         }
 
         return self.close_reason;
+    }
+
+    pub fn waitClosedResult(self: *Self) PubsubCloseResult {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        while (!self.closed) {
+            self.cond.wait(&self.mutex);
+        }
+
+        return self.closeResultLocked();
     }
 
     pub fn waitClosedTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseReason {
@@ -191,6 +209,26 @@ pub const PubsubSubscription = struct {
         }
 
         return self.close_reason;
+    }
+
+    pub fn waitClosedResultTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseResult {
+        const timeout_ns = timeout_ms * std.time.ns_per_ms;
+        const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ns));
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        while (!self.closed) {
+            const now = std.time.nanoTimestamp();
+            if (now >= deadline) return error.Timeout;
+
+            const remaining_ns = @as(u64, @intCast(deadline - now));
+            self.cond.timedWait(&self.mutex, remaining_ns) catch |err| switch (err) {
+                error.Timeout => if (!self.closed) return error.Timeout,
+            };
+        }
+
+        return self.closeResultLocked();
     }
 
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
@@ -477,6 +515,14 @@ pub const PubsubSubscription = struct {
         }
     }
 
+    fn closeResultLocked(self: *Self) PubsubCloseResult {
+        return .{
+            .reason = self.close_reason,
+            .dropped_messages = self.dropped_messages,
+            .last_error = self.last_error,
+        };
+    }
+
     fn setLastErrorLocked(self: *Self, code: i64, message: []const u8) void {
         self.clearLastErrorLocked();
         self.last_error = .{
@@ -511,12 +557,24 @@ pub const PubsubReceiver = struct {
         return self.subscription.closeReason();
     }
 
+    pub fn closeResult(self: *Self) PubsubCloseResult {
+        return self.subscription.closeResult();
+    }
+
     pub fn waitClosed(self: *Self) PubsubCloseReason {
         return self.subscription.waitClosed();
     }
 
     pub fn waitClosedTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseReason {
         return self.subscription.waitClosedTimeout(timeout_ms);
+    }
+
+    pub fn waitClosedResult(self: *Self) PubsubCloseResult {
+        return self.subscription.waitClosedResult();
+    }
+
+    pub fn waitClosedResultTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseResult {
+        return self.subscription.waitClosedResultTimeout(timeout_ms);
     }
 
     pub fn typedReceiver(self: *const Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
@@ -857,12 +915,24 @@ pub fn TypedPubsubReceiver(comptime ValueType: type) type {
             return self.receiver.closeReason();
         }
 
+        pub fn closeResult(self: *Self) PubsubCloseResult {
+            return self.receiver.closeResult();
+        }
+
         pub fn waitClosed(self: *Self) PubsubCloseReason {
             return self.receiver.waitClosed();
         }
 
         pub fn waitClosedTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseReason {
             return self.receiver.waitClosedTimeout(timeout_ms);
+        }
+
+        pub fn waitClosedResult(self: *Self) PubsubCloseResult {
+            return self.receiver.waitClosedResult();
+        }
+
+        pub fn waitClosedResultTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseResult {
+            return self.receiver.waitClosedResultTimeout(timeout_ms);
         }
 
         pub fn getLastError(self: *Self) ?RpcErrorDetail {
@@ -925,12 +995,24 @@ pub const PubsubSubscriptionWithReceiver = struct {
         return self.receiver.closeReason();
     }
 
+    pub fn closeResult(self: *Self) PubsubCloseResult {
+        return self.receiver.closeResult();
+    }
+
     pub fn waitClosed(self: *Self) PubsubCloseReason {
         return self.receiver.waitClosed();
     }
 
     pub fn waitClosedTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseReason {
         return self.receiver.waitClosedTimeout(timeout_ms);
+    }
+
+    pub fn waitClosedResult(self: *Self) PubsubCloseResult {
+        return self.receiver.waitClosedResult();
+    }
+
+    pub fn waitClosedResultTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseResult {
+        return self.receiver.waitClosedResultTimeout(timeout_ms);
     }
 
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
@@ -1276,12 +1358,24 @@ pub fn TypedPubsubSubscriptionWithReceiver(comptime ValueType: type) type {
             return self.receiver.closeReason();
         }
 
+        pub fn closeResult(self: *Self) PubsubCloseResult {
+            return self.receiver.closeResult();
+        }
+
         pub fn waitClosed(self: *Self) PubsubCloseReason {
             return self.receiver.waitClosed();
         }
 
         pub fn waitClosedTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseReason {
             return self.receiver.waitClosedTimeout(timeout_ms);
+        }
+
+        pub fn waitClosedResult(self: *Self) PubsubCloseResult {
+            return self.receiver.waitClosedResult();
+        }
+
+        pub fn waitClosedResultTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseResult {
+            return self.receiver.waitClosedResultTimeout(timeout_ms);
         }
 
         pub fn getLastError(self: *Self) ?RpcErrorDetail {
@@ -1350,12 +1444,24 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
             return self.receiver.closeReason();
         }
 
+        pub fn closeResult(self: *Self) PubsubCloseResult {
+            return self.receiver.closeResult();
+        }
+
         pub fn waitClosed(self: *Self) PubsubCloseReason {
             return self.receiver.waitClosed();
         }
 
         pub fn waitClosedTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseReason {
             return self.receiver.waitClosedTimeout(timeout_ms);
+        }
+
+        pub fn waitClosedResult(self: *Self) PubsubCloseResult {
+            return self.receiver.waitClosedResult();
+        }
+
+        pub fn waitClosedResultTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseResult {
+            return self.receiver.waitClosedResultTimeout(timeout_ms);
         }
 
         pub fn getLastError(self: *Self) ?RpcErrorDetail {
