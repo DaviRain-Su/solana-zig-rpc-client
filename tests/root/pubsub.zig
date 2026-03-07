@@ -483,6 +483,11 @@ const TestHandler = struct {
         };
     }
 
+    fn sendCloseFrame(self: *TestHandler) !void {
+        const code = [_]u8{ 0x03, 0xE8 };
+        try self.conn.writeFrame(.close, &code);
+    }
+
     pub fn clientMessage(self: *TestHandler, data: []u8) !void {
         const ParsedRequest = struct {
             id: u64,
@@ -519,7 +524,7 @@ const TestHandler = struct {
                     const notification =
                         "{\"jsonrpc\":\"2.0\",\"method\":\"signatureNotification\",\"params\":{\"result\":{\"context\":{\"slot\":501},\"value\":{\"err\":null}},\"subscription\":141}}";
                     try self.conn.write(notification);
-                    try self.conn.close(.{});
+                    try self.sendCloseFrame();
                 } else {
                     const notification =
                         "{\"jsonrpc\":\"2.0\",\"method\":\"signatureNotification\",\"params\":{\"result\":{\"context\":{\"slot\":777},\"value\":{\"err\":null}},\"subscription\":142}}";
@@ -539,7 +544,7 @@ const TestHandler = struct {
                 try self.conn.write(response);
 
                 if (self.app.reconnect_cancel_signature_subscribe_count == 1) {
-                    try self.conn.close(.{});
+                    try self.sendCloseFrame();
                 }
                 return;
             }
@@ -558,7 +563,7 @@ const TestHandler = struct {
                 defer self.app.allocator.free(response);
                 try self.conn.write(response);
                 std.Thread.sleep(10 * std.time.ns_per_ms);
-                try self.conn.close(.{});
+                try self.sendCloseFrame();
                 return;
             }
 
@@ -592,7 +597,7 @@ const TestHandler = struct {
 
                 if (reconnect_count < 3) {
                     std.Thread.sleep(10 * std.time.ns_per_ms);
-                    try self.conn.close(.{});
+                    try self.sendCloseFrame();
                 } else {
                     const notification =
                         "{\"jsonrpc\":\"2.0\",\"method\":\"signatureNotification\",\"params\":{\"result\":{\"context\":{\"slot\":888},\"value\":{\"err\":null}},\"subscription\":243}}";
