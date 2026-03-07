@@ -429,6 +429,36 @@ pub fn buildSignedLegacyTransactionWithConfig(
     );
 }
 
+pub fn buildLegacyInstructionsSignedTransactionWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    options: ?LegacyInstructionsBuildOptions,
+) !SignedLegacyTransaction {
+    return try self.buildSignedLegacyTransactionWithOptions(
+        payer,
+        instructions,
+        signers,
+        options,
+    );
+}
+
+pub fn buildLegacyInstructionsSignedTransactionWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    options: ?LegacyInstructionsBuildOptions,
+) !SignedLegacyTransaction {
+    return try self.buildLegacyInstructionsSignedTransactionWithOptions(
+        payer,
+        instructions,
+        signers,
+        options,
+    );
+}
+
 pub fn buildLegacyInstructionsSignedTransaction(
     self: anytype,
     payer: Pubkey,
@@ -638,6 +668,36 @@ pub fn buildLegacyInstructionsTransaction(
         instructions,
         signers,
         .{ .recent_blockhash = recent_blockhash },
+    );
+}
+
+pub fn buildLegacyInstructionsTransactionWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    options: ?LegacyInstructionsBuildOptions,
+) ![]u8 {
+    return try self.buildLegacyTransactionBase64WithOptions(
+        payer,
+        instructions,
+        signers,
+        options,
+    );
+}
+
+pub fn buildLegacyInstructionsTransactionWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    options: ?LegacyInstructionsBuildOptions,
+) ![]u8 {
+    return try self.buildLegacyInstructionsTransactionWithOptions(
+        payer,
+        instructions,
+        signers,
+        options,
     );
 }
 
