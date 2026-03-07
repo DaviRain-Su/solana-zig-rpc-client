@@ -96,13 +96,21 @@ fn executeRequest(
 }
 
 pub fn sendRequest(self: anytype, method: []const u8, params_json: []const u8) ![]u8 {
+    const request_id = self.request_id;
     const request_body = try std.fmt.allocPrint(
         self.allocator,
         "{{\"jsonrpc\":\"2.0\",\"id\":{},\"method\":\"{s}\",\"params\":{s}}}",
-        .{ self.request_id, method, params_json },
+        .{ request_id, method, params_json },
     );
-    errdefer self.allocator.free(request_body);
     self.request_id +%= 1;
+
+    if (self.mock_sender) |*sender| {
+        defer self.allocator.free(request_body);
+        self.transport_stats.request_count += 1;
+        return sender.dispatchRequest(request_id, method, params_json, request_body);
+    }
+
+    errdefer self.allocator.free(request_body);
 
     var response_writer = std.io.Writer.Allocating.init(self.allocator);
     errdefer response_writer.deinit();

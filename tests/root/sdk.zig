@@ -395,6 +395,111 @@ test "root.SystemProgram.advanceNonceAccount builds durable nonce instruction" {
     try std.testing.expect(!instruction.accounts[2].is_writable);
 }
 
+test "root.SystemProgram.initializeNonceAccount builds durable nonce initialization instruction" {
+    const allocator = std.testing.allocator;
+
+    const nonce_account_key_pair = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const authority_key_pair = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+
+    const nonce_account = client.Pubkey.fromBytes(nonce_account_key_pair.public_key.toBytes());
+    const authority = client.Pubkey.fromBytes(authority_key_pair.public_key.toBytes());
+    const recent_blockhashes_sysvar = try client.Sysvar.recentBlockhashes(allocator);
+    const rent_sysvar = try client.Sysvar.rent(allocator);
+
+    const initialize = try client.SystemProgram.initializeNonceAccount(
+        allocator,
+        nonce_account,
+        authority,
+    );
+    const instruction = initialize.instruction();
+
+    try std.testing.expect(instruction.program_id.eql(client.SystemProgram.id()));
+    try std.testing.expectEqual(@as(usize, 33), instruction.data.len);
+    try std.testing.expectEqual(@as(u8, 6), instruction.data[0]);
+    try std.testing.expectEqualSlices(u8, authority.bytes[0..], instruction.data[1..33]);
+    try std.testing.expectEqual(@as(usize, 3), instruction.accounts.len);
+    try std.testing.expect(instruction.accounts[0].pubkey.eql(nonce_account));
+    try std.testing.expect(!instruction.accounts[0].is_signer);
+    try std.testing.expect(instruction.accounts[0].is_writable);
+    try std.testing.expect(instruction.accounts[1].pubkey.eql(recent_blockhashes_sysvar));
+    try std.testing.expect(!instruction.accounts[1].is_signer);
+    try std.testing.expect(!instruction.accounts[1].is_writable);
+    try std.testing.expect(instruction.accounts[2].pubkey.eql(rent_sysvar));
+    try std.testing.expect(!instruction.accounts[2].is_signer);
+    try std.testing.expect(!instruction.accounts[2].is_writable);
+}
+
+test "root.SystemProgram.authorizeNonceAccount builds durable nonce authorization instruction" {
+    const nonce_account_key_pair = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const authority_key_pair = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const new_authority_key_pair = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+
+    const nonce_account = client.Pubkey.fromBytes(nonce_account_key_pair.public_key.toBytes());
+    const authority = client.Pubkey.fromBytes(authority_key_pair.public_key.toBytes());
+    const new_authority = client.Pubkey.fromBytes(new_authority_key_pair.public_key.toBytes());
+
+    const authorize = client.SystemProgram.authorizeNonceAccount(
+        nonce_account,
+        authority,
+        new_authority,
+    );
+    const instruction = authorize.instruction();
+
+    try std.testing.expect(instruction.program_id.eql(client.SystemProgram.id()));
+    try std.testing.expectEqual(@as(usize, 33), instruction.data.len);
+    try std.testing.expectEqual(@as(u8, 7), instruction.data[0]);
+    try std.testing.expectEqualSlices(u8, new_authority.bytes[0..], instruction.data[1..33]);
+    try std.testing.expectEqual(@as(usize, 2), instruction.accounts.len);
+    try std.testing.expect(instruction.accounts[0].pubkey.eql(nonce_account));
+    try std.testing.expect(!instruction.accounts[0].is_signer);
+    try std.testing.expect(instruction.accounts[0].is_writable);
+    try std.testing.expect(instruction.accounts[1].pubkey.eql(authority));
+    try std.testing.expect(instruction.accounts[1].is_signer);
+    try std.testing.expect(!instruction.accounts[1].is_writable);
+}
+
+test "root.SystemProgram.withdrawNonceAccount builds durable nonce withdrawal instruction" {
+    const allocator = std.testing.allocator;
+
+    const nonce_account_key_pair = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const authority_key_pair = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const recipient_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const nonce_account = client.Pubkey.fromBytes(nonce_account_key_pair.public_key.toBytes());
+    const authority = client.Pubkey.fromBytes(authority_key_pair.public_key.toBytes());
+    const recipient = client.Pubkey.fromBytes(recipient_key_pair.public_key.toBytes());
+    const recent_blockhashes_sysvar = try client.Sysvar.recentBlockhashes(allocator);
+    const rent_sysvar = try client.Sysvar.rent(allocator);
+
+    const withdraw = try client.SystemProgram.withdrawNonceAccount(
+        allocator,
+        nonce_account,
+        recipient,
+        authority,
+        42_000,
+    );
+    const instruction = withdraw.instruction();
+
+    try std.testing.expect(instruction.program_id.eql(client.SystemProgram.id()));
+    try std.testing.expectEqual(@as(usize, 9), instruction.data.len);
+    try std.testing.expectEqual(@as(u8, 5), instruction.data[0]);
+    try std.testing.expectEqual(@as(u64, 42_000), std.mem.readInt(u64, instruction.data[1..9], .little));
+    try std.testing.expectEqual(@as(usize, 5), instruction.accounts.len);
+    try std.testing.expect(instruction.accounts[0].pubkey.eql(nonce_account));
+    try std.testing.expect(instruction.accounts[0].is_writable);
+    try std.testing.expect(instruction.accounts[1].pubkey.eql(recipient));
+    try std.testing.expect(instruction.accounts[1].is_writable);
+    try std.testing.expect(instruction.accounts[2].pubkey.eql(recent_blockhashes_sysvar));
+    try std.testing.expect(!instruction.accounts[2].is_signer);
+    try std.testing.expect(!instruction.accounts[2].is_writable);
+    try std.testing.expect(instruction.accounts[3].pubkey.eql(rent_sysvar));
+    try std.testing.expect(!instruction.accounts[3].is_signer);
+    try std.testing.expect(!instruction.accounts[3].is_writable);
+    try std.testing.expect(instruction.accounts[4].pubkey.eql(authority));
+    try std.testing.expect(instruction.accounts[4].is_signer);
+    try std.testing.expect(!instruction.accounts[4].is_writable);
+}
+
 test "root.prependNonceAdvanceInstruction prepends durable nonce and clones instruction payloads" {
     const allocator = std.testing.allocator;
 
@@ -604,6 +709,103 @@ test "root.buildOwnedLegacyMessageWithNonceInstructions signs like generic durab
         expected_signed.signatures[0].bytes[0..],
         actual_signed.signatures[0].bytes[0..],
     );
+}
+
+test "root.buildSignedLegacyNonceTransferTransaction supports distinct payer sender and nonce authority" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = [_]u8{0x44} ** 32;
+
+    const fee_payer = try client.Keypair.fromSecretKeyBytes(fee_payer_raw.secret_key.toBytes());
+    const sender = try client.Keypair.fromSecretKeyBytes(sender_raw.secret_key.toBytes());
+    const nonce_authority = try client.Keypair.fromSecretKeyBytes(nonce_authority_raw.secret_key.toBytes());
+    const nonce_account = client.Pubkey.fromBytes(nonce_account_raw.public_key.toBytes());
+    const destination = client.Pubkey.fromBytes(destination_raw.public_key.toBytes());
+
+    const advance = try client.SystemProgram.advanceNonceAccount(
+        allocator,
+        nonce_account,
+        nonce_authority.public_key,
+    );
+    const transfer = client.SystemProgram.transfer(sender.public_key, destination, 1_000);
+    const instructions = [_]client.Instruction{
+        advance.instruction(),
+        transfer.instruction(),
+    };
+    const expected_transaction = client.LegacyTransaction{
+        .message = .{
+            .payer = fee_payer.public_key,
+            .recent_blockhash = client.Hash.fromBytes(recent_blockhash),
+            .instructions = instructions[0..],
+        },
+    };
+
+    var expected_signed = try expected_transaction.sign(
+        allocator,
+        &.{ fee_payer, sender, nonce_authority },
+    );
+    defer expected_signed.deinit(allocator);
+
+    var actual_signed = try client.buildSignedLegacyNonceTransferTransaction(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        nonce_account,
+        nonce_authority.public_key,
+        destination,
+        client.Hash.fromBytes(recent_blockhash),
+        1_000,
+        &.{ fee_payer, sender, nonce_authority },
+    );
+    defer actual_signed.deinit(allocator);
+
+    try std.testing.expectEqualSlices(u8, expected_signed.message_bytes, actual_signed.message_bytes);
+    try std.testing.expectEqual(@as(usize, 3), actual_signed.signatures.len);
+    try std.testing.expectEqualSlices(u8, expected_signed.signatures[0].bytes[0..], actual_signed.signatures[0].bytes[0..]);
+    try std.testing.expectEqualSlices(u8, expected_signed.signatures[1].bytes[0..], actual_signed.signatures[1].bytes[0..]);
+    try std.testing.expectEqualSlices(u8, expected_signed.signatures[2].bytes[0..], actual_signed.signatures[2].bytes[0..]);
+
+    var owned = try client.buildOwnedLegacyNonceTransferMessage(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        nonce_account,
+        nonce_authority.public_key,
+        destination,
+        client.Hash.fromBytes(recent_blockhash),
+        1_000,
+    );
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.message.instructions.len);
+    try std.testing.expect(owned.message.instructions[0].accounts[2].pubkey.eql(nonce_authority.public_key));
+    try std.testing.expect(owned.message.instructions[1].accounts[0].pubkey.eql(sender.public_key));
+
+    const expected_base64 = try expected_transaction.toBase64(
+        allocator,
+        &.{ fee_payer, sender, nonce_authority },
+    );
+    defer allocator.free(expected_base64);
+
+    const actual_base64 = try client.buildLegacyNonceTransferTransactionBase64(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        nonce_account,
+        nonce_authority.public_key,
+        destination,
+        client.Hash.fromBytes(recent_blockhash),
+        1_000,
+        &.{ fee_payer, sender, nonce_authority },
+    );
+    defer allocator.free(actual_base64);
+
+    try std.testing.expectEqualSlices(u8, expected_base64, actual_base64);
 }
 
 test "root.buildSignedLegacyTransaction and base64 match manual multi-signer legacy flow" {

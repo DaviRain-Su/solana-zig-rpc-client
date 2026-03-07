@@ -1,32 +1,13 @@
 const std = @import("std");
 const client = @import("solana_client_zig");
-const root_test_support = @import("root_test_support");
-
-const runMockRootServer = root_test_support.runMockRootServer;
-const runMockRootServerSequence = root_test_support.runMockRootServerSequence;
 
 test "root.getAccount wrappers return decoded account info" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":{"data":["", "base64"],"executable":false,"lamports":1234,"owner":"Owner1111111111111111111111111111111111","rentEpoch":8,"space":64}},"id":1}
-    ;
-    const response_bodies = [_][]const u8{
-        response_body,
-        response_body,
-        response_body,
-    };
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try client.RpcClient.init(allocator, rpc_url);
+    var rpc = try client.RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":{\"data\":[\"\",\"base64\"],\"executable\":false,\"lamports\":1234,\"owner\":\"Owner1111111111111111111111111111111111\",\"rentEpoch\":8,\"space\":64}},\"id\":1}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":{\"data\":[\"\",\"base64\"],\"executable\":false,\"lamports\":1234,\"owner\":\"Owner1111111111111111111111111111111111\",\"rentEpoch\":8,\"space\":64}},\"id\":2}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":{\"data\":[\"\",\"base64\"],\"executable\":false,\"lamports\":1234,\"owner\":\"Owner1111111111111111111111111111111111\",\"rentEpoch\":8,\"space\":64}},\"id\":3}" },
+    });
     defer rpc.deinit();
 
     const account_1 = (try rpc.getAccount("Address11111111111111111111111111111111")) orelse
@@ -47,6 +28,10 @@ test "root.getAccount wrappers return decoded account info" {
     )) orelse return error.TestExpectedEqual;
     defer rpc.freeOwnedAccountInfo(account_3);
     try std.testing.expectEqual(@as(u64, 1234), account_3.lamports);
+    try std.testing.expectEqual(@as(usize, 3), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[1].method);
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[2].method);
 }
 
 test "root.getAccountInfo params serialization" {
@@ -109,44 +94,21 @@ test "root.getUiAccount params serialization" {
 
 test "root.getAccountInfoMaybeWithOptions returns null when account missing" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":1},"value":null},"id":1}
-    ;
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try client.RpcClient.init(allocator, rpc_url);
+    var rpc = try client.RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":1},\"value\":null},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const maybe_info = try rpc.getAccountInfoMaybeWithOptions("Address11111111111111111111111111111111", null);
     try std.testing.expect(maybe_info == null);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
 }
 
 test "root.getAccountInfoResponseWithOptions preserves context slot" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":42},"value":{"data":["","base64"],"executable":false,"lamports":99,"owner":"Owner1111111111111111111111111111111111","rentEpoch":7,"space":0}},"id":1}
-    ;
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try client.RpcClient.init(allocator, rpc_url);
+    var rpc = try client.RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":42},\"value\":{\"data\":[\"\",\"base64\"],\"executable\":false,\"lamports\":99,\"owner\":\"Owner1111111111111111111111111111111111\",\"rentEpoch\":7,\"space\":0}},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const info_response = try rpc.getAccountInfoResponseWithOptions("Address11111111111111111111111111111111", null);
@@ -158,50 +120,30 @@ test "root.getAccountInfoResponseWithOptions preserves context slot" {
 
     try std.testing.expectEqual(@as(u64, 99), info.lamports);
     try std.testing.expectEqualStrings("Owner1111111111111111111111111111111111", info.owner);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
 }
 
 test "root.getUiAccountWithOptions returns account not found when account missing" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":1},"value":null},"id":1}
-    ;
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try client.RpcClient.init(allocator, rpc_url);
+    var rpc = try client.RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":1},\"value\":null},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     try std.testing.expectError(
         error.AccountNotFound,
         rpc.getUiAccountWithOptions("Address11111111111111111111111111111111", null),
     );
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
 }
 
 test "root.getMultipleUiAccountsResponseWithOptions preserves context slot" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":77},"value":[{"data":{"program":"spl-token","parsed":{"type":"account"}},"executable":false,"lamports":1,"owner":"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA","rentEpoch":2,"space":165},null]},"id":1}
-    ;
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try client.RpcClient.init(allocator, rpc_url);
+    var rpc = try client.RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":77},\"value\":[{\"data\":{\"program\":\"spl-token\",\"parsed\":{\"type\":\"account\"}},\"executable\":false,\"lamports\":1,\"owner\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\",\"rentEpoch\":2,\"space\":165},null]},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const infos_response = try rpc.getMultipleUiAccountsResponseWithOptions(&.{
@@ -222,6 +164,8 @@ test "root.getMultipleUiAccountsResponseWithOptions preserves context slot" {
     try std.testing.expectEqual(@as(usize, 2), infos_response.accounts.len);
     try std.testing.expect(infos_response.accounts[0] != null);
     try std.testing.expect(infos_response.accounts[1] == null);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getMultipleAccounts", rpc.capturedMockRequests()[0].method);
 }
 
 test "root.getMultipleUiAccounts params serialization" {
@@ -379,20 +323,9 @@ test "root.getProgramUiAccountsWithOptions params serialization" {
 
 test "root.getProgramUiAccountsWithConfig returns parsed program accounts" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":[{"pubkey":"ProgramAcct1111111111111111111111111111111111","account":{"data":{"program":"spl-token","parsed":{"type":"account","info":{"mint":"Mint1111111111111111111111111111111111"}}},"executable":false,"lamports":123,"owner":"Owner1111111111111111111111111111111111","rentEpoch":9,"space":165}}],"id":1}
-    ;
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try client.RpcClient.init(allocator, rpc_url);
+    var rpc = try client.RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":[{\"pubkey\":\"ProgramAcct1111111111111111111111111111111111\",\"account\":{\"data\":{\"program\":\"spl-token\",\"parsed\":{\"type\":\"account\",\"info\":{\"mint\":\"Mint1111111111111111111111111111111111\"}}},\"executable\":false,\"lamports\":123,\"owner\":\"Owner1111111111111111111111111111111111\",\"rentEpoch\":9,\"space\":165}}],\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const accounts = try rpc.getProgramUiAccountsWithConfig(
@@ -411,4 +344,6 @@ test "root.getProgramUiAccountsWithConfig returns parsed program accounts" {
     try std.testing.expectEqual(@as(usize, 1), accounts.len);
     try std.testing.expectEqualStrings("ProgramAcct1111111111111111111111111111111111", accounts[0].pubkey);
     try std.testing.expectEqual(@as(u64, 123), accounts[0].account.lamports);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getProgramAccounts", rpc.capturedMockRequests()[0].method);
 }

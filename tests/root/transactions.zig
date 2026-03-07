@@ -1,7 +1,6 @@
 const std = @import("std");
 const Ed25519 = std.crypto.sign.Ed25519;
 const client = @import("solana_client_zig");
-const root_test_support = @import("root_test_support");
 
 const RpcClient = client.RpcClient;
 const Keypair = client.Keypair;
@@ -17,26 +16,12 @@ const VersionedMessageV0 = client.VersionedMessageV0;
 const max_lockout_history = client.max_lockout_history;
 const confirmationSatisfiesCommitment = client.confirmationSatisfiesCommitment;
 const encodeBase58 = client.encodeBase58;
-const runMockRootServer = root_test_support.runMockRootServer;
-const runMockRootServerSequence = root_test_support.runMockRootServerSequence;
-const runMockRootServerCaptureSequence = root_test_support.runMockRootServerCaptureSequence;
 
 test "root.send delegates to sendTransaction" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":"Sig111111111111111111111111111111111111111111111111111111111111111111","id":1}
-    ;
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"Sig111111111111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const signature = try rpc.send("SignedTransactionBase64==");
@@ -46,6 +31,9 @@ test "root.send delegates to sendTransaction" {
         "Sig111111111111111111111111111111111111111111111111111111111111111111",
         signature,
     );
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, "SignedTransactionBase64==") != null);
 }
 
 test "root.sendTransactionTyped serializes signed legacy transaction" {
@@ -77,26 +65,9 @@ test "root.sendTransactionTyped serializes signed legacy transaction" {
     const encoded = try signed.toBase64(allocator);
     defer allocator.free(encoded);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":"SigTyped111111111111111111111111111111111111111111111111111111111111111","id":1}
-    };
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"SigTyped111111111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const signature = try rpc.sendTransactionTyped(
@@ -112,11 +83,11 @@ test "root.sendTransactionTyped serializes signed legacy transaction" {
         "SigTyped111111111111111111111111111111111111111111111111111111111111111",
         signature,
     );
-    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"sendTransaction\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"skipPreflight\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"preflightCommitment\":\"confirmed\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"preflightCommitment\":\"confirmed\"") != null);
 }
 
 test "root.sendLegacyTransaction signs and serializes legacy transaction" {
@@ -146,26 +117,9 @@ test "root.sendLegacyTransaction signs and serializes legacy transaction" {
     const encoded = try transaction.toBase64(allocator, &.{keypair});
     defer allocator.free(encoded);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":"SigLegacy11111111111111111111111111111111111111111111111111111111111111","id":1}
-    };
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"SigLegacy11111111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const signature = try rpc.sendLegacyTransaction(transaction, &.{keypair}, .{ .skip_preflight = true });
@@ -175,31 +129,18 @@ test "root.sendLegacyTransaction signs and serializes legacy transaction" {
         "SigLegacy11111111111111111111111111111111111111111111111111111111111111",
         signature,
     );
-    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"sendTransaction\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"skipPreflight\":true") != null);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
 }
 
 test "root.sendAndConfirmTransaction aliases wait on signature status" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":"Sig111111111111111111111111111111111111111111111111111111111111111111","id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[{"slot":10,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":2}
-    };
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"Sig111111111111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[{\"slot\":10,\"confirmations\":1,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":2}" },
+    });
     defer rpc.deinit();
 
     const signature = try rpc.sendAndConfirmTransaction("SignedTransactionBase64==");
@@ -209,6 +150,9 @@ test "root.sendAndConfirmTransaction aliases wait on signature status" {
         "Sig111111111111111111111111111111111111111111111111111111111111111111",
         signature,
     );
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
 }
 
 test "root.sendTransactionAndConfirmTyped submits and confirms signed legacy transaction" {
@@ -240,29 +184,10 @@ test "root.sendTransactionAndConfirmTyped submits and confirms signed legacy tra
     const encoded = try signed.toBase64(allocator);
     defer allocator.free(encoded);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":"SigTypedConfirm11111111111111111111111111111111111111111111111111111111111","id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[{"slot":10,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":2}
-    };
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"SigTypedConfirm11111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[{\"slot\":10,\"confirmations\":1,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":2}" },
+    });
     defer rpc.deinit();
 
     const signature = try rpc.sendTransactionAndConfirmTyped(
@@ -279,42 +204,27 @@ test "root.sendTransactionAndConfirmTyped submits and confirms signed legacy tra
         "SigTypedConfirm11111111111111111111111111111111111111111111111111111111111",
         signature,
     );
-    try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"sendTransaction\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"getSignatureStatuses\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"searchTransactionHistory\":true") != null);
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, encoded) != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"searchTransactionHistory\":true") != null);
 }
 
 test "root.sendTransactionAndConfirm uses initial transaction-not-found timeout from constructor" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":"SigInitialTimeout111111111111111111111111111111111111111111111111111111111","id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[null]},"id":2}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":11},"value":[null]},"id":3}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":[{"slot":12,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":4}
-    };
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.newWithTimeoutsAndCommitment(allocator, rpc_url, 40, 80, null);
+    var rpc = try RpcClient.newMockWithTimeoutsAndCommitment(
+        allocator,
+        &.{
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"SigInitialTimeout111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[null]},\"id\":2}" },
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":11},\"value\":[null]},\"id\":3}" },
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":[{\"slot\":12,\"confirmations\":1,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":4}" },
+        },
+        40,
+        80,
+        null,
+    );
     defer rpc.deinit();
 
     const signature = try rpc.sendTransactionAndConfirm(
@@ -331,41 +241,27 @@ test "root.sendTransactionAndConfirm uses initial transaction-not-found timeout 
         "SigInitialTimeout111111111111111111111111111111111111111111111111111111111",
         signature,
     );
-    try std.testing.expectEqual(@as(usize, 4), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"sendTransaction\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"getSignatureStatuses\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"method\":\"getSignatureStatuses\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[3], "\"method\":\"getSignatureStatuses\"") != null);
+    try std.testing.expectEqual(@as(usize, 4), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[2].method);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[3].method);
 }
 
 test "root.sendAndConfirmTransactionWithSpinner prints progress and honors config" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":"SigSpinner11111111111111111111111111111111111111111111111111111111111111","id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[null]},"id":2}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":11},"value":[{"slot":11,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":3}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":[{"slot":12,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":4}
-    };
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.newWithTimeoutsAndCommitment(allocator, rpc_url, 200, 80, null);
+    var rpc = try RpcClient.newMockWithTimeoutsAndCommitment(
+        allocator,
+        &.{
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"SigSpinner11111111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[null]},\"id\":2}" },
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":11},\"value\":[{\"slot\":11,\"confirmations\":1,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":3}" },
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":[{\"slot\":12,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":4}" },
+        },
+        200,
+        80,
+        null,
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -391,14 +287,14 @@ test "root.sendAndConfirmTransactionWithSpinner prints progress and honors confi
         "SigSpinner11111111111111111111111111111111111111111111111111111111111111",
         signature,
     );
-    try std.testing.expectEqual(@as(usize, 4), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"sendTransaction\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"skipPreflight\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"maxRetries\":2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"getSignatureStatuses\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"commitment\":\"confirmed\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"commitment\":\"confirmed\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[3], "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expectEqual(@as(usize, 4), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"maxRetries\":2") != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[3].params_json, "\"commitment\":\"confirmed\"") != null);
     try std.testing.expectEqualStrings(
         \\sending transaction...
         \\submitted transaction: SigSpinner11111111111111111111111111111111111111111111111111111111111111
@@ -411,32 +307,18 @@ test "root.sendAndConfirmTransactionWithSpinner prints progress and honors confi
 
 test "root.confirmTransactionWithSpinner waits for observation then commitment" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[null]},"id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":true,"id":2}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":[{"slot":12,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":3}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":13},"value":[{"slot":13,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":4}
-    };
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.newWithTimeoutsAndCommitment(allocator, rpc_url, 200, 80, null);
+    var rpc = try RpcClient.newMockWithTimeoutsAndCommitment(
+        allocator,
+        &.{
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[null]},\"id\":1}" },
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":true,\"id\":2}" },
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":[{\"slot\":12,\"confirmations\":1,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":3}" },
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":13},\"value\":[{\"slot\":13,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":4}" },
+        },
+        200,
+        80,
+        null,
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -459,12 +341,12 @@ test "root.confirmTransactionWithSpinner waits for observation then commitment" 
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
     defer allocator.free(captured);
 
-    try std.testing.expectEqual(@as(usize, 4), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getSignatureStatuses\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"commitment\":\"processed\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"isBlockhashValid\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"commitment\":\"processed\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[3], "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expectEqual(@as(usize, 4), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"processed\"") != null);
+    try std.testing.expectEqualStrings("isBlockhashValid", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"commitment\":\"processed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[3].params_json, "\"commitment\":\"confirmed\"") != null);
     try std.testing.expectEqualStrings(
         \\confirming transaction: SigConfirmSpinner11111111111111111111111111111111111111111111111111111111
         \\waiting for transaction to be observed: SigConfirmSpinner11111111111111111111111111111111111111111111111111111111
@@ -476,22 +358,16 @@ test "root.confirmTransactionWithSpinner waits for observation then commitment" 
 
 test "root.confirmTransactionWithSpinner returns blockhash expired when not observed" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[null]},"id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":false,"id":2}
-    };
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.newWithTimeoutsAndCommitment(allocator, rpc_url, 200, 0, null);
+    var rpc = try RpcClient.newMockWithTimeoutsAndCommitment(
+        allocator,
+        &.{
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[null]},\"id\":1}" },
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":false,\"id\":2}" },
+        },
+        200,
+        0,
+        null,
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -526,23 +402,10 @@ test "root.confirmTransactionWithSpinner returns blockhash expired when not obse
 
 test "root.sendAndConfirmTransactionWithConfig supports send options" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":"Sig222222222222222222222222222222222222222222222222222222222222222222","id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":11},"value":[{"slot":11,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":2}
-    };
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"Sig222222222222222222222222222222222222222222222222222222222222222222\",\"id\":1}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":11},\"value\":[{\"slot\":11,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":2}" },
+    });
     defer rpc.deinit();
 
     const signature = try rpc.sendAndConfirmTransactionWithConfig(
@@ -555,27 +418,18 @@ test "root.sendAndConfirmTransactionWithConfig supports send options" {
         "Sig222222222222222222222222222222222222222222222222222222222222222222",
         signature,
     );
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
 }
 
 test "root.sendAndConfirmTransactionWithCommitmentAndConfig supports both commitment and send options" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":"Sig333333333333333333333333333333333333333333333333333333333333333333","id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":[{"slot":12,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":2}
-    };
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"Sig333333333333333333333333333333333333333333333333333333333333333333\",\"id\":1}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":[{\"slot\":12,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":2}" },
+    });
     defer rpc.deinit();
 
     const signature = try rpc.sendAndConfirmTransactionWithCommitmentAndConfig(
@@ -589,27 +443,17 @@ test "root.sendAndConfirmTransactionWithCommitmentAndConfig supports both commit
         "Sig333333333333333333333333333333333333333333333333333333333333333333",
         signature,
     );
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"commitment\":\"confirmed\"") != null);
 }
 
 test "root.sendAndConfirmTransactionWithCommitment requires commitment-aware confirmation" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":"Sig333333333333333333333333333333333333333333333333333333333333333333","id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":[{"slot":12,"confirmations":1,"confirmationStatus":"finalized","err":null}]},"id":2}
-    };
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"Sig333333333333333333333333333333333333333333333333333333333333333333\",\"id\":1}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":[{\"slot\":12,\"confirmations\":1,\"confirmationStatus\":\"finalized\",\"err\":null}]},\"id\":2}" },
+    });
     defer rpc.deinit();
 
     const signature = try rpc.sendAndConfirmTransactionWithCommitment(
@@ -622,28 +466,16 @@ test "root.sendAndConfirmTransactionWithCommitment requires commitment-aware con
         "Sig333333333333333333333333333333333333333333333333333333333333333333",
         signature,
     );
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"commitment\":\"confirmed\"") != null);
 }
 
 test "root.pollGetBalanceWithCommitmentAndTimeouts retries until success" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"node behind"}}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":44},"value":77},"id":2}
-        ,
-    };
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32000,\"message\":\"node behind\"}}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":77},\"id\":2}" },
+    });
     defer rpc.deinit();
 
     const balance = try rpc.pollGetBalanceWithCommitmentAndTimeouts(
@@ -653,28 +485,17 @@ test "root.pollGetBalanceWithCommitmentAndTimeouts retries until success" {
         10,
     );
     try std.testing.expectEqual(@as(u64, 77), balance);
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getBalance", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("getBalance", rpc.capturedMockRequests()[1].method);
 }
 
 test "root.waitForBalanceWithCommitmentAndTimeouts waits for expected value" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":45},"value":1},"id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":46},"value":5},"id":2}
-        ,
-    };
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":45},\"value\":1},\"id\":1}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":46},\"value\":5},\"id\":2}" },
+    });
     defer rpc.deinit();
 
     const balance = try rpc.waitForBalanceWithCommitmentAndTimeouts(
@@ -685,78 +506,41 @@ test "root.waitForBalanceWithCommitmentAndTimeouts waits for expected value" {
         10,
     );
     try std.testing.expectEqual(@as(u64, 5), balance);
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
 }
 
 test "root.confirmTransaction checks transaction confirmed status" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[{"slot":10,"confirmations":1,"confirmationStatus":"confirmed","err":null}]},"id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":11},"value":[{"slot":11,"confirmations":2,"confirmationStatus":"finalized","err":null}]},"id":2}
-        ,
-    };
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[{\"slot\":10,\"confirmations\":1,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":11},\"value\":[{\"slot\":11,\"confirmations\":2,\"confirmationStatus\":\"finalized\",\"err\":null}]},\"id\":2}" },
+    });
     defer rpc.deinit();
 
     const confirmed = try rpc.confirmTransaction("Sig111111111111111111111111111111111111", .confirmed, false);
     try std.testing.expect(confirmed);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
 }
 
 test "root.confirmTransaction returns false for missing signature" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":1},"value":[null]},"id":1}
-    ;
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":1},\"value\":[null]},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const confirmed = try rpc.confirmTransaction("Sig111111111111111111111111111111111111", .processed, false);
     try std.testing.expect(!confirmed);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
 }
 
 test "root.pollForSignatureConfirmationWithTimeouts waits for configured lockout" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":21},"value":[{"slot":21,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":22},"value":[{"slot":22,"confirmations":3,"confirmationStatus":"confirmed","err":null}]},"id":2}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":23},"value":[{"slot":23,"confirmations":10,"confirmationStatus":"confirmed","err":null}]},"id":3}
-        ,
-    };
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":21},\"value\":[{\"slot\":21,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":22},\"value\":[{\"slot\":22,\"confirmations\":3,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":2}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":23},\"value\":[{\"slot\":23,\"confirmations\":10,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":3}" },
+    });
     defer rpc.deinit();
 
     const confirmed_blocks = try rpc.pollForSignatureConfirmationWithTimeouts(
@@ -767,28 +551,15 @@ test "root.pollForSignatureConfirmationWithTimeouts waits for configured lockout
         10,
     );
     try std.testing.expectEqual(@as(u64, 10), confirmed_blocks);
+    try std.testing.expectEqual(@as(usize, 3), rpc.mockRequestCount());
 }
 
 test "root.pollForSignatureConfirmationWithCommitmentAndTimeouts waits for commitment level" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":31},"value":[{"slot":31,"confirmations":1,"confirmationStatus":"confirmed","err":null}]},"id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":32},"value":[{"slot":32,"confirmations":10,"confirmationStatus":"finalized","err":null}]},"id":2}
-        ,
-    };
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":31},\"value\":[{\"slot\":31,\"confirmations\":1,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":32},\"value\":[{\"slot\":32,\"confirmations\":10,\"confirmationStatus\":\"finalized\",\"err\":null}]},\"id\":2}" },
+    });
     defer rpc.deinit();
 
     const confirmed_blocks = try rpc.pollForSignatureConfirmationWithCommitmentAndTimeouts(
@@ -800,24 +571,14 @@ test "root.pollForSignatureConfirmationWithCommitmentAndTimeouts waits for commi
         10,
     );
     try std.testing.expectEqual(@as(u64, 10), confirmed_blocks);
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
 }
 
 test "root.pollForSignature returns on failed signature" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":41},"value":[{"slot":41,"confirmations":1,"confirmationStatus":"processed","err":{"InstructionError":"GenericError"}}]},"id":1}
-    ;
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":41},\"value\":[{\"slot\":41,\"confirmations\":1,\"confirmationStatus\":\"processed\",\"err\":{\"InstructionError\":\"GenericError\"}}]},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     try rpc.pollForSignature(
@@ -825,26 +586,18 @@ test "root.pollForSignature returns on failed signature" {
         null,
         false,
     );
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
 }
 
 test "root.pollForSignatureConfirmation returns partial confirmations on timeout" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":41},"value":[{"slot":41,"confirmations":3,"confirmationStatus":"processed","err":null}]},"id":1}
-    ;
-    const response_bodies: [20][]const u8 = .{response_body} ** 20;
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    for (0..20) |_| {
+        try rpc.pushMockJsonResponse(
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":41},\"value\":[{\"slot\":41,\"confirmations\":3,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":1}",
+        );
+    }
 
     const confirmed_blocks = try rpc.pollForSignatureConfirmationWithTimeouts(
         "Sig111111111111111111111111111111111111",
@@ -854,46 +607,26 @@ test "root.pollForSignatureConfirmation returns partial confirmations on timeout
         10,
     );
     try std.testing.expectEqual(@as(u64, 3), confirmed_blocks);
+    try std.testing.expect(rpc.mockRequestCount() >= 1);
 }
 
 test "root.getNumBlocksSinceSignatureConfirmation returns lockout fallback when confirmations missing" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":31},"value":[{"slot":31,"confirmationStatus":"confirmed","err":null}]},"id":1}
-    ;
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":31},\"value\":[{\"slot\":31,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const confirmed_blocks = try rpc.getNumBlocksSinceSignatureConfirmation("Sig111111111111111111111111111111111111", false);
     try std.testing.expectEqual(@as(u64, max_lockout_history + 1), confirmed_blocks);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
 }
 
 test "root.getNumBlocksSinceSignatureConfirmationWithCommitment passes commitment into signature status query" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":31},"value":[{"slot":31,"confirmationStatus":"confirmed","err":null}]},"id":1}
-    ;
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":31},\"value\":[{\"slot\":31,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const confirmed_blocks = try rpc.getNumBlocksSinceSignatureConfirmationWithCommitment(
@@ -902,24 +635,14 @@ test "root.getNumBlocksSinceSignatureConfirmationWithCommitment passes commitmen
         false,
     );
     try std.testing.expectEqual(@as(u64, max_lockout_history + 1), confirmed_blocks);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
 }
 
 test "root.getTransactionWithConfig returns decoded transaction json" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":{"transaction":"abc","meta":{"err":null}}},"id":1}
-    ;
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":{\"transaction\":\"abc\",\"meta\":{\"err\":null}}},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const tx_json = try rpc.getTransactionWithConfig(
@@ -929,29 +652,21 @@ test "root.getTransactionWithConfig returns decoded transaction json" {
     defer allocator.free(tx_json.?);
 
     try std.testing.expect(std.mem.indexOf(u8, tx_json.?, "abc") != null);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
 }
 
 test "root.simulateTransactionWithConfig delegates to simulateTransaction" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":{"accounts":[],"err":null,"fee":120,"unitsConsumed":42}},"id":1}
-    ;
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":{\"accounts\":[],\"err\":null,\"fee\":120,\"unitsConsumed\":42}},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const result = try rpc.simulateTransactionWithConfig("signed-transaction-base64", null);
     try std.testing.expectEqual(@as(u64, 120), result.fee.?);
     try std.testing.expectEqual(@as(u64, 42), result.units_consumed.?);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("simulateTransaction", rpc.capturedMockRequests()[0].method);
 }
 
 test "root.simulateTransactionTyped serializes signed legacy transaction" {
@@ -983,26 +698,9 @@ test "root.simulateTransactionTyped serializes signed legacy transaction" {
     const encoded = try signed.toBase64(allocator);
     defer allocator.free(encoded);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":{"accounts":[],"err":null,"fee":120,"unitsConsumed":42}},"id":1}
-    };
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":{\"accounts\":[],\"err\":null,\"fee\":120,\"unitsConsumed\":42}},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const result = try rpc.simulateTransactionTyped(
@@ -1011,11 +709,11 @@ test "root.simulateTransactionTyped serializes signed legacy transaction" {
     );
     try std.testing.expectEqual(@as(u64, 120), result.fee.?);
     try std.testing.expectEqual(@as(u64, 42), result.units_consumed.?);
-    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"simulateTransaction\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"sigVerify\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"replaceRecentBlockhash\":true") != null);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("simulateTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"sigVerify\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"replaceRecentBlockhash\":true") != null);
 }
 
 test "root.simulateLegacyTransaction signs and serializes legacy transaction" {
@@ -1045,34 +743,18 @@ test "root.simulateLegacyTransaction signs and serializes legacy transaction" {
     const encoded = try transaction.toBase64(allocator, &.{keypair});
     defer allocator.free(encoded);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":{"accounts":[],"err":null,"fee":120,"unitsConsumed":42}},"id":1}
-    };
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":{\"accounts\":[],\"err\":null,\"fee\":120,\"unitsConsumed\":42}},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const result = try rpc.simulateLegacyTransaction(transaction, &.{keypair}, .{ .sig_verify = true });
     try std.testing.expectEqual(@as(u64, 120), result.fee.?);
     try std.testing.expectEqual(@as(u64, 42), result.units_consumed.?);
-    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"sigVerify\":true") != null);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("simulateTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"sigVerify\":true") != null);
 }
 
 test "root.buildTransferTransactionWithOptions fetches latest blockhash" {
@@ -1093,32 +775,15 @@ test "root.buildTransferTransactionWithOptions fetches latest blockhash" {
     const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
     defer allocator.free(recent_blockhash_base58);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
     const response_body = try std.fmt.allocPrint(
         allocator,
         "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":9}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":55}}}},\"id\":1}}",
         .{recent_blockhash_base58},
     );
     defer allocator.free(response_body);
-
-    const response_bodies = [_][]const u8{response_body};
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockJsonResponse(response_body);
 
     const encoded_transaction = try rpc.buildTransferTransactionWithOptions(
         sender_secret_key_base58,
@@ -1128,9 +793,9 @@ test "root.buildTransferTransactionWithOptions fetches latest blockhash" {
     );
     defer allocator.free(encoded_transaction);
 
-    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getLatestBlockhash\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
 
     const tx_bytes_len = try std.base64.standard.Decoder.calcSizeForSlice(encoded_transaction);
     var tx_bytes = try allocator.alloc(u8, tx_bytes_len);
@@ -1159,32 +824,15 @@ test "root.buildTransferSignedTransactionWithOptions fetches latest blockhash" {
     const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
     defer allocator.free(recent_blockhash_base58);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
     const response_body = try std.fmt.allocPrint(
         allocator,
         "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":9}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":55}}}},\"id\":1}}",
         .{recent_blockhash_base58},
     );
     defer allocator.free(response_body);
-
-    const response_bodies = [_][]const u8{response_body};
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockJsonResponse(response_body);
 
     var signed = try rpc.buildTransferSignedTransactionWithOptions(
         sender_secret_key_base58,
@@ -1197,9 +845,9 @@ test "root.buildTransferSignedTransactionWithOptions fetches latest blockhash" {
     const tx_bytes = try signed.serialize(allocator);
     defer allocator.free(tx_bytes);
 
-    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getLatestBlockhash\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
 
     const message = tx_bytes[1 + Ed25519.Signature.encoded_length ..];
     try std.testing.expect(std.mem.eql(u8, message[100..132], &recent_blockhash));
@@ -1230,32 +878,15 @@ test "root.buildTransferSignedTransactionWithOptions supports nonce blockhash qu
     const nonce_blockhash_base58 = try encodeBase58(allocator, &nonce_blockhash);
     defer allocator.free(nonce_blockhash_base58);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
     const response_body = try std.fmt.allocPrint(
         allocator,
         "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":42}},\"value\":{{\"data\":{{\"program\":\"system\",\"parsed\":{{\"type\":\"initialized\",\"info\":{{\"authority\":\"{s}\",\"blockhash\":\"{s}\",\"feeCalculator\":{{\"lamportsPerSignature\":5000}}}}}},\"space\":80}},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}}},\"id\":1}}",
         .{ sender_public_key_base58, nonce_blockhash_base58 },
     );
     defer allocator.free(response_body);
-
-    const response_bodies = [_][]const u8{response_body};
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockJsonResponse(response_body);
 
     var signed = try rpc.buildTransferSignedTransactionWithOptions(
         sender_secret_key_base58,
@@ -1285,12 +916,93 @@ test "root.buildTransferSignedTransactionWithOptions supports nonce blockhash qu
     );
     defer allocator.free(expected);
 
-    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getAccountInfo\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"encoding\":\"jsonParsed\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"commitment\":\"finalized\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], nonce_account_base58) != null);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"encoding\":\"jsonParsed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"finalized\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, nonce_account_base58) != null);
     try std.testing.expect(std.mem.eql(u8, expected, encoded));
+}
+
+test "root.buildNonceTransferSignedTransactionWithOptions supports distinct payer sender and nonce authority" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const fee_payer_secret_key_base58 = try encodeBase58(allocator, &fee_payer_secret_key);
+    defer allocator.free(fee_payer_secret_key_base58);
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+    const nonce_authority_secret_key_base58 = try encodeBase58(allocator, &nonce_authority_secret_key);
+    defer allocator.free(nonce_authority_secret_key_base58);
+    const nonce_authority_public_key_base58 = try encodeBase58(allocator, &nonce_authority_raw.public_key.toBytes());
+    defer allocator.free(nonce_authority_public_key_base58);
+
+    const nonce_account_pubkey = nonce_account_raw.public_key.toBytes();
+    const nonce_account_base58 = try encodeBase58(allocator, &nonce_account_pubkey);
+    defer allocator.free(nonce_account_base58);
+
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const nonce_blockhash = [_]u8{0x52} ** 32;
+    const nonce_blockhash_base58 = try encodeBase58(allocator, &nonce_blockhash);
+    defer allocator.free(nonce_blockhash_base58);
+
+    const response_body = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":42}},\"value\":{{\"data\":{{\"program\":\"system\",\"parsed\":{{\"type\":\"initialized\",\"info\":{{\"authority\":\"{s}\",\"blockhash\":\"{s}\",\"feeCalculator\":{{\"lamportsPerSignature\":5000}}}}}},\"space\":80}},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}}},\"id\":1}}",
+        .{ nonce_authority_public_key_base58, nonce_blockhash_base58 },
+    );
+    defer allocator.free(response_body);
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockJsonResponse(response_body);
+
+    var signed = try rpc.buildNonceTransferSignedTransactionWithOptions(
+        fee_payer_secret_key_base58,
+        sender_secret_key_base58,
+        nonce_authority_secret_key_base58,
+        nonce_account_base58,
+        destination_base58,
+        1_000,
+        .{ .blockhash_commitment = .confirmed },
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const nonce_authority = try Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+    const expected = try client.buildLegacyNonceTransferTransactionBase64(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(nonce_account_pubkey),
+        nonce_authority.public_key,
+        Pubkey.fromBytes(destination_public_key),
+        Hash.fromBytes(nonce_blockhash),
+        1_000,
+        &.{ fee_payer, sender, nonce_authority },
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"encoding\":\"jsonParsed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, nonce_account_base58) != null);
+    try std.testing.expectEqualSlices(u8, expected, encoded);
 }
 
 test "root.transferWithOptions fetches latest blockhash and confirms" {
@@ -1311,37 +1023,17 @@ test "root.transferWithOptions fetches latest blockhash and confirms" {
     const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
     defer allocator.free(recent_blockhash_base58);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
     const latest_blockhash_response = try std.fmt.allocPrint(
         allocator,
         "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":12}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":77}}}},\"id\":1}}",
         .{recent_blockhash_base58},
     );
     defer allocator.free(latest_blockhash_response);
-
-    const response_bodies = [_][]const u8{
-        latest_blockhash_response,
-        \\{"jsonrpc":"2.0","result":"Sig555555555555555555555555555555555555555555555555555555555555555555","id":2}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":13},"value":[{"slot":13,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":3}
-    };
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockJsonResponse(latest_blockhash_response);
+    try rpc.pushMockJsonResponse("{\"jsonrpc\":\"2.0\",\"result\":\"Sig555555555555555555555555555555555555555555555555555555555555555555\",\"id\":2}");
+    try rpc.pushMockJsonResponse("{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":13},\"value\":[{\"slot\":13,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":3}");
 
     const signature = try rpc.transferWithOptions(
         sender_secret_key_base58,
@@ -1362,14 +1054,14 @@ test "root.transferWithOptions fetches latest blockhash and confirms" {
         "Sig555555555555555555555555555555555555555555555555555555555555555555",
         signature,
     );
-    try std.testing.expectEqual(@as(usize, 3), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getLatestBlockhash\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"sendTransaction\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"skipPreflight\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"maxRetries\":2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"method\":\"getSignatureStatuses\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"searchTransactionHistory\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expectEqual(@as(usize, 3), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"maxRetries\":2") != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[2].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"searchTransactionHistory\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"commitment\":\"confirmed\"") != null);
 }
 
 test "root.transferWithOptions supports nonce blockhash query and confirms" {
@@ -1407,37 +1099,17 @@ test "root.transferWithOptions supports nonce blockhash query and confirms" {
     );
     defer allocator.free(expected_encoded);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
     const nonce_account_response = try std.fmt.allocPrint(
         allocator,
         "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":12}},\"value\":{{\"data\":{{\"program\":\"system\",\"parsed\":{{\"type\":\"initialized\",\"info\":{{\"authority\":\"{s}\",\"blockhash\":\"{s}\",\"feeCalculator\":{{\"lamportsPerSignature\":5000}}}}}},\"space\":80}},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}}},\"id\":1}}",
         .{ sender_public_key_base58, nonce_blockhash_base58 },
     );
     defer allocator.free(nonce_account_response);
-
-    const response_bodies = [_][]const u8{
-        nonce_account_response,
-        \\{"jsonrpc":"2.0","result":"Sig999999999999999999999999999999999999999999999999999999999999999999","id":2}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":13},"value":[{"slot":13,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":3}
-    };
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockJsonResponse(nonce_account_response);
+    try rpc.pushMockJsonResponse("{\"jsonrpc\":\"2.0\",\"result\":\"Sig999999999999999999999999999999999999999999999999999999999999999999\",\"id\":2}");
+    try rpc.pushMockJsonResponse("{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":13},\"value\":[{\"slot\":13,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":3}");
 
     const signature = try rpc.transferWithOptions(
         sender_secret_key_base58,
@@ -1463,16 +1135,112 @@ test "root.transferWithOptions supports nonce blockhash query and confirms" {
         "Sig999999999999999999999999999999999999999999999999999999999999999999",
         signature,
     );
-    try std.testing.expectEqual(@as(usize, 3), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getAccountInfo\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"commitment\":\"confirmed\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"sendTransaction\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], expected_encoded) != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"skipPreflight\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"maxRetries\":2") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"method\":\"getSignatureStatuses\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"searchTransactionHistory\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[2], "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expectEqual(@as(usize, 3), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].request_body, expected_encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"maxRetries\":2") != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[2].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"searchTransactionHistory\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"commitment\":\"confirmed\"") != null);
+}
+
+test "root.nonceTransferWithOptions supports distinct payer sender and nonce authority" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const fee_payer_secret_key_base58 = try encodeBase58(allocator, &fee_payer_secret_key);
+    defer allocator.free(fee_payer_secret_key_base58);
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+    const nonce_authority_secret_key_base58 = try encodeBase58(allocator, &nonce_authority_secret_key);
+    defer allocator.free(nonce_authority_secret_key_base58);
+    const nonce_authority_public_key_base58 = try encodeBase58(allocator, &nonce_authority_raw.public_key.toBytes());
+    defer allocator.free(nonce_authority_public_key_base58);
+
+    const nonce_account_pubkey = nonce_account_raw.public_key.toBytes();
+    const nonce_account_base58 = try encodeBase58(allocator, &nonce_account_pubkey);
+    defer allocator.free(nonce_account_base58);
+
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const nonce_blockhash = [_]u8{0x34} ** 32;
+    const nonce_blockhash_base58 = try encodeBase58(allocator, &nonce_blockhash);
+    defer allocator.free(nonce_blockhash_base58);
+
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const nonce_authority = try Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+    const expected_encoded = try client.buildLegacyNonceTransferTransactionBase64(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(nonce_account_pubkey),
+        nonce_authority.public_key,
+        Pubkey.fromBytes(destination_public_key),
+        Hash.fromBytes(nonce_blockhash),
+        5_000,
+        &.{ fee_payer, sender, nonce_authority },
+    );
+    defer allocator.free(expected_encoded);
+
+    const nonce_account_response = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":12}},\"value\":{{\"data\":{{\"program\":\"system\",\"parsed\":{{\"type\":\"initialized\",\"info\":{{\"authority\":\"{s}\",\"blockhash\":\"{s}\",\"feeCalculator\":{{\"lamportsPerSignature\":5000}}}}}},\"space\":80}},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}}},\"id\":1}}",
+        .{ nonce_authority_public_key_base58, nonce_blockhash_base58 },
+    );
+    defer allocator.free(nonce_account_response);
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockJsonResponse(nonce_account_response);
+    try rpc.pushMockJsonResponse("{\"jsonrpc\":\"2.0\",\"result\":\"Sig777777777777777777777777777777777777777777777777777777777777777777\",\"id\":2}");
+    try rpc.pushMockJsonResponse("{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":13},\"value\":[{\"slot\":13,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":3}");
+
+    const signature = try rpc.nonceTransferWithOptions(
+        fee_payer_secret_key_base58,
+        sender_secret_key_base58,
+        nonce_authority_secret_key_base58,
+        nonce_account_base58,
+        destination_base58,
+        5_000,
+        .{
+            .blockhash_commitment = .confirmed,
+            .send_transaction_options = .{ .skip_preflight = true, .max_retries = 2 },
+            .commitment = .confirmed,
+            .search_transaction_history = true,
+            .timeout_ms = 200,
+            .poll_interval_ms = 10,
+        },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "Sig777777777777777777777777777777777777777777777777777777777777777777",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 3), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, nonce_account_base58) != null);
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].request_body, expected_encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"maxRetries\":2") != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[2].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"searchTransactionHistory\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"commitment\":\"confirmed\"") != null);
 }
 
 test "root.sendTransaction params serialization" {
@@ -1712,26 +1480,9 @@ test "root.sendVersionedTransactionTyped serializes signed versioned transaction
     const encoded = try signed.toBase64(allocator);
     defer allocator.free(encoded);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":"SigVersioned1111111111111111111111111111111111111111111111111111111111111","id":1}
-    };
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"SigVersioned1111111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const signature = try rpc.sendVersionedTransactionTyped(
@@ -1747,11 +1498,11 @@ test "root.sendVersionedTransactionTyped serializes signed versioned transaction
         "SigVersioned1111111111111111111111111111111111111111111111111111111111111",
         signature,
     );
-    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"sendTransaction\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"skipPreflight\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"preflightCommitment\":\"confirmed\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"preflightCommitment\":\"confirmed\"") != null);
 }
 
 test "root.simulateVersionedTransactionTyped serializes signed versioned transaction" {
@@ -1802,26 +1553,9 @@ test "root.simulateVersionedTransactionTyped serializes signed versioned transac
     const encoded = try signed.toBase64(allocator);
     defer allocator.free(encoded);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":{"accounts":[],"err":null,"fee":120,"unitsConsumed":42}},"id":1}
-    };
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":{\"accounts\":[],\"err\":null,\"fee\":120,\"unitsConsumed\":42}},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const result = try rpc.simulateVersionedTransactionTyped(
@@ -1830,11 +1564,11 @@ test "root.simulateVersionedTransactionTyped serializes signed versioned transac
     );
     try std.testing.expectEqual(@as(u64, 120), result.fee.?);
     try std.testing.expectEqual(@as(u64, 42), result.units_consumed.?);
-    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"simulateTransaction\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"sigVerify\":true") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"replaceRecentBlockhash\":true") != null);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("simulateTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"sigVerify\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"replaceRecentBlockhash\":true") != null);
 }
 
 test "root.sendAndConfirmVersionedTransactionTyped submits and confirms signed versioned transaction" {
@@ -1885,29 +1619,10 @@ test "root.sendAndConfirmVersionedTransactionTyped submits and confirms signed v
     const encoded = try signed.toBase64(allocator);
     defer allocator.free(encoded);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":"SigVersionedConfirm111111111111111111111111111111111111111111111111111111111","id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":10},"value":[{"slot":10,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":2}
-    };
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"SigVersionedConfirm111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[{\"slot\":10,\"confirmations\":1,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":2}" },
+    });
     defer rpc.deinit();
 
     const signature = try rpc.sendAndConfirmVersionedTransactionTyped(
@@ -1924,11 +1639,11 @@ test "root.sendAndConfirmVersionedTransactionTyped submits and confirms signed v
         "SigVersionedConfirm111111111111111111111111111111111111111111111111111111111",
         signature,
     );
-    try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"sendTransaction\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded) != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"method\":\"getSignatureStatuses\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[1], "\"searchTransactionHistory\":true") != null);
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, encoded) != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"searchTransactionHistory\":true") != null);
 }
 
 test "root.getFeeForVersionedMessageTyped serializes typed v0 message" {
@@ -1971,32 +1686,15 @@ test "root.getFeeForVersionedMessageTyped serializes typed v0 message" {
     const encoded_message = try message.toBase64(allocator);
     defer allocator.free(encoded_message);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":123},"value":5000},"id":1}
-    };
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerCaptureSequence, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try RpcClient.init(allocator, rpc_url);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":123},\"value\":5000},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const fee = try rpc.getFeeForVersionedMessageTyped(message, .processed);
     try std.testing.expectEqual(@as(?u64, 5000), fee.value);
-    try std.testing.expectEqual(@as(usize, 1), request_captures.items.len);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"method\":\"getFeeForMessage\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], encoded_message) != null);
-    try std.testing.expect(std.mem.indexOf(u8, request_captures.items[0], "\"commitment\":\"processed\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getFeeForMessage", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, encoded_message) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"processed\"") != null);
 }

@@ -1,9 +1,5 @@
 const std = @import("std");
 const client = @import("solana_client_zig");
-const root_test_support = @import("root_test_support");
-
-const runMockRootServer = root_test_support.runMockRootServer;
-const runMockRootServerSequence = root_test_support.runMockRootServerSequence;
 
 test "root.getLatestBlockhash params serialization" {
     const allocator = std.testing.allocator;
@@ -20,21 +16,9 @@ test "root.getLatestBlockhash params serialization" {
 
 test "root.getLatestBlockhashResponse preserves context slot" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":9},"value":{"blockhash":"Blockhash111111111111111111111111111111111111","lastValidBlockHeight":55}},"id":1}
-    ;
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try client.RpcClient.init(allocator, rpc_url);
+    var rpc = try client.RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":9},\"value\":{\"blockhash\":\"Blockhash111111111111111111111111111111111111\",\"lastValidBlockHeight\":55}},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const blockhash_response = try rpc.getLatestBlockhashResponse(.confirmed);
@@ -43,33 +27,26 @@ test "root.getLatestBlockhashResponse preserves context slot" {
     try std.testing.expectEqual(@as(u64, 9), blockhash_response.context_slot);
     try std.testing.expectEqualStrings("Blockhash111111111111111111111111111111111111", blockhash_response.value.blockhash);
     try std.testing.expectEqual(@as(u64, 55), blockhash_response.value.last_valid_block_height);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
 }
 
 test "root.getNewLatestBlockhash waits for updated blockhash" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":1},"value":{"blockhash":"Blockhash111111111111111111111111111111111111","lastValidBlockHeight":55}},"id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":2},"value":{"blockhash":"UpdatedBlockhash11111111111111111111111111111111","lastValidBlockHeight":56}},"id":2}
-    };
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try client.RpcClient.init(allocator, rpc_url);
+    var rpc = try client.RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":1},\"value\":{\"blockhash\":\"Blockhash111111111111111111111111111111111111\",\"lastValidBlockHeight\":55}},\"id\":1}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":2},\"value\":{\"blockhash\":\"UpdatedBlockhash11111111111111111111111111111111\",\"lastValidBlockHeight\":56}},\"id\":2}" },
+    });
     defer rpc.deinit();
 
     const latest = try rpc.getNewLatestBlockhash("Blockhash111111111111111111111111111111111111");
     defer allocator.free(latest);
 
     try std.testing.expectEqualStrings("UpdatedBlockhash11111111111111111111111111111111", latest);
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[1].method);
 }
 
 test "root.featureActivationSlot params serialization" {

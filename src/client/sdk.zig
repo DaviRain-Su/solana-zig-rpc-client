@@ -638,11 +638,55 @@ pub const NonceAdvanceInstruction = struct {
     }
 };
 
+pub const NonceWithdrawInstruction = struct {
+    accounts: [5]AccountMeta,
+    data: [9]u8,
+
+    pub fn instruction(self: *const NonceWithdrawInstruction) Instruction {
+        return .{
+            .program_id = SystemProgram.id(),
+            .accounts = self.accounts[0..],
+            .data = self.data[0..],
+        };
+    }
+};
+
+pub const NonceInitializeInstruction = struct {
+    accounts: [3]AccountMeta,
+    data: [33]u8,
+
+    pub fn instruction(self: *const NonceInitializeInstruction) Instruction {
+        return .{
+            .program_id = SystemProgram.id(),
+            .accounts = self.accounts[0..],
+            .data = self.data[0..],
+        };
+    }
+};
+
+pub const NonceAuthorizeInstruction = struct {
+    accounts: [2]AccountMeta,
+    data: [33]u8,
+
+    pub fn instruction(self: *const NonceAuthorizeInstruction) Instruction {
+        return .{
+            .program_id = SystemProgram.id(),
+            .accounts = self.accounts[0..],
+            .data = self.data[0..],
+        };
+    }
+};
+
 pub const Sysvar = struct {
     pub const recent_blockhashes_base58 = "SysvarRecentB1ockHashes11111111111111111111";
+    pub const rent_base58 = "SysvarRent111111111111111111111111111111111";
 
     pub fn recentBlockhashes(allocator: Allocator) !Pubkey {
         return try Pubkey.fromBase58(allocator, recent_blockhashes_base58);
+    }
+
+    pub fn rent(allocator: Allocator) !Pubkey {
+        return try Pubkey.fromBase58(allocator, rent_base58);
     }
 };
 
@@ -676,6 +720,63 @@ pub const SystemProgram = struct {
                 AccountMeta.init(authority, true, false),
             },
             .data = .{4},
+        };
+    }
+
+    pub fn withdrawNonceAccount(
+        allocator: Allocator,
+        nonce_account: Pubkey,
+        recipient: Pubkey,
+        authority: Pubkey,
+        lamports: u64,
+    ) !NonceWithdrawInstruction {
+        var instruction_data = [_]u8{5} ++ [_]u8{0} ** 8;
+        std.mem.writeInt(u64, instruction_data[1..9], lamports, .little);
+
+        return .{
+            .accounts = .{
+                AccountMeta.init(nonce_account, false, true),
+                AccountMeta.init(recipient, false, true),
+                AccountMeta.init(try Sysvar.recentBlockhashes(allocator), false, false),
+                AccountMeta.init(try Sysvar.rent(allocator), false, false),
+                AccountMeta.init(authority, true, false),
+            },
+            .data = instruction_data,
+        };
+    }
+
+    pub fn initializeNonceAccount(
+        allocator: Allocator,
+        nonce_account: Pubkey,
+        authority: Pubkey,
+    ) !NonceInitializeInstruction {
+        var instruction_data = [_]u8{6} ++ [_]u8{0} ** Ed25519.PublicKey.encoded_length;
+        @memcpy(instruction_data[1 .. 1 + authority.bytes.len], authority.bytes[0..]);
+
+        return .{
+            .accounts = .{
+                AccountMeta.init(nonce_account, false, true),
+                AccountMeta.init(try Sysvar.recentBlockhashes(allocator), false, false),
+                AccountMeta.init(try Sysvar.rent(allocator), false, false),
+            },
+            .data = instruction_data,
+        };
+    }
+
+    pub fn authorizeNonceAccount(
+        nonce_account: Pubkey,
+        authority: Pubkey,
+        new_authority: Pubkey,
+    ) NonceAuthorizeInstruction {
+        var instruction_data = [_]u8{7} ++ [_]u8{0} ** Ed25519.PublicKey.encoded_length;
+        @memcpy(instruction_data[1 .. 1 + new_authority.bytes.len], new_authority.bytes[0..]);
+
+        return .{
+            .accounts = .{
+                AccountMeta.init(nonce_account, false, true),
+                AccountMeta.init(authority, true, false),
+            },
+            .data = instruction_data,
         };
     }
 };
@@ -1353,6 +1454,79 @@ pub fn buildSignedLegacyTransactionWithNonceInstructions(
     return try transaction.sign(allocator, signers);
 }
 
+pub fn buildOwnedLegacyNonceTransferMessage(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) !OwnedLegacyMessage {
+    const transfer = SystemProgram.transfer(sender, destination, lamports);
+    const instructions = [_]Instruction{transfer.instruction()};
+    return try buildOwnedLegacyMessageWithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        nonce_authority,
+        recent_blockhash,
+        instructions[0..],
+    );
+}
+
+pub fn buildSignedLegacyNonceTransferTransaction(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    signers: []const Keypair,
+) !SignedLegacyTransaction {
+    const transfer = SystemProgram.transfer(sender, destination, lamports);
+    const instructions = [_]Instruction{transfer.instruction()};
+    return try buildSignedLegacyTransactionWithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        nonce_authority,
+        recent_blockhash,
+        instructions[0..],
+        signers,
+    );
+}
+
+pub fn buildLegacyNonceTransferTransactionBase64(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    signers: []const Keypair,
+) ![]u8 {
+    var signed = try buildSignedLegacyNonceTransferTransaction(
+        allocator,
+        payer,
+        sender,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
+        signers,
+    );
+    defer signed.deinit(allocator);
+
+    return try signed.toBase64(allocator);
+}
+
 pub fn buildLegacyTransferMessageWithNonce(
     allocator: Allocator,
     sender_public_key: [Ed25519.PublicKey.encoded_length]u8,
@@ -1362,20 +1536,19 @@ pub fn buildLegacyTransferMessageWithNonce(
     lamports: u64,
 ) ![]u8 {
     const sender = Pubkey.fromBytes(sender_public_key);
-    const transfer_instruction = SystemProgram.transfer(
-        sender,
-        Pubkey.fromBytes(destination_public_key),
-        lamports,
-    );
-    const instructions = [_]Instruction{transfer_instruction.instruction()};
-    return try buildLegacyMessageWithNonceInstructions(
+    var owned = try buildOwnedLegacyNonceTransferMessage(
         allocator,
+        sender,
         sender,
         Pubkey.fromBytes(nonce_account_public_key),
         sender,
+        Pubkey.fromBytes(destination_public_key),
         Hash.fromBytes(recent_blockhash),
-        instructions[0..],
+        lamports,
     );
+    defer owned.deinit(allocator);
+
+    return try owned.serialize(allocator);
 }
 
 pub fn buildLegacyTransferTransactionWithNonce(
@@ -1389,23 +1562,17 @@ pub fn buildLegacyTransferTransactionWithNonce(
     const keypair = try Keypair.fromSecretKeySlice(secret_key);
     const nonce_account = try Pubkey.fromSlice(nonce_account_public_key);
     const destination = try Pubkey.fromSlice(destination_public_key);
-    const blockhash = try Hash.fromSlice(recent_blockhash);
-
-    const transfer_instruction = SystemProgram.transfer(keypair.public_key, destination, lamports);
-    const instructions = [_]Instruction{transfer_instruction.instruction()};
-
-    var signed = try buildSignedLegacyTransactionWithNonceInstructions(
+    return try buildLegacyNonceTransferTransactionBase64(
         allocator,
+        keypair.public_key,
         keypair.public_key,
         nonce_account,
         keypair.public_key,
-        blockhash,
-        instructions[0..],
+        destination,
+        try Hash.fromSlice(recent_blockhash),
+        lamports,
         &.{keypair},
     );
-    defer signed.deinit(allocator);
-
-    return try signed.toBase64(allocator);
 }
 
 pub fn buildSignedVersionedTransactionV0(

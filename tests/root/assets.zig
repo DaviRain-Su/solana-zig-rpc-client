@@ -1,9 +1,5 @@
 const std = @import("std");
 const client = @import("solana_client_zig");
-const root_test_support = @import("root_test_support");
-
-const runMockRootServer = root_test_support.runMockRootServer;
-const runMockRootServerSequence = root_test_support.runMockRootServerSequence;
 
 test "root.balance params serialization" {
     const allocator = std.testing.allocator;
@@ -23,20 +19,9 @@ test "root.balance params serialization" {
 
 test "root.requestAirdropWithBlockhash returns signature copy" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":"Sig111111111111111111111111111111111111111111111111111111111111111111","id":1}
-    ;
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try client.RpcClient.init(allocator, rpc_url);
+    var rpc = try client.RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"Sig111111111111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const signature = try rpc.requestAirdropWithBlockhash(
@@ -50,24 +35,17 @@ test "root.requestAirdropWithBlockhash returns signature copy" {
         "Sig111111111111111111111111111111111111111111111111111111111111111111",
         signature,
     );
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("requestAirdrop", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "9001") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"recentBlockhash\":\"RecentBlockhash1111111111111111111111111111\"") != null);
 }
 
 test "root.getTokenAccount returns parsed ui account" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":14},"value":{"data":{"program":"spl-token","parsed":{"type":"account","info":{"mint":"Mint1111111111111111111111111111111111"}}},"executable":false,"lamports":99,"owner":"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA","rentEpoch":42,"space":165}},"id":1}
-    ;
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try client.RpcClient.init(allocator, rpc_url);
+    var rpc = try client.RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":14},\"value\":{\"data\":{\"program\":\"spl-token\",\"parsed\":{\"type\":\"account\",\"info\":{\"mint\":\"Mint1111111111111111111111111111111111\"}}},\"executable\":false,\"lamports\":99,\"owner\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\",\"rentEpoch\":42,\"space\":165}},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const token_account = try rpc.getTokenAccount(
@@ -80,26 +58,17 @@ test "root.getTokenAccount returns parsed ui account" {
     try std.testing.expectEqual(@as(u64, 99), token_account.lamports);
     try std.testing.expectEqual(@as(bool, false), token_account.executable);
     try std.testing.expectEqualStrings("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", token_account.owner);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"encoding\":\"jsonParsed\"") != null);
 }
 
 test "root.ui and token account config aliases return same parsed account" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":14},"value":{"data":{"program":"spl-token","parsed":{"type":"account","info":{"mint":"Mint1111111111111111111111111111111111"}}},"executable":false,"lamports":99,"owner":"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA","rentEpoch":42,"space":165}},"id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":14},"value":{"data":{"program":"spl-token","parsed":{"type":"account","info":{"mint":"Mint1111111111111111111111111111111111"}}},"executable":false,"lamports":99,"owner":"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA","rentEpoch":42,"space":165}},"id":2}
-    };
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServerSequence, .{ &listener, allocator, &response_bodies });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try client.RpcClient.init(allocator, rpc_url);
+    var rpc = try client.RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":14},\"value\":{\"data\":{\"program\":\"spl-token\",\"parsed\":{\"type\":\"account\",\"info\":{\"mint\":\"Mint1111111111111111111111111111111111\"}}},\"executable\":false,\"lamports\":99,\"owner\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\",\"rentEpoch\":42,\"space\":165}},\"id\":1}" },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":14},\"value\":{\"data\":{\"program\":\"spl-token\",\"parsed\":{\"type\":\"account\",\"info\":{\"mint\":\"Mint1111111111111111111111111111111111\"}}},\"executable\":false,\"lamports\":99,\"owner\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\",\"rentEpoch\":42,\"space\":165}},\"id\":2}" },
+    });
     defer rpc.deinit();
 
     const ui_account = try rpc.getUiAccountWithConfig(
@@ -119,30 +88,24 @@ test "root.ui and token account config aliases return same parsed account" {
     defer rpc.allocator.free(token_account.data_json);
 
     try std.testing.expectEqual(@as(u64, 99), token_account.lamports);
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[1].method);
 }
 
 test "root.getBalanceResponse preserves context slot" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":42},"value":9001},"id":1}
-    ;
-
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try client.RpcClient.init(allocator, rpc_url);
+    var rpc = try client.RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":42},\"value\":9001},\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const balance_response = try rpc.getBalanceResponse("Address11111111111111111111111111111111", .confirmed);
     try std.testing.expectEqual(@as(u64, 42), balance_response.context_slot);
     try std.testing.expectEqual(@as(u64, 9001), balance_response.value);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getBalance", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
 }
 
 test "root.requestAirdrop params serialization" {
@@ -178,20 +141,9 @@ test "root.requestAirdrop params serialization" {
 
 test "root.requestAirdropWithConfig returns signature copy" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    const response_body =
-        \\{"jsonrpc":"2.0","result":"Sig111111111111111111111111111111111111111111111111111111111111111111","id":1}
-    ;
-    const server_thread = try std.Thread.spawn(.{}, runMockRootServer, .{ &listener, allocator, response_body });
-    defer server_thread.join();
-
-    const rpc_url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
-    defer allocator.free(rpc_url);
-
-    var rpc = try client.RpcClient.init(allocator, rpc_url);
+    var rpc = try client.RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"Sig111111111111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
+    });
     defer rpc.deinit();
 
     const signature = try rpc.requestAirdropWithConfig(
@@ -208,6 +160,10 @@ test "root.requestAirdropWithConfig returns signature copy" {
         "Sig111111111111111111111111111111111111111111111111111111111111111111",
         signature,
     );
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("requestAirdrop", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"processed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"recentBlockhash\":\"RecentBlockhash1111111111111111111111111111\"") != null);
 }
 
 test "root.minimumBalanceForRentExemption params serialization" {

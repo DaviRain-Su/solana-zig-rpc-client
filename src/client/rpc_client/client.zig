@@ -2,6 +2,7 @@ const std = @import("std");
 const rpc_types = @import("../rpc_types.zig");
 
 const lifecycle_methods = @import("./lifecycle.zig");
+const mock_methods = @import("./mock.zig");
 const owned_methods = @import("./owned.zig");
 const raw_methods = @import("./raw.zig");
 const response_methods = @import("./response.zig");
@@ -19,17 +20,33 @@ const Allocator = std.mem.Allocator;
 const Commitment = rpc_types.Commitment;
 const RpcErrorDetail = rpc_types.RpcErrorDetail;
 const TransportStats = rpc_types.TransportStats;
+const MockRequestType = mock_methods.MockRequest;
+const MockRequestHandlerType = mock_methods.MockRequestHandler;
+const MockRequestViewType = mock_methods.MockRequestView;
+const MockResponseType = mock_methods.MockResponse;
+const MockHandlerResponseType = mock_methods.MockHandlerResponse;
+const MockSenderType = mock_methods.MockSender;
+const MockTransportErrorType = mock_methods.MockTransportError;
 
 pub const RpcClient = struct {
     allocator: Allocator,
     endpoint: []const u8,
     http_client: std.http.Client,
+    mock_sender: ?MockSenderType,
     request_id: u64,
     default_commitment: ?Commitment,
     request_timeout_ms: ?u64,
     confirm_transaction_initial_timeout_ms: ?u64,
     last_error: ?RpcErrorDetail,
     transport_stats: TransportStats,
+
+    pub const MockRequest = mock_methods.MockRequest;
+    pub const MockRequestView = mock_methods.MockRequestView;
+    pub const MockRequestHandler = mock_methods.MockRequestHandler;
+    pub const MockResponse = mock_methods.MockResponse;
+    pub const MockHandlerResponse = mock_methods.MockHandlerResponse;
+    pub const MockSender = mock_methods.MockSender;
+    pub const MockTransportError = mock_methods.MockTransportError;
 
     pub const serializeParams = response_methods.serializeParams;
     pub const parseResponse = response_methods.parseResponse;
@@ -190,6 +207,54 @@ pub const RpcClient = struct {
     pub const getNonceAccount = nonce_methods.getNonceAccount;
     pub const getNonceBlockhash = nonce_methods.getNonceBlockhash;
     pub const resolveBlockhashQuery = nonce_methods.resolveBlockhashQuery;
+    pub const buildInitializeNonceAccountSignedTransaction = nonce_methods.buildInitializeNonceAccountSignedTransaction;
+    pub const buildInitializeNonceAccountSignedTransactionWithOptions = nonce_methods.buildInitializeNonceAccountSignedTransactionWithOptions;
+    pub const buildInitializeNonceAccountSignedTransactionWithConfig = nonce_methods.buildInitializeNonceAccountSignedTransactionWithConfig;
+    pub const buildInitializeNonceAccountTransaction = nonce_methods.buildInitializeNonceAccountTransaction;
+    pub const buildInitializeNonceAccountTransactionWithOptions = nonce_methods.buildInitializeNonceAccountTransactionWithOptions;
+    pub const buildInitializeNonceAccountTransactionWithConfig = nonce_methods.buildInitializeNonceAccountTransactionWithConfig;
+    pub const sendInitializeNonceAccount = nonce_methods.sendInitializeNonceAccount;
+    pub const sendInitializeNonceAccountWithOptions = nonce_methods.sendInitializeNonceAccountWithOptions;
+    pub const sendInitializeNonceAccountWithConfig = nonce_methods.sendInitializeNonceAccountWithConfig;
+    pub const initializeNonceAccount = nonce_methods.initializeNonceAccount;
+    pub const initializeNonceAccountWithOptions = nonce_methods.initializeNonceAccountWithOptions;
+    pub const initializeNonceAccountWithConfig = nonce_methods.initializeNonceAccountWithConfig;
+    pub const buildAdvanceNonceAccountSignedTransaction = nonce_methods.buildAdvanceNonceAccountSignedTransaction;
+    pub const buildAdvanceNonceAccountSignedTransactionWithOptions = nonce_methods.buildAdvanceNonceAccountSignedTransactionWithOptions;
+    pub const buildAdvanceNonceAccountSignedTransactionWithConfig = nonce_methods.buildAdvanceNonceAccountSignedTransactionWithConfig;
+    pub const buildAdvanceNonceAccountTransaction = nonce_methods.buildAdvanceNonceAccountTransaction;
+    pub const buildAdvanceNonceAccountTransactionWithOptions = nonce_methods.buildAdvanceNonceAccountTransactionWithOptions;
+    pub const buildAdvanceNonceAccountTransactionWithConfig = nonce_methods.buildAdvanceNonceAccountTransactionWithConfig;
+    pub const sendAdvanceNonceAccount = nonce_methods.sendAdvanceNonceAccount;
+    pub const sendAdvanceNonceAccountWithOptions = nonce_methods.sendAdvanceNonceAccountWithOptions;
+    pub const sendAdvanceNonceAccountWithConfig = nonce_methods.sendAdvanceNonceAccountWithConfig;
+    pub const advanceNonceAccount = nonce_methods.advanceNonceAccount;
+    pub const advanceNonceAccountWithOptions = nonce_methods.advanceNonceAccountWithOptions;
+    pub const advanceNonceAccountWithConfig = nonce_methods.advanceNonceAccountWithConfig;
+    pub const buildAuthorizeNonceAccountSignedTransaction = nonce_methods.buildAuthorizeNonceAccountSignedTransaction;
+    pub const buildAuthorizeNonceAccountSignedTransactionWithOptions = nonce_methods.buildAuthorizeNonceAccountSignedTransactionWithOptions;
+    pub const buildAuthorizeNonceAccountSignedTransactionWithConfig = nonce_methods.buildAuthorizeNonceAccountSignedTransactionWithConfig;
+    pub const buildAuthorizeNonceAccountTransaction = nonce_methods.buildAuthorizeNonceAccountTransaction;
+    pub const buildAuthorizeNonceAccountTransactionWithOptions = nonce_methods.buildAuthorizeNonceAccountTransactionWithOptions;
+    pub const buildAuthorizeNonceAccountTransactionWithConfig = nonce_methods.buildAuthorizeNonceAccountTransactionWithConfig;
+    pub const sendAuthorizeNonceAccount = nonce_methods.sendAuthorizeNonceAccount;
+    pub const sendAuthorizeNonceAccountWithOptions = nonce_methods.sendAuthorizeNonceAccountWithOptions;
+    pub const sendAuthorizeNonceAccountWithConfig = nonce_methods.sendAuthorizeNonceAccountWithConfig;
+    pub const authorizeNonceAccount = nonce_methods.authorizeNonceAccount;
+    pub const authorizeNonceAccountWithOptions = nonce_methods.authorizeNonceAccountWithOptions;
+    pub const authorizeNonceAccountWithConfig = nonce_methods.authorizeNonceAccountWithConfig;
+    pub const buildWithdrawNonceAccountSignedTransaction = nonce_methods.buildWithdrawNonceAccountSignedTransaction;
+    pub const buildWithdrawNonceAccountSignedTransactionWithOptions = nonce_methods.buildWithdrawNonceAccountSignedTransactionWithOptions;
+    pub const buildWithdrawNonceAccountSignedTransactionWithConfig = nonce_methods.buildWithdrawNonceAccountSignedTransactionWithConfig;
+    pub const buildWithdrawNonceAccountTransaction = nonce_methods.buildWithdrawNonceAccountTransaction;
+    pub const buildWithdrawNonceAccountTransactionWithOptions = nonce_methods.buildWithdrawNonceAccountTransactionWithOptions;
+    pub const buildWithdrawNonceAccountTransactionWithConfig = nonce_methods.buildWithdrawNonceAccountTransactionWithConfig;
+    pub const sendWithdrawNonceAccount = nonce_methods.sendWithdrawNonceAccount;
+    pub const sendWithdrawNonceAccountWithOptions = nonce_methods.sendWithdrawNonceAccountWithOptions;
+    pub const sendWithdrawNonceAccountWithConfig = nonce_methods.sendWithdrawNonceAccountWithConfig;
+    pub const withdrawNonceAccount = nonce_methods.withdrawNonceAccount;
+    pub const withdrawNonceAccountWithOptions = nonce_methods.withdrawNonceAccountWithOptions;
+    pub const withdrawNonceAccountWithConfig = nonce_methods.withdrawNonceAccountWithConfig;
     pub const serializeProgramAccountsParams = program_methods.serializeProgramAccountsParams;
     pub const serializeProgramUiAccountsParams = program_methods.serializeProgramUiAccountsParams;
     pub const getProgramAccountsResponseWithOptions = program_methods.getProgramAccountsResponseWithOptions;
@@ -203,17 +268,29 @@ pub const RpcClient = struct {
     pub const getProgramUiAccountsWithConfig = program_methods.getProgramUiAccountsWithConfig;
     pub const getProgramUiAccounts = program_methods.getProgramUiAccounts;
     pub const buildTransferSignedTransaction = transfer_methods.buildTransferSignedTransaction;
+    pub const buildNonceTransferSignedTransaction = transfer_methods.buildNonceTransferSignedTransaction;
     pub const buildTransferSignedTransactionWithOptions = transfer_methods.buildTransferSignedTransactionWithOptions;
+    pub const buildNonceTransferSignedTransactionWithOptions = transfer_methods.buildNonceTransferSignedTransactionWithOptions;
     pub const buildTransferSignedTransactionWithConfig = transfer_methods.buildTransferSignedTransactionWithConfig;
+    pub const buildNonceTransferSignedTransactionWithConfig = transfer_methods.buildNonceTransferSignedTransactionWithConfig;
     pub const buildTransferTransaction = transfer_methods.buildTransferTransaction;
+    pub const buildNonceTransferTransaction = transfer_methods.buildNonceTransferTransaction;
     pub const buildTransferTransactionWithOptions = transfer_methods.buildTransferTransactionWithOptions;
+    pub const buildNonceTransferTransactionWithOptions = transfer_methods.buildNonceTransferTransactionWithOptions;
     pub const buildTransferTransactionWithConfig = transfer_methods.buildTransferTransactionWithConfig;
+    pub const buildNonceTransferTransactionWithConfig = transfer_methods.buildNonceTransferTransactionWithConfig;
     pub const sendTransfer = transfer_methods.sendTransfer;
+    pub const sendNonceTransfer = transfer_methods.sendNonceTransfer;
     pub const sendTransferWithOptions = transfer_methods.sendTransferWithOptions;
+    pub const sendNonceTransferWithOptions = transfer_methods.sendNonceTransferWithOptions;
     pub const sendTransferWithConfig = transfer_methods.sendTransferWithConfig;
+    pub const sendNonceTransferWithConfig = transfer_methods.sendNonceTransferWithConfig;
     pub const transfer = transfer_methods.transfer;
+    pub const nonceTransfer = transfer_methods.nonceTransfer;
     pub const transferWithOptions = transfer_methods.transferWithOptions;
+    pub const nonceTransferWithOptions = transfer_methods.nonceTransferWithOptions;
     pub const transferWithConfig = transfer_methods.transferWithConfig;
+    pub const nonceTransferWithConfig = transfer_methods.nonceTransferWithConfig;
 
     pub const serializeSimulateTransactionParams = transaction_methods.serializeSimulateTransactionParams;
     pub const serializeSendTransactionParams = transaction_methods.serializeSendTransactionParams;
@@ -283,6 +360,89 @@ pub const RpcClient = struct {
 
     pub fn new(allocator: Allocator, endpoint: []const u8) !RpcClient {
         return RpcClient.init(allocator, endpoint);
+    }
+
+    pub fn newMock(allocator: Allocator, responses: []const MockResponseType) !RpcClient {
+        return lifecycle_methods.initMockClient(RpcClient, allocator, responses, null, null, null);
+    }
+
+    pub fn newMockWithCommitment(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return lifecycle_methods.initMockClient(RpcClient, allocator, responses, commitment, null, null);
+    }
+
+    pub fn newMockWithHandler(allocator: Allocator, handler: MockRequestHandlerType) !RpcClient {
+        return lifecycle_methods.initMockClientWithHandler(RpcClient, allocator, handler, null, null, null);
+    }
+
+    pub fn newMockWithHandlerAndCommitment(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return lifecycle_methods.initMockClientWithHandler(RpcClient, allocator, handler, commitment, null, null);
+    }
+
+    pub fn newMockWithTimeoutAndCommitment(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return lifecycle_methods.initMockClient(RpcClient, allocator, responses, commitment, timeout_ms, null);
+    }
+
+    pub fn newMockWithHandlerAndTimeoutAndCommitment(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return lifecycle_methods.initMockClientWithHandler(
+            RpcClient,
+            allocator,
+            handler,
+            commitment,
+            timeout_ms,
+            null,
+        );
+    }
+
+    pub fn newMockWithTimeoutsAndCommitment(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return lifecycle_methods.initMockClient(
+            RpcClient,
+            allocator,
+            responses,
+            commitment,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newMockWithHandlerAndTimeoutsAndCommitment(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return lifecycle_methods.initMockClientWithHandler(
+            RpcClient,
+            allocator,
+            handler,
+            commitment,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
     }
 
     pub fn newWithCommitment(
@@ -361,6 +521,79 @@ pub const RpcClient = struct {
 
     pub fn getTransportStats(self: *const RpcClient) TransportStats {
         return lifecycle_methods.getTransportStats(self);
+    }
+
+    pub fn isMock(self: *const RpcClient) bool {
+        return self.mock_sender != null;
+    }
+
+    pub fn mockResponseCount(self: *const RpcClient) usize {
+        return if (self.mock_sender) |sender| sender.responseCount() else 0;
+    }
+
+    pub fn mockRequestCount(self: *const RpcClient) usize {
+        return if (self.mock_sender) |sender| sender.requestCount() else 0;
+    }
+
+    pub fn hasMockHandler(self: *const RpcClient) bool {
+        return if (self.mock_sender) |sender| sender.hasHandler() else false;
+    }
+
+    pub fn capturedMockRequests(self: *const RpcClient) []const MockRequestType {
+        return if (self.mock_sender) |sender| sender.capturedRequests() else &.{};
+    }
+
+    pub fn clearCapturedMockRequests(self: *RpcClient) void {
+        if (self.mock_sender) |*sender| sender.clearCapturedRequests();
+    }
+
+    pub fn clearMockResponses(self: *RpcClient) void {
+        if (self.mock_sender) |*sender| sender.clearResponses();
+    }
+
+    pub fn setMockHandler(self: *RpcClient, handler: MockRequestHandlerType) !void {
+        if (self.mock_sender) |*sender| {
+            sender.setHandler(handler);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn clearMockHandler(self: *RpcClient) !void {
+        if (self.mock_sender) |*sender| {
+            sender.clearHandler();
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockResponse(self: *RpcClient, response: MockResponseType) !void {
+        if (self.mock_sender) |*sender| {
+            try sender.pushResponse(response);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockJsonResponse(self: *RpcClient, response_body: []const u8) !void {
+        if (self.mock_sender) |*sender| {
+            try sender.pushJsonResponse(response_body);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockTransportError(self: *RpcClient, transport_error: MockTransportErrorType) !void {
+        if (self.mock_sender) |*sender| {
+            try sender.pushTransportError(transport_error);
+            return;
+        }
+
+        return error.NotMockClient;
     }
 
     pub fn getDefaultCommitment(self: *const RpcClient) ?Commitment {

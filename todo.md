@@ -78,14 +78,14 @@ So "feature parity with Rust client" should be read in two layers:
 | `rpc_client` | Mostly implemented | Core blocking RPC surface is largely present and now split across `src/client/rpc_client/*.zig`. |
 | `rpc_config` / `rpc_filter` / `rpc_request` / `rpc_response` / `rpc_custom_error` | Partially implemented | Zig has many equivalent structs/options, but not a full Rust-style public module layout. |
 | `blockhash_query` | Partially implemented | Minimal `BlockhashQuery` / `resolveBlockhashQuery` support now exists, but the broader Rust helper surface is still incomplete. |
-| `nonce_utils` | Partially implemented | Nonce account parsing, nonce blockhash lookup, and minimal nonce-aware transfer/instruction builders now exist, but the broader durable-nonce utility surface is still incomplete. |
+| `nonce_utils` | Partially implemented | Nonce account parsing, nonce blockhash lookup, durable nonce system instruction helpers (`advance` / `initialize` / `authorize` / `withdraw`), nonce-aware typed builders, and higher-level blocking RPC convenience for both durable nonce transfer and nonce account lifecycle operations now exist, including signed/base64/send/send-and-confirm helper families, a flexible legacy nonce transfer path with distinct fee payer, sender, and nonce authority, and standalone lifecycle helpers for `advance` / `initialize` / `authorize` / `withdraw`; the broader durable-nonce utility surface is still incomplete. |
 | `pubsub_client` | Partially implemented | A minimal websocket-based pubsub client now exists with `signatureSubscribe`, `logsSubscribe`, `accountSubscribe`, `programSubscribe`, `slotSubscribe`, `rootSubscribe`, `slotsUpdatesSubscribe`, `voteSubscribe`, and `blockSubscribe`, plus subscription dispatch, typed notification helpers, typed subscription/channel convenience, summary typed helpers for `signature`/`logs`/`account`/`program`/`block`, stronger typed `block` notifications for `transactionDetails=signatures`, `transactionDetails=accounts`, and `transactionDetails=full`, including deeper full-transaction counts for account keys, instructions, address table lookups, and loaded addresses; account/program summaries including common `parsed.info` fields, receiver views with timeout support, bounded per-subscription queues with overflow policies and close reasons, heartbeat ping/pong keepalive, reconnect backoff, automatic reconnect/re-subscribe support, and integration tests; the broader Rust pubsub surface is still incomplete. |
 | `nonblocking` | Not implemented | No async RPC client surface. |
 | `connection_cache` | Not implemented | No QUIC/UDP connection cache abstraction. |
 | `tpu_client` | Not implemented | No direct-to-leader TPU sending path. |
 | `transaction_executor` | Not implemented | No background pending-transaction executor. |
 | `send_and_confirm_transactions_in_parallel` | Not implemented | No parallel sender/re-sign/retry flow. |
-| mock sender helpers | Not implemented | Tests currently use local mock HTTP servers, not a Rust-style mock sender API. |
+| mock sender helpers | Partially implemented | `RpcClient.newMock*` constructors, queued mock responses, captured mock requests, mock transport error injection, and handler-based mock transport callbacks now exist; a growing subset of root integration tests now run directly on this mock transport, but there is not yet a fuller Rust-style sender trait surface across all client entry points. |
 
 ### Blocking `rpc-client` Surface
 
@@ -102,7 +102,7 @@ So "feature parity with Rust client" should be read in two layers:
 | Versioned transaction / v0 / ALT support | Mostly implemented | Minimal v0 typed support exists, a higher-level compiler from `Instruction` + ALT account input now exists, and SDK convenience builders can now directly sign v0 transactions; broader ergonomics are still incomplete. |
 | Public raw RPC escape hatch | Mostly implemented | Public `sendRequest(method, params_json)`, `sendRaw`, `sendJsonRpc`, `sendTyped`, and `RpcRequest` helpers now exist, though the request identifier surface is still lighter than Rust's full module layout. |
 | Spinner variants | Mostly implemented | High-level send-and-confirm spinner convenience methods and blockhash-aware `confirmTransactionWithSpinner` now exist; broader Rust spinner surface is still lighter than upstream. |
-| Mock constructors | Missing | No `new_mock*` or similar public test helpers. |
+| Mock constructors | Partially implemented | `newMock`, commitment/timeout variants, and handler-based `newMockWithHandler*` constructors now exist, along with request capture, response queue helpers, and runtime handler mutation; broader Rust-style sender polymorphism is still missing. |
 | Async runtime / inner client accessors | Partial | `getDefaultCommitment()` now exists, but there is still no `get_inner_client()` / runtime equivalent. |
 
 ## Known Gaps Worth Tracking Explicitly
@@ -269,6 +269,9 @@ These items are valid Agave features, but they should not be the next thing:
 - [ ] `send_and_confirm_transactions_in_parallel`
 - [x] Rust-style spinner helpers
 - [ ] Rust-style mock sender surface
+  Current state: `newMock*` and `newMockWithHandler*` constructors, queued
+  responses, request capture, runtime handler mutation, and injected transport
+  errors now exist; broader sender polymorphism is still missing.
 
 Reason for defer:
 

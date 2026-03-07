@@ -537,7 +537,20 @@ pub const TransferBuildOptions = struct {
     blockhash_query: ?BlockhashQuery = null,
 };
 
+pub const NonceTransferBuildOptions = struct {
+    recent_blockhash: ?[]const u8 = null,
+    blockhash_commitment: ?Commitment = null,
+    blockhash_query: ?BlockhashQuery = null,
+};
+
 pub const SendTransferOptions = struct {
+    recent_blockhash: ?[]const u8 = null,
+    blockhash_commitment: ?Commitment = null,
+    blockhash_query: ?BlockhashQuery = null,
+    send_transaction_options: ?SendTransactionOptions = null,
+};
+
+pub const SendNonceTransferOptions = struct {
     recent_blockhash: ?[]const u8 = null,
     blockhash_commitment: ?Commitment = null,
     blockhash_query: ?BlockhashQuery = null,
@@ -548,6 +561,38 @@ pub const TransferOptions = struct {
     recent_blockhash: ?[]const u8 = null,
     blockhash_commitment: ?Commitment = null,
     blockhash_query: ?BlockhashQuery = null,
+    send_transaction_options: ?SendTransactionOptions = null,
+    commitment: ?Commitment = null,
+    search_transaction_history: bool = false,
+    timeout_ms: u64 = sdk.poll_for_signature_confirmation_timeout_ms,
+    poll_interval_ms: u64 = sdk.signature_poll_interval_ms,
+};
+
+pub const NonceTransferOptions = struct {
+    recent_blockhash: ?[]const u8 = null,
+    blockhash_commitment: ?Commitment = null,
+    blockhash_query: ?BlockhashQuery = null,
+    send_transaction_options: ?SendTransactionOptions = null,
+    commitment: ?Commitment = null,
+    search_transaction_history: bool = false,
+    timeout_ms: u64 = sdk.poll_for_signature_confirmation_timeout_ms,
+    poll_interval_ms: u64 = sdk.signature_poll_interval_ms,
+};
+
+pub const NonceAccountBuildOptions = struct {
+    recent_blockhash: ?[]const u8 = null,
+    blockhash_commitment: ?Commitment = null,
+};
+
+pub const SendNonceAccountOptions = struct {
+    recent_blockhash: ?[]const u8 = null,
+    blockhash_commitment: ?Commitment = null,
+    send_transaction_options: ?SendTransactionOptions = null,
+};
+
+pub const NonceAccountOptions = struct {
+    recent_blockhash: ?[]const u8 = null,
+    blockhash_commitment: ?Commitment = null,
     send_transaction_options: ?SendTransactionOptions = null,
     commitment: ?Commitment = null,
     search_transaction_history: bool = false,
