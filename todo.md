@@ -79,7 +79,7 @@ So "feature parity with Rust client" should be read in two layers:
 | `rpc_config` / `rpc_filter` / `rpc_request` / `rpc_response` / `rpc_custom_error` | Partially implemented | Zig has many equivalent structs/options, but not a full Rust-style public module layout. |
 | `blockhash_query` | Partially implemented | Minimal `BlockhashQuery` / `resolveBlockhashQuery` support now exists, but the broader Rust helper surface is still incomplete. |
 | `nonce_utils` | Partially implemented | Nonce account parsing, nonce blockhash lookup, and minimal nonce-aware transfer/instruction builders now exist, but the broader durable-nonce utility surface is still incomplete. |
-| `pubsub_client` | Partially implemented | A minimal websocket-based pubsub client now exists with `signatureSubscribe`, `logsSubscribe`, `accountSubscribe`, `programSubscribe`, `slotSubscribe`, and `rootSubscribe`, plus subscription dispatch, typed notification helpers, and integration tests; the broader Rust pubsub surface is still incomplete. |
+| `pubsub_client` | Partially implemented | A minimal websocket-based pubsub client now exists with `signatureSubscribe`, `logsSubscribe`, `accountSubscribe`, `programSubscribe`, `slotSubscribe`, `rootSubscribe`, `slotsUpdatesSubscribe`, `voteSubscribe`, and `blockSubscribe`, plus subscription dispatch, typed notification helpers, typed subscription/channel convenience, summary typed helpers for `signature`/`logs`/`account`/`program`/`block`, account/program summaries including common `parsed.info` fields, receiver views with timeout support, automatic reconnect/re-subscribe support, and integration tests; the broader Rust pubsub surface is still incomplete. |
 | `nonblocking` | Not implemented | No async RPC client surface. |
 | `connection_cache` | Not implemented | No QUIC/UDP connection cache abstraction. |
 | `tpu_client` | Not implemented | No direct-to-leader TPU sending path. |
@@ -253,8 +253,14 @@ These items are valid Agave features, but they should not be the next thing:
 - [ ] `pubsub_client`
   minimal websocket-based `signatureSubscribe` / `logsSubscribe` /
   `accountSubscribe` / `programSubscribe` / `slotSubscribe` /
-  `rootSubscribe` is now in place.
-  still missing broader subscription coverage, reconnect/re-subscribe behavior,
+  `rootSubscribe` / `slotsUpdatesSubscribe` / `voteSubscribe` /
+  `blockSubscribe` is now in place, and basic automatic reconnect/re-subscribe
+  is now implemented. receiver views, timeout-based receive convenience, and
+  typed subscription/channel helpers now exist too, including a stronger typed
+  block summary path above the raw block notification payload and stronger
+  account/program summary paths above the raw json-parsed notification payloads,
+  including common `parsed.info` fields for nonce and token-account style data.
+  still missing broader subscription coverage,
   and a more Rust-like receiver/channel surface.
 - [ ] `nonblocking` async client
 - [ ] `connection_cache`

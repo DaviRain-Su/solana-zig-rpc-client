@@ -15,6 +15,10 @@ const TestApp = struct {
     program_unsubscribe_seen: bool = false,
     slot_unsubscribe_seen: bool = false,
     root_unsubscribe_seen: bool = false,
+    slots_updates_unsubscribe_seen: bool = false,
+    vote_unsubscribe_seen: bool = false,
+    block_unsubscribe_seen: bool = false,
+    reconnect_signature_subscribe_count: usize = 0,
 };
 
 const TestHandler = struct {
@@ -38,6 +42,44 @@ const TestHandler = struct {
         defer parsed.deinit();
 
         if (std.mem.eql(u8, parsed.value.method, "signatureSubscribe")) {
+            if (std.mem.indexOf(u8, data, "Reconnect1111111111111111111111111111111111111") != null) {
+                self.app.reconnect_signature_subscribe_count += 1;
+                const response = try std.fmt.allocPrint(
+                    self.app.allocator,
+                    "{{\"jsonrpc\":\"2.0\",\"result\":{},\"id\":{}}}",
+                    .{ 140 + self.app.reconnect_signature_subscribe_count, parsed.value.id },
+                );
+                defer self.app.allocator.free(response);
+                try self.conn.write(response);
+
+                if (self.app.reconnect_signature_subscribe_count == 1) {
+                    const notification =
+                        "{\"jsonrpc\":\"2.0\",\"method\":\"signatureNotification\",\"params\":{\"result\":{\"context\":{\"slot\":501},\"value\":{\"err\":null}},\"subscription\":141}}";
+                    try self.conn.write(notification);
+                    try self.conn.close(.{});
+                } else {
+                    const notification =
+                        "{\"jsonrpc\":\"2.0\",\"method\":\"signatureNotification\",\"params\":{\"result\":{\"context\":{\"slot\":777},\"value\":{\"err\":null}},\"subscription\":142}}";
+                    try self.conn.write(notification);
+                }
+                return;
+            }
+
+            if (std.mem.indexOf(u8, data, "ErrorSig11111111111111111111111111111111111111") != null) {
+                const response = try std.fmt.allocPrint(
+                    self.app.allocator,
+                    "{{\"jsonrpc\":\"2.0\",\"result\":43,\"id\":{}}}",
+                    .{parsed.value.id},
+                );
+                defer self.app.allocator.free(response);
+                try self.conn.write(response);
+
+                const notification =
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"signatureNotification\",\"params\":{\"result\":{\"context\":{\"slot\":199},\"value\":{\"err\":{\"InstructionError\":[1,{\"Custom\":6001}]}}},\"subscription\":43}}";
+                try self.conn.write(notification);
+                return;
+            }
+
             const response = try std.fmt.allocPrint(
                 self.app.allocator,
                 "{{\"jsonrpc\":\"2.0\",\"result\":41,\"id\":{}}}",
@@ -55,6 +97,9 @@ const TestHandler = struct {
         }
 
         if (std.mem.eql(u8, parsed.value.method, "signatureUnsubscribe")) {
+            if (std.mem.indexOf(u8, data, "\"params\":[142]") != null) {
+                self.app.signature_unsubscribe_seen = true;
+            }
             self.app.signature_unsubscribe_seen = true;
             const response = try std.fmt.allocPrint(
                 self.app.allocator,
@@ -67,6 +112,21 @@ const TestHandler = struct {
         }
 
         if (std.mem.eql(u8, parsed.value.method, "logsSubscribe")) {
+            if (std.mem.indexOf(u8, data, "Err111111111111111111111111111111111111111") != null) {
+                const response = try std.fmt.allocPrint(
+                    self.app.allocator,
+                    "{{\"jsonrpc\":\"2.0\",\"result\":53,\"id\":{}}}",
+                    .{parsed.value.id},
+                );
+                defer self.app.allocator.free(response);
+                try self.conn.write(response);
+
+                const notification =
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"logsNotification\",\"params\":{\"result\":{\"context\":{\"slot\":124},\"value\":{\"signature\":\"7err\",\"err\":{\"InstructionError\":[0,\"InvalidArgument\"]},\"logs\":[\"program log: fail\",\"program consumed 1 of 200000 compute units\"]}},\"subscription\":53}}";
+                try self.conn.write(notification);
+                return;
+            }
+
             const response = try std.fmt.allocPrint(
                 self.app.allocator,
                 "{{\"jsonrpc\":\"2.0\",\"result\":52,\"id\":{}}}",
@@ -102,7 +162,7 @@ const TestHandler = struct {
             try self.conn.write(response);
 
             const notification =
-                "{\"jsonrpc\":\"2.0\",\"method\":\"accountNotification\",\"params\":{\"result\":{\"context\":{\"slot\":321},\"value\":{\"data\":{\"program\":\"nonce\",\"parsed\":{\"type\":\"initialized\"}},\"executable\":false,\"lamports\":777,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":4,\"space\":80}},\"subscription\":61}}";
+                "{\"jsonrpc\":\"2.0\",\"method\":\"accountNotification\",\"params\":{\"result\":{\"context\":{\"slot\":321},\"value\":{\"data\":{\"program\":\"nonce\",\"parsed\":{\"type\":\"initialized\",\"info\":{\"authority\":\"Auth1111111111111111111111111111111111111\",\"blockhash\":\"NonceBlockhash111111111111111111111111111111\",\"lamportsPerSignature\":5000}}},\"executable\":false,\"lamports\":777,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":4,\"space\":80}},\"subscription\":61}}";
             try self.conn.write(notification);
             return;
         }
@@ -129,7 +189,7 @@ const TestHandler = struct {
             try self.conn.write(response);
 
             const notification =
-                "{\"jsonrpc\":\"2.0\",\"method\":\"programNotification\",\"params\":{\"result\":{\"context\":{\"slot\":444},\"value\":{\"pubkey\":\"7YttLkHDoNj9wyQkL8vL7h4sQ6x9x1Fs6sT4m7G4S3xX\",\"account\":{\"data\":{\"program\":\"spl-token\",\"parsed\":{\"type\":\"account\"}},\"executable\":false,\"lamports\":999,\"owner\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\",\"rentEpoch\":8,\"space\":165}}},\"subscription\":62}}";
+                "{\"jsonrpc\":\"2.0\",\"method\":\"programNotification\",\"params\":{\"result\":{\"context\":{\"slot\":444},\"value\":{\"pubkey\":\"7YttLkHDoNj9wyQkL8vL7h4sQ6x9x1Fs6sT4m7G4S3xX\",\"account\":{\"data\":{\"program\":\"spl-token\",\"parsed\":{\"type\":\"account\",\"info\":{\"mint\":\"Mint111111111111111111111111111111111111111\",\"owner\":\"Owner1111111111111111111111111111111111111\",\"state\":\"initialized\",\"tokenAmount\":{\"amount\":\"42\",\"decimals\":9,\"uiAmountString\":\"0.000000042\"}}}},\"executable\":false,\"lamports\":999,\"owner\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\",\"rentEpoch\":8,\"space\":165}}},\"subscription\":62}}";
             try self.conn.write(notification);
             return;
         }
@@ -190,6 +250,94 @@ const TestHandler = struct {
 
         if (std.mem.eql(u8, parsed.value.method, "rootUnsubscribe")) {
             self.app.root_unsubscribe_seen = true;
+            const response = try std.fmt.allocPrint(
+                self.app.allocator,
+                "{{\"jsonrpc\":\"2.0\",\"result\":true,\"id\":{}}}",
+                .{parsed.value.id},
+            );
+            defer self.app.allocator.free(response);
+            try self.conn.write(response);
+            return;
+        }
+
+        if (std.mem.eql(u8, parsed.value.method, "slotsUpdatesSubscribe")) {
+            const response = try std.fmt.allocPrint(
+                self.app.allocator,
+                "{{\"jsonrpc\":\"2.0\",\"result\":73,\"id\":{}}}",
+                .{parsed.value.id},
+            );
+            defer self.app.allocator.free(response);
+            try self.conn.write(response);
+
+            const notification =
+                "{\"jsonrpc\":\"2.0\",\"method\":\"slotsUpdatesNotification\",\"params\":{\"result\":{\"parent\":44,\"slot\":45,\"timestamp\":1710000000,\"type\":\"frozen\",\"stats\":{\"maxTransactionsPerEntry\":64,\"numFailedTransactions\":2,\"numSuccessfulTransactions\":10,\"numTransactionEntries\":3}},\"subscription\":73}}";
+            try self.conn.write(notification);
+            return;
+        }
+
+        if (std.mem.eql(u8, parsed.value.method, "slotsUpdatesUnsubscribe")) {
+            self.app.slots_updates_unsubscribe_seen = true;
+            const response = try std.fmt.allocPrint(
+                self.app.allocator,
+                "{{\"jsonrpc\":\"2.0\",\"result\":true,\"id\":{}}}",
+                .{parsed.value.id},
+            );
+            defer self.app.allocator.free(response);
+            try self.conn.write(response);
+            return;
+        }
+
+        if (std.mem.eql(u8, parsed.value.method, "voteSubscribe")) {
+            const response = try std.fmt.allocPrint(
+                self.app.allocator,
+                "{{\"jsonrpc\":\"2.0\",\"result\":74,\"id\":{}}}",
+                .{parsed.value.id},
+            );
+            defer self.app.allocator.free(response);
+            try self.conn.write(response);
+
+            const notification =
+                "{\"jsonrpc\":\"2.0\",\"method\":\"voteNotification\",\"params\":{\"result\":{\"hash\":\"7fK4nkmxQZ7QBY9Lfe1dSDA6n9yM4eGJdJm1Qf8E2QpN\",\"slots\":[101,102],\"timestamp\":1710000100,\"signature\":\"5h6x\",\"votePubkey\":\"Vote111111111111111111111111111111111111111\"},\"subscription\":74}}";
+            try self.conn.write(notification);
+            return;
+        }
+
+        if (std.mem.eql(u8, parsed.value.method, "voteUnsubscribe")) {
+            self.app.vote_unsubscribe_seen = true;
+            const response = try std.fmt.allocPrint(
+                self.app.allocator,
+                "{{\"jsonrpc\":\"2.0\",\"result\":true,\"id\":{}}}",
+                .{parsed.value.id},
+            );
+            defer self.app.allocator.free(response);
+            try self.conn.write(response);
+            return;
+        }
+
+        if (std.mem.eql(u8, parsed.value.method, "blockSubscribe")) {
+            try std.testing.expect(std.mem.indexOf(u8, data, "\"mentionsAccountOrProgram\":\"11111111111111111111111111111111\"") != null);
+            try std.testing.expect(std.mem.indexOf(u8, data, "\"commitment\":\"finalized\"") != null);
+            try std.testing.expect(std.mem.indexOf(u8, data, "\"encoding\":\"json\"") != null);
+            try std.testing.expect(std.mem.indexOf(u8, data, "\"transactionDetails\":\"signatures\"") != null);
+            try std.testing.expect(std.mem.indexOf(u8, data, "\"maxSupportedTransactionVersion\":0") != null);
+            try std.testing.expect(std.mem.indexOf(u8, data, "\"showRewards\":false") != null);
+
+            const response = try std.fmt.allocPrint(
+                self.app.allocator,
+                "{{\"jsonrpc\":\"2.0\",\"result\":75,\"id\":{}}}",
+                .{parsed.value.id},
+            );
+            defer self.app.allocator.free(response);
+            try self.conn.write(response);
+
+            const notification =
+                "{\"jsonrpc\":\"2.0\",\"method\":\"blockNotification\",\"params\":{\"result\":{\"context\":{\"slot\":901},\"value\":{\"slot\":900,\"err\":null,\"block\":{\"blockhash\":\"Blockhash111111111111111111111111111111111111\",\"previousBlockhash\":\"Prev111111111111111111111111111111111111111\",\"parentSlot\":899,\"transactions\":[{\"transaction\":{\"signatures\":[\"5h6x\"]}}],\"rewards\":[]}}},\"subscription\":75}}";
+            try self.conn.write(notification);
+            return;
+        }
+
+        if (std.mem.eql(u8, parsed.value.method, "blockUnsubscribe")) {
+            self.app.block_unsubscribe_seen = true;
             const response = try std.fmt.allocPrint(
                 self.app.allocator,
                 "{{\"jsonrpc\":\"2.0\",\"result\":true,\"id\":{}}}",
@@ -276,6 +424,85 @@ test "root.PubsubClient logsSubscribe parses log notifications" {
     try std.testing.expect(try subscription.unsubscribe());
 }
 
+test "root.PubsubSubscription parses signature summary notifications" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.signatureSubscribe(
+        "ErrorSig11111111111111111111111111111111111111",
+        .{ .commitment = .confirmed },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvSignatureSummaryNotification();
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 43), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, 199), notification.notification.context_slot);
+    try std.testing.expect(!notification.notification.value.receivedSignature);
+    try std.testing.expect(notification.notification.value.hasError);
+    try std.testing.expectEqualStrings(
+        "{\"InstructionError\":[1,{\"Custom\":6001}]}",
+        notification.notification.value.errJson.?,
+    );
+}
+
+test "root.PubsubReceiver parses logs summary notifications with error payloads" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.logsSubscribe(
+        .{ .mentions = "Err111111111111111111111111111111111111111" },
+        .{ .commitment = .finalized },
+    );
+    defer subscription.deinit();
+
+    var receiver = subscription.receiver();
+    var notification = try receiver.recvLogsSummaryNotificationTimeout(1000);
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 53), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, 124), notification.notification.context_slot);
+    try std.testing.expectEqualStrings("7err", notification.notification.value.signature);
+    try std.testing.expect(notification.notification.value.hasError);
+    try std.testing.expectEqualStrings(
+        "{\"InstructionError\":[0,\"InvalidArgument\"]}",
+        notification.notification.value.errJson.?,
+    );
+    try std.testing.expectEqual(@as(usize, 2), notification.notification.value.logsCount);
+    try std.testing.expectEqualStrings("program log: fail", notification.notification.value.firstLog.?);
+}
+
 test "root.PubsubClient signatureSubscribe parses receivedSignature notifications" {
     const port = try reservePort();
     var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
@@ -350,6 +577,49 @@ test "root.PubsubClient accountSubscribe receives typed account notifications" {
     try std.testing.expect(app.account_unsubscribe_seen);
 }
 
+test "root.PubsubClient accountSubscribe parses account summary notifications" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.accountSubscribe(
+        "11111111111111111111111111111111",
+        .{ .commitment = .processed, .encoding = .json_parsed },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvAccountSummaryNotification();
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 61), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, 321), notification.notification.context_slot);
+    try std.testing.expectEqual(@as(u64, 777), notification.notification.value.lamports);
+    try std.testing.expectEqualStrings("11111111111111111111111111111111", notification.notification.value.owner);
+    try std.testing.expectEqual(@as(?u64, 4), notification.notification.value.rentEpoch);
+    try std.testing.expectEqual(@as(?u64, 80), notification.notification.value.space);
+    try std.testing.expect(notification.notification.value.dataSummary != null);
+    try std.testing.expectEqualStrings("nonce", notification.notification.value.dataSummary.?.program.?);
+    try std.testing.expectEqualStrings("initialized", notification.notification.value.dataSummary.?.parsedType.?);
+    try std.testing.expect(notification.notification.value.dataSummary.?.info != null);
+    try std.testing.expectEqualStrings("Auth1111111111111111111111111111111111111", notification.notification.value.dataSummary.?.info.?.authority.?);
+    try std.testing.expectEqualStrings("NonceBlockhash111111111111111111111111111111", notification.notification.value.dataSummary.?.info.?.blockhash.?);
+    try std.testing.expectEqual(@as(?u64, 5000), notification.notification.value.dataSummary.?.info.?.lamportsPerSignature);
+}
+
 test "root.PubsubClient programSubscribe receives typed program notifications" {
     const port = try reservePort();
     var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
@@ -395,6 +665,57 @@ test "root.PubsubClient programSubscribe receives typed program notifications" {
 
     try std.testing.expect(try subscription.unsubscribe());
     try std.testing.expect(app.program_unsubscribe_seen);
+}
+
+test "root.PubsubClient programSubscribe parses program summary notifications" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.programSubscribe(
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        .{
+            .commitment = .confirmed,
+            .encoding = .json_parsed,
+            .data_size = 165,
+            .memcmp_offset = 32,
+            .memcmp_bytes = "11111111111111111111111111111111",
+        },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvProgramSummaryNotification();
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 62), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, 444), notification.notification.context_slot);
+    try std.testing.expectEqualStrings("7YttLkHDoNj9wyQkL8vL7h4sQ6x9x1Fs6sT4m7G4S3xX", notification.notification.value.pubkey);
+    try std.testing.expectEqual(@as(u64, 999), notification.notification.value.account.lamports);
+    try std.testing.expectEqualStrings("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", notification.notification.value.account.owner);
+    try std.testing.expect(notification.notification.value.account.dataSummary != null);
+    try std.testing.expectEqualStrings("spl-token", notification.notification.value.account.dataSummary.?.program.?);
+    try std.testing.expectEqualStrings("account", notification.notification.value.account.dataSummary.?.parsedType.?);
+    try std.testing.expect(notification.notification.value.account.dataSummary.?.info != null);
+    try std.testing.expectEqualStrings("Mint111111111111111111111111111111111111111", notification.notification.value.account.dataSummary.?.info.?.mint.?);
+    try std.testing.expectEqualStrings("Owner1111111111111111111111111111111111111", notification.notification.value.account.dataSummary.?.info.?.owner.?);
+    try std.testing.expectEqualStrings("initialized", notification.notification.value.account.dataSummary.?.info.?.state.?);
+    try std.testing.expectEqualStrings("42", notification.notification.value.account.dataSummary.?.info.?.tokenAmountAmount.?);
+    try std.testing.expectEqual(@as(?u8, 9), notification.notification.value.account.dataSummary.?.info.?.tokenAmountDecimals);
+    try std.testing.expectEqualStrings("0.000000042", notification.notification.value.account.dataSummary.?.info.?.tokenAmountUiAmountString.?);
 }
 
 test "root.PubsubClient slotSubscribe receives slot notifications" {
@@ -463,4 +784,465 @@ test "root.PubsubClient rootSubscribe receives root notifications" {
 
     try std.testing.expect(try subscription.unsubscribe());
     try std.testing.expect(app.root_unsubscribe_seen);
+}
+
+test "root.PubsubSubscription receiver view supports typed receive and timeout" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.rootSubscribe();
+    defer subscription.deinit();
+
+    var receiver = subscription.receiver();
+    try std.testing.expect(receiver.queuedCount() <= 1);
+
+    var notification = try receiver.recvRootNotificationTimeout(1000);
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 72), notification.notification.subscription);
+    try std.testing.expectEqual(@as(u64, 456), notification.notification.value);
+    try std.testing.expectEqual(@as(usize, 0), receiver.queuedCount());
+    try std.testing.expectError(error.Timeout, receiver.recvTimeout(10));
+
+    try std.testing.expect(try subscription.unsubscribe());
+    try std.testing.expect(app.root_unsubscribe_seen);
+}
+
+test "root.PubsubClient slotsUpdatesSubscribe receives slots update notifications" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.slotsUpdatesSubscribe();
+    defer subscription.deinit();
+
+    var notification = try subscription.recvSlotsUpdatesNotification();
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 73), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, null), notification.notification.context_slot);
+    try std.testing.expectEqualStrings("frozen", notification.notification.value.type);
+    try std.testing.expectEqual(@as(u64, 44), notification.notification.value.parent.?);
+    try std.testing.expectEqual(@as(u64, 45), notification.notification.value.slot);
+    try std.testing.expectEqual(@as(i64, 1710000000), notification.notification.value.timestamp);
+    try std.testing.expect(notification.notification.value.stats != null);
+    try std.testing.expectEqual(@as(u64, 64), notification.notification.value.stats.?.maxTransactionsPerEntry);
+
+    try std.testing.expect(try subscription.unsubscribe());
+    try std.testing.expect(app.slots_updates_unsubscribe_seen);
+}
+
+test "root.PubsubClient voteSubscribe receives vote notifications" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.voteSubscribe();
+    defer subscription.deinit();
+
+    var notification = try subscription.recvVoteNotification();
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 74), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, null), notification.notification.context_slot);
+    try std.testing.expectEqualStrings("7fK4nkmxQZ7QBY9Lfe1dSDA6n9yM4eGJdJm1Qf8E2QpN", notification.notification.value.hash);
+    try std.testing.expectEqual(@as(usize, 2), notification.notification.value.slots.len);
+    try std.testing.expectEqual(@as(u64, 101), notification.notification.value.slots[0]);
+    try std.testing.expectEqual(@as(u64, 102), notification.notification.value.slots[1]);
+    try std.testing.expectEqual(@as(?i64, 1710000100), notification.notification.value.timestamp);
+    try std.testing.expectEqualStrings("5h6x", notification.notification.value.signature);
+    try std.testing.expectEqualStrings("Vote111111111111111111111111111111111111111", notification.notification.value.votePubkey);
+
+    try std.testing.expect(try subscription.unsubscribe());
+    try std.testing.expect(app.vote_unsubscribe_seen);
+}
+
+test "root.PubsubClient blockSubscribe receives block notifications" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.blockSubscribe(
+        .{ .mentions_account_or_program = "11111111111111111111111111111111" },
+        .{
+            .commitment = .finalized,
+            .encoding = .json,
+            .transaction_details = .signatures,
+            .max_supported_transaction_version = 0,
+            .show_rewards = false,
+        },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvBlockNotification();
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 75), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, 901), notification.notification.context_slot);
+    try std.testing.expectEqual(@as(u64, 900), notification.notification.value.slot);
+    try std.testing.expect(notification.notification.value.err == null);
+    try std.testing.expect(notification.notification.value.block != null);
+
+    const block = notification.notification.value.block.?;
+    try std.testing.expect(block == .object);
+    try std.testing.expectEqualStrings(
+        "Blockhash111111111111111111111111111111111111",
+        block.object.get("blockhash").?.string,
+    );
+    try std.testing.expectEqual(@as(i64, 899), block.object.get("parentSlot").?.integer);
+    try std.testing.expectEqual(@as(usize, 1), block.object.get("transactions").?.array.items.len);
+    try std.testing.expectEqual(@as(usize, 0), block.object.get("rewards").?.array.items.len);
+
+    try std.testing.expect(try subscription.unsubscribe());
+    try std.testing.expect(app.block_unsubscribe_seen);
+}
+
+test "root.PubsubSubscription parses block summary notifications" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.blockSubscribe(
+        .{ .mentions_account_or_program = "11111111111111111111111111111111" },
+        .{
+            .commitment = .finalized,
+            .encoding = .json,
+            .transaction_details = .signatures,
+            .max_supported_transaction_version = 0,
+            .show_rewards = false,
+        },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvBlockSummaryNotification();
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 75), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, 901), notification.notification.context_slot);
+    try std.testing.expectEqual(@as(u64, 900), notification.notification.value.slot);
+    try std.testing.expect(notification.notification.value.err == null);
+    try std.testing.expect(notification.notification.value.block != null);
+    try std.testing.expectEqualStrings(
+        "Blockhash111111111111111111111111111111111111",
+        notification.notification.value.block.?.blockhash,
+    );
+    try std.testing.expectEqualStrings(
+        "Prev111111111111111111111111111111111111111",
+        notification.notification.value.block.?.previousBlockhash.?,
+    );
+    try std.testing.expectEqual(@as(u64, 899), notification.notification.value.block.?.parentSlot);
+    try std.testing.expectEqual(@as(?usize, 1), notification.notification.value.block.?.transactionsCount);
+    try std.testing.expectEqual(@as(?usize, 0), notification.notification.value.block.?.rewardsCount);
+}
+
+test "root.PubsubClient subscribeWithReceiver convenience returns handle and receiver" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var subscribed = try pubsub.logsSubscribeWithReceiver(
+        .{ .mentions = "11111111111111111111111111111111" },
+        .{ .commitment = .finalized },
+    );
+    defer subscribed.subscription.deinit();
+
+    var notification = try subscribed.receiver.recvLogsNotificationTimeout(1000);
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 52), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, 123), notification.notification.context_slot);
+    try std.testing.expectEqualStrings("5h6x", notification.notification.value.signature);
+    try std.testing.expectEqual(@as(usize, 1), notification.notification.value.logs.len);
+
+    try std.testing.expectEqual(@as(usize, 0), subscribed.queuedCount());
+    try std.testing.expect(!subscribed.isClosed());
+    try std.testing.expect(try subscribed.unsubscribe());
+    try std.testing.expect(subscribed.isClosed());
+}
+
+test "root.PubsubClient auto reconnects and re-subscribes active subscriptions" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .auto_reconnect = true,
+        .reconnect_delay_ms = 0,
+    });
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.signatureSubscribe(
+        "Reconnect1111111111111111111111111111111111111",
+        .{ .commitment = .confirmed },
+    );
+    defer subscription.deinit();
+
+    var first_notification = try subscription.recvSignatureNotification();
+    defer first_notification.deinit();
+    try std.testing.expectEqual(@as(?u64, 501), first_notification.notification.context_slot);
+    try std.testing.expectEqual(@as(u64, 141), subscription.id);
+
+    var second_notification = try subscription.recvSignatureNotification();
+    defer second_notification.deinit();
+    try std.testing.expectEqual(@as(?u64, 777), second_notification.notification.context_slot);
+    try std.testing.expectEqual(@as(u64, 142), subscription.id);
+    try std.testing.expectEqual(@as(usize, 2), app.reconnect_signature_subscribe_count);
+
+    try std.testing.expect(try subscription.unsubscribe());
+    try std.testing.expect(app.signature_unsubscribe_seen);
+}
+
+test "root.PubsubClient typed subscription convenience returns typed channel" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var subscription = try pubsub.signatureSubscribeTyped(
+        "3vQB7B6MrGQZaxCuFg4oh",
+        .{ .commitment = .confirmed },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recv();
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 41), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, 99), notification.notification.context_slot);
+    try std.testing.expect(notification.notification.value.err == null);
+    try std.testing.expectEqual(@as(usize, 0), subscription.queuedCount());
+    try std.testing.expectError(error.Timeout, subscription.recvTimeout(10));
+
+    try std.testing.expect(try subscription.unsubscribe());
+    try std.testing.expect(subscription.isClosed());
+    try std.testing.expect(app.signature_unsubscribe_seen);
+}
+
+test "root.PubsubClient logsSubscribeSummaryTyped returns typed logs summary channel" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var subscription = try pubsub.logsSubscribeSummaryTyped(
+        .{ .mentions = "Err111111111111111111111111111111111111111" },
+        .{ .commitment = .finalized },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvTimeout(1000);
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 53), notification.notification.subscription);
+    try std.testing.expectEqualStrings("7err", notification.notification.value.signature);
+    try std.testing.expect(notification.notification.value.hasError);
+    try std.testing.expectEqual(@as(usize, 2), notification.notification.value.logsCount);
+    try std.testing.expectEqualStrings("program log: fail", notification.notification.value.firstLog.?);
+}
+
+test "root.PubsubClient programSubscribeSummaryTyped returns typed program summary channel" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var subscription = try pubsub.programSubscribeSummaryTyped(
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        .{
+            .commitment = .confirmed,
+            .encoding = .json_parsed,
+            .data_size = 165,
+            .memcmp_offset = 32,
+            .memcmp_bytes = "11111111111111111111111111111111",
+        },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvTimeout(1000);
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 62), notification.notification.subscription);
+    try std.testing.expectEqualStrings("7YttLkHDoNj9wyQkL8vL7h4sQ6x9x1Fs6sT4m7G4S3xX", notification.notification.value.pubkey);
+    try std.testing.expect(notification.notification.value.account.dataSummary != null);
+    try std.testing.expectEqualStrings("spl-token", notification.notification.value.account.dataSummary.?.program.?);
+    try std.testing.expectEqualStrings("account", notification.notification.value.account.dataSummary.?.parsedType.?);
+    try std.testing.expect(notification.notification.value.account.dataSummary.?.info != null);
+    try std.testing.expectEqualStrings("Mint111111111111111111111111111111111111111", notification.notification.value.account.dataSummary.?.info.?.mint.?);
+    try std.testing.expectEqualStrings("Owner1111111111111111111111111111111111111", notification.notification.value.account.dataSummary.?.info.?.owner.?);
+}
+
+test "root.PubsubClient blockSubscribeSummaryTyped returns typed block summary channel" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var subscription = try pubsub.blockSubscribeSummaryTyped(
+        .{ .mentions_account_or_program = "11111111111111111111111111111111" },
+        .{
+            .commitment = .finalized,
+            .encoding = .json,
+            .transaction_details = .signatures,
+            .max_supported_transaction_version = 0,
+            .show_rewards = false,
+        },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvTimeout(1000);
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 75), notification.notification.subscription);
+    try std.testing.expectEqual(@as(u64, 900), notification.notification.value.slot);
+    try std.testing.expect(notification.notification.value.block != null);
+    try std.testing.expectEqual(@as(?usize, 1), notification.notification.value.block.?.transactionsCount);
+    try std.testing.expectEqual(@as(?usize, 0), notification.notification.value.block.?.rewardsCount);
 }

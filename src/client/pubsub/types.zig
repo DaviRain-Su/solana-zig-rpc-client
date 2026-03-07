@@ -7,6 +7,8 @@ pub const PubsubClientOptions = struct {
     write_timeout_ms: ?u32 = null,
     max_message_size: usize = 256 * 1024,
     buffer_size: usize = 8 * 1024,
+    auto_reconnect: bool = false,
+    reconnect_delay_ms: u32 = 250,
 };
 
 pub const SignatureSubscribeOptions = struct {
@@ -51,6 +53,19 @@ pub const ProgramSubscribeOptions = struct {
     memcmp_bytes: ?[]const u8 = null,
 };
 
+pub const BlockSubscribeFilter = union(enum) {
+    all,
+    mentions_account_or_program: []const u8,
+};
+
+pub const BlockSubscribeOptions = struct {
+    commitment: ?rpc_types.Commitment = null,
+    encoding: ?rpc_types.TransactionEncoding = null,
+    transaction_details: ?rpc_types.TransactionDetails = null,
+    max_supported_transaction_version: ?u8 = null,
+    show_rewards: ?bool = null,
+};
+
 pub const PubsubContext = struct {
     slot: u64 = 0,
 };
@@ -86,7 +101,96 @@ pub const SignatureNotificationValue = struct {
     }
 };
 
+pub const SignatureNotificationSummaryValue = struct {
+    receivedSignature: bool = false,
+    hasError: bool = false,
+    errJson: ?[]const u8 = null,
+
+    pub fn jsonParseFromValue(
+        allocator: std.mem.Allocator,
+        source: json.Value,
+        _: json.ParseOptions,
+    ) !@This() {
+        return switch (source) {
+            .string => |value| blk: {
+                if (std.mem.eql(u8, value, "receivedSignature")) {
+                    break :blk .{
+                        .receivedSignature = true,
+                        .hasError = false,
+                        .errJson = null,
+                    };
+                }
+                return error.InvalidEnumTag;
+            },
+            .object => blk: {
+                const err_json = if (source.object.get("err")) |err_value|
+                    try summarizeErrorValue(allocator, err_value)
+                else
+                    null;
+                break :blk .{
+                    .receivedSignature = false,
+                    .hasError = err_json != null,
+                    .errJson = err_json,
+                };
+            },
+            else => error.UnexpectedToken,
+        };
+    }
+};
+
 pub const AccountNotificationValue = rpc_types.RpcJsonParsedAccountInfoResult;
+
+pub const ParsedAccountDataSummary = struct {
+    program: ?[]const u8 = null,
+    parsedType: ?[]const u8 = null,
+    info: ?ParsedAccountInfoSummary = null,
+};
+
+pub const ParsedAccountInfoSummary = struct {
+    authority: ?[]const u8 = null,
+    blockhash: ?[]const u8 = null,
+    lamportsPerSignature: ?u64 = null,
+    mint: ?[]const u8 = null,
+    owner: ?[]const u8 = null,
+    state: ?[]const u8 = null,
+    tokenAmountAmount: ?[]const u8 = null,
+    tokenAmountDecimals: ?u8 = null,
+    tokenAmountUiAmountString: ?[]const u8 = null,
+};
+
+pub const AccountNotificationSummaryValue = struct {
+    lamports: u64 = 0,
+    owner: []const u8 = "",
+    executable: bool = false,
+    rentEpoch: ?u64 = null,
+    space: ?u64 = null,
+    dataSummary: ?ParsedAccountDataSummary = null,
+
+    pub fn jsonParseFromValue(
+        allocator: std.mem.Allocator,
+        source: json.Value,
+        options: json.ParseOptions,
+    ) !@This() {
+        const Parsed = struct {
+            data: json.Value = .null,
+            executable: bool = false,
+            lamports: u64 = 0,
+            owner: []const u8 = "",
+            rentEpoch: ?u64 = null,
+            space: ?u64 = null,
+        };
+
+        const parsed = try json.parseFromValueLeaky(Parsed, allocator, source, options);
+        return .{
+            .lamports = parsed.lamports,
+            .owner = parsed.owner,
+            .executable = parsed.executable,
+            .rentEpoch = parsed.rentEpoch,
+            .space = parsed.space,
+            .dataSummary = summarizeParsedAccountData(parsed.data),
+        };
+    }
+};
 
 pub const LogsNotificationValue = struct {
     signature: []const u8 = "",
@@ -94,7 +198,55 @@ pub const LogsNotificationValue = struct {
     logs: []const []const u8 = &.{},
 };
 
+pub const LogsNotificationSummaryValue = struct {
+    signature: []const u8 = "",
+    hasError: bool = false,
+    errJson: ?[]const u8 = null,
+    logsCount: usize = 0,
+    firstLog: ?[]const u8 = null,
+
+    pub fn jsonParseFromValue(
+        allocator: std.mem.Allocator,
+        source: json.Value,
+        options: json.ParseOptions,
+    ) !@This() {
+        const parsed = try json.parseFromValueLeaky(LogsNotificationValue, allocator, source, options);
+        return .{
+            .signature = parsed.signature,
+            .hasError = parsed.err != null,
+            .errJson = if (parsed.err) |err_value|
+                try summarizeErrorValue(allocator, err_value)
+            else
+                null,
+            .logsCount = parsed.logs.len,
+            .firstLog = if (parsed.logs.len > 0) parsed.logs[0] else null,
+        };
+    }
+};
+
 pub const ProgramNotificationValue = rpc_types.RpcJsonParsedProgramAccountResult;
+
+pub const ProgramNotificationSummaryValue = struct {
+    pubkey: []const u8 = "",
+    account: AccountNotificationSummaryValue = .{},
+
+    pub fn jsonParseFromValue(
+        allocator: std.mem.Allocator,
+        source: json.Value,
+        options: json.ParseOptions,
+    ) !@This() {
+        const Parsed = struct {
+            pubkey: []const u8 = "",
+            account: json.Value = .null,
+        };
+
+        const parsed = try json.parseFromValueLeaky(Parsed, allocator, source, options);
+        return .{
+            .pubkey = parsed.pubkey,
+            .account = try json.parseFromValueLeaky(AccountNotificationSummaryValue, allocator, parsed.account, options),
+        };
+    }
+};
 
 pub const SlotNotificationValue = struct {
     parent: u64 = 0,
@@ -102,7 +254,177 @@ pub const SlotNotificationValue = struct {
     slot: u64 = 0,
 };
 
+pub const SlotsUpdatesStats = struct {
+    maxTransactionsPerEntry: u64 = 0,
+    numFailedTransactions: u64 = 0,
+    numSuccessfulTransactions: u64 = 0,
+    numTransactionEntries: u64 = 0,
+};
+
+pub const SlotsUpdatesNotificationValue = struct {
+    err: ?[]const u8 = null,
+    parent: ?u64 = null,
+    slot: u64 = 0,
+    stats: ?SlotsUpdatesStats = null,
+    timestamp: i64 = 0,
+    type: []const u8 = "",
+};
+
 pub const RootNotificationValue = u64;
+
+pub const BlockNotificationValue = struct {
+    slot: u64 = 0,
+    err: ?json.Value = null,
+    block: ?json.Value = null,
+};
+
+pub const BlockNotificationBlockSummary = struct {
+    blockhash: []const u8 = "",
+    previousBlockhash: ?[]const u8 = null,
+    parentSlot: u64 = 0,
+    blockHeight: ?u64 = null,
+    blockTime: ?i64 = null,
+    transactionsCount: ?usize = null,
+    rewardsCount: ?usize = null,
+
+    pub fn jsonParseFromValue(
+        allocator: std.mem.Allocator,
+        source: json.Value,
+        options: json.ParseOptions,
+    ) !@This() {
+        const Parsed = struct {
+            blockhash: []const u8 = "",
+            previousBlockhash: ?[]const u8 = null,
+            parentSlot: u64 = 0,
+            blockHeight: ?u64 = null,
+            blockTime: ?i64 = null,
+            transactions: ?[]json.Value = null,
+            rewards: ?[]json.Value = null,
+        };
+
+        const parsed = try json.parseFromValueLeaky(Parsed, allocator, source, options);
+        return .{
+            .blockhash = parsed.blockhash,
+            .previousBlockhash = parsed.previousBlockhash,
+            .parentSlot = parsed.parentSlot,
+            .blockHeight = parsed.blockHeight,
+            .blockTime = parsed.blockTime,
+            .transactionsCount = if (parsed.transactions) |value| value.len else null,
+            .rewardsCount = if (parsed.rewards) |value| value.len else null,
+        };
+    }
+};
+
+pub const BlockNotificationSummaryValue = struct {
+    slot: u64 = 0,
+    err: ?json.Value = null,
+    block: ?BlockNotificationBlockSummary = null,
+};
+
+pub const VoteNotificationValue = struct {
+    hash: []const u8 = "",
+    slots: []const u64 = &.{},
+    timestamp: ?i64 = null,
+    signature: []const u8 = "",
+    votePubkey: []const u8 = "",
+};
+
+fn summarizeParsedAccountData(source: json.Value) ?ParsedAccountDataSummary {
+    if (source != .object) return null;
+
+    var summary: ParsedAccountDataSummary = .{};
+    if (source.object.get("program")) |program_value| {
+        if (program_value == .string) {
+            summary.program = program_value.string;
+        }
+    }
+
+    if (source.object.get("parsed")) |parsed_value| {
+        if (parsed_value == .object) {
+            if (parsed_value.object.get("type")) |type_value| {
+                if (type_value == .string) {
+                    summary.parsedType = type_value.string;
+                }
+            }
+
+            if (parsed_value.object.get("info")) |info_value| {
+                summary.info = summarizeParsedAccountInfo(info_value);
+            }
+        }
+    }
+
+    if (summary.program == null and summary.parsedType == null and summary.info == null) return null;
+    return summary;
+}
+
+fn summarizeErrorValue(allocator: std.mem.Allocator, value: json.Value) !?[]const u8 {
+    return switch (value) {
+        .null => null,
+        .string => |text| try allocator.dupe(u8, text),
+        else => try json.Stringify.valueAlloc(allocator, value, .{}),
+    };
+}
+
+fn summarizeParsedAccountInfo(source: json.Value) ?ParsedAccountInfoSummary {
+    if (source != .object) return null;
+
+    var summary: ParsedAccountInfoSummary = .{};
+
+    if (source.object.get("authority")) |value| {
+        if (value == .string) summary.authority = value.string;
+    }
+    if (source.object.get("blockhash")) |value| {
+        if (value == .string) summary.blockhash = value.string;
+    }
+    if (source.object.get("lamportsPerSignature")) |value| {
+        switch (value) {
+            .integer => |integer| summary.lamportsPerSignature = std.math.cast(u64, integer),
+            .number_string => |number| summary.lamportsPerSignature = std.fmt.parseInt(u64, number, 10) catch null,
+            else => {},
+        }
+    }
+    if (source.object.get("mint")) |value| {
+        if (value == .string) summary.mint = value.string;
+    }
+    if (source.object.get("owner")) |value| {
+        if (value == .string) summary.owner = value.string;
+    }
+    if (source.object.get("state")) |value| {
+        if (value == .string) summary.state = value.string;
+    }
+    if (source.object.get("tokenAmount")) |value| {
+        if (value == .object) {
+            if (value.object.get("amount")) |amount_value| {
+                if (amount_value == .string) summary.tokenAmountAmount = amount_value.string;
+            }
+            if (value.object.get("decimals")) |decimals_value| {
+                switch (decimals_value) {
+                    .integer => |integer| summary.tokenAmountDecimals = std.math.cast(u8, integer),
+                    .number_string => |number| summary.tokenAmountDecimals = std.fmt.parseInt(u8, number, 10) catch null,
+                    else => {},
+                }
+            }
+            if (value.object.get("uiAmountString")) |ui_amount_string_value| {
+                if (ui_amount_string_value == .string) summary.tokenAmountUiAmountString = ui_amount_string_value.string;
+            }
+        }
+    }
+
+    if (summary.authority == null and
+        summary.blockhash == null and
+        summary.lamportsPerSignature == null and
+        summary.mint == null and
+        summary.owner == null and
+        summary.state == null and
+        summary.tokenAmountAmount == null and
+        summary.tokenAmountDecimals == null and
+        summary.tokenAmountUiAmountString == null)
+    {
+        return null;
+    }
+
+    return summary;
+}
 
 pub fn PubsubNotification(comptime ValueType: type) type {
     return struct {
