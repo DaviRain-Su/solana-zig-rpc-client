@@ -1496,6 +1496,52 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expect(!pubsub.getReconnectLimitReached());
 }
 
+test "root.PubsubClient mutable policy setters update runtime values" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    pubsub.setAutoReconnectEnabled(false);
+    pubsub.setHeartbeatTimeoutMs(12_345);
+    pubsub.setReconnectDelayMs(555);
+    pubsub.setReconnectBackoffFactor(4);
+    pubsub.setReconnectMaxDelayMs(4_321);
+    pubsub.setReconnectMaxAttempts(9);
+    pubsub.setSubscriptionQueueLimit(13);
+    pubsub.setQueueOverflowPolicy(.drop_newest);
+    pubsub.setHandshakeTimeoutMs(8_765);
+    pubsub.setWriteTimeoutMs(432);
+    pubsub.setMaxMessageSize(1024);
+    pubsub.setBufferSize(2048);
+
+    try std.testing.expect(!pubsub.isAutoReconnectEnabled());
+    try std.testing.expectEqual(@as(?u32, 12_345), pubsub.getHeartbeatTimeoutMs());
+    try std.testing.expectEqual(@as(u32, 555), pubsub.getReconnectDelayMs());
+    try std.testing.expectEqual(@as(u8, 4), pubsub.getReconnectBackoffFactor());
+    try std.testing.expectEqual(@as(?u32, 4_321), pubsub.getReconnectMaxDelayMs());
+    try std.testing.expectEqual(@as(?u32, 9), pubsub.getReconnectMaxAttempts());
+    try std.testing.expectEqual(@as(usize, 13), pubsub.getSubscriptionQueueLimit());
+    try std.testing.expectEqual(client.PubsubQueueOverflowPolicy.drop_newest, pubsub.getQueueOverflowPolicy());
+    try std.testing.expectEqual(@as(u32, 8_765), pubsub.getHandshakeTimeoutMs());
+    try std.testing.expectEqual(@as(?u32, 432), pubsub.getWriteTimeoutMs());
+    try std.testing.expectEqual(@as(usize, 1024), pubsub.getMaxMessageSize());
+    try std.testing.expectEqual(@as(usize, 2048), pubsub.getBufferSize());
+}
+
 test "root.PubsubClient signatureSubscribe parses receivedSignature notifications" {
     const port = try reservePort();
     var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
