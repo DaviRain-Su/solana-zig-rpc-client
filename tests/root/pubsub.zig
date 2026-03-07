@@ -2322,6 +2322,60 @@ test "root.PubsubClient logsSubscribeWithCallback reports droppedCount when queu
     try std.testing.expect(app.logs_unsubscribe_seen);
 }
 
+test "root.PubsubClient logsSubscribeWithCallback closes subscription when queue overflows" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .subscription_queue_limit = 1,
+        .queue_overflow_policy = .close_subscription,
+    });
+    defer pubsub.deinit();
+
+    var tracker = LogsCallbackTracker{};
+    {
+        var subscription = try pubsub.logsSubscribeWithCallback(
+            .all,
+            .{ .commitment = .confirmed },
+            &tracker,
+            slowLogsCallback,
+        );
+        defer subscription.deinit();
+
+        try waitForClosed(subscription.rawSubscription(), 2000);
+        try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, subscription.closeReason());
+        try std.testing.expectEqual(@as(usize, 1), subscription.queuedCount());
+        try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
+
+        const receiver = subscription.receiver();
+        try std.testing.expectEqual(subscription.subscriptionId(), receiver.subscriptionId());
+        try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, receiver.closeReason());
+        try std.testing.expectEqual(@as(usize, 1), receiver.queuedCount());
+
+        const typed_receiver = subscription.typed(client.LogsNotificationValue);
+        try std.testing.expectEqual(receiver.subscriptionId(), typed_receiver.subscriptionId());
+        try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, typed_receiver.closeReason());
+
+        var notification = try receiver.recvLogsNotificationTimeout(1000);
+        defer notification.deinit();
+        try std.testing.expectEqualStrings("close1", notification.notification.value.signature);
+    }
+
+    _ = tracker;
+}
+
 test "root.PubsubClient programSubscribeWithCallback invokes callback and unsubscribes" {
     const port = try reservePort();
     var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
