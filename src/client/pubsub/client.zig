@@ -143,6 +143,13 @@ pub const PubsubSubscription = struct {
         return self.receiver().typedReceiver(ValueType);
     }
 
+    pub fn typed(self: *Self, comptime ValueType: type) TypedPubsubSubscription(ValueType) {
+        return .{
+            .subscription = self,
+            .receiver = self.typedReceiver(ValueType),
+        };
+    }
+
     pub fn droppedCount(self: *Self) usize {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -517,6 +524,10 @@ pub const PubsubReceiver = struct {
             .subscription = self.subscription,
             .receiver = self.*,
         };
+    }
+
+    pub fn typed(self: *const Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.typedReceiver(ValueType);
     }
 
     pub fn getLastError(self: *Self) ?RpcErrorDetail {

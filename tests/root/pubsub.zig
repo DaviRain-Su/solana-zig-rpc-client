@@ -2131,6 +2131,44 @@ test "root.PubsubClient typed subscription convenience returns typed channel" {
     try std.testing.expect(app.signature_unsubscribe_seen);
 }
 
+test "root.PubsubSubscription typed convenience returns typed channel handle" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const raw_subscription = try pubsub.signatureSubscribe(
+        "3vQB7B6MrGQZaxCuFg4oh",
+        .{ .commitment = .confirmed },
+    );
+    defer raw_subscription.deinit();
+
+    var subscription = raw_subscription.typed(client.SignatureNotificationValue);
+    var notification = try subscription.recv();
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 41), notification.notification.subscription);
+    try std.testing.expectEqual(@as(u64, 41), subscription.subscriptionId());
+    try std.testing.expect(subscription.rawSubscription() == raw_subscription);
+
+    try std.testing.expect(try subscription.unsubscribe());
+    try std.testing.expect(raw_subscription.isClosed());
+    try std.testing.expect(app.signature_unsubscribe_seen);
+}
+
 test "root.PubsubClient logsSubscribeSummaryTyped returns typed logs summary channel" {
     const port = try reservePort();
     var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
