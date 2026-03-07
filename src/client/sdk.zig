@@ -51,10 +51,11 @@ fn base58Value(byte: u8) SdkError!u8 {
 }
 
 pub fn decodeBase58(allocator: Allocator, encoded: []const u8) ![]u8 {
-    if (encoded.len == 0) return error.InvalidBase58Length;
+    const trimmed = std.mem.trim(u8, encoded, " \n\r\t");
+    if (trimmed.len == 0) return error.InvalidBase58Length;
 
     var leading_zeroes: usize = 0;
-    for (encoded) |byte| {
+    for (trimmed) |byte| {
         if (byte == '1') {
             leading_zeroes += 1;
         } else {
@@ -65,7 +66,7 @@ pub fn decodeBase58(allocator: Allocator, encoded: []const u8) ![]u8 {
     var decoded = std.ArrayList(u8).empty;
     errdefer decoded.deinit(allocator);
 
-    for (encoded) |byte| {
+    for (trimmed) |byte| {
         var carry: u64 = try base58Value(byte);
         var index: usize = 0;
         while (index < decoded.items.len) : (index += 1) {

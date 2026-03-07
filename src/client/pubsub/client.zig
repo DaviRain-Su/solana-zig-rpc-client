@@ -398,7 +398,7 @@ pub const PubsubSubscription = struct {
         return .{ .subscription = self };
     }
 
-    pub fn subscriptionId(self: *Self) u64 {
+    pub fn subscriptionId(self: *const Self) u64 {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
         return self.id;
@@ -821,7 +821,7 @@ pub const PubsubSlotsUpdatesSubscriptionWithCallback = struct {
         return self.subscription.droppedCount();
     }
 
-    pub fn subscriptionId(self: *Self) u64 {
+    pub fn subscriptionId(self: *const Self) u64 {
         return self.subscription.subscriptionId();
     }
 
@@ -915,7 +915,7 @@ pub const PubsubRootSubscriptionWithCallback = struct {
         return self.subscription.droppedCount();
     }
 
-    pub fn subscriptionId(self: *Self) u64 {
+    pub fn subscriptionId(self: *const Self) u64 {
         return self.subscription.subscriptionId();
     }
 
@@ -1009,7 +1009,7 @@ pub const PubsubVoteSubscriptionWithCallback = struct {
         return self.subscription.droppedCount();
     }
 
-    pub fn subscriptionId(self: *Self) u64 {
+    pub fn subscriptionId(self: *const Self) u64 {
         return self.subscription.subscriptionId();
     }
 
@@ -1103,7 +1103,7 @@ pub const PubsubBlockSubscriptionWithCallback = struct {
         return self.subscription.droppedCount();
     }
 
-    pub fn subscriptionId(self: *Self) u64 {
+    pub fn subscriptionId(self: *const Self) u64 {
         return self.subscription.subscriptionId();
     }
 
@@ -1197,7 +1197,7 @@ pub const PubsubSignatureSubscriptionWithCallback = struct {
         return self.subscription.droppedCount();
     }
 
-    pub fn subscriptionId(self: *Self) u64 {
+    pub fn subscriptionId(self: *const Self) u64 {
         return self.subscription.subscriptionId();
     }
 
@@ -1291,7 +1291,7 @@ pub const PubsubAccountSubscriptionWithCallback = struct {
         return self.subscription.droppedCount();
     }
 
-    pub fn subscriptionId(self: *Self) u64 {
+    pub fn subscriptionId(self: *const Self) u64 {
         return self.subscription.subscriptionId();
     }
 
@@ -1385,7 +1385,7 @@ pub const PubsubLogsSubscriptionWithCallback = struct {
         return self.subscription.droppedCount();
     }
 
-    pub fn subscriptionId(self: *Self) u64 {
+    pub fn subscriptionId(self: *const Self) u64 {
         return self.subscription.subscriptionId();
     }
 
@@ -1479,7 +1479,7 @@ pub const PubsubProgramSubscriptionWithCallback = struct {
         return self.subscription.droppedCount();
     }
 
-    pub fn subscriptionId(self: *Self) u64 {
+    pub fn subscriptionId(self: *const Self) u64 {
         return self.subscription.subscriptionId();
     }
 
@@ -1573,7 +1573,7 @@ pub const PubsubSlotSubscriptionWithCallback = struct {
         return self.subscription.droppedCount();
     }
 
-    pub fn subscriptionId(self: *Self) u64 {
+    pub fn subscriptionId(self: *const Self) u64 {
         return self.subscription.subscriptionId();
     }
 
@@ -1661,7 +1661,7 @@ pub const PubsubReceiver = struct {
         return self.subscription.queuedCount();
     }
 
-    pub fn subscriptionId(self: *Self) u64 {
+    pub fn subscriptionId(self: *const Self) u64 {
         return self.subscription.subscriptionId();
     }
 
@@ -2019,7 +2019,7 @@ pub fn TypedPubsubReceiver(comptime ValueType: type) type {
             return self.receiver.queuedCount();
         }
 
-        pub fn subscriptionId(self: *Self) u64 {
+        pub fn subscriptionId(self: *const Self) u64 {
             return self.receiver.subscriptionId();
         }
 
@@ -2099,7 +2099,7 @@ pub const PubsubSubscriptionWithReceiver = struct {
         return self.receiver.queuedCount();
     }
 
-    pub fn subscriptionId(self: *Self) u64 {
+    pub fn subscriptionId(self: *const Self) u64 {
         return self.subscription.subscriptionId();
     }
 
@@ -2474,7 +2474,7 @@ pub fn TypedPubsubSubscriptionWithReceiver(comptime ValueType: type) type {
             return self.receiver.queuedCount();
         }
 
-        pub fn subscriptionId(self: *Self) u64 {
+        pub fn subscriptionId(self: *const Self) u64 {
             return self.receiver.subscriptionId();
         }
 
@@ -2564,7 +2564,7 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
             return self.receiver.queuedCount();
         }
 
-        pub fn subscriptionId(self: *Self) u64 {
+        pub fn subscriptionId(self: *const Self) u64 {
             return self.receiver.subscriptionId();
         }
 
