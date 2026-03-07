@@ -2409,147 +2409,97 @@ fn parseAccountEncoding(value: []const u8) ?client.AccountEncoding {
     return null;
 }
 
-fn runMockBlockServer(
-    listener: *std.net.Server,
+const RequestSenderSingleContext = struct {
     allocator: Allocator,
-    request_capture: *std.ArrayList(u8),
     response_body: []const u8,
-) void {
-    runMockBlockServerWithLifetime(listener, allocator, request_capture, response_body, false);
-}
+    request_capture: std.ArrayList(u8) = .empty,
 
-fn acceptMockConnection(listener: *std.net.Server) ?std.net.Server.Connection {
-    var poll_fds = [_]std.posix.pollfd{
-        .{
-            .fd = listener.stream.handle,
-            .events = std.posix.POLL.IN,
-            .revents = 0,
-        },
-    };
-
-    const ready = std.posix.poll(&poll_fds, 500) catch return null;
-    if (ready == 0) return null;
-    if (poll_fds[0].revents & std.posix.POLL.IN != std.posix.POLL.IN) return null;
-
-    return listener.accept() catch return null;
-}
-
-fn runMockBlockServerWithLifetime(
-    listener: *std.net.Server,
-    allocator: Allocator,
-    request_capture: *std.ArrayList(u8),
-    response_body: []const u8,
-    close_listener: bool,
-) void {
-    if (!close_listener) {
-        // keep alive for additional test requests in the same thread.
-    } else {
-        defer listener.deinit();
+    fn deinit(self: *RequestSenderSingleContext) void {
+        self.request_capture.deinit(self.allocator);
     }
+};
 
-    var connection = acceptMockConnection(listener) orelse return;
-    defer connection.stream.close();
-
-    var receive_buffer: [4096]u8 = undefined;
-    var request_body_buffer: [4096]u8 = undefined;
-    var send_buffer: [4096]u8 = undefined;
-    var connection_reader = connection.stream.reader(&receive_buffer);
-    var connection_writer = connection.stream.writer(&send_buffer);
-    var http_server = std.http.Server.init(connection_reader.interface(), &connection_writer.interface);
-
-    var request = http_server.receiveHead() catch return;
-    const body_length = request.head.content_length orelse 0;
-    const request_body_reader = request.readerExpectNone(&request_body_buffer);
-    const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
-    defer allocator.free(request_body);
-
-    request_capture.appendSlice(allocator, request_body) catch return;
-    request.respond(response_body, .{}) catch return;
-}
-
-fn runMockTransactionServer(
-    listener: *std.net.Server,
+const RequestSenderSequenceContext = struct {
     allocator: Allocator,
-    request_capture: *std.ArrayList(u8),
-    response_body: []const u8,
-) void {
-    var connection = acceptMockConnection(listener) orelse return;
-    defer connection.stream.close();
-
-    var receive_buffer: [4096]u8 = undefined;
-    var request_body_buffer: [4096]u8 = undefined;
-    var send_buffer: [4096]u8 = undefined;
-    var connection_reader = connection.stream.reader(&receive_buffer);
-    var connection_writer = connection.stream.writer(&send_buffer);
-    var http_server = std.http.Server.init(connection_reader.interface(), &connection_writer.interface);
-
-    var request = http_server.receiveHead() catch return;
-    const body_length = request.head.content_length orelse 0;
-    const request_body_reader = request.readerExpectNone(&request_body_buffer);
-    const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
-    defer allocator.free(request_body);
-
-    request_capture.appendSlice(allocator, request_body) catch return;
-    request.respond(response_body, .{}) catch return;
-}
-
-fn runMockBalanceServer(
-    listener: *std.net.Server,
-    allocator: Allocator,
-    request_capture: *std.ArrayList(u8),
-    response_body: []const u8,
-) void {
-    var connection = acceptMockConnection(listener) orelse return;
-    defer connection.stream.close();
-
-    var receive_buffer: [4096]u8 = undefined;
-    var request_body_buffer: [4096]u8 = undefined;
-    var send_buffer: [4096]u8 = undefined;
-    var connection_reader = connection.stream.reader(&receive_buffer);
-    var connection_writer = connection.stream.writer(&send_buffer);
-    var http_server = std.http.Server.init(connection_reader.interface(), &connection_writer.interface);
-
-    var request = http_server.receiveHead() catch return;
-    const body_length = request.head.content_length orelse 0;
-    const request_body_reader = request.readerExpectNone(&request_body_buffer);
-    const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
-    defer allocator.free(request_body);
-
-    request_capture.appendSlice(allocator, request_body) catch return;
-    request.respond(response_body, .{}) catch return;
-}
-
-fn runMockRequestSequenceServer(
-    listener: *std.net.Server,
-    allocator: Allocator,
-    request_captures: *std.ArrayList([]u8),
     response_bodies: []const []const u8,
-) void {
-    for (response_bodies) |response_body| {
-        var connection = acceptMockConnection(listener) orelse return;
-        defer connection.stream.close();
+    next_response_index: usize = 0,
+    request_captures: std.ArrayList([]u8) = .empty,
 
-        var receive_buffer: [4096]u8 = undefined;
-        var request_body_buffer: [4096]u8 = undefined;
-        var send_buffer: [4096]u8 = undefined;
-        var connection_reader = connection.stream.reader(&receive_buffer);
-        var connection_writer = connection.stream.writer(&send_buffer);
-        var http_server = std.http.Server.init(connection_reader.interface(), &connection_writer.interface);
-
-        var request = http_server.receiveHead() catch return;
-        const body_length = request.head.content_length orelse 0;
-        const request_body_reader = request.readerExpectNone(&request_body_buffer);
-        const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
-        defer allocator.free(request_body);
-
-        const request_body_copy = allocator.dupe(u8, request_body) catch return;
-        request_captures.append(allocator, request_body_copy) catch {
-            allocator.free(request_body_copy);
-            return;
-        };
-
-        request.respond(response_body, .{}) catch return;
+    fn deinit(self: *RequestSenderSequenceContext) void {
+        for (self.request_captures.items) |request| {
+            self.allocator.free(request);
+        }
+        self.request_captures.deinit(self.allocator);
     }
+};
+
+fn singleResponseRequestSender(
+    context_ptr: ?*anyopaque,
+    allocator: Allocator,
+    request: client.RequestSenderRequest,
+) ![]u8 {
+    const context: *RequestSenderSingleContext = @ptrCast(@alignCast(context_ptr.?));
+    context.request_capture.clearRetainingCapacity();
+    try context.request_capture.appendSlice(context.allocator, request.request_body);
+    return try allocator.dupe(u8, context.response_body);
+}
+
+fn sequenceResponseRequestSender(
+    context_ptr: ?*anyopaque,
+    allocator: Allocator,
+    request: client.RequestSenderRequest,
+) ![]u8 {
+    const context: *RequestSenderSequenceContext = @ptrCast(@alignCast(context_ptr.?));
+    try context.request_captures.append(context.allocator, try context.allocator.dupe(u8, request.request_body));
+    if (context.next_response_index >= context.response_bodies.len) {
+        return error.MockResponseExhausted;
+    }
+
+    const response_body = context.response_bodies[context.next_response_index];
+    context.next_response_index += 1;
+    return try allocator.dupe(u8, response_body);
+}
+
+fn initCommandTestRpcWithSingleResponse(
+    allocator: Allocator,
+    context: *RequestSenderSingleContext,
+    response_body: []const u8,
+) !client.RpcClient {
+    context.* = .{
+        .allocator = allocator,
+        .response_body = response_body,
+    };
+    return client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        .{
+            .context = context,
+            .callback = singleResponseRequestSender,
+        },
+        .{
+            .endpoint = "command-test://single",
+        },
+    );
+}
+
+fn initCommandTestRpcWithSequenceResponses(
+    allocator: Allocator,
+    context: *RequestSenderSequenceContext,
+    response_bodies: []const []const u8,
+) !client.RpcClient {
+    context.* = .{
+        .allocator = allocator,
+        .response_bodies = response_bodies,
+    };
+    return client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        .{
+            .context = context,
+            .callback = sequenceResponseRequestSender,
+        },
+        .{
+            .endpoint = "command-test://sequence",
+        },
+    );
 }
 
 fn writeKeypairJsonFile(allocator: Allocator, path: []const u8, secret_key: []const u8) !void {
@@ -3723,21 +3673,11 @@ test "runCommand validates wait-for-balance requires expected lamports" {
 
 test "runCommand balance with context prints slot and value" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":345},\"id\":1}";
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -3763,7 +3703,7 @@ test "runCommand balance with context prints slot and value" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try expectGetBalanceRequest(allocator, request_capture.items, "Address11111111111111111111111111111111", "confirmed");
+    try expectGetBalanceRequest(allocator, sender_context.request_capture.items, "Address11111111111111111111111111111111", "confirmed");
     try std.testing.expectEqualStrings(
         "balance context slot: 12\nbalance for Address11111111111111111111111111111111: 345\n",
         captured,
@@ -3772,21 +3712,11 @@ test "runCommand balance with context prints slot and value" {
 
 test "runCommand poll-balance prints value" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":15},\"value\":678},\"id\":1}";
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -3813,7 +3743,7 @@ test "runCommand poll-balance prints value" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try expectGetBalanceRequest(allocator, request_capture.items, "Address11111111111111111111111111111111", null);
+    try expectGetBalanceRequest(allocator, sender_context.request_capture.items, "Address11111111111111111111111111111111", null);
     try std.testing.expectEqualStrings(
         "polled balance for Address11111111111111111111111111111111: 678\n",
         captured,
@@ -3822,21 +3752,11 @@ test "runCommand poll-balance prints value" {
 
 test "runCommand latest-blockhash with context prints slot and value" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":{\"blockhash\":\"Blockhash111111111111111111111111111111111111\",\"lastValidBlockHeight\":77}},\"id\":1}";
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -3861,7 +3781,7 @@ test "runCommand latest-blockhash with context prints slot and value" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try expectGetLatestBlockhashRequest(allocator, request_capture.items, "confirmed");
+    try expectGetLatestBlockhashRequest(allocator, sender_context.request_capture.items, "confirmed");
     try std.testing.expectEqualStrings(
         "latest blockhash context slot: 44\nLatest blockhash: Blockhash111111111111111111111111111111111111\nLast valid height: 77\n",
         captured,
@@ -3870,27 +3790,13 @@ test "runCommand latest-blockhash with context prints slot and value" {
 
 test "runCommand new-latest-blockhash waits for updated value" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
+    var sender_context: RequestSenderSequenceContext = undefined;
+    defer sender_context.deinit();
     const response_bodies = [_][]const u8{
         "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":{\"blockhash\":\"Blockhash111111111111111111111111111111111111\",\"lastValidBlockHeight\":77}},\"id\":1}",
         "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":45},\"value\":{\"blockhash\":\"Blockhash222222222222222222222222222222222222\",\"lastValidBlockHeight\":88}},\"id\":2}",
     };
-    const server_thread = try std.Thread.spawn(.{}, runMockRequestSequenceServer, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSequenceResponses(allocator, &sender_context, &response_bodies);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -3913,9 +3819,9 @@ test "runCommand new-latest-blockhash waits for updated value" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
-    try expectGetLatestBlockhashRequest(allocator, request_captures.items[0], null);
-    try expectGetLatestBlockhashRequest(allocator, request_captures.items[1], null);
+    try std.testing.expectEqual(@as(usize, 2), sender_context.request_captures.items.len);
+    try expectGetLatestBlockhashRequest(allocator, sender_context.request_captures.items[0], null);
+    try expectGetLatestBlockhashRequest(allocator, sender_context.request_captures.items[1], null);
     try std.testing.expectEqualStrings(
         "Latest blockhash: Blockhash222222222222222222222222222222222222\n",
         captured,
@@ -3924,21 +3830,11 @@ test "runCommand new-latest-blockhash waits for updated value" {
 
 test "runCommand fee-for-message with context prints slot and value" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":88},\"value\":5000},\"id\":1}";
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -3964,7 +3860,7 @@ test "runCommand fee-for-message with context prints slot and value" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try expectGetFeeForMessageRequest(allocator, request_capture.items, "AQAB", "finalized");
+    try expectGetFeeForMessageRequest(allocator, sender_context.request_capture.items, "AQAB", "finalized");
     try std.testing.expectEqualStrings(
         "fee context slot: 88\nfee for message: 5000\n",
         captured,
@@ -3973,22 +3869,12 @@ test "runCommand fee-for-message with context prints slot and value" {
 
 test "runCommand token-account-balance with context prints slot and value" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":{"amount":"1234.560000","decimals":6,"uiAmount":12.3456,"uiAmountString":"12.3456"}}, "id":1}
     ;
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4014,7 +3900,7 @@ test "runCommand token-account-balance with context prints slot and value" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try expectGetTokenAccountBalanceRequest(allocator, request_capture.items, "TokenAcct1111111111111111111111111111111", "confirmed");
+    try expectGetTokenAccountBalanceRequest(allocator, sender_context.request_capture.items, "TokenAcct1111111111111111111111111111111", "confirmed");
     try std.testing.expectEqualStrings(
         "token account balance context slot: 12\n" ++
             "token account balance for TokenAcct1111111111111111111111111111111: amount=1234.560000 decimals=6 ui_amount=12.3456 ui_amount_string=12.3456\n",
@@ -4024,22 +3910,12 @@ test "runCommand token-account-balance with context prints slot and value" {
 
 test "runCommand token-supply with context prints slot and value" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         \\{"jsonrpc":"2.0","result":{"context":{"slot":77},"value":{"amount":"1000000","decimals":9,"uiAmount":1e-3,"uiAmountString":"0.001"}}, "id":1}
     ;
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4065,7 +3941,7 @@ test "runCommand token-supply with context prints slot and value" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try expectGetTokenSupplyRequest(allocator, request_capture.items, "Mint111111111111111111111111111111111111", "finalized");
+    try expectGetTokenSupplyRequest(allocator, sender_context.request_capture.items, "Mint111111111111111111111111111111111111", "finalized");
     try std.testing.expectEqualStrings(
         "token supply context slot: 77\n" ++
             "token supply for Mint111111111111111111111111111111111111: amount=1000000 decimals=9 ui_amount=0.001 ui_amount_string=0.001\n",
@@ -4075,22 +3951,12 @@ test "runCommand token-supply with context prints slot and value" {
 
 test "runCommand token-largest-accounts with context prints slot and entries" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         \\{"jsonrpc":"2.0","result":{"context":{"slot":99},"value":[{"address":"Owner111111111111111111111111111111111111","amount":"100","decimals":2,"uiAmount":1,"uiAmountString":"1"},{"address":"Owner222222222222222222222222222222222222","amount":"200","decimals":2,"uiAmount":2,"uiAmountString":"2"}]},"id":1}
     ;
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4116,7 +3982,7 @@ test "runCommand token-largest-accounts with context prints slot and entries" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try expectGetTokenLargestAccountsRequest(allocator, request_capture.items, "Mint111111111111111111111111111111111111", "confirmed");
+    try expectGetTokenLargestAccountsRequest(allocator, sender_context.request_capture.items, "Mint111111111111111111111111111111111111", "confirmed");
     try std.testing.expect(std.mem.indexOf(u8, captured, "token largest accounts context slot: 99\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "token largest accounts for Mint111111111111111111111111111111111111: 2\n") != null);
     try std.testing.expect(
@@ -4129,21 +3995,11 @@ test "runCommand token-largest-accounts with context prints slot and entries" {
 
 test "runCommand executes block command and sends getBlock request" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":123,\"blockhash\":\"abc\"},\"id\":1}";
-    const server_thread = try std.Thread.spawn(.{}, runMockBlockServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -4153,26 +4009,16 @@ test "runCommand executes block command and sends getBlock request" {
     defer parsed.deinit(allocator);
 
     try runCommand(allocator, &rpc, &parsed);
-    try expectGetBlockRequest(allocator, request_capture.items, 123, null);
+    try expectGetBlockRequest(allocator, sender_context.request_capture.items, 123, null);
 }
 
 test "runCommand executes block command with commitment and sends getBlock request" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":456,\"blockhash\":\"abc\"},\"id\":1}";
-    const server_thread = try std.Thread.spawn(.{}, runMockBlockServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -4184,25 +4030,15 @@ test "runCommand executes block command with commitment and sends getBlock reque
     defer parsed.deinit(allocator);
 
     try runCommand(allocator, &rpc, &parsed);
-    try expectGetBlockRequest(allocator, request_capture.items, 456, "confirmed");
+    try expectGetBlockRequest(allocator, sender_context.request_capture.items, 456, "confirmed");
 }
 
 test "runCommand handles block not found" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body = "{\"jsonrpc\":\"2.0\",\"result\":null,\"id\":1}";
-    const server_thread = try std.Thread.spawn(.{}, runMockBlockServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -4212,31 +4048,24 @@ test "runCommand handles block not found" {
     defer parsed.deinit(allocator);
 
     try runCommand(allocator, &rpc, &parsed);
-    try expectGetBlockRequest(allocator, request_capture.items, 789, null);
+    try expectGetBlockRequest(allocator, sender_context.request_capture.items, 789, null);
 }
 
 test "runCommand sends increasing request ids for block calls" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_capture_1 = std.ArrayList(u8).empty;
-    defer request_capture_1.deinit(allocator);
-
+    var sender_context: RequestSenderSequenceContext = undefined;
+    defer sender_context.deinit();
     const response_body_1 =
         "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":111,\"blockhash\":\"abc\"},\"id\":1}";
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    const response_body_2 =
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":222,\"blockhash\":\"abc\"},\"id\":2}";
+    var rpc = try initCommandTestRpcWithSequenceResponses(allocator, &sender_context, &.{
+        response_body_1,
+        response_body_2,
+    });
     defer rpc.deinit();
 
     {
-        const server_thread = try std.Thread.spawn(.{}, runMockBlockServerWithLifetime, .{ &listener, allocator, &request_capture_1, response_body_1, false });
-        defer server_thread.join();
-
         var parsed_first = try cli.parseCliArgs(allocator, &.{
             "block",
             "111",
@@ -4244,19 +4073,10 @@ test "runCommand sends increasing request ids for block calls" {
         defer parsed_first.deinit(allocator);
 
         try runCommand(allocator, &rpc, &parsed_first);
-        try expectGetBlockRequestWithId(allocator, request_capture_1.items, 1, 111, null);
+        try expectGetBlockRequestWithId(allocator, sender_context.request_captures.items[0], 1, 111, null);
     }
 
-    var request_capture_2 = std.ArrayList(u8).empty;
-    defer request_capture_2.deinit(allocator);
-
-    const response_body_2 =
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":222,\"blockhash\":\"abc\"},\"id\":2}";
-
     {
-        const server_thread = try std.Thread.spawn(.{}, runMockBlockServerWithLifetime, .{ &listener, allocator, &request_capture_2, response_body_2, false });
-        defer server_thread.join();
-
         var parsed_second = try cli.parseCliArgs(allocator, &.{
             "block",
             "222",
@@ -4264,26 +4084,16 @@ test "runCommand sends increasing request ids for block calls" {
         defer parsed_second.deinit(allocator);
 
         try runCommand(allocator, &rpc, &parsed_second);
-        try expectGetBlockRequestWithId(allocator, request_capture_2.items, 2, 222, null);
+        try expectGetBlockRequestWithId(allocator, sender_context.request_captures.items[1], 2, 222, null);
     }
 }
 
 test "runCommand block not found prints message" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body = "{\"jsonrpc\":\"2.0\",\"result\":null,\"id\":1}";
-    const server_thread = try std.Thread.spawn(.{}, runMockBlockServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4306,27 +4116,17 @@ test "runCommand block not found prints message" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try expectGetBlockRequest(allocator, request_capture.items, 789, null);
+    try expectGetBlockRequest(allocator, sender_context.request_capture.items, 789, null);
     try std.testing.expectEqualStrings("block 789: not found\n", captured);
 }
 
 test "runCommand block prints summary and raw json" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         "{\"jsonrpc\":\"2.0\",\"result\":{\"blockhash\":\"Blockhash111111111111111111111111111111111111\",\"previousBlockhash\":\"Prev111111111111111111111111111111111111111\",\"parentSlot\":99,\"blockHeight\":100,\"blockTime\":1700000400,\"transactions\":[{},{}],\"rewards\":[{}]},\"id\":1}";
-    const server_thread = try std.Thread.spawn(.{}, runMockBlockServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4349,7 +4149,7 @@ test "runCommand block prints summary and raw json" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
     defer allocator.free(captured);
 
-    try expectGetBlockRequest(allocator, request_capture.items, 100, null);
+    try expectGetBlockRequest(allocator, sender_context.request_capture.items, 100, null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "block 100: parent_slot=99 block_height=100 block_time=1700000400 transactions=2 rewards=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  blockhash: Blockhash111111111111111111111111111111111111") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  previous_blockhash: Prev111111111111111111111111111111111111111") != null);
@@ -4358,21 +4158,11 @@ test "runCommand block prints summary and raw json" {
 
 test "runCommand transaction prints summary and raw json" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":55,\"blockTime\":1700000500,\"version\":\"legacy\",\"meta\":{\"err\":{\"InstructionError\":[0,{\"Custom\":1}]},\"fee\":7000,\"logMessages\":[\"a\",\"b\"]},\"transaction\":{\"signatures\":[\"sig-1\",\"sig-2\"]}},\"id\":1}";
-    const server_thread = try std.Thread.spawn(.{}, runMockTransactionServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4396,7 +4186,7 @@ test "runCommand transaction prints summary and raw json" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
     defer allocator.free(captured);
 
-    try expectGetTransactionRequest(allocator, request_capture.items, signature_value, null);
+    try expectGetTransactionRequest(allocator, sender_context.request_capture.items, signature_value, null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "transaction 5h6xSignature111111111111111111111111111111111111: slot=55 block_time=1700000500 version=legacy signatures=2 fee=7000 log_messages=2 has_error=true") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  error: {\"InstructionError\":[0,{\"Custom\":1}]}") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  raw: {") != null);
@@ -4404,31 +4194,15 @@ test "runCommand transaction prints summary and raw json" {
 
 test "runCommand status waits for signature status with search history and commitment" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| {
-            allocator.free(request);
-        }
-        request_captures.deinit(allocator);
-    }
-
+    var sender_context: RequestSenderSequenceContext = undefined;
+    defer sender_context.deinit();
     const response_bodies = [_][]const u8{
         \\{"jsonrpc":"2.0","result":{"context":{"slot":77},"value":[null]},"id":1}
         ,
         \\{"jsonrpc":"2.0","result":{"context":{"slot":78},"value":[{"slot":78,"confirmations":1,"confirmationStatus":"confirmed","err":null}]},"id":2}
         ,
     };
-    const server_thread = try std.Thread.spawn(.{}, runMockRequestSequenceServer, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSequenceResponses(allocator, &sender_context, &response_bodies);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4460,40 +4234,30 @@ test "runCommand status waits for signature status with search history and commi
 
     try expectGetSignatureStatusesRequest(
         allocator,
-        request_captures.items[0],
+        sender_context.request_captures.items[0],
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         true,
         "confirmed",
     );
     try expectGetSignatureStatusesRequest(
         allocator,
-        request_captures.items[1],
+        sender_context.request_captures.items[1],
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         true,
         "confirmed",
     );
-    try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
+    try std.testing.expectEqual(@as(usize, 2), sender_context.request_captures.items.len);
     try std.testing.expectEqualStrings("signature confirmed\n", captured);
 }
 
 test "runCommand confirm-transaction respects commitment" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         \\{"jsonrpc":"2.0","result":{"context":{"slot":44},"value":[{"slot":44,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":1}
     ;
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -4521,7 +4285,7 @@ test "runCommand confirm-transaction respects commitment" {
 
     try expectGetSignatureStatusesRequest(
         allocator,
-        request_capture.items,
+        sender_context.request_capture.items,
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         true,
         "confirmed",
@@ -4531,22 +4295,12 @@ test "runCommand confirm-transaction respects commitment" {
 
 test "runCommand signature-status prints status" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         \\{"jsonrpc":"2.0","result":{"context":{"slot":55},"value":[{"slot":55,"confirmations":7,"confirmationStatus":"confirmed","err":null}]},"id":1}
     ;
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4573,7 +4327,7 @@ test "runCommand signature-status prints status" {
 
     try expectGetSignatureStatusesRequest(
         allocator,
-        request_capture.items,
+        sender_context.request_capture.items,
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         false,
         "confirmed",
@@ -4586,22 +4340,12 @@ test "runCommand signature-status prints status" {
 
 test "runCommand signature-statuses prints per-signature output" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         \\{"jsonrpc":"2.0","result":{"context":{"slot":61},"value":[null,{"slot":61,"confirmations":2,"confirmationStatus":"confirmed","err":null},{"slot":62,"confirmations":4,"confirmationStatus":"processed","err":{"InstructionError":0}}]},"id":1}
     ;
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4629,7 +4373,7 @@ test "runCommand signature-statuses prints per-signature output" {
 
     try expectGetSignatureStatusesRequest(
         allocator,
-        request_capture.items,
+        sender_context.request_capture.items,
         &[_][]const u8{ "SigA111111111111111111111111111111111111", "SigB111111111111111111111111111111111111", "SigC111111111111111111111111111111111111" },
         true,
         null,
@@ -4642,31 +4386,15 @@ test "runCommand signature-statuses prints per-signature output" {
 
 test "runCommand poll-for-signature-confirmation polls until min confirmed blocks" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| {
-            allocator.free(request);
-        }
-        request_captures.deinit(allocator);
-    }
-
+    var sender_context: RequestSenderSequenceContext = undefined;
+    defer sender_context.deinit();
     const response_bodies = [_][]const u8{
         \\{"jsonrpc":"2.0","result":{"context":{"slot":77},"value":[{"slot":77,"confirmations":1,"confirmationStatus":"confirmed","err":null}]},"id":1}
         ,
         \\{"jsonrpc":"2.0","result":{"context":{"slot":78},"value":[{"slot":78,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":2}
         ,
     };
-    const server_thread = try std.Thread.spawn(.{}, runMockRequestSequenceServer, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSequenceResponses(allocator, &sender_context, &response_bodies);
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -4699,19 +4427,19 @@ test "runCommand poll-for-signature-confirmation polls until min confirmed block
 
     try expectGetSignatureStatusesRequest(
         allocator,
-        request_captures.items[0],
+        sender_context.request_captures.items[0],
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         true,
         "confirmed",
     );
     try expectGetSignatureStatusesRequest(
         allocator,
-        request_captures.items[1],
+        sender_context.request_captures.items[1],
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         true,
         "confirmed",
     );
-    try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
+    try std.testing.expectEqual(@as(usize, 2), sender_context.request_captures.items.len);
     try std.testing.expectEqualStrings(
         "signature Sig111111111111111111111111111111111111 reached 2 confirmed blocks (target=2)\n",
         captured,
@@ -4720,22 +4448,12 @@ test "runCommand poll-for-signature-confirmation polls until min confirmed block
 
 test "runCommand blocks-since-signature-confirmation prints confirmations" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         \\{"jsonrpc":"2.0","result":{"context":{"slot":88},"value":[{"slot":88,"confirmations":9,"confirmationStatus":"finalized","err":null}]},"id":1}
     ;
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -4762,7 +4480,7 @@ test "runCommand blocks-since-signature-confirmation prints confirmations" {
 
     try expectGetSignatureStatusesRequest(
         allocator,
-        request_capture.items,
+        sender_context.request_capture.items,
         &[_][]const u8{"Sig111111111111111111111111111111111111"},
         false,
         "confirmed",
@@ -4853,18 +4571,8 @@ test "runCommand transfer fetches blockhash builds transaction and confirms sign
     const recent_blockhash_base58 = try client.encodeBase58(allocator, &recent_blockhash);
     defer allocator.free(recent_blockhash_base58);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| {
-            allocator.free(request);
-        }
-        request_captures.deinit(allocator);
-    }
-
+    var sender_context: RequestSenderSequenceContext = undefined;
+    defer sender_context.deinit();
     const latest_blockhash_response = try std.fmt.allocPrint(
         allocator,
         "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":44}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":88}}}},\"id\":1}}",
@@ -4884,13 +4592,7 @@ test "runCommand transfer fetches blockhash builds transaction and confirms sign
         send_transaction_response,
         signature_status_response,
     };
-    const server_thread = try std.Thread.spawn(.{}, runMockRequestSequenceServer, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSequenceResponses(allocator, &sender_context, &response_bodies);
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -4925,11 +4627,11 @@ test "runCommand transfer fetches blockhash builds transaction and confirms sign
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try std.testing.expectEqual(@as(usize, 3), request_captures.items.len);
-    try expectGetLatestBlockhashRequest(allocator, request_captures.items[0], "confirmed");
+    try std.testing.expectEqual(@as(usize, 3), sender_context.request_captures.items.len);
+    try expectGetLatestBlockhashRequest(allocator, sender_context.request_captures.items[0], "confirmed");
     try expectSendTransferTransactionRequest(
         allocator,
-        request_captures.items[1],
+        sender_context.request_captures.items[1],
         sender_key_pair.public_key.toBytes(),
         destination_public_key,
         recent_blockhash,
@@ -4941,7 +4643,7 @@ test "runCommand transfer fetches blockhash builds transaction and confirms sign
     );
     try expectGetSignatureStatusesRequest(
         allocator,
-        request_captures.items[2],
+        sender_context.request_captures.items[2],
         &[_][]const u8{"Sig444444444444444444444444444444444444444444444444444444444444444444"},
         true,
         "confirmed",
@@ -4977,28 +4679,14 @@ test "runCommand transfer accepts sender keypair file" {
     const recent_blockhash_base58 = try client.encodeBase58(allocator, &recent_blockhash);
     defer allocator.free(recent_blockhash_base58);
 
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-
-    var request_captures = std.ArrayList([]u8).empty;
-    defer {
-        for (request_captures.items) |request| allocator.free(request);
-        request_captures.deinit(allocator);
-    }
-
+    var sender_context: RequestSenderSequenceContext = undefined;
+    defer sender_context.deinit();
     const response_bodies = [_][]const u8{
         \\{"jsonrpc":"2.0","result":"Sig666666666666666666666666666666666666666666666666666666666666666666","id":1}
         ,
         \\{"jsonrpc":"2.0","result":{"context":{"slot":46},"value":[{"slot":46,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":2}
     };
-    const server_thread = try std.Thread.spawn(.{}, runMockRequestSequenceServer, .{ &listener, allocator, &request_captures, &response_bodies });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSequenceResponses(allocator, &sender_context, &response_bodies);
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -5028,10 +4716,10 @@ test "runCommand transfer accepts sender keypair file" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try std.testing.expectEqual(@as(usize, 2), request_captures.items.len);
+    try std.testing.expectEqual(@as(usize, 2), sender_context.request_captures.items.len);
     try expectSendTransferTransactionRequest(
         allocator,
-        request_captures.items[0],
+        sender_context.request_captures.items[0],
         sender_key_pair.public_key.toBytes(),
         destination_public_key,
         recent_blockhash,
@@ -5043,7 +4731,7 @@ test "runCommand transfer accepts sender keypair file" {
     );
     try expectGetSignatureStatusesRequest(
         allocator,
-        request_captures.items[1],
+        sender_context.request_captures.items[1],
         &[_][]const u8{"Sig666666666666666666666666666666666666666666666666666666666666666666"},
         false,
         "confirmed",
@@ -5056,22 +4744,12 @@ test "runCommand transfer accepts sender keypair file" {
 
 test "runCommand request-airdrop uses default params" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         \\{"jsonrpc":"2.0","result":"Sig111111111111111111111111111111111111111111111111111111111111111111","id":1}
     ;
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -5097,7 +4775,7 @@ test "runCommand request-airdrop uses default params" {
 
     try expectRequestAirdropRequest(
         allocator,
-        request_capture.items,
+        sender_context.request_capture.items,
         "Address11111111111111111111111111111111",
         9999,
         null,
@@ -5111,22 +4789,12 @@ test "runCommand request-airdrop uses default params" {
 
 test "runCommand request-airdrop with commitment and recent blockhash passes both" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         \\{"jsonrpc":"2.0","result":"Sig111111111111111111111111111111111111111111111111111111111111111111","id":1}
     ;
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -5156,7 +4824,7 @@ test "runCommand request-airdrop with commitment and recent blockhash passes bot
 
     try expectRequestAirdropRequest(
         allocator,
-        request_capture.items,
+        sender_context.request_capture.items,
         "Address11111111111111111111111111111111",
         9999,
         "confirmed",
@@ -5170,22 +4838,12 @@ test "runCommand request-airdrop with commitment and recent blockhash passes bot
 
 test "runCommand account-data decodes base64 and prints hex" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         \\{"jsonrpc":"2.0","result":{"context":{"slot":15},"value":{"data":["AQID","base64"],"executable":false,"lamports":200,"owner":"Owner1111111111111111111111111111111111","rentEpoch":1,"space":3}},"id":1}
     ;
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -5214,7 +4872,7 @@ test "runCommand account-data decodes base64 and prints hex" {
 
     try expectGetAccountInfoRequest(
         allocator,
-        request_capture.items,
+        sender_context.request_capture.items,
         "Address11111111111111111111111111111111",
         "getAccountInfo",
         "finalized",
@@ -5229,22 +4887,12 @@ test "runCommand account-data decodes base64 and prints hex" {
 
 test "runCommand ui-account prints parsed account details" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         \\{"jsonrpc":"2.0","result":{"context":{"slot":77},"value":{"data":{"program":"system","parsed":{"type":"account"}}, "executable":false,"lamports":111,"owner":"Owner1111111111111111111111111111111111","rentEpoch":3,"space":64}},"id":1}
     ;
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -5274,7 +4922,7 @@ test "runCommand ui-account prints parsed account details" {
 
     try expectGetUiAccountRequest(
         allocator,
-        request_capture.items,
+        sender_context.request_capture.items,
         "Address11111111111111111111111111111111",
         "confirmed",
         99,
@@ -5286,22 +4934,12 @@ test "runCommand ui-account prints parsed account details" {
 
 test "runCommand multiple-ui-accounts prints parsed entries and not found" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         \\{"jsonrpc":"2.0","result":{"context":{"slot":66},"value":[{"data":{"program":"system","parsed":{"type":"account","info":{}}},"executable":false,"lamports":11,"owner":"Owner1111111111111111111111111111111111","rentEpoch":1,"space":65},null]},"id":1}
     ;
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -5330,7 +4968,7 @@ test "runCommand multiple-ui-accounts prints parsed entries and not found" {
 
     try expectGetMultipleUiAccountsRequest(
         allocator,
-        request_capture.items,
+        sender_context.request_capture.items,
         &[_][]const u8{ "Address11111111111111111111111111111111", "Address22222222222222222222222222222222" },
         "confirmed",
         null,
@@ -5343,22 +4981,12 @@ test "runCommand multiple-ui-accounts prints parsed entries and not found" {
 
 test "runCommand program-ui-accounts prints ui program accounts" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         \\{"jsonrpc":"2.0","result":{"context":{"slot":55},"value":[{"pubkey":"Acct11111111111111111111111111111111","account":{"data":{"program":"system","parsed":{"type":"account","info":{}}},"executable":false,"lamports":101,"owner":"Owner1111111111111111111111111111111111","rentEpoch":2,"space":128}}]},"id":1}
     ;
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -5386,7 +5014,7 @@ test "runCommand program-ui-accounts prints ui program accounts" {
 
     try expectGetProgramUiAccountsRequest(
         allocator,
-        request_capture.items,
+        sender_context.request_capture.items,
         "Program1111111111111111111111111111111111",
         "confirmed",
         true,
@@ -5398,22 +5026,12 @@ test "runCommand program-ui-accounts prints ui program accounts" {
 
 test "runCommand token-account prints parsed account details" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    const port = listener.listen_address.getPort();
-    var request_capture = std.ArrayList(u8).empty;
-    defer request_capture.deinit(allocator);
-
+    var sender_context: RequestSenderSingleContext = undefined;
+    defer sender_context.deinit();
     const response_body =
         \\{"jsonrpc":"2.0","result":{"context":{"slot":44},"value":{"data":{"program":"spl-token","parsed":{"type":"account","info":{}}},"executable":false,"lamports":77,"owner":"Owner1111111111111111111111111111111111","rentEpoch":4,"space":165}},"id":1}
     ;
-    const server_thread = try std.Thread.spawn(.{}, runMockBalanceServer, .{ &listener, allocator, &request_capture, response_body });
-    defer server_thread.join();
-
-    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{}", .{port});
-    defer allocator.free(endpoint);
-
-    var rpc = try client.RpcClient.init(allocator, endpoint);
+    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -5440,7 +5058,7 @@ test "runCommand token-account prints parsed account details" {
 
     try expectGetAccountInfoRequest(
         allocator,
-        request_capture.items,
+        sender_context.request_capture.items,
         "TokenAcct1111111111111111111111111111111",
         "getAccountInfo",
         null,

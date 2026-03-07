@@ -1,7 +1,7 @@
 # solana-client-zig TODO
 
 Snapshot: 2026-03-07
-Current commit: `70c0739`
+Current commit: `e5c28b3`
 
 ## Purpose
 
@@ -85,7 +85,7 @@ So "feature parity with Rust client" should be read in two layers:
 | `tpu_client` | Not implemented | No direct-to-leader TPU sending path. |
 | `transaction_executor` | Not implemented | No background pending-transaction executor. |
 | `send_and_confirm_transactions_in_parallel` | Not implemented | No parallel sender/re-sign/retry flow. |
-| mock sender helpers | Partially implemented | `RpcClient.newMock*` constructors, queued mock responses, captured mock requests, mock transport error injection, and handler-based mock transport callbacks now exist; a growing subset of root integration tests now run directly on this mock transport, but there is not yet a fuller Rust-style sender trait surface across all client entry points. |
+| mock sender helpers | Partially implemented | `RpcClient.newMock*` constructors, queued mock responses, structured `result_json` / `rpc_error` mock envelopes, captured mock requests, mock transport error injection, handler-based mock transport callbacks, prebuilt `MockSender` injection, direct mutable sender access, route/matcher-based scripted responses, and a generic callback-based `RequestSender` injection surface now exist; root integration tests and a growing subset of command tests now run on this transport, but there is not yet a fuller Rust-style sender trait surface across all client entry points. |
 
 ### Blocking `rpc-client` Surface
 
@@ -102,7 +102,7 @@ So "feature parity with Rust client" should be read in two layers:
 | Versioned transaction / v0 / ALT support | Mostly implemented | Minimal v0 typed support exists, a higher-level compiler from `Instruction` + ALT account input now exists, and SDK convenience builders can now directly sign v0 transactions; broader ergonomics are still incomplete. |
 | Public raw RPC escape hatch | Mostly implemented | Public `sendRequest(method, params_json)`, `sendRaw`, `sendJsonRpc`, `sendTyped`, and `RpcRequest` helpers now exist, though the request identifier surface is still lighter than Rust's full module layout. |
 | Spinner variants | Mostly implemented | High-level send-and-confirm spinner convenience methods and blockhash-aware `confirmTransactionWithSpinner` now exist; broader Rust spinner surface is still lighter than upstream. |
-| Mock constructors | Partially implemented | `newMock`, commitment/timeout variants, and handler-based `newMockWithHandler*` constructors now exist, along with request capture, response queue helpers, and runtime handler mutation; broader Rust-style sender polymorphism is still missing. |
+| Mock constructors | Partially implemented | `newMock`, commitment/timeout variants, `newMockWithHandler*`, `newMockWithSenderAndOptions`, and generic `newWithRequestSenderAndOptions` now exist, along with request capture, response queue helpers, route/matcher helpers, structured result/error helpers, direct `mockSender()` access, and runtime handler mutation; broader Rust-style sender polymorphism is still missing. |
 | Async runtime / inner client accessors | Partial | `getDefaultCommitment()` now exists, but there is still no `get_inner_client()` / runtime equivalent. |
 
 ## Known Gaps Worth Tracking Explicitly
@@ -270,8 +270,12 @@ These items are valid Agave features, but they should not be the next thing:
 - [x] Rust-style spinner helpers
 - [ ] Rust-style mock sender surface
   Current state: `newMock*` and `newMockWithHandler*` constructors, queued
-  responses, request capture, runtime handler mutation, and injected transport
-  errors now exist; broader sender polymorphism is still missing.
+  responses, structured result/error helpers, request capture, prebuilt
+  `MockSender` injection, direct `mockSender()` access, runtime handler
+  mutation, injected transport errors, route/matcher-based scripted
+  responses, and a generic callback-based `RequestSender` injection surface
+  now exist, and command tests have started to migrate onto that path; broader
+  sender polymorphism is still missing.
 
 Reason for defer:
 

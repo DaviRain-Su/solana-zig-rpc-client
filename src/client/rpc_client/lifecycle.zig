@@ -1,6 +1,7 @@
 const std = @import("std");
 const rpc_types = @import("../rpc_types.zig");
 const mock_methods = @import("./mock.zig");
+const sender_methods = @import("./sender.zig");
 
 const Commitment = rpc_types.Commitment;
 const RpcErrorDetail = rpc_types.RpcErrorDetail;
@@ -8,6 +9,25 @@ const TransportStats = rpc_types.TransportStats;
 const MockResponse = mock_methods.MockResponse;
 const MockRequestHandler = mock_methods.MockRequestHandler;
 const MockSender = mock_methods.MockSender;
+const RequestSender = sender_methods.RequestSender;
+const RequestSenderRequest = sender_methods.RequestSenderRequest;
+
+fn mockRequestSenderCallback(
+    context_ptr: ?*anyopaque,
+    allocator: std.mem.Allocator,
+    request: RequestSenderRequest,
+) ![]u8 {
+    _ = allocator;
+    const sender: *MockSender = @ptrCast(@alignCast(context_ptr.?));
+    return sender.dispatchRequest(request.id, request.method, request.params_json, request.request_body);
+}
+
+pub fn makeMockRequestSender(sender: *MockSender) RequestSender {
+    return .{
+        .context = sender,
+        .callback = mockRequestSenderCallback,
+    };
+}
 
 pub fn initClient(
     comptime ClientType: type,
@@ -21,6 +41,7 @@ pub fn initClient(
         .allocator = allocator,
         .endpoint = try allocator.dupe(u8, endpoint),
         .http_client = .{ .allocator = allocator },
+        .request_sender = null,
         .mock_sender = null,
         .request_id = 1,
         .default_commitment = default_commitment,
@@ -49,7 +70,16 @@ pub fn initMockClient(
     );
     errdefer client.deinit();
 
-    client.mock_sender = try MockSender.initSequence(allocator, responses);
+    const sender_value = try MockSender.initSequence(allocator, responses);
+    errdefer {
+        var owned = sender_value;
+        owned.deinit();
+    }
+    const sender_ptr = try allocator.create(MockSender);
+    errdefer allocator.destroy(sender_ptr);
+    sender_ptr.* = sender_value;
+    client.mock_sender = sender_ptr;
+    client.request_sender = makeMockRequestSender(sender_ptr);
     return client;
 }
 
@@ -71,15 +101,73 @@ pub fn initMockClientWithHandler(
     );
     errdefer client.deinit();
 
-    client.mock_sender = MockSender.initWithHandler(allocator, handler);
+    const sender_ptr = try allocator.create(MockSender);
+    errdefer allocator.destroy(sender_ptr);
+    sender_ptr.* = MockSender.initWithHandler(allocator, handler);
+    client.mock_sender = sender_ptr;
+    client.request_sender = makeMockRequestSender(sender_ptr);
+    return client;
+}
+
+pub fn initMockClientWithSender(
+    comptime ClientType: type,
+    allocator: std.mem.Allocator,
+    sender: MockSender,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+) !ClientType {
+    var client = try initClient(
+        ClientType,
+        allocator,
+        "mock://local",
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    errdefer client.deinit();
+
+    const sender_ptr = try allocator.create(MockSender);
+    errdefer allocator.destroy(sender_ptr);
+    sender_ptr.* = sender;
+    client.mock_sender = sender_ptr;
+    client.request_sender = makeMockRequestSender(sender_ptr);
+    return client;
+}
+
+pub fn initClientWithRequestSender(
+    comptime ClientType: type,
+    allocator: std.mem.Allocator,
+    endpoint: []const u8,
+    sender: RequestSender,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+) !ClientType {
+    var client = try initClient(
+        ClientType,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    errdefer client.deinit();
+
+    client.request_sender = sender;
     return client;
 }
 
 pub fn deinit(self: anytype) void {
     clearLastError(self);
-    if (self.mock_sender) |*sender| {
+    if (self.mock_sender) |sender| {
         sender.deinit();
+        self.allocator.destroy(sender);
         self.mock_sender = null;
+        self.request_sender = null;
+    } else if (self.request_sender) |request_sender| {
+        request_sender.deinit(self.allocator);
+        self.request_sender = null;
     }
     self.http_client.deinit();
     self.allocator.free(self.endpoint);

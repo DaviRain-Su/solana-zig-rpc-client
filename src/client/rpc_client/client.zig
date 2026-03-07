@@ -6,6 +6,7 @@ const mock_methods = @import("./mock.zig");
 const owned_methods = @import("./owned.zig");
 const raw_methods = @import("./raw.zig");
 const response_methods = @import("./response.zig");
+const sender_methods = @import("./sender.zig");
 const transport_methods = @import("./transport.zig");
 const account_methods = @import("./accounts.zig");
 const asset_methods = @import("./assets.zig");
@@ -20,19 +21,25 @@ const Allocator = std.mem.Allocator;
 const Commitment = rpc_types.Commitment;
 const RpcErrorDetail = rpc_types.RpcErrorDetail;
 const TransportStats = rpc_types.TransportStats;
+const RequestSenderRequestType = sender_methods.RequestSenderRequest;
+const RequestSenderType = sender_methods.RequestSender;
 const MockRequestType = mock_methods.MockRequest;
+const MockRequestMatcherType = mock_methods.MockRequestMatcher;
 const MockRequestHandlerType = mock_methods.MockRequestHandler;
 const MockRequestViewType = mock_methods.MockRequestView;
+const MockRouteType = mock_methods.MockRoute;
 const MockResponseType = mock_methods.MockResponse;
 const MockHandlerResponseType = mock_methods.MockHandlerResponse;
 const MockSenderType = mock_methods.MockSender;
+const MockRpcErrorType = mock_methods.MockRpcError;
 const MockTransportErrorType = mock_methods.MockTransportError;
 
 pub const RpcClient = struct {
     allocator: Allocator,
     endpoint: []const u8,
     http_client: std.http.Client,
-    mock_sender: ?MockSenderType,
+    request_sender: ?RequestSenderType,
+    mock_sender: ?*MockSenderType,
     request_id: u64,
     default_commitment: ?Commitment,
     request_timeout_ms: ?u64,
@@ -40,18 +47,36 @@ pub const RpcClient = struct {
     last_error: ?RpcErrorDetail,
     transport_stats: TransportStats,
 
+    pub const RequestSenderRequest = sender_methods.RequestSenderRequest;
+    pub const RequestSender = sender_methods.RequestSender;
     pub const MockRequest = mock_methods.MockRequest;
+    pub const MockRequestMatcher = mock_methods.MockRequestMatcher;
     pub const MockRequestView = mock_methods.MockRequestView;
     pub const MockRequestHandler = mock_methods.MockRequestHandler;
+    pub const MockRoute = mock_methods.MockRoute;
     pub const MockResponse = mock_methods.MockResponse;
     pub const MockHandlerResponse = mock_methods.MockHandlerResponse;
     pub const MockSender = mock_methods.MockSender;
+    pub const MockRpcError = mock_methods.MockRpcError;
     pub const MockTransportError = mock_methods.MockTransportError;
+    pub const MockClientOptions = struct {
+        commitment: ?Commitment = null,
+        request_timeout_ms: ?u64 = null,
+        confirm_transaction_initial_timeout_ms: ?u64 = null,
+    };
+    pub const RequestSenderOptions = struct {
+        endpoint: []const u8 = "custom://local",
+        commitment: ?Commitment = null,
+        request_timeout_ms: ?u64 = null,
+        confirm_transaction_initial_timeout_ms: ?u64 = null,
+    };
 
     pub const serializeParams = response_methods.serializeParams;
     pub const parseResponse = response_methods.parseResponse;
     pub const parseOwnedResponse = response_methods.parseOwnedResponse;
     pub const captureRpcError = response_methods.captureRpcError;
+    pub const encodeJsonRpcResultEnvelope = sender_methods.encodeJsonRpcResultEnvelope;
+    pub const encodeJsonRpcErrorEnvelope = sender_methods.encodeJsonRpcErrorEnvelope;
     pub const sendRaw = raw_methods.sendRaw;
     pub const sendJsonRpc = raw_methods.sendJsonRpc;
     pub const sendTyped = raw_methods.sendTyped;
@@ -445,6 +470,45 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn newMockWithSender(allocator: Allocator, sender: MockSenderType) !RpcClient {
+        return RpcClient.newMockWithSenderAndOptions(allocator, sender, .{});
+    }
+
+    pub fn newMockWithSenderAndOptions(
+        allocator: Allocator,
+        sender: MockSenderType,
+        options: MockClientOptions,
+    ) !RpcClient {
+        return lifecycle_methods.initMockClientWithSender(
+            RpcClient,
+            allocator,
+            sender,
+            options.commitment,
+            options.request_timeout_ms,
+            options.confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newWithRequestSender(allocator: Allocator, sender: RequestSenderType) !RpcClient {
+        return RpcClient.newWithRequestSenderAndOptions(allocator, sender, .{});
+    }
+
+    pub fn newWithRequestSenderAndOptions(
+        allocator: Allocator,
+        sender: RequestSenderType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return lifecycle_methods.initClientWithRequestSender(
+            RpcClient,
+            allocator,
+            options.endpoint,
+            sender,
+            options.commitment,
+            options.request_timeout_ms,
+            options.confirm_transaction_initial_timeout_ms,
+        );
+    }
+
     pub fn newWithCommitment(
         allocator: Allocator,
         endpoint: []const u8,
@@ -527,8 +591,16 @@ pub const RpcClient = struct {
         return self.mock_sender != null;
     }
 
+    pub fn hasRequestSender(self: *const RpcClient) bool {
+        return self.request_sender != null and self.mock_sender == null;
+    }
+
     pub fn mockResponseCount(self: *const RpcClient) usize {
         return if (self.mock_sender) |sender| sender.responseCount() else 0;
+    }
+
+    pub fn mockRouteCount(self: *const RpcClient) usize {
+        return if (self.mock_sender) |sender| sender.routeCount() else 0;
     }
 
     pub fn mockRequestCount(self: *const RpcClient) usize {
@@ -539,20 +611,71 @@ pub const RpcClient = struct {
         return if (self.mock_sender) |sender| sender.hasHandler() else false;
     }
 
+    pub fn requestSender(self: *RpcClient) !*RequestSenderType {
+        if (self.mock_sender != null) return error.NoRequestSender;
+        return if (self.request_sender) |*sender| sender else error.NoRequestSender;
+    }
+
+    pub fn requestSenderConst(self: *const RpcClient) !*const RequestSenderType {
+        if (self.mock_sender != null) return error.NoRequestSender;
+        return if (self.request_sender) |*sender| sender else error.NoRequestSender;
+    }
+
+    pub fn mockSender(self: *RpcClient) !*MockSenderType {
+        return if (self.mock_sender) |sender| sender else error.NotMockClient;
+    }
+
+    pub fn mockSenderConst(self: *const RpcClient) !*const MockSenderType {
+        return if (self.mock_sender) |sender| sender else error.NotMockClient;
+    }
+
     pub fn capturedMockRequests(self: *const RpcClient) []const MockRequestType {
         return if (self.mock_sender) |sender| sender.capturedRequests() else &.{};
     }
 
     pub fn clearCapturedMockRequests(self: *RpcClient) void {
-        if (self.mock_sender) |*sender| sender.clearCapturedRequests();
+        if (self.mock_sender) |sender| sender.clearCapturedRequests();
     }
 
     pub fn clearMockResponses(self: *RpcClient) void {
-        if (self.mock_sender) |*sender| sender.clearResponses();
+        if (self.mock_sender) |sender| sender.clearResponses();
+    }
+
+    pub fn clearMockRoutes(self: *RpcClient) void {
+        if (self.mock_sender) |sender| sender.clearRoutes();
+    }
+
+    pub fn replaceMockSender(self: *RpcClient, sender: MockSenderType) !void {
+        if (self.mock_sender) |existing| {
+            existing.deinit();
+            self.allocator.destroy(existing);
+            const replacement = try self.allocator.create(MockSenderType);
+            replacement.* = sender;
+            self.mock_sender = replacement;
+            self.request_sender = lifecycle_methods.makeMockRequestSender(replacement);
+            self.request_id = 1;
+            self.transport_stats = .{};
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn replaceRequestSender(self: *RpcClient, sender: RequestSenderType) !void {
+        if (self.mock_sender != null) return error.NoRequestSender;
+        if (self.request_sender) |existing| {
+            existing.deinit(self.allocator);
+            self.request_sender = sender;
+            self.request_id = 1;
+            self.transport_stats = .{};
+            return;
+        }
+
+        return error.NoRequestSender;
     }
 
     pub fn setMockHandler(self: *RpcClient, handler: MockRequestHandlerType) !void {
-        if (self.mock_sender) |*sender| {
+        if (self.mock_sender) |sender| {
             sender.setHandler(handler);
             return;
         }
@@ -561,7 +684,7 @@ pub const RpcClient = struct {
     }
 
     pub fn clearMockHandler(self: *RpcClient) !void {
-        if (self.mock_sender) |*sender| {
+        if (self.mock_sender) |sender| {
             sender.clearHandler();
             return;
         }
@@ -570,7 +693,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockResponse(self: *RpcClient, response: MockResponseType) !void {
-        if (self.mock_sender) |*sender| {
+        if (self.mock_sender) |sender| {
             try sender.pushResponse(response);
             return;
         }
@@ -579,7 +702,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockJsonResponse(self: *RpcClient, response_body: []const u8) !void {
-        if (self.mock_sender) |*sender| {
+        if (self.mock_sender) |sender| {
             try sender.pushJsonResponse(response_body);
             return;
         }
@@ -587,9 +710,64 @@ pub const RpcClient = struct {
         return error.NotMockClient;
     }
 
+    pub fn pushMockResultJson(self: *RpcClient, result_json: []const u8) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushResultJson(result_json);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockRpcError(self: *RpcClient, rpc_error: MockRpcErrorType) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushRpcError(rpc_error);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
     pub fn pushMockTransportError(self: *RpcClient, transport_error: MockTransportErrorType) !void {
-        if (self.mock_sender) |*sender| {
+        if (self.mock_sender) |sender| {
             try sender.pushTransportError(transport_error);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockRoute(self: *RpcClient, route: MockRouteType) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushRoute(route);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockResultRoute(
+        self: *RpcClient,
+        matcher: MockRequestMatcherType,
+        result_json: []const u8,
+        remaining_uses: ?usize,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushResultRoute(matcher, result_json, remaining_uses);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockRpcErrorRoute(
+        self: *RpcClient,
+        matcher: MockRequestMatcherType,
+        rpc_error: MockRpcErrorType,
+        remaining_uses: ?usize,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushRpcErrorRoute(matcher, rpc_error, remaining_uses);
             return;
         }
 

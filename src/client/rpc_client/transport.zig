@@ -104,10 +104,15 @@ pub fn sendRequest(self: anytype, method: []const u8, params_json: []const u8) !
     );
     self.request_id +%= 1;
 
-    if (self.mock_sender) |*sender| {
+    if (self.request_sender) |sender| {
         defer self.allocator.free(request_body);
         self.transport_stats.request_count += 1;
-        return sender.dispatchRequest(request_id, method, params_json, request_body);
+        return sender.callback(sender.context, self.allocator, .{
+            .id = request_id,
+            .method = method,
+            .params_json = params_json,
+            .request_body = request_body,
+        });
     }
 
     errdefer self.allocator.free(request_body);

@@ -5,6 +5,15 @@ const MockHandlerContext = struct {
     call_count: usize = 0,
 };
 
+const RequestSenderContext = struct {
+    call_count: usize = 0,
+    deinit_count: usize = 0,
+    saw_confirmed_commitment: bool = false,
+    last_request_id: u64 = 0,
+    base_slot: u64 = 0,
+    error_code: i64 = -32055,
+};
+
 fn rpcJsonResponse(allocator: std.mem.Allocator, request_id: u64, result_json: []const u8) ![]u8 {
     return try std.fmt.allocPrint(
         allocator,
@@ -46,6 +55,56 @@ fn timeoutMockHandler(
     _ = allocator;
     _ = request;
     return .{ .transport_error = .timeout };
+}
+
+fn structuredMockHandler(
+    context_ptr: ?*anyopaque,
+    allocator: std.mem.Allocator,
+    request: client.MockRequestView,
+) !client.MockHandlerResponse {
+    const context: *MockHandlerContext = @ptrCast(@alignCast(context_ptr.?));
+    context.call_count += 1;
+
+    if (std.mem.eql(u8, request.method, "getSlot")) {
+        return .{ .result_json = try std.fmt.allocPrint(allocator, "{}", .{request.id * 100}) };
+    }
+
+    return .{ .rpc_error = .{
+        .code = -32000,
+        .message = try allocator.dupe(u8, "mock handler rejected request"),
+        .data_json = try allocator.dupe(u8, "{\"method\":\"unexpected\"}"),
+    } };
+}
+
+fn customRequestSender(
+    context_ptr: ?*anyopaque,
+    allocator: std.mem.Allocator,
+    request: client.RequestSenderRequest,
+) ![]u8 {
+    const context: *RequestSenderContext = @ptrCast(@alignCast(context_ptr.?));
+    context.call_count += 1;
+    context.last_request_id = request.id;
+    if (std.mem.indexOf(u8, request.params_json, "\"confirmed\"") != null) {
+        context.saw_confirmed_commitment = true;
+    }
+
+    if (std.mem.eql(u8, request.method, "getSlot")) {
+        const result_json = try std.fmt.allocPrint(allocator, "{}", .{context.base_slot + request.id});
+        defer allocator.free(result_json);
+        return try client.encodeJsonRpcResultEnvelope(allocator, request.id, result_json);
+    }
+
+    return try client.encodeJsonRpcErrorEnvelope(allocator, request.id, .{
+        .code = context.error_code,
+        .message = "custom sender rejected request",
+        .data_json = "{\"method\":\"unexpected\"}",
+    });
+}
+
+fn customRequestSenderDeinit(context_ptr: ?*anyopaque, allocator: std.mem.Allocator) void {
+    _ = allocator;
+    const context: *RequestSenderContext = @ptrCast(@alignCast(context_ptr.?));
+    context.deinit_count += 1;
 }
 
 fn runDelayedRootServer(listener: *std.net.Server, allocator: std.mem.Allocator, delay_ms: u64, response_body: []const u8) void {
@@ -403,4 +462,262 @@ test "root.setMockHandler and clearMockHandler mutate mock transport behavior" {
     try rpc.clearMockHandler();
     try std.testing.expect(!rpc.hasMockHandler());
     try std.testing.expectError(error.MockResponseExhausted, rpc.getHealth());
+}
+
+test "root.newMockWithSenderAndOptions accepts prebuilt sender and structured mock responses" {
+    const allocator = std.testing.allocator;
+
+    var sender = client.MockSender.init(allocator);
+    try sender.pushResultJson("123");
+    try sender.pushRpcError(.{
+        .code = -32001,
+        .message = "mock balance unavailable",
+        .data_json = "{\"retryAfterMs\":25}",
+    });
+
+    var rpc = try client.RpcClient.newMockWithSenderAndOptions(allocator, sender, .{
+        .commitment = .confirmed,
+        .request_timeout_ms = 55,
+        .confirm_transaction_initial_timeout_ms = 89,
+    });
+    defer rpc.deinit();
+
+    try std.testing.expect(rpc.isMock());
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 55), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 89), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 123), slot);
+
+    try std.testing.expectError(
+        error.RpcError,
+        rpc.getBalance("Address11111111111111111111111111111111", null),
+    );
+    const last_error = rpc.getLastError() orelse return error.TestExpectedError;
+    try std.testing.expectEqual(@as(i64, -32001), last_error.code);
+    try std.testing.expectEqualStrings("mock balance unavailable", last_error.message);
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+}
+
+test "root.mockSender exposes mutable scripted sender state" {
+    const allocator = std.testing.allocator;
+
+    var rpc = try client.RpcClient.newMockWithSenderAndOptions(
+        allocator,
+        client.MockSender.init(allocator),
+        .{},
+    );
+    defer rpc.deinit();
+
+    var sender = try rpc.mockSender();
+    try sender.pushResultJson("\"ok\"");
+    try sender.pushTransportError(.connection_reset);
+
+    const health = try rpc.getHealth();
+    defer allocator.free(health);
+    try std.testing.expectEqualStrings("ok", health);
+    try std.testing.expectError(error.ConnectionResetByPeer, rpc.getSlot(.processed));
+
+    sender = try rpc.mockSender();
+    sender.clearCapturedRequests();
+    try std.testing.expectEqual(@as(usize, 0), rpc.mockRequestCount());
+}
+
+test "root.mock handler supports structured result and rpc error helpers" {
+    const allocator = std.testing.allocator;
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.newMockWithHandler(
+        allocator,
+        .{
+            .context = &handler_context,
+            .callback = structuredMockHandler,
+        },
+    );
+    defer rpc.deinit();
+
+    const slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 100), slot);
+
+    try std.testing.expectError(error.RpcError, rpc.getHealth());
+    const last_error = rpc.getLastError() orelse return error.TestExpectedError;
+    try std.testing.expectEqual(@as(i64, -32000), last_error.code);
+    try std.testing.expectEqualStrings("mock handler rejected request", last_error.message);
+    try std.testing.expectEqual(@as(usize, 2), handler_context.call_count);
+}
+
+test "root.newWithRequestSenderAndOptions injects generic request sender" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{
+        .base_slot = 600,
+        .error_code = -32077,
+    };
+
+    {
+        var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+            allocator,
+            .{
+                .context = &context,
+                .callback = customRequestSender,
+                .deinit_callback = customRequestSenderDeinit,
+            },
+            .{
+                .endpoint = "custom://sender",
+                .commitment = .confirmed,
+                .request_timeout_ms = 21,
+                .confirm_transaction_initial_timeout_ms = 34,
+            },
+        );
+        defer rpc.deinit();
+
+        try std.testing.expect(!rpc.isMock());
+        try std.testing.expect(rpc.hasRequestSender());
+        try std.testing.expectEqualStrings("custom://sender", rpc.url());
+        try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+        try std.testing.expectEqual(@as(?u64, 21), rpc.getRequestTimeoutMs());
+        try std.testing.expectEqual(@as(?u64, 34), rpc.getConfirmTransactionInitialTimeoutMs());
+
+        const slot = try rpc.getSlot(null);
+        try std.testing.expectEqual(@as(u64, 601), slot);
+        try std.testing.expect(context.saw_confirmed_commitment);
+
+        try std.testing.expectError(error.RpcError, rpc.getHealth());
+        const last_error = rpc.getLastError() orelse return error.TestExpectedError;
+        try std.testing.expectEqual(@as(i64, -32077), last_error.code);
+        try std.testing.expectEqualStrings("custom sender rejected request", last_error.message);
+        try std.testing.expectEqual(@as(usize, 2), context.call_count);
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), context.deinit_count);
+}
+
+test "root.replaceRequestSender resets stats and deinitializes previous sender" {
+    const allocator = std.testing.allocator;
+    var first_context = RequestSenderContext{ .base_slot = 700 };
+    var second_context = RequestSenderContext{ .base_slot = 900 };
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        .{
+            .context = &first_context,
+            .callback = customRequestSender,
+            .deinit_callback = customRequestSenderDeinit,
+        },
+    );
+    defer rpc.deinit();
+
+    const first_slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 701), first_slot);
+    try std.testing.expectEqual(@as(usize, 1), rpc.getTransportStats().request_count);
+    try std.testing.expectEqual(@as(u64, 1), first_context.last_request_id);
+
+    try rpc.replaceRequestSender(.{
+        .context = &second_context,
+        .callback = customRequestSender,
+        .deinit_callback = customRequestSenderDeinit,
+    });
+    try std.testing.expectEqual(@as(usize, 1), first_context.deinit_count);
+    try std.testing.expect(rpc.hasRequestSender());
+
+    const second_slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 901), second_slot);
+    try std.testing.expectEqual(@as(usize, 1), rpc.getTransportStats().request_count);
+    try std.testing.expectEqual(@as(u64, 1), second_context.last_request_id);
+}
+
+test "root.mock routes match by method and params fragment" {
+    const allocator = std.testing.allocator;
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.newMockWithHandler(
+        allocator,
+        .{
+            .context = &handler_context,
+            .callback = dynamicMockHandler,
+        },
+    );
+    defer rpc.deinit();
+
+    try rpc.pushMockResultRoute(.{
+        .method = "getSlot",
+        .params_json_contains = "\"finalized\"",
+    }, "999", 1);
+
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRouteCount());
+
+    const finalized_slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 999), finalized_slot);
+    try std.testing.expectEqual(@as(usize, 0), rpc.mockRouteCount());
+    try std.testing.expectEqual(@as(usize, 0), handler_context.call_count);
+
+    const processed_slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 456), processed_slot);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+}
+
+test "root.mock routes can be reused and cleared explicitly" {
+    const allocator = std.testing.allocator;
+
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+
+    try rpc.pushMockRpcErrorRoute(.{
+        .method = "getHealth",
+    }, .{
+        .code = -32009,
+        .message = "health unavailable",
+        .data_json = "{\"reason\":\"warming_up\"}",
+    }, null);
+
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRouteCount());
+
+    try std.testing.expectError(error.RpcError, rpc.getHealth());
+    var last_error = rpc.getLastError() orelse return error.TestExpectedError;
+    try std.testing.expectEqual(@as(i64, -32009), last_error.code);
+    try std.testing.expectEqualStrings("health unavailable", last_error.message);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRouteCount());
+
+    try std.testing.expectError(error.RpcError, rpc.getHealth());
+    last_error = rpc.getLastError() orelse return error.TestExpectedError;
+    try std.testing.expectEqual(@as(i64, -32009), last_error.code);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRouteCount());
+
+    rpc.clearMockRoutes();
+    try std.testing.expectEqual(@as(usize, 0), rpc.mockRouteCount());
+    try std.testing.expectError(error.MockResponseExhausted, rpc.getHealth());
+}
+
+test "root.mock transport prefers queue then route then handler" {
+    const allocator = std.testing.allocator;
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.newMockWithHandler(
+        allocator,
+        .{
+            .context = &handler_context,
+            .callback = dynamicMockHandler,
+        },
+    );
+    defer rpc.deinit();
+
+    try rpc.pushMockResultRoute(.{
+        .method = "getSlot",
+        .params_json_contains = "\"processed\"",
+    }, "333", 1);
+    try rpc.pushMockResultJson("111");
+
+    const queued_slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 111), queued_slot);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRouteCount());
+    try std.testing.expectEqual(@as(usize, 0), handler_context.call_count);
+
+    const routed_slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 333), routed_slot);
+    try std.testing.expectEqual(@as(usize, 0), rpc.mockRouteCount());
+    try std.testing.expectEqual(@as(usize, 0), handler_context.call_count);
+
+    const handled_slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 456), handled_slot);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
 }
