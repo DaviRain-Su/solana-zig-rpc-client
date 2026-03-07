@@ -27,37 +27,3 @@ pub fn commandCapturedRequestAt(context: *const CommandTestSender, index: usize)
 pub fn commandCapturedRequestCount(context: *const CommandTestSender) usize {
     return context.sender.capturedRequests().len;
 }
-
-pub fn initCommandTestRpcWithSingleResponse(
-    allocator: Allocator,
-    context: *CommandTestSender,
-    response_body: []const u8,
-) !client.RpcClient {
-    context.* = CommandTestSender.init(allocator);
-    try context.sender.pushJsonResponse(response_body);
-    return client.RpcClient.newWithRequestSenderAndOptions(
-        allocator,
-        client.RequestSender.fromMockSender(&context.sender),
-        .{
-            .endpoint = "command-test://single",
-        },
-    );
-}
-
-pub fn initCommandTestRpcWithSequenceResponses(
-    allocator: Allocator,
-    context: *CommandTestSender,
-    response_bodies: []const []const u8,
-) !client.RpcClient {
-    context.* = CommandTestSender.init(allocator);
-    for (response_bodies) |response_body| {
-        try context.sender.pushJsonResponse(response_body);
-    }
-    return client.RpcClient.newWithRequestSenderAndOptions(
-        allocator,
-        client.RequestSender.fromMockSender(&context.sender),
-        .{
-            .endpoint = "command-test://sequence",
-        },
-    );
-}

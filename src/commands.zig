@@ -20,22 +20,6 @@ const command_test_support = if (builtin.is_test) @import("command_test_support"
     pub fn commandCapturedRequestCount(_: *const SenderType) usize {
         unreachable;
     }
-
-    pub fn initCommandTestRpcWithSingleResponse(
-        _: Allocator,
-        _: *SenderType,
-        _: []const u8,
-    ) !client.RpcClient {
-        unreachable;
-    }
-
-    pub fn initCommandTestRpcWithSequenceResponses(
-        _: Allocator,
-        _: *SenderType,
-        _: []const []const u8,
-    ) !client.RpcClient {
-        unreachable;
-    }
 };
 const mock_sender_assertions = if (builtin.is_test) @import("mock_sender_assertions") else struct {
     pub fn expectMockSenderScriptSatisfied(_: *const client.MockSender) !void {
@@ -46,8 +30,6 @@ const CommandTestSender = if (builtin.is_test) command_test_support.CommandTestS
 const commandCapturedRequest = command_test_support.commandCapturedRequest;
 const commandCapturedRequestAt = command_test_support.commandCapturedRequestAt;
 const commandCapturedRequestCount = command_test_support.commandCapturedRequestCount;
-const initCommandTestRpcWithSingleResponse = command_test_support.initCommandTestRpcWithSingleResponse;
-const initCommandTestRpcWithSequenceResponses = command_test_support.initCommandTestRpcWithSequenceResponses;
 const expectMockSenderScriptSatisfied = mock_sender_assertions.expectMockSenderScriptSatisfied;
 
 fn loadSecretKeyFromKeypairFile(allocator: Allocator, path: []const u8) ![]u8 {
@@ -3715,11 +3697,18 @@ test "runCommand poll-balance prints value" {
 
 test "runCommand latest-blockhash with context prints slot and value" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":{\"blockhash\":\"Blockhash111111111111111111111111111111111111\",\"lastValidBlockHeight\":77}},\"id\":1}";
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushLatestBlockhashResponse(
+        44,
+        "Blockhash111111111111111111111111111111111111",
+        77,
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://latest-blockhash" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -3745,6 +3734,7 @@ test "runCommand latest-blockhash with context prints slot and value" {
     defer allocator.free(captured);
 
     try expectGetLatestBlockhashRequest(allocator, commandCapturedRequest(&sender_context), "confirmed");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "latest blockhash context slot: 44\nLatest blockhash: Blockhash111111111111111111111111111111111111\nLast valid height: 77\n",
         captured,
@@ -3753,13 +3743,23 @@ test "runCommand latest-blockhash with context prints slot and value" {
 
 test "runCommand new-latest-blockhash waits for updated value" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_bodies = [_][]const u8{
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":{\"blockhash\":\"Blockhash111111111111111111111111111111111111\",\"lastValidBlockHeight\":77}},\"id\":1}",
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":45},\"value\":{\"blockhash\":\"Blockhash222222222222222222222222222222222222\",\"lastValidBlockHeight\":88}},\"id\":2}",
-    };
-    var rpc = try initCommandTestRpcWithSequenceResponses(allocator, &sender_context, &response_bodies);
+    try sender_context.sender.pushLatestBlockhashResponse(
+        44,
+        "Blockhash111111111111111111111111111111111111",
+        77,
+    );
+    try sender_context.sender.pushLatestBlockhashResponse(
+        45,
+        "Blockhash222222222222222222222222222222222222",
+        88,
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://new-latest-blockhash" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -3794,11 +3794,14 @@ test "runCommand new-latest-blockhash waits for updated value" {
 
 test "runCommand fee-for-message with context prints slot and value" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":88},\"value\":5000},\"id\":1}";
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushFeeForMessageResponse(88, 5000);
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://fee-for-message" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -3825,6 +3828,7 @@ test "runCommand fee-for-message with context prints slot and value" {
     defer allocator.free(captured);
 
     try expectGetFeeForMessageRequest(allocator, commandCapturedRequest(&sender_context), "AQAB", "finalized");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "fee context slot: 88\nfee for message: 5000\n",
         captured,
@@ -3833,12 +3837,19 @@ test "runCommand fee-for-message with context prints slot and value" {
 
 test "runCommand token-account-balance with context prints slot and value" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":12},"value":{"amount":"1234.560000","decimals":6,"uiAmount":12.3456,"uiAmountString":"12.3456"}}, "id":1}
-    ;
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushTokenAmountResponse(12, .{
+        .amount = "1234.560000",
+        .decimals = 6,
+        .ui_amount = 12.3456,
+        .ui_amount_string = "12.3456",
+    });
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://token-account-balance" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -3865,6 +3876,7 @@ test "runCommand token-account-balance with context prints slot and value" {
     defer allocator.free(captured);
 
     try expectGetTokenAccountBalanceRequest(allocator, commandCapturedRequest(&sender_context), "TokenAcct1111111111111111111111111111111", "confirmed");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "token account balance context slot: 12\n" ++
             "token account balance for TokenAcct1111111111111111111111111111111: amount=1234.560000 decimals=6 ui_amount=12.3456 ui_amount_string=12.3456\n",
@@ -3874,12 +3886,19 @@ test "runCommand token-account-balance with context prints slot and value" {
 
 test "runCommand token-supply with context prints slot and value" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":77},"value":{"amount":"1000000","decimals":9,"uiAmount":1e-3,"uiAmountString":"0.001"}}, "id":1}
-    ;
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushTokenAmountResponse(77, .{
+        .amount = "1000000",
+        .decimals = 9,
+        .ui_amount = 0.001,
+        .ui_amount_string = "0.001",
+    });
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://token-supply" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -3906,6 +3925,7 @@ test "runCommand token-supply with context prints slot and value" {
     defer allocator.free(captured);
 
     try expectGetTokenSupplyRequest(allocator, commandCapturedRequest(&sender_context), "Mint111111111111111111111111111111111111", "finalized");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "token supply context slot: 77\n" ++
             "token supply for Mint111111111111111111111111111111111111: amount=1000000 decimals=9 ui_amount=0.001 ui_amount_string=0.001\n",
@@ -3915,12 +3935,33 @@ test "runCommand token-supply with context prints slot and value" {
 
 test "runCommand token-largest-accounts with context prints slot and entries" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":99},"value":[{"address":"Owner111111111111111111111111111111111111","amount":"100","decimals":2,"uiAmount":1,"uiAmountString":"1"},{"address":"Owner222222222222222222222222222222222222","amount":"200","decimals":2,"uiAmount":2,"uiAmountString":"2"}]},"id":1}
-    ;
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushTokenLargestAccountsResponse(99, &.{
+        .{
+            .address = "Owner111111111111111111111111111111111111",
+            .amount = .{
+                .amount = "100",
+                .decimals = 2,
+                .ui_amount = 1,
+                .ui_amount_string = "1",
+            },
+        },
+        .{
+            .address = "Owner222222222222222222222222222222222222",
+            .amount = .{
+                .amount = "200",
+                .decimals = 2,
+                .ui_amount = 2,
+                .ui_amount_string = "2",
+            },
+        },
+    });
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://token-largest-accounts" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -3947,6 +3988,7 @@ test "runCommand token-largest-accounts with context prints slot and entries" {
     defer allocator.free(captured);
 
     try expectGetTokenLargestAccountsRequest(allocator, commandCapturedRequest(&sender_context), "Mint111111111111111111111111111111111111", "confirmed");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "token largest accounts context slot: 99\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "token largest accounts for Mint111111111111111111111111111111111111: 2\n") != null);
     try std.testing.expect(
@@ -3959,11 +4001,14 @@ test "runCommand token-largest-accounts with context prints slot and entries" {
 
 test "runCommand executes block command and sends getBlock request" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":123,\"blockhash\":\"abc\"},\"id\":1}";
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushResultJson("{\"slot\":123,\"blockhash\":\"abc\"}");
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://block-basic" },
+    );
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -3974,15 +4019,19 @@ test "runCommand executes block command and sends getBlock request" {
 
     try runCommand(allocator, &rpc, &parsed);
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 123, null);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
 }
 
 test "runCommand executes block command with commitment and sends getBlock request" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":456,\"blockhash\":\"abc\"},\"id\":1}";
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushResultJson("{\"slot\":456,\"blockhash\":\"abc\"}");
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://block-with-commitment" },
+    );
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -3995,14 +4044,19 @@ test "runCommand executes block command with commitment and sends getBlock reque
 
     try runCommand(allocator, &rpc, &parsed);
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 456, "confirmed");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
 }
 
 test "runCommand handles block not found" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body = "{\"jsonrpc\":\"2.0\",\"result\":null,\"id\":1}";
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushNullResult();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://block-not-found" },
+    );
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -4013,20 +4067,20 @@ test "runCommand handles block not found" {
 
     try runCommand(allocator, &rpc, &parsed);
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 789, null);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
 }
 
 test "runCommand sends increasing request ids for block calls" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body_1 =
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":111,\"blockhash\":\"abc\"},\"id\":1}";
-    const response_body_2 =
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":222,\"blockhash\":\"abc\"},\"id\":2}";
-    var rpc = try initCommandTestRpcWithSequenceResponses(allocator, &sender_context, &.{
-        response_body_1,
-        response_body_2,
-    });
+    try sender_context.sender.pushResultJson("{\"slot\":111,\"blockhash\":\"abc\"}");
+    try sender_context.sender.pushResultJson("{\"slot\":222,\"blockhash\":\"abc\"}");
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://block-request-ids" },
+    );
     defer rpc.deinit();
 
     {
@@ -4050,14 +4104,19 @@ test "runCommand sends increasing request ids for block calls" {
         try runCommand(allocator, &rpc, &parsed_second);
         try expectGetBlockRequestWithId(allocator, commandCapturedRequestAt(&sender_context, 1), 2, 222, null);
     }
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
 }
 
 test "runCommand block not found prints message" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body = "{\"jsonrpc\":\"2.0\",\"result\":null,\"id\":1}";
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushNullResult();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://block-not-found-print" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4081,16 +4140,22 @@ test "runCommand block not found prints message" {
     defer allocator.free(captured);
 
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 789, null);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings("block 789: not found\n", captured);
 }
 
 test "runCommand block prints summary and raw json" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"blockhash\":\"Blockhash111111111111111111111111111111111111\",\"previousBlockhash\":\"Prev111111111111111111111111111111111111111\",\"parentSlot\":99,\"blockHeight\":100,\"blockTime\":1700000400,\"transactions\":[{},{}],\"rewards\":[{}]},\"id\":1}";
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushResultJson(
+        "{\"blockhash\":\"Blockhash111111111111111111111111111111111111\",\"previousBlockhash\":\"Prev111111111111111111111111111111111111111\",\"parentSlot\":99,\"blockHeight\":100,\"blockTime\":1700000400,\"transactions\":[{},{}],\"rewards\":[{}]}",
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://block-summary" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4114,6 +4179,7 @@ test "runCommand block prints summary and raw json" {
     defer allocator.free(captured);
 
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 100, null);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "block 100: parent_slot=99 block_height=100 block_time=1700000400 transactions=2 rewards=1") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  blockhash: Blockhash111111111111111111111111111111111111") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  previous_blockhash: Prev111111111111111111111111111111111111111") != null);
@@ -4122,11 +4188,16 @@ test "runCommand block prints summary and raw json" {
 
 test "runCommand transaction prints summary and raw json" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"slot\":55,\"blockTime\":1700000500,\"version\":\"legacy\",\"meta\":{\"err\":{\"InstructionError\":[0,{\"Custom\":1}]},\"fee\":7000,\"logMessages\":[\"a\",\"b\"]},\"transaction\":{\"signatures\":[\"sig-1\",\"sig-2\"]}},\"id\":1}";
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushResultJson(
+        "{\"slot\":55,\"blockTime\":1700000500,\"version\":\"legacy\",\"meta\":{\"err\":{\"InstructionError\":[0,{\"Custom\":1}]},\"fee\":7000,\"logMessages\":[\"a\",\"b\"]},\"transaction\":{\"signatures\":[\"sig-1\",\"sig-2\"]}}",
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://transaction-summary" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4151,6 +4222,7 @@ test "runCommand transaction prints summary and raw json" {
     defer allocator.free(captured);
 
     try expectGetTransactionRequest(allocator, commandCapturedRequest(&sender_context), signature_value, null);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "transaction 5h6xSignature111111111111111111111111111111111111: slot=55 block_time=1700000500 version=legacy signatures=2 fee=7000 log_messages=2 has_error=true") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  error: {\"InstructionError\":[0,{\"Custom\":1}]}") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  raw: {") != null);
@@ -4784,12 +4856,16 @@ test "runCommand transfer accepts sender keypair file" {
 
 test "runCommand request-airdrop uses default params" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        \\{"jsonrpc":"2.0","result":"Sig111111111111111111111111111111111111111111111111111111111111111111","id":1}
-    ;
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushSignatureResult(
+        "Sig111111111111111111111111111111111111111111111111111111111111111111",
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://request-airdrop" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4821,6 +4897,7 @@ test "runCommand request-airdrop uses default params" {
         null,
         null,
     );
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "airdrop signature: Sig111111111111111111111111111111111111111111111111111111111111111111\n",
         captured,
@@ -4829,12 +4906,16 @@ test "runCommand request-airdrop uses default params" {
 
 test "runCommand request-airdrop with commitment and recent blockhash passes both" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        \\{"jsonrpc":"2.0","result":"Sig111111111111111111111111111111111111111111111111111111111111111111","id":1}
-    ;
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushSignatureResult(
+        "Sig111111111111111111111111111111111111111111111111111111111111111111",
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://request-airdrop-config" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4870,6 +4951,7 @@ test "runCommand request-airdrop with commitment and recent blockhash passes bot
         "confirmed",
         "RecentBlockhash11111111111111111111111111",
     );
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "airdrop signature: Sig111111111111111111111111111111111111111111111111111111111111111111\n",
         captured,
@@ -4878,12 +4960,22 @@ test "runCommand request-airdrop with commitment and recent blockhash passes bot
 
 test "runCommand account-data decodes base64 and prints hex" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":15},"value":{"data":["AQID","base64"],"executable":false,"lamports":200,"owner":"Owner1111111111111111111111111111111111","rentEpoch":1,"space":3}},"id":1}
-    ;
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushAccountInfoResponse(15, .{
+        .data = "AQID",
+        .data_encoding = "base64",
+        .executable = false,
+        .lamports = 200,
+        .owner = "Owner1111111111111111111111111111111111",
+        .rent_epoch = 1,
+        .space = 3,
+    });
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://account-data" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4919,6 +5011,7 @@ test "runCommand account-data decodes base64 and prints hex" {
         123,
         "base64",
     );
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "account data for Address11111111111111111111111111111111: 3 bytes\n010203\n",
         captured,
@@ -4927,12 +5020,21 @@ test "runCommand account-data decodes base64 and prints hex" {
 
 test "runCommand ui-account prints parsed account details" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":77},"value":{"data":{"program":"system","parsed":{"type":"account"}}, "executable":false,"lamports":111,"owner":"Owner1111111111111111111111111111111111","rentEpoch":3,"space":64}},"id":1}
-    ;
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushUiAccountResponse(77, .{
+        .data_json = "{\"program\":\"system\",\"parsed\":{\"type\":\"account\"}}",
+        .executable = false,
+        .lamports = 111,
+        .owner = "Owner1111111111111111111111111111111111",
+        .rent_epoch = 3,
+        .space = 64,
+    });
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://ui-account" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4967,6 +5069,7 @@ test "runCommand ui-account prints parsed account details" {
         "confirmed",
         99,
     );
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "ui account context slot: 77\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "ui account for Address11111111111111111111111111111111: lamports=111 executable=false owner=Owner1111111111111111111111111111111111 rent_epoch=3 space=64\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  data(jsonParsed):") != null);
@@ -4974,12 +5077,24 @@ test "runCommand ui-account prints parsed account details" {
 
 test "runCommand multiple-ui-accounts prints parsed entries and not found" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":66},"value":[{"data":{"program":"system","parsed":{"type":"account","info":{}}},"executable":false,"lamports":11,"owner":"Owner1111111111111111111111111111111111","rentEpoch":1,"space":65},null]},"id":1}
-    ;
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushMultipleUiAccountsResponse(66, &.{
+        .{
+            .data_json = "{\"program\":\"system\",\"parsed\":{\"type\":\"account\",\"info\":{}}}",
+            .executable = false,
+            .lamports = 11,
+            .owner = "Owner1111111111111111111111111111111111",
+            .rent_epoch = 1,
+            .space = 65,
+        },
+        null,
+    });
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://multiple-ui-accounts" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -5013,6 +5128,7 @@ test "runCommand multiple-ui-accounts prints parsed entries and not found" {
         "confirmed",
         null,
     );
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "multiple ui accounts context slot: 66\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "multiple ui accounts: 2\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  [0] Address11111111111111111111111111111111: lamports=11 executable=false owner=Owner1111111111111111111111111111111111 rent_epoch=1 space=65\n") != null);
@@ -5021,12 +5137,26 @@ test "runCommand multiple-ui-accounts prints parsed entries and not found" {
 
 test "runCommand program-ui-accounts prints ui program accounts" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":55},"value":[{"pubkey":"Acct11111111111111111111111111111111","account":{"data":{"program":"system","parsed":{"type":"account","info":{}}},"executable":false,"lamports":101,"owner":"Owner1111111111111111111111111111111111","rentEpoch":2,"space":128}}]},"id":1}
-    ;
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushProgramUiAccountsResponse(55, &.{
+        .{
+            .pubkey = "Acct11111111111111111111111111111111",
+            .account = .{
+                .data_json = "{\"program\":\"system\",\"parsed\":{\"type\":\"account\",\"info\":{}}}",
+                .executable = false,
+                .lamports = 101,
+                .owner = "Owner1111111111111111111111111111111111",
+                .rent_epoch = 2,
+                .space = 128,
+            },
+        },
+    });
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://program-ui-accounts" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -5059,6 +5189,7 @@ test "runCommand program-ui-accounts prints ui program accounts" {
         "confirmed",
         true,
     );
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "program ui accounts context slot: 55\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "program ui accounts for Program1111111111111111111111111111111111: 1\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  [0] pubkey=Acct11111111111111111111111111111111 lamports=101 executable=false owner=Owner1111111111111111111111111111111111 rent_epoch=2 space=128\n") != null);
@@ -5066,12 +5197,21 @@ test "runCommand program-ui-accounts prints ui program accounts" {
 
 test "runCommand token-account prints parsed account details" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":44},"value":{"data":{"program":"spl-token","parsed":{"type":"account","info":{}}},"executable":false,"lamports":77,"owner":"Owner1111111111111111111111111111111111","rentEpoch":4,"space":165}},"id":1}
-    ;
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushUiAccountResponse(44, .{
+        .data_json = "{\"program\":\"spl-token\",\"parsed\":{\"type\":\"account\",\"info\":{}}}",
+        .executable = false,
+        .lamports = 77,
+        .owner = "Owner1111111111111111111111111111111111",
+        .rent_epoch = 4,
+        .space = 165,
+    });
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://token-account" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -5105,6 +5245,7 @@ test "runCommand token-account prints parsed account details" {
         44,
         "jsonParsed",
     );
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "token account for TokenAcct1111111111111111111111111111111: lamports=77 executable=false owner=Owner1111111111111111111111111111111111 rent_epoch=4 space=165\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  data(jsonParsed): ") != null);
 }

@@ -1,7 +1,7 @@
 # solana-client-zig TODO
 
 Snapshot: 2026-03-07
-Current commit: `ab10d8e`
+Current commit: `1960a78`
 
 ## Purpose
 
@@ -79,13 +79,13 @@ So "feature parity with Rust client" should be read in two layers:
 | `rpc_config` / `rpc_filter` / `rpc_request` / `rpc_response` / `rpc_custom_error` | Partially implemented | Zig has many equivalent structs/options, but not a full Rust-style public module layout. |
 | `blockhash_query` | Partially implemented | Minimal `BlockhashQuery` / `resolveBlockhashQuery` support now exists, but the broader Rust helper surface is still incomplete. |
 | `nonce_utils` | Partially implemented | Nonce account parsing, nonce blockhash lookup, durable nonce system instruction helpers (`advance` / `initialize` / `authorize` / `withdraw`), nonce-aware typed builders, and higher-level blocking RPC convenience for both durable nonce transfer and nonce account lifecycle operations now exist, including signed/base64/send/send-and-confirm helper families, a flexible legacy nonce transfer path with distinct fee payer, sender, and nonce authority, and standalone lifecycle helpers for `advance` / `initialize` / `authorize` / `withdraw`; the broader durable-nonce utility surface is still incomplete. |
-| `pubsub_client` | Partially implemented | A minimal websocket-based pubsub client now exists with `signatureSubscribe`, `logsSubscribe`, `accountSubscribe`, `programSubscribe`, `slotSubscribe`, `rootSubscribe`, `slotsUpdatesSubscribe`, `voteSubscribe`, and `blockSubscribe`, plus subscription dispatch, typed notification helpers, typed subscription/channel convenience, summary typed helpers for `signature`/`logs`/`account`/`program`/`block`, stronger typed `block` notifications for `transactionDetails=signatures`, `transactionDetails=accounts`, and `transactionDetails=full`, including deeper full-transaction counts for account keys, instructions, address table lookups, and loaded addresses; account/program summaries including common `parsed.info` fields, receiver views with timeout support, bounded per-subscription queues with overflow policies and close reasons, heartbeat ping/pong keepalive, reconnect backoff, automatic reconnect/re-subscribe support, and integration tests; the broader Rust pubsub surface is still incomplete. |
+| `pubsub_client` | Partially implemented | A minimal websocket-based pubsub client now exists with `signatureSubscribe`, `logsSubscribe`, `accountSubscribe`, `programSubscribe`, `slotSubscribe`, `rootSubscribe`, `slotsUpdatesSubscribe`, `voteSubscribe`, and `blockSubscribe`, plus subscription dispatch, typed notification helpers, typed subscription/channel convenience, public typed receiver views with timeout and unsubscribe/lifecycle access, summary typed helpers for `signature`/`logs`/`account`/`program`/`block`, stronger typed `block` notifications for `transactionDetails=signatures`, `transactionDetails=accounts`, and `transactionDetails=full`, including deeper full-transaction counts for account keys, instructions, address table lookups, and loaded addresses; account/program summaries including common `parsed.info` fields, bounded per-subscription queues with overflow policies and close reasons, heartbeat ping/pong keepalive, reconnect backoff, automatic reconnect/re-subscribe support, explicit subscribe/unsubscribe RPC error propagation, per-subscription `last error` tracking, and reconnect-aware local unsubscribe semantics, all covered by integration tests; the broader Rust pubsub surface is still incomplete. |
 | `nonblocking` | Not implemented | No async RPC client surface. |
 | `connection_cache` | Not implemented | No QUIC/UDP connection cache abstraction. |
 | `tpu_client` | Not implemented | No direct-to-leader TPU sending path. |
 | `transaction_executor` | Not implemented | No background pending-transaction executor. |
 | `send_and_confirm_transactions_in_parallel` | Not implemented | No parallel sender/re-sign/retry flow. |
-| mock sender helpers | Partially implemented | `RpcClient.newMock*` constructors, queued mock responses, structured `result_json` / `rpc_error` mock envelopes, captured mock requests, mock transport error injection, handler-based mock transport callbacks, prebuilt `MockSender` injection, direct mutable sender access, route/matcher-based scripted responses, a `MockRouteBuilder` DSL with common RPC matcher helpers (`getSlot`, `getHealth`, `getLatestBlockhash`, `sendTransaction`), high-frequency mock response helpers (`slot`, `health ok`, `latestBlockhash`, `signature`, `signature status`, `bool`, `balance`), common send/confirm flow helpers for both single-shot and polled status sequences (`sendTransaction -> signature status`, `latestBlockhash -> sendTransaction -> signature status`), plus confirm-spinner observation flows that interleave `getSignatureStatuses` and `isBlockhashValid`, named once/persistent route helpers, total and per-label route match counters, pending scripted-dispatch counters, script-miss counters with last-miss request views, mock script summary output, shared test support built on `MockSender`, shared mock-script assertion helpers for root/command tests, and a generic callback-based `RequestSender` injection surface now exist; `RequestSender` can now also borrow or own a `MockSender` directly, so scripted mock behavior can flow through the generic sender path, but there is not yet a fuller Rust-style sender trait surface across all client entry points. |
+| mock sender helpers | Partially implemented | `RpcClient.newMock*` constructors, queued mock responses, structured `result_json` / `rpc_error` mock envelopes, captured mock requests, mock transport error injection, handler-based mock transport callbacks, prebuilt `MockSender` injection, direct mutable sender access, route/matcher-based scripted responses, a `MockRouteBuilder` DSL with common RPC matcher helpers (`getSlot`, `getHealth`, `getLatestBlockhash`, `sendTransaction`), high-frequency mock response helpers (`slot`, `health ok`, `latestBlockhash`, `fee for message`, `signature`, `signature status`, `bool`, `null result`, `balance`, token amount, token largest accounts, account info, UI account, multiple UI accounts, program UI accounts), common send/confirm flow helpers for both single-shot and polled status sequences (`sendTransaction -> signature status`, `latestBlockhash -> sendTransaction -> signature status`, repeated status polling, and confirm-spinner observation flows that interleave `getSignatureStatuses` and `isBlockhashValid`), named once/persistent route helpers, total and per-label route match counters, pending scripted-dispatch counters, script-miss counters with last-miss request views, mock script summary output, shared test support built on `MockSender`, shared mock-script assertion helpers for root/command tests, and a generic callback-based `RequestSender` injection surface now exist; `RequestSender` can now also borrow or own a `MockSender` directly, so scripted mock behavior can flow through the generic sender path, and command tests no longer need handwritten JSON-RPC envelopes, but there is not yet a fuller Rust-style sender trait surface across all client entry points. |
 
 ### Blocking `rpc-client` Surface
 
@@ -255,12 +255,12 @@ These items are valid Agave features, but they should not be the next thing:
   `accountSubscribe` / `programSubscribe` / `slotSubscribe` /
   `rootSubscribe` / `slotsUpdatesSubscribe` / `voteSubscribe` /
   `blockSubscribe` is now in place, and basic automatic reconnect/re-subscribe
-  is now implemented. receiver views, timeout-based receive convenience, and
-  typed subscription/channel helpers now exist too, including a stronger typed
-  block summary path above the raw block notification payload and stronger
-  account/program summary paths above the raw json-parsed notification payloads,
-  including common `parsed.info` fields for nonce and token-account style data.
-  still missing broader subscription coverage,
+  is now implemented. receiver views, timeout-based receive convenience,
+  public typed receiver views, and typed subscription/channel helpers now exist
+  too, including a stronger typed block summary path above the raw block
+  notification payload and stronger account/program summary paths above the raw
+  json-parsed notification payloads, including common `parsed.info` fields for
+  nonce and token-account style data. still missing broader subscription coverage,
   and a more Rust-like receiver/channel surface.
 - [ ] `nonblocking` async client
 - [ ] `connection_cache`

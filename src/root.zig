@@ -240,5 +240,6 @@ pub const pubsubAccountEncodingToString = pubsub_types.pubsubAccountEncodingToSt
 pub const PubsubClient = pubsub_client.PubsubClient;
 pub const PubsubSubscription = pubsub_client.PubsubSubscription;
 pub const PubsubReceiver = pubsub_client.PubsubReceiver;
+pub const TypedPubsubReceiver = pubsub_client.TypedPubsubReceiver;
 pub const PubsubSubscriptionWithReceiver = pubsub_client.PubsubSubscriptionWithReceiver;
 pub const TypedPubsubSubscription = pubsub_client.TypedPubsubSubscription;

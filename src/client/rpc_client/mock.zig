@@ -2,6 +2,11 @@ const std = @import("std");
 const rpc_types = @import("../rpc_types.zig");
 
 const Allocator = std.mem.Allocator;
+const AccountInfo = rpc_types.AccountInfo;
+const JsonParsedAccountInfo = rpc_types.JsonParsedAccountInfo;
+const JsonParsedProgramAccount = rpc_types.JsonParsedProgramAccount;
+const TokenAmount = rpc_types.TokenAmount;
+const TokenLargestAccount = rpc_types.TokenLargestAccount;
 
 pub const MockRpcError = struct {
     code: i64,
@@ -193,6 +198,96 @@ fn formatRpcErrorEnvelope(allocator: Allocator, request_id: u64, rpc_error: Mock
             "{{\"jsonrpc\":\"2.0\",\"error\":{{\"code\":{},\"message\":{s}}},\"id\":{}}}",
             .{ rpc_error.code, encoded_message, request_id },
         );
+}
+
+fn writeEncodedJsonString(writer: *std.Io.Writer, allocator: Allocator, value: []const u8) !void {
+    const encoded = try encodeJsonString(allocator, value);
+    defer allocator.free(encoded);
+    try writer.writeAll(encoded);
+}
+
+fn writeOptionalU64Json(writer: *std.Io.Writer, value: ?u64) !void {
+    if (value) |unwrapped| {
+        try writer.print("{}", .{unwrapped});
+    } else {
+        try writer.writeAll("null");
+    }
+}
+
+fn writeOptionalF64Json(writer: *std.Io.Writer, value: ?f64) !void {
+    if (value) |unwrapped| {
+        try writer.print("{d}", .{unwrapped});
+    } else {
+        try writer.writeAll("null");
+    }
+}
+
+fn writeTokenAmountJson(writer: *std.Io.Writer, allocator: Allocator, value: TokenAmount) !void {
+    try writer.writeAll("{\"amount\":");
+    try writeEncodedJsonString(writer, allocator, value.amount);
+    try writer.print(",\"decimals\":{},\"uiAmount\":", .{value.decimals});
+    try writeOptionalF64Json(writer, value.ui_amount);
+    try writer.writeAll(",\"uiAmountString\":");
+    try writeEncodedJsonString(writer, allocator, value.ui_amount_string);
+    try writer.writeByte('}');
+}
+
+fn writeAccountInfoJson(writer: *std.Io.Writer, allocator: Allocator, account: AccountInfo) !void {
+    try writer.writeAll("{\"data\":");
+    if (account.data) |data| {
+        try writer.writeByte('[');
+        try writeEncodedJsonString(writer, allocator, data);
+        try writer.writeByte(',');
+        try writeEncodedJsonString(writer, allocator, account.data_encoding orelse "base64");
+        try writer.writeByte(']');
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.print(
+        ",\"executable\":{s},\"lamports\":{},\"owner\":",
+        .{ if (account.executable) "true" else "false", account.lamports },
+    );
+    try writeEncodedJsonString(writer, allocator, account.owner);
+    try writer.writeAll(",\"rentEpoch\":");
+    try writeOptionalU64Json(writer, account.rent_epoch);
+    try writer.writeAll(",\"space\":");
+    try writeOptionalU64Json(writer, account.space);
+    try writer.writeByte('}');
+}
+
+fn writeJsonParsedAccountInfoJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    account: JsonParsedAccountInfo,
+) !void {
+    try writer.writeAll("{\"data\":");
+    if (account.data_json.len == 0) {
+        try writer.writeAll("null");
+    } else {
+        try writer.writeAll(account.data_json);
+    }
+    try writer.print(
+        ",\"executable\":{s},\"lamports\":{},\"owner\":",
+        .{ if (account.executable) "true" else "false", account.lamports },
+    );
+    try writeEncodedJsonString(writer, allocator, account.owner);
+    try writer.writeAll(",\"rentEpoch\":");
+    try writeOptionalU64Json(writer, account.rent_epoch);
+    try writer.writeAll(",\"space\":");
+    try writeOptionalU64Json(writer, account.space);
+    try writer.writeByte('}');
+}
+
+fn writeJsonParsedProgramAccountJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    account: JsonParsedProgramAccount,
+) !void {
+    try writer.writeAll("{\"pubkey\":");
+    try writeEncodedJsonString(writer, allocator, account.pubkey);
+    try writer.writeAll(",\"account\":");
+    try writeJsonParsedAccountInfoJson(writer, allocator, account.account);
+    try writer.writeByte('}');
 }
 
 pub const MockRoute = struct {
@@ -480,6 +575,10 @@ pub const MockSender = struct {
         try self.pushResultJson(if (value) "true" else "false");
     }
 
+    pub fn pushNullResult(self: *MockSender) !void {
+        try self.pushResultJson("null");
+    }
+
     pub fn pushBalanceResponse(self: *MockSender, context_slot: u64, value: u64) !void {
         const result_json = try std.fmt.allocPrint(
             self.allocator,
@@ -494,6 +593,144 @@ pub const MockSender = struct {
         for (steps) |step| {
             try self.pushBalanceResponse(step.context_slot, step.value);
         }
+    }
+
+    pub fn pushFeeForMessageResponse(self: *MockSender, context_slot: u64, value: ?u64) !void {
+        var out = std.io.Writer.Allocating.init(self.allocator);
+        defer out.deinit();
+
+        try out.writer.print("{{\"context\":{{\"slot\":{}}},\"value\":", .{context_slot});
+        try writeOptionalU64Json(&out.writer, value);
+        try out.writer.writeByte('}');
+
+        try self.pushResultJson(out.written());
+    }
+
+    pub fn pushTokenAmountResponse(
+        self: *MockSender,
+        context_slot: u64,
+        value: TokenAmount,
+    ) !void {
+        var out = std.io.Writer.Allocating.init(self.allocator);
+        defer out.deinit();
+
+        try out.writer.print("{{\"context\":{{\"slot\":{}}},\"value\":", .{context_slot});
+        try writeTokenAmountJson(&out.writer, self.allocator, value);
+        try out.writer.writeByte('}');
+
+        try self.pushResultJson(out.written());
+    }
+
+    pub fn pushTokenLargestAccountsResponse(
+        self: *MockSender,
+        context_slot: u64,
+        accounts: []const TokenLargestAccount,
+    ) !void {
+        var out = std.io.Writer.Allocating.init(self.allocator);
+        defer out.deinit();
+
+        try out.writer.print("{{\"context\":{{\"slot\":{}}},\"value\":[", .{context_slot});
+        for (accounts, 0..) |account, index| {
+            if (index != 0) try out.writer.writeByte(',');
+            try out.writer.writeAll("{\"address\":");
+            try writeEncodedJsonString(&out.writer, self.allocator, account.address);
+            try out.writer.writeAll(",\"amount\":");
+            try writeEncodedJsonString(&out.writer, self.allocator, account.amount.amount);
+            try out.writer.print(",\"decimals\":{},\"uiAmount\":", .{account.amount.decimals});
+            try writeOptionalF64Json(&out.writer, account.amount.ui_amount);
+            try out.writer.writeAll(",\"uiAmountString\":");
+            try writeEncodedJsonString(&out.writer, self.allocator, account.amount.ui_amount_string);
+            try out.writer.writeByte('}');
+        }
+        try out.writer.writeAll("]}");
+
+        try self.pushResultJson(out.written());
+    }
+
+    pub fn pushAccountInfoResponse(
+        self: *MockSender,
+        context_slot: u64,
+        account: ?AccountInfo,
+    ) !void {
+        var out = std.io.Writer.Allocating.init(self.allocator);
+        defer out.deinit();
+
+        try out.writer.print("{{\"context\":{{\"slot\":{}}},\"value\":", .{context_slot});
+        if (account) |value| {
+            try writeAccountInfoJson(&out.writer, self.allocator, value);
+        } else {
+            try out.writer.writeAll("null");
+        }
+        try out.writer.writeByte('}');
+
+        try self.pushResultJson(out.written());
+    }
+
+    pub fn pushUiAccountResponse(
+        self: *MockSender,
+        context_slot: u64,
+        account: ?JsonParsedAccountInfo,
+    ) !void {
+        var out = std.io.Writer.Allocating.init(self.allocator);
+        defer out.deinit();
+
+        try out.writer.print("{{\"context\":{{\"slot\":{}}},\"value\":", .{context_slot});
+        if (account) |value| {
+            try writeJsonParsedAccountInfoJson(&out.writer, self.allocator, value);
+        } else {
+            try out.writer.writeAll("null");
+        }
+        try out.writer.writeByte('}');
+
+        try self.pushResultJson(out.written());
+    }
+
+    pub fn pushMultipleUiAccountsResponse(
+        self: *MockSender,
+        context_slot: u64,
+        accounts: []const ?JsonParsedAccountInfo,
+    ) !void {
+        var out = std.io.Writer.Allocating.init(self.allocator);
+        defer out.deinit();
+
+        try out.writer.print("{{\"context\":{{\"slot\":{}}},\"value\":[", .{context_slot});
+        for (accounts, 0..) |maybe_account, index| {
+            if (index != 0) try out.writer.writeByte(',');
+            if (maybe_account) |account| {
+                try writeJsonParsedAccountInfoJson(&out.writer, self.allocator, account);
+            } else {
+                try out.writer.writeAll("null");
+            }
+        }
+        try out.writer.writeAll("]}");
+
+        try self.pushResultJson(out.written());
+    }
+
+    pub fn pushProgramUiAccountsResponse(
+        self: *MockSender,
+        context_slot: ?u64,
+        accounts: []const JsonParsedProgramAccount,
+    ) !void {
+        var out = std.io.Writer.Allocating.init(self.allocator);
+        defer out.deinit();
+
+        if (context_slot) |slot| {
+            try out.writer.print("{{\"context\":{{\"slot\":{}}},\"value\":[", .{slot});
+        } else {
+            try out.writer.writeByte('[');
+        }
+        for (accounts, 0..) |account, index| {
+            if (index != 0) try out.writer.writeByte(',');
+            try writeJsonParsedProgramAccountJson(&out.writer, self.allocator, account);
+        }
+        if (context_slot != null) {
+            try out.writer.writeAll("]}");
+        } else {
+            try out.writer.writeByte(']');
+        }
+
+        try self.pushResultJson(out.written());
     }
 
     pub fn pushHealthOk(self: *MockSender) !void {

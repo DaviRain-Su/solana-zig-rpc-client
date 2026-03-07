@@ -24,6 +24,9 @@ const TransportStats = rpc_types.TransportStats;
 const RequestSenderRequestType = sender_methods.RequestSenderRequest;
 const RequestSenderType = sender_methods.RequestSender;
 const MockRequestType = mock_methods.MockRequest;
+const AccountInfoType = rpc_types.AccountInfo;
+const JsonParsedAccountInfoType = rpc_types.JsonParsedAccountInfo;
+const JsonParsedProgramAccountType = rpc_types.JsonParsedProgramAccount;
 const MockRequestMatcherType = mock_methods.MockRequestMatcher;
 const MockRequestHandlerType = mock_methods.MockRequestHandler;
 const MockRequestViewType = mock_methods.MockRequestView;
@@ -33,6 +36,8 @@ const MockHandlerResponseType = mock_methods.MockHandlerResponse;
 const MockSenderType = mock_methods.MockSender;
 const MockRpcErrorType = mock_methods.MockRpcError;
 const MockTransportErrorType = mock_methods.MockTransportError;
+const TokenAmountType = rpc_types.TokenAmount;
+const TokenLargestAccountType = rpc_types.TokenLargestAccount;
 
 pub const RpcClient = struct {
     allocator: Allocator,
@@ -779,6 +784,15 @@ pub const RpcClient = struct {
         return error.NotMockClient;
     }
 
+    pub fn pushMockNullResult(self: *RpcClient) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushNullResult();
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
     pub fn pushMockBalanceResponse(
         self: *RpcClient,
         context_slot: u64,
@@ -798,6 +812,97 @@ pub const RpcClient = struct {
     ) !void {
         if (self.mock_sender) |sender| {
             try sender.pushBalancePollResults(steps);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockFeeForMessageResponse(
+        self: *RpcClient,
+        context_slot: u64,
+        value: ?u64,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushFeeForMessageResponse(context_slot, value);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockTokenAmountResponse(
+        self: *RpcClient,
+        context_slot: u64,
+        value: TokenAmountType,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushTokenAmountResponse(context_slot, value);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockTokenLargestAccountsResponse(
+        self: *RpcClient,
+        context_slot: u64,
+        accounts: []const TokenLargestAccountType,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushTokenLargestAccountsResponse(context_slot, accounts);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockAccountInfoResponse(
+        self: *RpcClient,
+        context_slot: u64,
+        account: ?AccountInfoType,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushAccountInfoResponse(context_slot, account);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockUiAccountResponse(
+        self: *RpcClient,
+        context_slot: u64,
+        account: ?JsonParsedAccountInfoType,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushUiAccountResponse(context_slot, account);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockMultipleUiAccountsResponse(
+        self: *RpcClient,
+        context_slot: u64,
+        accounts: []const ?JsonParsedAccountInfoType,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushMultipleUiAccountsResponse(context_slot, accounts);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockProgramUiAccountsResponse(
+        self: *RpcClient,
+        context_slot: ?u64,
+        accounts: []const JsonParsedProgramAccountType,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushProgramUiAccountsResponse(context_slot, accounts);
             return;
         }
 

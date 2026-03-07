@@ -113,6 +113,7 @@ pub const PubsubSubscription = struct {
     dropped_messages: usize = 0,
     closed: bool = false,
     close_reason: PubsubCloseReason = .none,
+    last_error: ?RpcErrorDetail = null,
 
     const Self = @This();
 
@@ -132,6 +133,10 @@ pub const PubsubSubscription = struct {
         return .{ .subscription = self };
     }
 
+    pub fn typedReceiver(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.receiver().typedReceiver(ValueType);
+    }
+
     pub fn droppedCount(self: *Self) usize {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -142,6 +147,18 @@ pub const PubsubSubscription = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         return self.close_reason;
+    }
+
+    pub fn getLastError(self: *Self) ?RpcErrorDetail {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.last_error;
+    }
+
+    pub fn clearLastError(self: *Self) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.clearLastErrorLocked();
     }
 
     pub fn recv(self: *Self) ![]u8 {
@@ -362,6 +379,7 @@ pub const PubsubSubscription = struct {
         for (self.queue.items) |message| {
             self.state.allocator.free(message);
         }
+        self.clearLastErrorLocked();
         self.queue.deinit(self.state.allocator);
         self.mutex.unlock();
 
@@ -407,6 +425,21 @@ pub const PubsubSubscription = struct {
         }
         self.cond.broadcast();
     }
+
+    fn clearLastErrorLocked(self: *Self) void {
+        if (self.last_error) |last_error| {
+            self.state.allocator.free(last_error.message);
+            self.last_error = null;
+        }
+    }
+
+    fn setLastErrorLocked(self: *Self, code: i64, message: []const u8) void {
+        self.clearLastErrorLocked();
+        self.last_error = .{
+            .code = code,
+            .message = self.state.allocator.dupe(u8, message) catch return,
+        };
+    }
 };
 
 pub const PubsubReceiver = struct {
@@ -428,6 +461,29 @@ pub const PubsubReceiver = struct {
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.subscription.closeReason();
+    }
+
+    pub fn typedReceiver(self: *const Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return .{
+            .subscription = self.subscription,
+            .receiver = self.*,
+        };
+    }
+
+    pub fn getLastError(self: *Self) ?RpcErrorDetail {
+        return self.subscription.getLastError();
+    }
+
+    pub fn clearLastError(self: *Self) void {
+        self.subscription.clearLastError();
+    }
+
+    pub fn unsubscribe(self: *Self) !bool {
+        return self.subscription.unsubscribe();
+    }
+
+    pub fn rawSubscription(self: *const Self) *PubsubSubscription {
+        return self.subscription;
     }
 
     pub fn recv(self: *Self) ![]u8 {
@@ -714,6 +770,63 @@ pub const PubsubReceiver = struct {
     }
 };
 
+pub fn TypedPubsubReceiver(comptime ValueType: type) type {
+    return struct {
+        subscription: *PubsubSubscription,
+        receiver: PubsubReceiver,
+
+        const Self = @This();
+
+        pub fn isClosed(self: *const Self) bool {
+            return self.receiver.isClosed();
+        }
+
+        pub fn queuedCount(self: *const Self) usize {
+            return self.receiver.queuedCount();
+        }
+
+        pub fn droppedCount(self: *const Self) usize {
+            return self.receiver.droppedCount();
+        }
+
+        pub fn closeReason(self: *const Self) PubsubCloseReason {
+            return self.receiver.closeReason();
+        }
+
+        pub fn getLastError(self: *Self) ?RpcErrorDetail {
+            return self.receiver.getLastError();
+        }
+
+        pub fn clearLastError(self: *Self) void {
+            self.receiver.clearLastError();
+        }
+
+        pub fn unsubscribe(self: *Self) !bool {
+            return self.subscription.unsubscribe();
+        }
+
+        pub fn recv(self: *Self) !pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.receiver.recvParsed(ValueType);
+        }
+
+        pub fn tryRecv(self: *Self) !?pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.receiver.tryRecvParsed(ValueType);
+        }
+
+        pub fn recvTimeout(self: *Self, timeout_ms: u64) !pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.receiver.recvParsedTimeout(ValueType, timeout_ms);
+        }
+
+        pub fn rawSubscription(self: *const Self) *PubsubSubscription {
+            return self.subscription;
+        }
+
+        pub fn rawReceiver(self: *const Self) PubsubReceiver {
+            return self.receiver;
+        }
+    };
+}
+
 pub const PubsubSubscriptionWithReceiver = struct {
     subscription: *PubsubSubscription,
     receiver: PubsubReceiver,
@@ -736,6 +849,18 @@ pub const PubsubSubscriptionWithReceiver = struct {
         return self.receiver.closeReason();
     }
 
+    pub fn getLastError(self: *Self) ?RpcErrorDetail {
+        return self.subscription.getLastError();
+    }
+
+    pub fn clearLastError(self: *Self) void {
+        self.subscription.clearLastError();
+    }
+
+    pub fn typedReceiver(self: *Self, comptime ValueType: type) TypedPubsubReceiver(ValueType) {
+        return self.receiver.typedReceiver(ValueType);
+    }
+
     pub fn unsubscribe(self: *Self) !bool {
         return self.subscription.unsubscribe();
     }
@@ -749,7 +874,7 @@ pub const PubsubSubscriptionWithReceiver = struct {
 pub fn TypedPubsubSubscription(comptime ValueType: type) type {
     return struct {
         subscription: *PubsubSubscription,
-        receiver: PubsubReceiver,
+        receiver: TypedPubsubReceiver(ValueType),
 
         const Self = @This();
 
@@ -769,16 +894,24 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
             return self.receiver.closeReason();
         }
 
+        pub fn getLastError(self: *Self) ?RpcErrorDetail {
+            return self.receiver.getLastError();
+        }
+
+        pub fn clearLastError(self: *Self) void {
+            self.receiver.clearLastError();
+        }
+
         pub fn recv(self: *Self) !pubsub_types.OwnedPubsubNotification(ValueType) {
-            return self.receiver.recvParsed(ValueType);
+            return self.receiver.recv();
         }
 
         pub fn tryRecv(self: *Self) !?pubsub_types.OwnedPubsubNotification(ValueType) {
-            return self.receiver.tryRecvParsed(ValueType);
+            return self.receiver.tryRecv();
         }
 
         pub fn recvTimeout(self: *Self, timeout_ms: u64) !pubsub_types.OwnedPubsubNotification(ValueType) {
-            return self.receiver.recvParsedTimeout(ValueType, timeout_ms);
+            return self.receiver.recvTimeout(timeout_ms);
         }
 
         pub fn unsubscribe(self: *Self) !bool {
@@ -792,6 +925,10 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
 
         pub fn rawSubscription(self: *const Self) *PubsubSubscription {
             return self.subscription;
+        }
+
+        pub fn rawReceiver(self: *const Self) TypedPubsubReceiver(ValueType) {
+            return self.receiver;
         }
     };
 }
@@ -1105,6 +1242,11 @@ const State = struct {
 
             pending.error_code = code;
             pending.error_message = try self.allocator.dupe(u8, message);
+            if (pending.subscription) |subscription| {
+                subscription.mutex.lock();
+                subscription.setLastErrorLocked(code, message);
+                subscription.mutex.unlock();
+            }
             self.setLastError(code, message);
             pending.completed = true;
             self.cond.broadcast();
@@ -1117,21 +1259,30 @@ const State = struct {
                 const subscription_id = try jsonValueToU64(result_value);
                 pending.subscription_id = subscription_id;
                 if (pending.subscription) |subscription| {
-                    subscription.id = subscription_id;
-                    try self.subscriptions.put(self.allocator, subscription_id, subscription);
+                    subscription.mutex.lock();
+                    defer subscription.mutex.unlock();
+                    subscription.clearLastErrorLocked();
+
+                    if (subscription.closed and subscription.close_reason == .unsubscribed) {
+                        subscription.id = 0;
+                    } else {
+                        subscription.id = subscription_id;
+                        try self.subscriptions.put(self.allocator, subscription_id, subscription);
+                    }
                 }
             },
             .unsubscribe => {
                 const unsubscribe_ok = try jsonValueToBool(result_value);
                 pending.unsubscribe_ok = unsubscribe_ok;
-                if (unsubscribe_ok) {
-                    if (pending.subscription) |subscription| {
+                if (pending.subscription) |subscription| {
+                    subscription.mutex.lock();
+                    defer subscription.mutex.unlock();
+                    if (unsubscribe_ok) {
+                        subscription.clearLastErrorLocked();
                         if (subscription.id != 0) {
                             _ = self.subscriptions.remove(subscription.id);
                         }
-                        subscription.mutex.lock();
                         subscription.closeLocked(.unsubscribed);
-                        subscription.mutex.unlock();
                     }
                 }
             },
@@ -1220,7 +1371,10 @@ const State = struct {
         }
 
         if (pending.error_message != null) {
-            return error.RpcError;
+            return switch (pending.kind) {
+                .subscribe => error.SubscribeRpcError,
+                .unsubscribe => error.UnsubscribeRpcError,
+            };
         }
     }
 
@@ -1622,7 +1776,29 @@ const State = struct {
     }
 
     fn unsubscribe(self: *State, subscription: *PubsubSubscription) !bool {
-        if (subscription.id == 0) return false;
+        self.mutex.lock();
+
+        if (subscription.closed and subscription.close_reason == .unsubscribed) {
+            self.mutex.unlock();
+            return false;
+        }
+
+        if (self.reconnecting or subscription.id == 0) {
+            if (subscription.id != 0) {
+                _ = self.subscriptions.remove(subscription.id);
+                subscription.id = 0;
+            }
+
+            subscription.mutex.lock();
+            subscription.clearLastErrorLocked();
+            subscription.closeLocked(.unsubscribed);
+            subscription.mutex.unlock();
+
+            self.mutex.unlock();
+            return true;
+        }
+
+        self.mutex.unlock();
 
         const pending = try self.allocator.create(PendingRequest);
         defer pending.deinit(self.allocator);
@@ -1711,7 +1887,7 @@ pub const PubsubClient = struct {
     ) TypedPubsubSubscription(ValueType) {
         return .{
             .subscription = subscription,
-            .receiver = subscription.receiver(),
+            .receiver = subscription.typedReceiver(ValueType),
         };
     }
 
@@ -1753,6 +1929,12 @@ pub const PubsubClient = struct {
 
     pub fn url(self: *const Self) []const u8 {
         return self.state.endpoint;
+    }
+
+    pub fn isReconnecting(self: *const Self) bool {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        return self.state.reconnecting;
     }
 
     pub fn getLastError(self: *const Self) ?RpcErrorDetail {
