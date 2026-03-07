@@ -35,6 +35,15 @@ fn waitForReconnecting(pubsub: *const client.PubsubClient, timeout_ms: u64) !voi
     return error.Timeout;
 }
 
+fn waitForNotReconnecting(pubsub: *const client.PubsubClient, timeout_ms: u64) !void {
+    const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ms * std.time.ns_per_ms));
+    while (std.time.nanoTimestamp() < deadline) {
+        if (!pubsub.isReconnecting()) return;
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
+    return error.Timeout;
+}
+
 fn waitForHeartbeatPingCount(app: *TestApp, expected: usize, timeout_ms: u64) !void {
     const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ms * std.time.ns_per_ms));
     while (std.time.nanoTimestamp() < deadline) {
@@ -3510,6 +3519,7 @@ test "root.PubsubClient auto reconnects and re-subscribes active subscriptions" 
     try std.testing.expectEqual(@as(u64, 142), subscription.id);
     try std.testing.expectEqual(@as(usize, 2), app.reconnect_signature_subscribe_count);
 
+    try waitForNotReconnecting(&pubsub, 1000);
     try std.testing.expect(try subscription.unsubscribe());
     try std.testing.expect(app.signature_unsubscribe_seen);
 }
