@@ -2340,6 +2340,7 @@ test "root.PubsubClient slotSubscribeWithCallback invokes callback and unsubscri
         defer tracker.mutex.unlock();
         try std.testing.expectEqual(@as(usize, 1), tracker.count);
         try std.testing.expectEqual(@as(u64, 12), tracker.last_slot.?);
+        try std.testing.expectEqual(@as(usize, 0), subscription.droppedCount());
         try std.testing.expect(subscription.getLastError() == null);
         subscription.clearLastError();
         try std.testing.expect(subscription.getLastError() == null);

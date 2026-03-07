@@ -817,6 +817,10 @@ pub const PubsubSlotsUpdatesSubscriptionWithCallback = struct {
         return self.subscription.queuedCount();
     }
 
+    pub fn droppedCount(self: *const Self) usize {
+        return self.subscription.droppedCount();
+    }
+
     pub fn subscriptionId(self: *Self) u64 {
         return self.subscription.subscriptionId();
     }
@@ -905,6 +909,10 @@ pub const PubsubRootSubscriptionWithCallback = struct {
 
     pub fn queuedCount(self: *const Self) usize {
         return self.subscription.queuedCount();
+    }
+
+    pub fn droppedCount(self: *const Self) usize {
+        return self.subscription.droppedCount();
     }
 
     pub fn subscriptionId(self: *Self) u64 {
@@ -997,6 +1005,10 @@ pub const PubsubVoteSubscriptionWithCallback = struct {
         return self.subscription.queuedCount();
     }
 
+    pub fn droppedCount(self: *const Self) usize {
+        return self.subscription.droppedCount();
+    }
+
     pub fn subscriptionId(self: *Self) u64 {
         return self.subscription.subscriptionId();
     }
@@ -1085,6 +1097,10 @@ pub const PubsubBlockSubscriptionWithCallback = struct {
 
     pub fn queuedCount(self: *const Self) usize {
         return self.subscription.queuedCount();
+    }
+
+    pub fn droppedCount(self: *const Self) usize {
+        return self.subscription.droppedCount();
     }
 
     pub fn subscriptionId(self: *Self) u64 {
@@ -1177,6 +1193,10 @@ pub const PubsubSignatureSubscriptionWithCallback = struct {
         return self.subscription.queuedCount();
     }
 
+    pub fn droppedCount(self: *const Self) usize {
+        return self.subscription.droppedCount();
+    }
+
     pub fn subscriptionId(self: *Self) u64 {
         return self.subscription.subscriptionId();
     }
@@ -1265,6 +1285,10 @@ pub const PubsubAccountSubscriptionWithCallback = struct {
 
     pub fn queuedCount(self: *const Self) usize {
         return self.subscription.queuedCount();
+    }
+
+    pub fn droppedCount(self: *const Self) usize {
+        return self.subscription.droppedCount();
     }
 
     pub fn subscriptionId(self: *Self) u64 {
@@ -1357,6 +1381,10 @@ pub const PubsubLogsSubscriptionWithCallback = struct {
         return self.subscription.queuedCount();
     }
 
+    pub fn droppedCount(self: *const Self) usize {
+        return self.subscription.droppedCount();
+    }
+
     pub fn subscriptionId(self: *Self) u64 {
         return self.subscription.subscriptionId();
     }
@@ -1447,6 +1475,10 @@ pub const PubsubProgramSubscriptionWithCallback = struct {
         return self.subscription.queuedCount();
     }
 
+    pub fn droppedCount(self: *const Self) usize {
+        return self.subscription.droppedCount();
+    }
+
     pub fn subscriptionId(self: *Self) u64 {
         return self.subscription.subscriptionId();
     }
@@ -1535,6 +1567,10 @@ pub const PubsubSlotSubscriptionWithCallback = struct {
 
     pub fn queuedCount(self: *const Self) usize {
         return self.subscription.queuedCount();
+    }
+
+    pub fn droppedCount(self: *const Self) usize {
+        return self.subscription.droppedCount();
     }
 
     pub fn subscriptionId(self: *Self) u64 {
