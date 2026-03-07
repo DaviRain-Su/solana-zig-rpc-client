@@ -815,6 +815,59 @@ test "root.RequestSender.fromOwnedMockSender supports scripted sender replacemen
     try std.testing.expectEqual(@as(usize, 1), replacement_context.call_count);
 }
 
+test "root.RequestSender.init accepts raw context + callback pair" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{
+        .base_slot = 900,
+        .error_code = -32030,
+    };
+
+    {
+        var rpc = try client.RpcClient.newWithRequestSender(
+            allocator,
+            client.RequestSender.init(
+                &context,
+                customRequestSender,
+            ),
+        );
+        defer rpc.deinit();
+
+        const slot = try rpc.getSlot(.confirmed);
+        try std.testing.expectEqual(@as(u64, 901), slot);
+        try std.testing.expect(context.saw_confirmed_commitment);
+        try std.testing.expect(context.call_count > 0);
+        try std.testing.expectError(error.RpcError, rpc.getBalance("Address11111111111111111111111111111111", null));
+    }
+
+    try std.testing.expectEqual(@as(usize, 0), context.deinit_count);
+}
+
+test "root.RequestSender.initWithDeinit runs deinit callback" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{
+        .base_slot = 1000,
+        .error_code = -32031,
+    };
+
+    {
+        var rpc = try client.RpcClient.newWithRequestSender(
+            allocator,
+            client.RequestSender.initWithDeinit(
+                &context,
+                customRequestSender,
+                customRequestSenderDeinit,
+            ),
+        );
+        defer rpc.deinit();
+
+        const slot = try rpc.getSlot(.processed);
+        try std.testing.expectEqual(@as(u64, 1001), slot);
+        try std.testing.expectEqual(@as(usize, 1), context.call_count);
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), context.deinit_count);
+}
+
 test "root.MockSender tracks pending scripted dispatches and persistent routes" {
     const allocator = std.testing.allocator;
     var sender = client.MockSender.init(allocator);
