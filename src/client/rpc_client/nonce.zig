@@ -4,6 +4,8 @@ const rpc_types = @import("../rpc_types.zig");
 
 const BlockhashQuery = rpc_types.BlockhashQuery;
 const Commitment = rpc_types.Commitment;
+const FeeForMessage = rpc_types.FeeForMessage;
+const FeeForMessageResponse = rpc_types.FeeForMessageResponse;
 const NonceAccountBuildOptions = rpc_types.NonceAccountBuildOptions;
 const NonceAccountOptions = rpc_types.NonceAccountOptions;
 const NonceAccount = rpc_types.NonceAccount;
@@ -11,6 +13,8 @@ const NonceAccountResponse = rpc_types.NonceAccountResponse;
 const ResolvedBlockhash = rpc_types.ResolvedBlockhash;
 const SendNonceAccountOptions = rpc_types.SendNonceAccountOptions;
 const SendTransactionOptions = rpc_types.SendTransactionOptions;
+const SimulateTransactionOptions = rpc_types.SimulateTransactionOptions;
+const SimulatedTransaction = rpc_types.SimulatedTransaction;
 const UiAccountQueryOptions = rpc_types.UiAccountQueryOptions;
 const Hash = @import("../sdk.zig").Hash;
 const Instruction = @import("../sdk.zig").Instruction;
@@ -391,6 +395,68 @@ pub fn buildLegacyTransactionBase64WithBlockhashQuery(
             signers,
         ),
     };
+}
+
+pub fn getFeeForLegacyInstructionsResponseWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    var owned = try self.buildOwnedLegacyMessageWithBlockhashQuery(
+        payer,
+        instructions,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer owned.deinit(self.allocator);
+
+    return try self.getFeeForMessageResponseTyped(owned.message, commitment);
+}
+
+pub fn getFeeForLegacyInstructionsWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    var owned = try self.buildOwnedLegacyMessageWithBlockhashQuery(
+        payer,
+        instructions,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer owned.deinit(self.allocator);
+
+    return try self.getFeeForMessageTyped(owned.message, commitment);
+}
+
+pub fn simulateLegacyInstructionsWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+    options: ?SimulateTransactionOptions,
+) !SimulatedTransaction {
+    var signed = try self.buildSignedLegacyTransactionWithBlockhashQuery(
+        payer,
+        instructions,
+        signers,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer signed.deinit(self.allocator);
+
+    return try self.simulateTransactionTyped(
+        signed,
+        options,
+    );
 }
 
 pub fn sendLegacyInstructionsWithBlockhashQuery(
