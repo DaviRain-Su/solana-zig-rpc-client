@@ -979,6 +979,114 @@ test "root.MockRouteBuilder builds matcher fields and requires a response" {
     );
 }
 
+test "root.MockRouteBuilder adds common rpc request matchers" {
+    const finalized_route = try client.MockRouteBuilder.init()
+        .matchGetBlock(.finalized)
+        .resultJson("{}")
+        .build();
+
+    const processed_route = try client.MockRouteBuilder.init()
+        .matchGetBalance(.processed)
+        .resultJson("{}")
+        .build();
+
+    const account_route = try client.MockRouteBuilder.init()
+        .matchGetAccountInfo(null)
+        .resultJson("{}")
+        .build();
+
+    const signature_statuses_route = try client.MockRouteBuilder.init()
+        .matchGetSignatureStatuses(null)
+        .resultJson("{}")
+        .build();
+
+    const signature_for_address_route = try client.MockRouteBuilder.init()
+        .matchGetSignaturesForAddress(null)
+        .resultJson("{}")
+        .build();
+
+    const transaction_route = try client.MockRouteBuilder.init()
+        .matchGetTransaction(null)
+        .resultJson("{}")
+        .build();
+
+    const slot_leaders_route = try client.MockRouteBuilder.init()
+        .matchGetSlotLeaders()
+        .resultJson("[]")
+        .build();
+
+    const airdrop_route = try client.MockRouteBuilder.init()
+        .matchRequestAirdrop()
+        .resultJson("\"signature\"")
+        .build();
+
+    const identity_route = try client.MockRouteBuilder.init()
+        .matchGetIdentity()
+        .resultJson("{\"identity\":\"ABC\"}")
+        .build();
+
+    const version_route = try client.MockRouteBuilder.init()
+        .matchGetVersion()
+        .resultJson("\"test-version\"")
+        .build();
+
+    const supply_route = try client.MockRouteBuilder.init()
+        .matchGetSupply()
+        .resultJson("{\"context\":{\"slot\":1},\"value\":{}}")
+        .build();
+
+    const epoch_info_route = try client.MockRouteBuilder.init()
+        .matchGetEpochInfo()
+        .resultJson("{}")
+        .build();
+
+    const slot_leader_route = try client.MockRouteBuilder.init()
+        .matchGetSlotLeader()
+        .resultJson("\"slotLeader\"")
+        .build();
+
+    try std.testing.expectEqualStrings("getBlock", finalized_route.matcher.method.?);
+    try std.testing.expectEqualStrings("finalized", finalized_route.matcher.params_json_contains.?);
+    try std.testing.expectEqualStrings("getBalance", processed_route.matcher.method.?);
+    try std.testing.expectEqualStrings("processed", processed_route.matcher.params_json_contains.?);
+    try std.testing.expectEqualStrings("getAccountInfo", account_route.matcher.method.?);
+    try std.testing.expectEqualStrings("getSignatureStatuses", signature_statuses_route.matcher.method.?);
+    try std.testing.expectEqualStrings("getSignaturesForAddress", signature_for_address_route.matcher.method.?);
+    try std.testing.expectEqualStrings("getTransaction", transaction_route.matcher.method.?);
+    try std.testing.expectEqualStrings("getSlotLeaders", slot_leaders_route.matcher.method.?);
+    try std.testing.expectEqualStrings("requestAirdrop", airdrop_route.matcher.method.?);
+    try std.testing.expectEqualStrings("getIdentity", identity_route.matcher.method.?);
+    try std.testing.expectEqualStrings("getVersion", version_route.matcher.method.?);
+    try std.testing.expectEqualStrings("getSupply", supply_route.matcher.method.?);
+    try std.testing.expectEqualStrings("getEpochInfo", epoch_info_route.matcher.method.?);
+    try std.testing.expectEqualStrings("getSlotLeader", slot_leader_route.matcher.method.?);
+    try std.testing.expectEqualStrings("minimumLedgerSlot", (try client.MockRouteBuilder.init()
+        .matchGetMinimumLedgerSlot()
+        .resultJson("0")
+        .build()).matcher.method.?);
+    try std.testing.expectEqualStrings("getLeaderSchedule", (try client.MockRouteBuilder.init()
+        .matchGetLeaderSchedule()
+        .resultJson("{}")
+        .build()).matcher.method.?);
+    try std.testing.expectEqualStrings("getGenesisHash", (try client.MockRouteBuilder.init()
+        .matchGetGenesisHash()
+        .resultJson("\"hash\"")
+        .build()).matcher.method.?);
+    try std.testing.expectEqualStrings("getHighestSnapshotSlot", (try client.MockRouteBuilder.init()
+        .matchGetHighestSnapshotSlot()
+        .resultJson("0")
+        .build()).matcher.method.?);
+    try std.testing.expectEqualStrings("getEpochSchedule", (try client.MockRouteBuilder.init()
+        .matchGetEpochSchedule()
+        .resultJson("{}")
+        .build()).matcher.method.?);
+    try std.testing.expectEqualStrings("getTransactionCount", (try client.MockRouteBuilder.init()
+        .matchGetTransactionCount()
+        .resultJson("0")
+        .build()).matcher.method.?);
+    try std.testing.expect(airdrop_route.matcher.params_json_contains == null);
+}
+
 test "root.mock routes match by method and params fragment" {
     const allocator = std.testing.allocator;
     var handler_context = MockHandlerContext{};
