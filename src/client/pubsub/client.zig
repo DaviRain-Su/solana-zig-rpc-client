@@ -2384,6 +2384,7 @@ const State = struct {
     endpoint: []const u8,
     options: PubsubClientOptions,
     ws_client: websocket.Client,
+    ws_client_deinitialized: bool = false,
     reader_thread: ?std.Thread = null,
     heartbeat_thread: ?std.Thread = null,
     ref_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(1),
@@ -2398,6 +2399,8 @@ const State = struct {
     closed: bool = false,
     reconnecting: bool = false,
     reconnect_attempt: u32 = 0,
+    total_reconnect_attempts: u32 = 0,
+    reconnect_limit_reached: bool = false,
     shutdown_started: bool = false,
 
     fn retain(self: *State) void {
@@ -2484,6 +2487,17 @@ const State = struct {
         self.cond.broadcast();
     }
 
+    fn deinitWsClientLocked(self: *State) void {
+        if (self.ws_client_deinitialized) return;
+        self.ws_client.deinit();
+        self.ws_client_deinitialized = true;
+    }
+
+    fn setWsClientLocked(self: *State, ws_client: websocket.Client) void {
+        self.ws_client = ws_client;
+        self.ws_client_deinitialized = false;
+    }
+
     fn failPendingRequestsLocked(self: *State) void {
         var pending_it = self.pending_requests.valueIterator();
         while (pending_it.next()) |pending| {
@@ -2519,7 +2533,10 @@ const State = struct {
         if (heartbeat_thread) |active_heartbeat_thread| {
             active_heartbeat_thread.join();
         }
-        self.ws_client.deinit();
+
+        self.mutex.lock();
+        self.deinitWsClientLocked();
+        self.mutex.unlock();
     }
 
     pub fn serverMessage(self: *State, data: []u8) !void {
@@ -2583,11 +2600,8 @@ const State = struct {
         self.reconnecting = true;
         self.reader_thread = null;
         self.failPendingRequestsLocked();
+        self.deinitWsClientLocked();
         self.mutex.unlock();
-
-        const old_client = self.ws_client;
-        var owned_old_client = old_client;
-        owned_old_client.deinit();
 
         while (true) {
             self.mutex.lock();
@@ -2597,7 +2611,22 @@ const State = struct {
                 self.mutex.unlock();
                 return error.Closed;
             }
+
+            if (self.options.reconnect_max_attempts) |max_reconnect_attempts| {
+                if (self.total_reconnect_attempts >= max_reconnect_attempts) {
+                    self.reconnect_limit_reached = true;
+                    self.reconnect_attempt = 0;
+                    self.markClosedLocked(.transport_closed);
+                    self.mutex.unlock();
+                    return error.Closed;
+                }
+            }
+
+            self.reconnect_limit_reached = false;
             const reconnect_delay_ms = self.reconnectDelayMsLocked();
+            if (self.total_reconnect_attempts < std.math.maxInt(u32)) {
+                self.total_reconnect_attempts += 1;
+            }
             self.mutex.unlock();
 
             if (reconnect_delay_ms > 0) {
@@ -2622,9 +2651,11 @@ const State = struct {
                 return error.Closed;
             }
 
-            self.ws_client = new_client;
+            self.setWsClientLocked(new_client);
             self.reader_thread = try self.ws_client.readLoopInNewThread(self);
             try self.resubscribeAllLocked();
+            self.reconnect_attempt = 0;
+            self.total_reconnect_attempts = 0;
             self.reconnecting = false;
             self.resetHeartbeatState();
             self.cond.broadcast();
@@ -3453,6 +3484,18 @@ pub const PubsubClient = struct {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
         self.state.clearLastError();
+    }
+
+    pub fn getReconnectAttemptCount(self: *const Self) u32 {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        return self.state.total_reconnect_attempts;
+    }
+
+    pub fn getReconnectLimitReached(self: *const Self) bool {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        return self.state.reconnect_limit_reached;
     }
 
     pub fn subscribeRaw(

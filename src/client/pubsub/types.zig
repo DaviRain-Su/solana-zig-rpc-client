@@ -15,6 +15,7 @@ pub const PubsubClientOptions = struct {
     reconnect_delay_ms: u32 = 250,
     reconnect_backoff_factor: u8 = 2,
     reconnect_max_delay_ms: ?u32 = null,
+    reconnect_max_attempts: ?u32 = null,
 };
 
 pub const PubsubQueueOverflowPolicy = enum {

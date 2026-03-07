@@ -59,6 +59,18 @@ fn waitForBackoffReconnectCount(app: *TestApp, expected: usize, timeout_ms: u64)
     return error.Timeout;
 }
 
+fn waitForReconnectAttemptCount(app: *TestApp, expected: usize, timeout_ms: u64) !void {
+    const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ms * std.time.ns_per_ms));
+    while (std.time.nanoTimestamp() < deadline) {
+        app.mutex.lock();
+        const reconnect_count = app.reconnect_signature_subscribe_count + app.reconnect_cancel_signature_subscribe_count + app.reconnect_backoff_subscribe_count + app.reconnect_max_attempt_subscribe_count;
+        app.mutex.unlock();
+        if (reconnect_count >= expected) return;
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
+    return error.Timeout;
+}
+
 fn reconnectBackoffTime(app: *TestApp, index: usize) i64 {
     app.mutex.lock();
     defer app.mutex.unlock();
@@ -84,6 +96,7 @@ const TestApp = struct {
     reply_to_client_ping: bool = true,
     reconnect_backoff_subscribe_count: usize = 0,
     reconnect_backoff_subscribe_times_ns: [4]i64 = .{ 0, 0, 0, 0 },
+    reconnect_max_attempt_subscribe_count: usize = 0,
     signature_subscribe_error_seen: bool = false,
     signature_unsubscribe_error_seen: bool = false,
 };
@@ -478,6 +491,24 @@ const TestHandler = struct {
                 if (self.app.reconnect_cancel_signature_subscribe_count == 1) {
                     try self.conn.close(.{});
                 }
+                return;
+            }
+
+            if (std.mem.indexOf(u8, data, "MaxReconnectAttempts1111111111111111111111111111111") != null) {
+                self.app.mutex.lock();
+                self.app.reconnect_max_attempt_subscribe_count += 1;
+                const reconnect_count = self.app.reconnect_max_attempt_subscribe_count;
+                self.app.mutex.unlock();
+
+                const response = try std.fmt.allocPrint(
+                    self.app.allocator,
+                    "{{\"jsonrpc\":\"2.0\",\"result\":{},\"id\":{}}}",
+                    .{ 440 + reconnect_count, parsed.value.id },
+                );
+                defer self.app.allocator.free(response);
+                try self.conn.write(response);
+                std.Thread.sleep(10 * std.time.ns_per_ms);
+                try self.conn.close(.{});
                 return;
             }
 
@@ -1329,6 +1360,44 @@ test "root.PubsubClient reconnect backoff increases delay across retries" {
     try std.testing.expect(third_time_ns > second_time_ns);
     try std.testing.expect(second_time_ns - first_time_ns >= 15 * std.time.ns_per_ms);
     try std.testing.expect(third_time_ns - second_time_ns >= 30 * std.time.ns_per_ms);
+}
+
+test "root.PubsubClient reconnect respects configured maximum attempts" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .auto_reconnect = true,
+        .reconnect_delay_ms = 20,
+        .reconnect_max_attempts = 2,
+    });
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.signatureSubscribe(
+        "MaxReconnectAttempts1111111111111111111111111111111",
+        .{ .commitment = .confirmed },
+    );
+    defer subscription.deinit();
+
+    try waitForClosed(subscription, 2000);
+    try waitForReconnectAttemptCount(&app, 2, 2000);
+
+    try std.testing.expectEqual(@as(usize, 2), app.reconnect_max_attempt_subscribe_count);
+    try std.testing.expectEqual(client.PubsubCloseReason.transport_closed, subscription.closeReason());
+    try std.testing.expect(pubsub.getReconnectLimitReached());
+    try std.testing.expectEqual(@as(u32, 2), pubsub.getReconnectAttemptCount());
 }
 
 test "root.PubsubClient signatureSubscribe parses receivedSignature notifications" {
