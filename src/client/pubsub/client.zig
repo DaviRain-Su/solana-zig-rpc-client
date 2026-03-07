@@ -20,6 +20,35 @@ const BlockSubscribeOptions = pubsub_types.BlockSubscribeOptions;
 const PubsubCloseReason = pubsub_types.PubsubCloseReason;
 const PubsubCloseResult = pubsub_types.PubsubCloseResult;
 
+pub const SlotsUpdatesNotificationCallback = *const fn (
+    ?*anyopaque,
+    pubsub_types.OwnedPubsubNotification(pubsub_types.SlotsUpdatesNotificationValue),
+) void;
+
+const SlotsUpdatesNotificationCallbackState = struct {
+    subscription: *PubsubSubscription,
+    context: ?*anyopaque,
+    callback: SlotsUpdatesNotificationCallback,
+
+    fn run(self: *SlotsUpdatesNotificationCallbackState) void {
+        while (true) {
+            var notification = self.subscription.recvParsed(pubsub_types.SlotsUpdatesNotificationValue) catch |err| {
+                switch (err) {
+                    error.Closed => break,
+                    error.InvalidResponse => continue,
+                    else => break,
+                }
+            };
+            self.callback(self.context, notification);
+            notification.deinit();
+        }
+    }
+};
+
+fn runSlotsUpdatesNotificationCallback(context: *SlotsUpdatesNotificationCallbackState) void {
+    context.run();
+}
+
 fn jsonValueToU64(value: json.Value) !u64 {
     return switch (value) {
         .integer => |integer| std.math.cast(u64, integer) orelse error.InvalidResponse,
@@ -538,6 +567,72 @@ pub const PubsubSubscription = struct {
             .code = code,
             .message = self.state.allocator.dupe(u8, message) catch return,
         };
+    }
+};
+
+pub const PubsubSlotsUpdatesSubscriptionWithCallback = struct {
+    subscription: *PubsubSubscription,
+    callback_state: *SlotsUpdatesNotificationCallbackState,
+    callback_thread: std.Thread,
+
+    const Self = @This();
+
+    pub fn isClosed(self: *const Self) bool {
+        return self.subscription.isClosed();
+    }
+
+    pub fn queuedCount(self: *const Self) usize {
+        return self.subscription.queuedCount();
+    }
+
+    pub fn subscriptionId(self: *Self) u64 {
+        return self.subscription.subscriptionId();
+    }
+
+    pub fn closeReason(self: *const Self) PubsubCloseReason {
+        return self.subscription.closeReason();
+    }
+
+    pub fn closeResult(self: *Self) PubsubCloseResult {
+        return self.subscription.closeResult();
+    }
+
+    pub fn waitClosed(self: *Self) PubsubCloseReason {
+        return self.subscription.waitClosed();
+    }
+
+    pub fn waitClosedTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseReason {
+        return self.subscription.waitClosedTimeout(timeout_ms);
+    }
+
+    pub fn waitClosedResult(self: *Self) PubsubCloseResult {
+        return self.subscription.waitClosedResult();
+    }
+
+    pub fn waitClosedResultTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseResult {
+        return self.subscription.waitClosedResultTimeout(timeout_ms);
+    }
+
+    pub fn unsubscribe(self: *Self) !bool {
+        return self.subscription.unsubscribe();
+    }
+
+    pub fn rawSubscription(self: *const Self) *PubsubSubscription {
+        return self.subscription;
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self.unsubscribe() catch {};
+        self.subscription.mutex.lock();
+        if (!self.subscription.closed) {
+            self.subscription.closeLocked(.deinitialized);
+        }
+        self.subscription.mutex.unlock();
+
+        self.callback_thread.join();
+        self.subscription.deinit();
+        self.subscription.state.allocator.destroy(self.callback_state);
+        self.* = undefined;
     }
 };
 
@@ -2913,6 +3008,30 @@ pub const PubsubClient = struct {
 
     pub fn slotsUpdatesSubscribeTyped(self: *Self) !TypedPubsubSubscription(pubsub_types.SlotsUpdatesNotificationValue) {
         return typedSubscription(pubsub_types.SlotsUpdatesNotificationValue, try self.slotsUpdatesSubscribe());
+    }
+
+    pub fn slotsUpdatesSubscribeWithCallback(
+        self: *Self,
+        context: ?*anyopaque,
+        callback: SlotsUpdatesNotificationCallback,
+    ) !PubsubSlotsUpdatesSubscriptionWithCallback {
+        const subscription = try self.state.subscribeSlotsUpdates();
+        errdefer subscription.deinit();
+
+        const callback_state = try self.state.allocator.create(SlotsUpdatesNotificationCallbackState);
+        errdefer self.state.allocator.destroy(callback_state);
+        callback_state.* = .{
+            .subscription = subscription,
+            .context = context,
+            .callback = callback,
+        };
+
+        const callback_thread = try std.Thread.spawn(.{}, runSlotsUpdatesNotificationCallback, .{callback_state});
+        return .{
+            .subscription = subscription,
+            .callback_state = callback_state,
+            .callback_thread = callback_thread,
+        };
     }
 
     pub fn voteSubscribe(self: *Self) !*PubsubSubscription {
