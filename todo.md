@@ -293,6 +293,7 @@ These items are valid Agave features, but they should not be the next thing:
   `MockSender` injection, direct `mockSender()` access, runtime handler
   mutation, injected transport errors, route/matcher-based scripted
   responses, a `MockRouteBuilder` DSL with common RPC matcher helpers,
+  constructor option aliases for commitment/timeout ordering (`newMockWithCommitmentAndTimeout*`),
   high-frequency mock response helpers, common single-shot and polled
   send/confirm flow helpers, confirm-spinner observation flows that interleave
   signature-status and blockhash-validity checks, balance response helpers,
