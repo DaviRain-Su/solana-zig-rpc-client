@@ -1256,6 +1256,46 @@ test "root.buildVersionedTransferSignedTransactionWithOptions fetches latest blo
     try std.testing.expect(std.mem.eql(u8, message[recent_blockhash_offset .. recent_blockhash_offset + 32], &recent_blockhash));
 }
 
+test "root.buildVersionedTransferTransaction with fixed blockhash returns versioned payload" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_public_key = destination_key_pair.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x22} ** 32;
+
+    var rpc = try RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    const encoded = try rpc.buildVersionedTransferTransaction(
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        &recent_blockhash,
+        &.{},
+    );
+    defer allocator.free(encoded);
+
+    const tx_bytes_len = try std.base64.standard.Decoder.calcSizeForSlice(encoded);
+    var tx_bytes = try allocator.alloc(u8, tx_bytes_len);
+    defer allocator.free(tx_bytes);
+    try std.base64.standard.Decoder.decode(tx_bytes, encoded);
+
+    const message = tx_bytes[1 + Ed25519.Signature.encoded_length ..];
+    const recent_blockhash_offset = 1 + 3 + 1 + (3 * Ed25519.PublicKey.encoded_length);
+    const decoded_recent_blockhash = message[recent_blockhash_offset .. recent_blockhash_offset + 32];
+    try std.testing.expect(std.mem.eql(u8, decoded_recent_blockhash, &recent_blockhash));
+    try std.testing.expectEqual(@as(usize, 0), rpc.mockRequestCount());
+}
+
 test "root.sendVersionedTransferWithOptions resolves latest blockhash and sends" {
     const allocator = std.testing.allocator;
 
