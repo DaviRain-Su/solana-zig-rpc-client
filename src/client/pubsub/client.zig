@@ -13,6 +13,7 @@ const SignatureSubscribeOptions = pubsub_types.SignatureSubscribeOptions;
 const AccountSubscribeOptions = pubsub_types.AccountSubscribeOptions;
 const LogsSubscribeFilter = pubsub_types.LogsSubscribeFilter;
 const LogsSubscribeOptions = pubsub_types.LogsSubscribeOptions;
+const SlotSubscribeOptions = pubsub_types.SlotSubscribeOptions;
 const ProgramSubscribeOptions = pubsub_types.ProgramSubscribeOptions;
 const BlockSubscribeFilter = pubsub_types.BlockSubscribeFilter;
 const BlockSubscribeOptions = pubsub_types.BlockSubscribeOptions;
@@ -2253,8 +2254,19 @@ const State = struct {
         return subscription;
     }
 
-    fn subscribeSlot(self: *State) !*PubsubSubscription {
-        const params_json = try self.allocator.dupe(u8, "[]");
+    fn subscribeSlot(
+        self: *State,
+        options: ?SlotSubscribeOptions,
+    ) !*PubsubSubscription {
+        const params_json = if (options) |value| blk: {
+            if (value.commitment == null) break :blk try self.allocator.dupe(u8, "[]");
+
+            const config_json = try self.buildSubscribeConfig(value.commitment, null, null);
+            defer self.allocator.free(config_json);
+            break :blk try std.fmt.allocPrint(self.allocator, "[{s}]", .{config_json});
+        } else blk: {
+            break :blk try self.allocator.dupe(u8, "[]");
+        };
         const subscription = self.allocateSubscription("slotSubscribe", params_json, "slotUnsubscribe", null, null) catch |err| {
             self.allocator.free(params_json);
             return err;
@@ -2268,7 +2280,7 @@ const State = struct {
             .subscription = subscription,
         };
 
-        try self.sendRequest("slotSubscribe", "[]", pending);
+        try self.sendRequest("slotSubscribe", params_json, pending);
         return subscription;
     }
 
@@ -2824,7 +2836,14 @@ pub const PubsubClient = struct {
     }
 
     pub fn slotSubscribe(self: *Self) !*PubsubSubscription {
-        return self.state.subscribeSlot();
+        return self.state.subscribeSlot(null);
+    }
+
+    pub fn slotSubscribeWithOptions(
+        self: *Self,
+        options: SlotSubscribeOptions,
+    ) !*PubsubSubscription {
+        return self.state.subscribeSlot(options);
     }
 
     pub fn slotSubscribeWithReceiver(self: *Self) !PubsubSubscriptionWithReceiver {
@@ -2832,12 +2851,34 @@ pub const PubsubClient = struct {
         return .{ .subscription = subscription, .receiver = subscription.receiver() };
     }
 
+    pub fn slotSubscribeWithOptionsWithReceiver(
+        self: *Self,
+        options: SlotSubscribeOptions,
+    ) !PubsubSubscriptionWithReceiver {
+        const subscription = try self.slotSubscribeWithOptions(options);
+        return .{ .subscription = subscription, .receiver = subscription.receiver() };
+    }
+
     pub fn slotSubscribeWithTypedReceiver(self: *Self) !TypedPubsubSubscriptionWithReceiver(pubsub_types.SlotNotificationValue) {
         return typedSubscriptionWithReceiver(pubsub_types.SlotNotificationValue, try self.slotSubscribe());
     }
 
+    pub fn slotSubscribeWithOptionsWithTypedReceiver(
+        self: *Self,
+        options: SlotSubscribeOptions,
+    ) !TypedPubsubSubscriptionWithReceiver(pubsub_types.SlotNotificationValue) {
+        return typedSubscriptionWithReceiver(pubsub_types.SlotNotificationValue, try self.slotSubscribeWithOptions(options));
+    }
+
     pub fn slotSubscribeTyped(self: *Self) !TypedPubsubSubscription(pubsub_types.SlotNotificationValue) {
         return typedSubscription(pubsub_types.SlotNotificationValue, try self.slotSubscribe());
+    }
+
+    pub fn slotSubscribeWithOptionsTyped(
+        self: *Self,
+        options: SlotSubscribeOptions,
+    ) !TypedPubsubSubscription(pubsub_types.SlotNotificationValue) {
+        return typedSubscription(pubsub_types.SlotNotificationValue, try self.slotSubscribeWithOptions(options));
     }
 
     pub fn rootSubscribe(self: *Self) !*PubsubSubscription {

@@ -72,6 +72,10 @@ pub const LogsSubscribeOptions = struct {
     commitment: ?rpc_types.Commitment = null,
 };
 
+pub const SlotSubscribeOptions = struct {
+    commitment: ?rpc_types.Commitment = null,
+};
+
 pub const ProgramSubscribeOptions = struct {
     commitment: ?rpc_types.Commitment = null,
     encoding: PubsubAccountEncoding = .json_parsed,

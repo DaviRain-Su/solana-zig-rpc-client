@@ -73,6 +73,7 @@ const TestApp = struct {
     account_unsubscribe_seen: bool = false,
     program_unsubscribe_seen: bool = false,
     slot_unsubscribe_seen: bool = false,
+    slot_subscribe_with_commitment_seen: bool = false,
     root_unsubscribe_seen: bool = false,
     slots_updates_unsubscribe_seen: bool = false,
     vote_unsubscribe_seen: bool = false,
@@ -394,6 +395,9 @@ const TestHandler = struct {
         }
 
         if (std.mem.eql(u8, parsed.value.method, "slotSubscribe")) {
+            if (std.mem.indexOf(u8, data, "\"commitment\"") != null) {
+                self.app.slot_subscribe_with_commitment_seen = true;
+            }
             const response = try std.fmt.allocPrint(
                 self.app.allocator,
                 "{{\"jsonrpc\":\"2.0\",\"result\":71,\"id\":{}}}",
@@ -1251,6 +1255,44 @@ test "root.PubsubClient slotSubscribe receives slot notifications" {
     try std.testing.expectEqual(@as(u64, 11), notification.notification.value.parent);
     try std.testing.expectEqual(@as(u64, 9), notification.notification.value.root);
     try std.testing.expectEqual(@as(u64, 12), notification.notification.value.slot);
+
+    try std.testing.expect(try subscription.unsubscribe());
+    try std.testing.expect(app.slot_unsubscribe_seen);
+}
+
+test "root.PubsubClient slotSubscribeWithOptions sends commitment option" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.slotSubscribeWithOptions(.{
+        .commitment = .finalized,
+    });
+    defer subscription.deinit();
+
+    var notification = try subscription.recvSlotNotification();
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 71), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, null), notification.notification.context_slot);
+    try std.testing.expectEqual(@as(u64, 11), notification.notification.value.parent);
+    try std.testing.expectEqual(@as(u64, 9), notification.notification.value.root);
+    try std.testing.expectEqual(@as(u64, 12), notification.notification.value.slot);
+    try std.testing.expect(app.slot_subscribe_with_commitment_seen);
 
     try std.testing.expect(try subscription.unsubscribe());
     try std.testing.expect(app.slot_unsubscribe_seen);
