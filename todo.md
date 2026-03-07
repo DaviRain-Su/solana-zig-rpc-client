@@ -279,8 +279,10 @@ These items are valid Agave features, but they should not be the next thing:
   stronger typed block summary path above the raw block notification payload
   and stronger account/program summary paths above the raw json-parsed
   notification payloads, including common `parsed.info` fields for nonce and
-  token-account style data. still missing broader subscription coverage, and a
-  more Rust-like receiver/channel surface.
+  token-account style data. all core subscription callback coverage is now also
+  added, including signature/account/logs/program/slot/root/slotsUpdates/vote/
+  block. Remaining gaps are receiver/channel ergonomics and reconnect
+  telemetry/policy knobs.
 - [ ] `nonblocking` async client
 - [ ] `connection_cache`
 - [ ] `tpu_client`
