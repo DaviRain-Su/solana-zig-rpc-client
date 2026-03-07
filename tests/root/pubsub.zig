@@ -973,12 +973,9 @@ const TestHandler = struct {
         }
 
         if (std.mem.eql(u8, parsed.value.method, "blockSubscribe")) {
-            try std.testing.expect(std.mem.indexOf(u8, data, "\"mentionsAccountOrProgram\":\"11111111111111111111111111111111\"") != null);
-            try std.testing.expect(std.mem.indexOf(u8, data, "\"commitment\":\"finalized\"") != null);
-            try std.testing.expect(std.mem.indexOf(u8, data, "\"encoding\":\"json\"") != null);
-            try std.testing.expect(std.mem.indexOf(u8, data, "\"maxSupportedTransactionVersion\":0") != null);
+            const is_burst_close_case = std.mem.indexOf(u8, data, "BurstClose11111111111111111111111111111111111") != null;
 
-            if (std.mem.indexOf(u8, data, "BurstClose11111111111111111111111111111111111") != null) {
+            if (is_burst_close_case) {
                 const response = try std.fmt.allocPrint(
                     self.app.allocator,
                     "{{\"jsonrpc\":\"2.0\",\"result\":75,\"id\":{}}}",
@@ -1032,6 +1029,10 @@ const TestHandler = struct {
                 return;
             }
 
+            try std.testing.expect(std.mem.indexOf(u8, data, "\"mentionsAccountOrProgram\":\"11111111111111111111111111111111\"") != null);
+            try std.testing.expect(std.mem.indexOf(u8, data, "\"commitment\":\"finalized\"") != null);
+            try std.testing.expect(std.mem.indexOf(u8, data, "\"encoding\":\"json\"") != null);
+            try std.testing.expect(std.mem.indexOf(u8, data, "\"maxSupportedTransactionVersion\":0") != null);
             try std.testing.expect(std.mem.indexOf(u8, data, "\"transactionDetails\":\"signatures\"") != null);
             try std.testing.expect(std.mem.indexOf(u8, data, "\"showRewards\":false") != null);
 
