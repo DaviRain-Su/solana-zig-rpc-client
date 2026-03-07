@@ -2911,7 +2911,7 @@ const State = struct {
             }
 
             self.setWsClientLocked(new_client);
-            self.reader_thread = try self.ws_client.readLoopInNewThread(self);
+            self.reader_thread = try self.spawnReadLoopThread();
             try self.resubscribeAllLocked();
             self.reconnect_attempt = 0;
             self.reconnecting = false;
@@ -3671,6 +3671,41 @@ const State = struct {
     fn heartbeatLoopThread(self: *State) void {
         self.heartbeatLoop();
     }
+
+    fn spawnReadLoopThread(self: *State) !std.Thread {
+        return std.Thread.spawn(.{}, State.runReadLoopThread, .{self});
+    }
+
+    fn runReadLoopThread(self: *State) void {
+        self.mutex.lock();
+        if (self.shutdown_started or self.closed) {
+            self.mutex.unlock();
+            return;
+        }
+        self.mutex.unlock();
+
+        self.readLoop() catch {};
+    }
+
+    fn readLoop(self: *State) !void {
+        defer self.close();
+
+        while (true) {
+            const message = (try self.ws_client.read()) orelse continue;
+            const message_type = message.type;
+            defer self.ws_client.done(message_type);
+
+            switch (message_type) {
+                .text, .binary => try self.serverMessage(message.data),
+                .ping => try self.serverPing(message.data),
+                .close => {
+                    self.ws_client.close(.{}) catch {};
+                    return;
+                },
+                .pong => try self.serverPong(message.data),
+            }
+        }
+    }
 };
 
 pub const PubsubClient = struct {
@@ -3721,7 +3756,7 @@ pub const PubsubClient = struct {
         errdefer allocator.free(state.endpoint);
 
         state.resetHeartbeatState();
-        state.reader_thread = try state.ws_client.readLoopInNewThread(state);
+        state.reader_thread = try state.spawnReadLoopThread();
         if (options.heartbeat_interval_ms != null) {
             state.heartbeat_thread = try std.Thread.spawn(.{}, State.heartbeatLoopThread, .{state});
         }
