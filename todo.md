@@ -269,5 +269,8 @@ If work resumes from here, the best sequence is:
 - SDK convenience helpers now also cover generic legacy message/signed-tx/base64
   builders and generic v0 message bytes/base64 builders, reducing the amount of
   struct assembly callers need to do by hand.
+- Legacy builders now also have an owned-message path, so callers can clone,
+  hold, and sign reusable legacy instruction sets later, similar to the owned
+  v0 compile flow already in the SDK.
 - Prefer preserving the current project direction: blocking HTTP RPC first,
   minimal SDK second, heavy transport features last.

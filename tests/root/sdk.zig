@@ -291,6 +291,79 @@ test "root.buildLegacyMessageBytes and base64 match manual legacy message constr
     try std.testing.expectEqualSlices(u8, expected_base64, actual_base64);
 }
 
+test "root.buildOwnedLegacyMessage clones instructions and signs multi-signer messages" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const writable_raw = try Ed25519.KeyPair.generateDeterministic(.{3} ** 32);
+    const readonly_raw = try Ed25519.KeyPair.generateDeterministic(.{4} ** 32);
+    const program_raw = try Ed25519.KeyPair.generateDeterministic(.{8} ** 32);
+    const recent_blockhash = [_]u8{0x23} ** 32;
+
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const extra_signer = try client.Keypair.fromSecretKeyBytes(extra_signer_raw.secret_key.toBytes());
+    const writable = client.Pubkey.fromBytes(writable_raw.public_key.toBytes());
+    const readonly = client.Pubkey.fromBytes(readonly_raw.public_key.toBytes());
+    const program_id = client.Pubkey.fromBytes(program_raw.public_key.toBytes());
+    const instruction_accounts = [_]client.AccountMeta{
+        client.AccountMeta.init(payer.public_key, true, true),
+        client.AccountMeta.init(extra_signer.public_key, true, false),
+        client.AccountMeta.init(writable, false, true),
+        client.AccountMeta.init(readonly, false, false),
+    };
+    const instruction_data = [_]u8{ 0x10, 0x20, 0x30 };
+    const instructions = [_]client.Instruction{
+        .{
+            .program_id = program_id,
+            .accounts = instruction_accounts[0..],
+            .data = instruction_data[0..],
+        },
+    };
+    const transaction = client.LegacyTransaction{
+        .message = .{
+            .payer = payer.public_key,
+            .recent_blockhash = client.Hash.fromBytes(recent_blockhash),
+            .instructions = instructions[0..],
+        },
+    };
+
+    var owned = try client.buildOwnedLegacyMessage(
+        allocator,
+        payer.public_key,
+        client.Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+    );
+    defer owned.deinit(allocator);
+
+    try std.testing.expect(owned.message.instructions.ptr != instructions[0..].ptr);
+    try std.testing.expect(owned.message.instructions[0].accounts.ptr != instructions[0].accounts.ptr);
+    try std.testing.expect(owned.message.instructions[0].data.ptr != instructions[0].data.ptr);
+
+    const expected_bytes = try transaction.message.serialize(allocator);
+    defer allocator.free(expected_bytes);
+    const actual_bytes = try owned.serialize(allocator);
+    defer allocator.free(actual_bytes);
+    try std.testing.expectEqualSlices(u8, expected_bytes, actual_bytes);
+
+    var expected_signed = try transaction.sign(allocator, &.{ payer, extra_signer });
+    defer expected_signed.deinit(allocator);
+    var actual_signed = try owned.sign(allocator, &.{ payer, extra_signer });
+    defer actual_signed.deinit(allocator);
+
+    try std.testing.expectEqualSlices(u8, expected_signed.message_bytes, actual_signed.message_bytes);
+    try std.testing.expectEqualSlices(
+        u8,
+        expected_signed.signatures[0].bytes[0..],
+        actual_signed.signatures[0].bytes[0..],
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        expected_signed.signatures[1].bytes[0..],
+        actual_signed.signatures[1].bytes[0..],
+    );
+}
+
 test "root.SystemProgram.advanceNonceAccount builds durable nonce instruction" {
     const allocator = std.testing.allocator;
 
@@ -480,6 +553,57 @@ test "root.buildSignedLegacyTransactionWithNonceInstructions matches transfer-sp
     defer allocator.free(expected);
 
     try std.testing.expectEqualSlices(u8, expected, actual);
+}
+
+test "root.buildOwnedLegacyMessageWithNonceInstructions signs like generic durable nonce helper" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_key_pair = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_key_pair.secret_key.toBytes();
+    const nonce_account_key_pair = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_key_pair = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = [_]u8{0x44} ** 32;
+
+    const keypair = try client.Keypair.fromSecretKeyBytes(sender_secret_key);
+    const nonce_account = client.Pubkey.fromBytes(nonce_account_key_pair.public_key.toBytes());
+    const destination = client.Pubkey.fromBytes(destination_key_pair.public_key.toBytes());
+    const transfer = client.SystemProgram.transfer(keypair.public_key, destination, 1_000);
+    const instructions = [_]client.Instruction{transfer.instruction()};
+
+    var owned = try client.buildOwnedLegacyMessageWithNonceInstructions(
+        allocator,
+        keypair.public_key,
+        nonce_account,
+        keypair.public_key,
+        client.Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+    );
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.message.instructions.len);
+    try std.testing.expectEqualSlices(u8, &.{4}, owned.message.instructions[0].data);
+
+    var actual_signed = try owned.sign(allocator, &.{keypair});
+    defer actual_signed.deinit(allocator);
+
+    var expected_signed = try client.buildSignedLegacyTransactionWithNonceInstructions(
+        allocator,
+        keypair.public_key,
+        nonce_account,
+        keypair.public_key,
+        client.Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+        &.{keypair},
+    );
+    defer expected_signed.deinit(allocator);
+
+    try std.testing.expectEqualSlices(u8, expected_signed.message_bytes, actual_signed.message_bytes);
+    try std.testing.expectEqualSlices(
+        u8,
+        expected_signed.signatures[0].bytes[0..],
+        actual_signed.signatures[0].bytes[0..],
+    );
 }
 
 test "root.buildSignedLegacyTransaction and base64 match manual multi-signer legacy flow" {

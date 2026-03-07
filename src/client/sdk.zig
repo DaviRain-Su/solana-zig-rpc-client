@@ -334,6 +334,32 @@ pub const LegacyMessage = struct {
     }
 };
 
+pub const OwnedLegacyMessage = struct {
+    message: LegacyMessage,
+    owned_instructions: []Instruction,
+
+    pub fn deinit(self: *OwnedLegacyMessage, allocator: Allocator) void {
+        freeInstructionClones(allocator, self.owned_instructions, self.owned_instructions.len);
+        self.* = undefined;
+    }
+
+    pub fn serialize(self: OwnedLegacyMessage, allocator: Allocator) ![]u8 {
+        return try self.message.serialize(allocator);
+    }
+
+    pub fn toBase64(self: OwnedLegacyMessage, allocator: Allocator) ![]u8 {
+        return try self.message.toBase64(allocator);
+    }
+
+    pub fn sign(self: OwnedLegacyMessage, allocator: Allocator, signers: []const Keypair) !SignedLegacyTransaction {
+        return try self.message.sign(allocator, signers);
+    }
+
+    pub fn transaction(self: OwnedLegacyMessage) LegacyTransaction {
+        return .{ .message = self.message };
+    }
+};
+
 pub const LegacyTransaction = struct {
     message: LegacyMessage,
 
@@ -1141,6 +1167,23 @@ pub fn buildLegacyTransferMessage(
     return try message.serialize(allocator);
 }
 
+pub fn buildOwnedLegacyMessage(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+) !OwnedLegacyMessage {
+    const owned_instructions = try cloneInstructions(allocator, instructions);
+    return .{
+        .message = .{
+            .payer = payer,
+            .recent_blockhash = recent_blockhash,
+            .instructions = owned_instructions.instructions,
+        },
+        .owned_instructions = owned_instructions.instructions,
+    };
+}
+
 pub fn buildLegacyMessageBytes(
     allocator: Allocator,
     payer: Pubkey,
@@ -1173,6 +1216,30 @@ pub fn buildLegacyMessageBase64(
     return try encodeBase64(allocator, message_bytes);
 }
 
+pub fn buildOwnedLegacyMessageWithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+) !OwnedLegacyMessage {
+    const owned_instructions = try prependNonceAdvanceInstruction(
+        allocator,
+        nonce_account,
+        nonce_authority,
+        instructions,
+    );
+    return .{
+        .message = .{
+            .payer = payer,
+            .recent_blockhash = recent_blockhash,
+            .instructions = owned_instructions.instructions,
+        },
+        .owned_instructions = owned_instructions.instructions,
+    };
+}
+
 pub fn buildLegacyMessageWithNonceInstructions(
     allocator: Allocator,
     payer: Pubkey,
@@ -1181,21 +1248,17 @@ pub fn buildLegacyMessageWithNonceInstructions(
     recent_blockhash: Hash,
     instructions: []const Instruction,
 ) ![]u8 {
-    var owned_instructions = try prependNonceAdvanceInstruction(
+    var owned_message = try buildOwnedLegacyMessageWithNonceInstructions(
         allocator,
+        payer,
         nonce_account,
         nonce_authority,
+        recent_blockhash,
         instructions,
     );
-    defer owned_instructions.deinit(allocator);
+    defer owned_message.deinit(allocator);
 
-    const message = LegacyMessage{
-        .payer = payer,
-        .recent_blockhash = recent_blockhash,
-        .instructions = owned_instructions.instructions,
-    };
-
-    return try message.serialize(allocator);
+    return try owned_message.serialize(allocator);
 }
 
 pub fn buildLegacyTransferTransaction(
