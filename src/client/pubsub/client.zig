@@ -1102,7 +1102,7 @@ pub const PubsubSignatureSubscriptionWithCallback = struct {
     }
 
     pub fn waitClosedResult(self: *Self) PubsubCloseResult {
-        return self.subscription.closeResult();
+        return self.subscription.waitClosedResult();
     }
 
     pub fn waitClosedResultTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseResult {
@@ -1168,7 +1168,7 @@ pub const PubsubAccountSubscriptionWithCallback = struct {
     }
 
     pub fn waitClosedResult(self: *Self) PubsubCloseResult {
-        return self.subscription.closeResult();
+        return self.subscription.waitClosedResult();
     }
 
     pub fn waitClosedResultTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseResult {
@@ -1234,7 +1234,7 @@ pub const PubsubLogsSubscriptionWithCallback = struct {
     }
 
     pub fn waitClosedResult(self: *Self) PubsubCloseResult {
-        return self.subscription.closeResult();
+        return self.subscription.waitClosedResult();
     }
 
     pub fn waitClosedResultTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseResult {
@@ -1300,7 +1300,7 @@ pub const PubsubProgramSubscriptionWithCallback = struct {
     }
 
     pub fn waitClosedResult(self: *Self) PubsubCloseResult {
-        return self.subscription.closeResult();
+        return self.subscription.waitClosedResult();
     }
 
     pub fn waitClosedResultTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseResult {
@@ -1366,7 +1366,7 @@ pub const PubsubSlotSubscriptionWithCallback = struct {
     }
 
     pub fn waitClosedResult(self: *Self) PubsubCloseResult {
-        return self.subscription.closeResult();
+        return self.subscription.waitClosedResult();
     }
 
     pub fn waitClosedResultTimeout(self: *Self, timeout_ms: u64) error{Timeout}!PubsubCloseResult {
@@ -1888,6 +1888,14 @@ pub const PubsubSubscriptionWithReceiver = struct {
     }
 
     pub fn rawReceiver(self: *const Self) PubsubReceiver {
+        return self.receiver;
+    }
+
+    pub fn rawSubscription(self: *const Self) *PubsubSubscription {
+        return self.subscription;
+    }
+
+    pub fn rawReceiverView(self: *const Self) PubsubReceiver {
         return self.receiver;
     }
 
