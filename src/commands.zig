@@ -430,7 +430,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .new_latest_blockhash => {
             const blockhash = blockhash_arg orelse {
-                std.debug.print("error: new-latest-blockhash requires <blockhash>\n", .{});
+                reportInvalidCliMessage("error: new-latest-blockhash requires <blockhash>\n", .{});
                 return error.InvalidCli;
             };
 
@@ -442,7 +442,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .status => {
             const signature_value = signature orelse {
-                std.debug.print("error: status requires <signature>\n", .{});
+                reportInvalidCliMessage("error: status requires <signature>\n", .{});
                 return error.InvalidCli;
             };
             try rpc.waitForSignatureStatus(signature_value, commitment, search_transaction_history, status_timeout_ms, status_poll_ms, false);
@@ -451,7 +451,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .confirm_transaction => {
             const signature_value = signature orelse {
-                std.debug.print("error: confirm-transaction requires <signature>\n", .{});
+                reportInvalidCliMessage("error: confirm-transaction requires <signature>\n", .{});
                 return error.InvalidCli;
             };
             const confirmed = try rpc.confirmTransaction(signature_value, commitment, search_transaction_history);
@@ -460,7 +460,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .signature_status => {
             const signature_value = signature orelse {
-                std.debug.print("error: signature-status requires <signature>\n", .{});
+                reportInvalidCliMessage("error: signature-status requires <signature>\n", .{});
                 return error.InvalidCli;
             };
             const status_request_options = if (search_transaction_history or commitment != null)
@@ -486,7 +486,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .signature_statuses => {
             if (signature_statuses.items.len == 0) {
-                std.debug.print("error: signature-statuses requires at least one signature\n", .{});
+                reportInvalidCliMessage("error: signature-statuses requires at least one signature\n", .{});
                 return error.InvalidCli;
             }
 
@@ -536,13 +536,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .poll_for_signature_confirmation => {
             const signature_value = signature orelse {
-                std.debug.print("error: poll-for-signature-confirmation requires <signature> <min-confirmed-blocks>\n", .{});
+                reportInvalidCliMessage("error: poll-for-signature-confirmation requires <signature> <min-confirmed-blocks>\n", .{});
                 return error.InvalidCli;
             };
             const min_confirmed_blocks = if (confirmation_blocks_arg) |value|
                 std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
             else {
-                std.debug.print("error: poll-for-signature-confirmation requires <signature> <min-confirmed-blocks>\n", .{});
+                reportInvalidCliMessage("error: poll-for-signature-confirmation requires <signature> <min-confirmed-blocks>\n", .{});
                 return error.InvalidCli;
             };
 
@@ -562,7 +562,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .blocks_since_signature_confirmation => {
             const signature_value = signature orelse {
-                std.debug.print("error: blocks-since-signature-confirmation requires <signature>\n", .{});
+                reportInvalidCliMessage("error: blocks-since-signature-confirmation requires <signature>\n", .{});
                 return error.InvalidCli;
             };
             const confirmed_blocks = try rpc.getNumBlocksSinceSignatureConfirmationWithCommitment(
@@ -575,7 +575,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .send_transaction => {
             const tx = signed_tx_arg orelse {
-                std.debug.print("error: send-transaction requires <signed-tx-base64>\n", .{});
+                reportInvalidCliMessage("error: send-transaction requires <signed-tx-base64>\n", .{});
                 return error.InvalidCli;
             };
 
@@ -587,7 +587,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .send_transaction_and_confirm => {
             const tx = signed_tx_arg orelse {
-                std.debug.print("error: send-transaction-and-confirm requires <signed-tx-base64>\n", .{});
+                reportInvalidCliMessage("error: send-transaction-and-confirm requires <signed-tx-base64>\n", .{});
                 return error.InvalidCli;
             };
 
@@ -606,7 +606,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .transfer => {
             if (sender_secret_key_arg != null and sender_keypair_path_arg != null) {
-                std.debug.print("error: transfer accepts either --sender-keypair <path> or <sender-secret-key>, not both\n", .{});
+                reportInvalidCliMessage("error: transfer accepts either --sender-keypair <path> or <sender-secret-key>, not both\n", .{});
                 return error.InvalidCli;
             }
 
@@ -638,24 +638,24 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                         };
                         defer if (missing_path_allocated) allocator.free(missing_path);
 
-                        std.debug.print("error: sender keypair file not found: {s}\n", .{missing_path});
+                        reportInvalidCliMessage("error: sender keypair file not found: {s}\n", .{missing_path});
                         return error.InvalidCli;
                     },
                     error.HomeDirectoryNotFound => {
-                        std.debug.print("error: HOME is not set; transfer requires --sender-keypair <path> or <sender-secret-key>\n", .{});
+                        reportInvalidCliMessage("error: HOME is not set; transfer requires --sender-keypair <path> or <sender-secret-key>\n", .{});
                         return error.InvalidCli;
                     },
                     error.InvalidSecretKeyLength => {
-                        std.debug.print("error: sender keypair file must contain {} secret-key bytes\n", .{Ed25519.SecretKey.encoded_length});
+                        reportInvalidCliMessage("error: sender keypair file must contain {} secret-key bytes\n", .{Ed25519.SecretKey.encoded_length});
                         return error.InvalidCli;
                     },
                     else => {
                         if (sender_keypair_path_arg) |path| {
-                            std.debug.print("error: sender keypair file is not valid JSON byte array: {s}\n", .{path});
+                            reportInvalidCliMessage("error: sender keypair file is not valid JSON byte array: {s}\n", .{path});
                         } else if (default_sender_keypair_path_arg) |path| {
-                            std.debug.print("error: default sender keypair file is not valid JSON byte array: {s}\n", .{path});
+                            reportInvalidCliMessage("error: default sender keypair file is not valid JSON byte array: {s}\n", .{path});
                         } else {
-                            std.debug.print("error: default sender keypair file is not valid JSON byte array: {s}\n", .{default_solana_keypair_path});
+                            reportInvalidCliMessage("error: default sender keypair file is not valid JSON byte array: {s}\n", .{default_solana_keypair_path});
                         }
                         return error.InvalidCli;
                     },
@@ -664,13 +664,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             defer allocator.free(sender_secret_key);
 
             const destination = account orelse {
-                std.debug.print("error: transfer requires [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>\n", .{});
+                reportInvalidCliMessage("error: transfer requires [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>\n", .{});
                 return error.InvalidCli;
             };
             const lamports = if (lamports_arg) |value|
                 std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
             else {
-                std.debug.print("error: transfer requires [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>\n", .{});
+                reportInvalidCliMessage("error: transfer requires [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>\n", .{});
                 return error.InvalidCli;
             };
 
@@ -695,7 +695,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .simulate_transaction => {
             const tx = signed_tx_arg orelse {
-                std.debug.print("error: simulate-transaction requires <signed-tx-base64>\n", .{});
+                reportInvalidCliMessage("error: simulate-transaction requires <signed-tx-base64>\n", .{});
                 return error.InvalidCli;
             };
 
@@ -816,7 +816,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .transaction => {
             const signature_value = signature orelse {
-                std.debug.print("error: transaction requires <signature>\n", .{});
+                reportInvalidCliMessage("error: transaction requires <signature>\n", .{});
                 return error.InvalidCli;
             };
             const encoding = if (encoding_arg) |value| parseTransactionEncoding(value) orelse return error.InvalidCli else null;
@@ -889,7 +889,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             const expected_balance = if (expected_balance_arg) |raw|
                 std.fmt.parseInt(u64, raw, 10) catch return error.InvalidCli
             else {
-                std.debug.print("error: wait-for-balance requires <expected-lamports>\n", .{});
+                reportInvalidCliMessage("error: wait-for-balance requires <expected-lamports>\n", .{});
                 return error.InvalidCli;
             };
 
@@ -940,7 +940,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 switch (value) {
                     .json_parsed => {
                         if (data_slice_offset != null or data_slice_length != null) {
-                            std.debug.print("error: --account-data-slice-* are not supported with --account-encoding jsonParsed\n", .{});
+                            reportInvalidCliMessage("error: --account-data-slice-* are not supported with --account-encoding jsonParsed\n", .{});
                             return error.InvalidCli;
                         }
 
@@ -1164,7 +1164,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .multiple_accounts => {
             if (multiple_accounts.items.len == 0) {
-                std.debug.print("error: multiple-accounts requires at least one account\n", .{});
+                reportInvalidCliMessage("error: multiple-accounts requires at least one account\n", .{});
                 return error.InvalidCli;
             }
 
@@ -1182,7 +1182,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 switch (value) {
                     .json_parsed => {
                         if (data_slice_offset != null or data_slice_length != null) {
-                            std.debug.print("error: --account-data-slice-* are not supported with --account-encoding jsonParsed\n", .{});
+                            reportInvalidCliMessage("error: --account-data-slice-* are not supported with --account-encoding jsonParsed\n", .{});
                             return error.InvalidCli;
                         }
 
@@ -1336,7 +1336,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .multiple_ui_accounts => {
             if (multiple_accounts.items.len == 0) {
-                std.debug.print("error: multiple-ui-accounts requires at least one account\n", .{});
+                reportInvalidCliMessage("error: multiple-ui-accounts requires at least one account\n", .{});
                 return error.InvalidCli;
             }
 
@@ -1573,7 +1573,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
         .inflation_reward => {
             if (multiple_accounts.items.len == 0) {
-                std.debug.print("error: inflation-reward requires at least one address\n", .{});
+                reportInvalidCliMessage("error: inflation-reward requires at least one address\n", .{});
                 return error.InvalidCli;
             }
 
@@ -1940,11 +1940,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             else
                 null;
             if (last_slot != null and first_slot == null) {
-                std.debug.print("error: --range-last-slot requires --range-first-slot\n", .{});
+                reportInvalidCliMessage("error: --range-last-slot requires --range-first-slot\n", .{});
                 return error.InvalidCli;
             }
             if (first_slot != null and last_slot != null and last_slot.? < first_slot.?) {
-                std.debug.print("error: --range-last-slot must be >= --range-first-slot\n", .{});
+                reportInvalidCliMessage("error: --range-last-slot must be >= --range-first-slot\n", .{});
                 return error.InvalidCli;
             }
 
