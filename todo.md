@@ -87,7 +87,7 @@ So "feature parity with Rust client" should be read in two layers:
 | `rpc_config` / `rpc_filter` / `rpc_request` / `rpc_response` / `rpc_custom_error` | Partially implemented | Zig has many equivalent structs/options, but not a full Rust-style public module layout. |
 | `blockhash_query` | Partially implemented | Minimal `BlockhashQuery` / `resolveBlockhashQuery` support now exists, but the broader Rust helper surface is still incomplete. |
 | `nonce_utils` | Partially implemented | Nonce account parsing, nonce blockhash lookup, durable nonce system instruction helpers (`advance` / `initialize` / `authorize` / `withdraw`), nonce-aware typed builders, and higher-level blocking RPC convenience for both durable nonce transfer and nonce account lifecycle operations now exist, including signed/base64/send/send-and-confirm helper families, a flexible legacy nonce transfer path with distinct fee payer, sender, and nonce authority, and standalone lifecycle helpers for `advance` / `initialize` / `authorize` / `withdraw`; the broader durable-nonce utility surface is still incomplete. |
-| `pubsub_client` | Partially implemented | A minimal websocket-based pubsub client now exists with `signatureSubscribe`, `logsSubscribe`, `accountSubscribe`, `programSubscribe`, `slotSubscribe`, `rootSubscribe`, `slotsUpdatesSubscribe`, `voteSubscribe`, and `blockSubscribe`, plus subscription dispatch, typed notification helpers, typed subscription/channel convenience, public typed receiver views with timeout and unsubscribe/lifecycle access, `waitClosed` / `waitClosedTimeout` lifecycle waiting, `closeResult()` / `waitClosedResult*()` summaries, public `subscriptionId()` access on subscription/receiver/typed handles, direct `subscription.typed(T)` and `receiver.typed(T)` conversion helpers, typed `withReceiver` convenience handles, direct typed notification helpers on `withReceiver` handles, safer raw receiver/subscription access on typed handles, summary typed helpers for `signature`/`logs`/`account`/`program`/`block`, stronger typed `block` notifications for `transactionDetails=signatures`, `transactionDetails=accounts`, and `transactionDetails=full`, including deeper full-transaction counts for account keys, instructions, address table lookups, and loaded addresses; account/program summaries including common `parsed.info` fields, bounded per-subscription queues with overflow policies and close reasons, heartbeat ping/pong keepalive, reconnect backoff, automatic reconnect/re-subscribe support, explicit subscribe/unsubscribe RPC error propagation, per-subscription `last error` tracking, and reconnect-aware local unsubscribe semantics, all covered by integration tests; the broader Rust pubsub surface is still incomplete. |
+| `pubsub_client` | Partially implemented | A minimal websocket-based pubsub client now exists with `signatureSubscribe`, `logsSubscribe`, `accountSubscribe`, `programSubscribe`, `slotSubscribe`, `rootSubscribe`, `slotsUpdatesSubscribe`, `voteSubscribe`, and `blockSubscribe`, plus a raw subscribe escape hatch (`subscribeRaw*`) for unsupported websocket methods, subscription dispatch, typed notification helpers, typed subscription/channel convenience, public typed receiver views with timeout and unsubscribe/lifecycle access, `waitClosed` / `waitClosedTimeout` lifecycle waiting, `closeResult()` / `waitClosedResult*()` summaries, public `subscriptionId()` access on subscription/receiver/typed handles, direct `subscription.typed(T)` and `receiver.typed(T)` conversion helpers, typed `withReceiver` convenience handles, direct typed notification helpers on `withReceiver` handles, safer raw receiver/subscription access on typed handles, summary typed helpers for `signature`/`logs`/`account`/`program`/`block`, stronger typed `block` notifications for `transactionDetails=signatures`, `transactionDetails=accounts`, and `transactionDetails=full`, including deeper full-transaction counts for account keys, instructions, address table lookups, and loaded addresses; account/program summaries including common `parsed.info` fields, bounded per-subscription queues with overflow policies and close reasons, heartbeat ping/pong keepalive, reconnect backoff, automatic reconnect/re-subscribe support, explicit subscribe/unsubscribe RPC error propagation, per-subscription `last error` tracking, and reconnect-aware local unsubscribe semantics, all covered by integration tests; the broader Rust pubsub surface is still incomplete. |
 | `nonblocking` | Not implemented | No async RPC client surface. |
 | `connection_cache` | Not implemented | No QUIC/UDP connection cache abstraction. |
 | `tpu_client` | Not implemented | No direct-to-leader TPU sending path. |
@@ -272,14 +272,15 @@ These items are valid Agave features, but they should not be the next thing:
   public typed receiver views, `waitClosed` / `waitClosedTimeout` lifecycle
   waiting, `closeResult()` / `waitClosedResult*()` lifecycle summaries, public
   `subscriptionId()` access on subscription/receiver/typed handles, direct
-  `subscription.typed(T)` and `receiver.typed(T)` conversion helpers, typed
-  `withReceiver` convenience handles, direct typed notification helpers on
-  `withReceiver` handles, and typed subscription/channel helpers now exist
-  too, including a stronger typed block summary path above the raw block
-  notification payload and stronger account/program summary paths above the raw
-  json-parsed notification payloads, including common `parsed.info` fields for
-  nonce and token-account style data. still missing broader subscription
-  coverage, and a more Rust-like receiver/channel surface.
+  `subscription.typed(T)` and `receiver.typed(T)` conversion helpers, a raw
+  subscribe escape hatch for unsupported websocket methods, typed `withReceiver`
+  convenience handles, direct typed notification helpers on `withReceiver`
+  handles, and typed subscription/channel helpers now exist too, including a
+  stronger typed block summary path above the raw block notification payload
+  and stronger account/program summary paths above the raw json-parsed
+  notification payloads, including common `parsed.info` fields for nonce and
+  token-account style data. still missing broader subscription coverage, and a
+  more Rust-like receiver/channel surface.
 - [ ] `nonblocking` async client
 - [ ] `connection_cache`
 - [ ] `tpu_client`

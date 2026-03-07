@@ -2141,6 +2141,45 @@ test "root.PubsubClient typed subscription convenience returns typed channel" {
     try std.testing.expect(app.signature_unsubscribe_seen);
 }
 
+test "root.PubsubClient subscribeRawTyped provides pubsub escape hatch" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var subscription = try pubsub.subscribeRawTyped(
+        client.SignatureNotificationValue,
+        "signatureSubscribe",
+        "[\"3vQB7B6MrGQZaxCuFg4oh\",{\"commitment\":\"confirmed\"}]",
+        "signatureUnsubscribe",
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvTimeout(1000);
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 41), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, 99), notification.notification.context_slot);
+    try std.testing.expectEqual(@as(u64, 41), subscription.subscriptionId());
+
+    try std.testing.expect(try subscription.unsubscribe());
+    try std.testing.expect(subscription.isClosed());
+    try std.testing.expect(app.signature_unsubscribe_seen);
+}
+
 test "root.PubsubSubscription typed convenience returns typed channel handle" {
     const port = try reservePort();
     var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{

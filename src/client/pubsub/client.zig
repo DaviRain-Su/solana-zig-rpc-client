@@ -108,6 +108,8 @@ pub const PubsubSubscription = struct {
     subscribe_method: []const u8,
     subscribe_params_json: []u8,
     unsubscribe_method: []const u8,
+    owned_subscribe_method: ?[]u8 = null,
+    owned_unsubscribe_method: ?[]u8 = null,
     mutex: std.Thread.Mutex = .{},
     cond: std.Thread.Condition = .{},
     queue: std.ArrayListUnmanaged([]u8) = .{},
@@ -466,6 +468,12 @@ pub const PubsubSubscription = struct {
         self.mutex.unlock();
 
         self.state.allocator.free(self.subscribe_params_json);
+        if (self.owned_subscribe_method) |owned_subscribe_method| {
+            self.state.allocator.free(owned_subscribe_method);
+        }
+        if (self.owned_unsubscribe_method) |owned_unsubscribe_method| {
+            self.state.allocator.free(owned_unsubscribe_method);
+        }
         self.state.release();
         allocator.destroy(self);
     }
@@ -1953,6 +1961,8 @@ const State = struct {
         subscribe_method: []const u8,
         subscribe_params_json: []u8,
         unsubscribe_method: []const u8,
+        owned_subscribe_method: ?[]u8,
+        owned_unsubscribe_method: ?[]u8,
     ) !*PubsubSubscription {
         const subscription = try self.allocator.create(PubsubSubscription);
         errdefer self.allocator.destroy(subscription);
@@ -1965,6 +1975,8 @@ const State = struct {
             .subscribe_method = subscribe_method,
             .subscribe_params_json = subscribe_params_json,
             .unsubscribe_method = unsubscribe_method,
+            .owned_subscribe_method = owned_subscribe_method,
+            .owned_unsubscribe_method = owned_unsubscribe_method,
         };
         return subscription;
     }
@@ -2111,7 +2123,7 @@ const State = struct {
             "[\"{s}\",{s}]",
             .{ signature, config_json },
         );
-        const subscription = self.allocateSubscription("signatureSubscribe", params_json, "signatureUnsubscribe") catch |err| {
+        const subscription = self.allocateSubscription("signatureSubscribe", params_json, "signatureUnsubscribe", null, null) catch |err| {
             self.allocator.free(params_json);
             return err;
         };
@@ -2141,7 +2153,7 @@ const State = struct {
             "[\"{s}\",{s}]",
             .{ account, config_json },
         );
-        const subscription = self.allocateSubscription("accountSubscribe", params_json, "accountUnsubscribe") catch |err| {
+        const subscription = self.allocateSubscription("accountSubscribe", params_json, "accountUnsubscribe", null, null) catch |err| {
             self.allocator.free(params_json);
             return err;
         };
@@ -2182,7 +2194,7 @@ const State = struct {
             "[{s},{s}]",
             .{ filter_json, config_json },
         );
-        const subscription = self.allocateSubscription("logsSubscribe", params_json, "logsUnsubscribe") catch |err| {
+        const subscription = self.allocateSubscription("logsSubscribe", params_json, "logsUnsubscribe", null, null) catch |err| {
             self.allocator.free(params_json);
             return err;
         };
@@ -2212,7 +2224,7 @@ const State = struct {
             "[\"{s}\",{s}]",
             .{ program_id, config_json },
         );
-        const subscription = self.allocateSubscription("programSubscribe", params_json, "programUnsubscribe") catch |err| {
+        const subscription = self.allocateSubscription("programSubscribe", params_json, "programUnsubscribe", null, null) catch |err| {
             self.allocator.free(params_json);
             return err;
         };
@@ -2231,7 +2243,7 @@ const State = struct {
 
     fn subscribeSlot(self: *State) !*PubsubSubscription {
         const params_json = try self.allocator.dupe(u8, "[]");
-        const subscription = self.allocateSubscription("slotSubscribe", params_json, "slotUnsubscribe") catch |err| {
+        const subscription = self.allocateSubscription("slotSubscribe", params_json, "slotUnsubscribe", null, null) catch |err| {
             self.allocator.free(params_json);
             return err;
         };
@@ -2250,7 +2262,7 @@ const State = struct {
 
     fn subscribeRoot(self: *State) !*PubsubSubscription {
         const params_json = try self.allocator.dupe(u8, "[]");
-        const subscription = self.allocateSubscription("rootSubscribe", params_json, "rootUnsubscribe") catch |err| {
+        const subscription = self.allocateSubscription("rootSubscribe", params_json, "rootUnsubscribe", null, null) catch |err| {
             self.allocator.free(params_json);
             return err;
         };
@@ -2269,7 +2281,7 @@ const State = struct {
 
     fn subscribeSlotsUpdates(self: *State) !*PubsubSubscription {
         const params_json = try self.allocator.dupe(u8, "[]");
-        const subscription = self.allocateSubscription("slotsUpdatesSubscribe", params_json, "slotsUpdatesUnsubscribe") catch |err| {
+        const subscription = self.allocateSubscription("slotsUpdatesSubscribe", params_json, "slotsUpdatesUnsubscribe", null, null) catch |err| {
             self.allocator.free(params_json);
             return err;
         };
@@ -2288,7 +2300,7 @@ const State = struct {
 
     fn subscribeVote(self: *State) !*PubsubSubscription {
         const params_json = try self.allocator.dupe(u8, "[]");
-        const subscription = self.allocateSubscription("voteSubscribe", params_json, "voteUnsubscribe") catch |err| {
+        const subscription = self.allocateSubscription("voteSubscribe", params_json, "voteUnsubscribe", null, null) catch |err| {
             self.allocator.free(params_json);
             return err;
         };
@@ -2328,7 +2340,7 @@ const State = struct {
             "[{s},{s}]",
             .{ filter_json, config_json },
         );
-        const subscription = self.allocateSubscription("blockSubscribe", params_json, "blockUnsubscribe") catch |err| {
+        const subscription = self.allocateSubscription("blockSubscribe", params_json, "blockUnsubscribe", null, null) catch |err| {
             self.allocator.free(params_json);
             return err;
         };
@@ -2342,6 +2354,43 @@ const State = struct {
         };
 
         try self.sendRequest("blockSubscribe", params_json, pending);
+        return subscription;
+    }
+
+    fn subscribeRaw(
+        self: *State,
+        subscribe_method: []const u8,
+        params_json: []const u8,
+        unsubscribe_method: []const u8,
+    ) !*PubsubSubscription {
+        const owned_subscribe_method = try self.allocator.dupe(u8, subscribe_method);
+        errdefer self.allocator.free(owned_subscribe_method);
+
+        const owned_params_json = try self.allocator.dupe(u8, params_json);
+        errdefer self.allocator.free(owned_params_json);
+
+        const owned_unsubscribe_method = try self.allocator.dupe(u8, unsubscribe_method);
+        errdefer self.allocator.free(owned_unsubscribe_method);
+
+        const subscription = self.allocateSubscription(
+            owned_subscribe_method,
+            owned_params_json,
+            owned_unsubscribe_method,
+            owned_subscribe_method,
+            owned_unsubscribe_method,
+        ) catch |err| {
+            return err;
+        };
+        errdefer subscription.deinit();
+
+        const pending = try self.allocator.create(PendingRequest);
+        defer pending.deinit(self.allocator);
+        pending.* = .{
+            .kind = .subscribe,
+            .subscription = subscription,
+        };
+
+        try self.sendRequest(owned_subscribe_method, owned_params_json, pending);
         return subscription;
     }
 
@@ -2525,6 +2574,45 @@ pub const PubsubClient = struct {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
         self.state.clearLastError();
+    }
+
+    pub fn subscribeRaw(
+        self: *Self,
+        subscribe_method: []const u8,
+        params_json: []const u8,
+        unsubscribe_method: []const u8,
+    ) !*PubsubSubscription {
+        return self.state.subscribeRaw(subscribe_method, params_json, unsubscribe_method);
+    }
+
+    pub fn subscribeRawWithReceiver(
+        self: *Self,
+        subscribe_method: []const u8,
+        params_json: []const u8,
+        unsubscribe_method: []const u8,
+    ) !PubsubSubscriptionWithReceiver {
+        const subscription = try self.subscribeRaw(subscribe_method, params_json, unsubscribe_method);
+        return .{ .subscription = subscription, .receiver = subscription.receiver() };
+    }
+
+    pub fn subscribeRawWithTypedReceiver(
+        self: *Self,
+        comptime ValueType: type,
+        subscribe_method: []const u8,
+        params_json: []const u8,
+        unsubscribe_method: []const u8,
+    ) !TypedPubsubSubscriptionWithReceiver(ValueType) {
+        return typedSubscriptionWithReceiver(ValueType, try self.subscribeRaw(subscribe_method, params_json, unsubscribe_method));
+    }
+
+    pub fn subscribeRawTyped(
+        self: *Self,
+        comptime ValueType: type,
+        subscribe_method: []const u8,
+        params_json: []const u8,
+        unsubscribe_method: []const u8,
+    ) !TypedPubsubSubscription(ValueType) {
+        return typedSubscription(ValueType, try self.subscribeRaw(subscribe_method, params_json, unsubscribe_method));
     }
 
     pub fn signatureSubscribe(
