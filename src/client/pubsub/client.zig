@@ -1329,6 +1329,10 @@ pub const PubsubSubscriptionWithReceiver = struct {
         };
     }
 
+    pub fn typedParsed(self: *Self, comptime ValueType: type) TypedPubsubSubscriptionWithReceiver(ValueType) {
+        return self.typed(ValueType);
+    }
+
     pub fn unsubscribe(self: *Self) !bool {
         return self.subscription.unsubscribe();
     }
@@ -1422,6 +1426,10 @@ pub fn TypedPubsubSubscriptionWithReceiver(comptime ValueType: type) type {
         pub fn rawReceiver(self: *const Self) TypedPubsubReceiver(ValueType) {
             return self.receiver;
         }
+
+        pub fn rawReceiverView(self: *const Self) TypedPubsubReceiver(ValueType) {
+            return self.receiver;
+        }
     };
 }
 
@@ -1506,6 +1514,10 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
         }
 
         pub fn rawReceiver(self: *const Self) TypedPubsubReceiver(ValueType) {
+            return self.receiver;
+        }
+
+        pub fn rawReceiverView(self: *const Self) TypedPubsubReceiver(ValueType) {
             return self.receiver;
         }
     };

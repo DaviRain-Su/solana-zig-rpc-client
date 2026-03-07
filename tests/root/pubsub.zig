@@ -2218,6 +2218,39 @@ test "root.PubsubSubscription typed convenience returns typed channel handle" {
     try std.testing.expect(app.signature_unsubscribe_seen);
 }
 
+test "root.PubsubSubscriptionWithReceiver typedParsed returns typed handle alias" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var subscribed = try pubsub.signatureSubscribeWithReceiver(
+        "3vQB7B6MrGQZaxCuFg4oh",
+        .{ .commitment = .confirmed },
+    );
+    defer subscribed.deinit();
+
+    var typed = subscribed.typedParsed(client.SignatureNotificationValue);
+    var notification = try typed.recvTimeout(1000);
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 41), notification.notification.subscription);
+    try std.testing.expect(typed.rawReceiverView().rawSubscription() == subscribed.subscription);
+}
+
 test "root.PubsubClient logsSubscribeSummaryTyped returns typed logs summary channel" {
     const port = try reservePort();
     var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
