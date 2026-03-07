@@ -1,7 +1,7 @@
 # solana-client-zig TODO
 
-Snapshot: 2026-03-06
-Current commit: `22d0be0`
+Snapshot: 2026-03-07
+Current commit: `70c0739`
 
 ## Purpose
 
@@ -40,6 +40,33 @@ So "feature parity with Rust client" should be read in two layers:
 1. Reach strong parity with blocking `rpc-client`.
 2. Only then decide how much of `client`'s higher-level transport stack is
    actually worth porting to Zig.
+
+## Status At A Glance
+
+### Completed
+
+- The planned blocking `rpc-client` phases in this document are complete.
+- Core blocking RPC coverage is present: read RPCs, encoded send/simulate,
+  signature status, confirm/poll helpers, airdrop variants, and UI wrappers.
+- The project now has a minimal typed SDK for both legacy and v0 transactions:
+  typed messages/transactions, signing, serialization, base64 helpers, ALT
+  compilation, nonce-aware builders, and owned-message helpers.
+- Core client semantics that were previously placeholders are now real:
+  default commitment persistence, request timeout behavior, initial
+  send-and-confirm timeout handling, raw/typed RPC escape hatches, and
+  spinner-style confirmation convenience.
+
+### Remaining
+
+- Full Agave `client` parity is not complete.
+- The heavy transport/client-stack features are still absent:
+  `pubsub_client`, `nonblocking`, `connection_cache`, `tpu_client`,
+  `transaction_executor`, and `send_and_confirm_transactions_in_parallel`.
+- Some parity areas are only partial rather than complete:
+  `blockhash_query`, `nonce_utils`, Rust-style mock sender helpers, full raw
+  request catalog breadth, and broader typed builder ergonomics.
+- So the current state is: blocking Zig client roadmap mostly done, full Rust
+  Agave client parity still incomplete.
 
 ## Comparison Summary
 
