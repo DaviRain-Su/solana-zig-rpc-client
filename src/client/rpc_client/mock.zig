@@ -423,6 +423,38 @@ pub const MockRouteBuilder = struct {
         return self.rpcRequest(rpc_types.RpcRequest.getHealth);
     }
 
+    pub fn matchGetBlockCommitment(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getBlockCommitment);
+    }
+
+    pub fn matchGetBlockHeight(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getBlockHeight);
+    }
+
+    pub fn matchGetBlockProduction(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getBlockProduction);
+    }
+
+    pub fn matchGetBlockTime(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getBlockTime);
+    }
+
+    pub fn matchGetBlocks(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getBlocks);
+    }
+
+    pub fn matchGetBlocksWithLimit(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getBlocksWithLimit);
+    }
+
+    pub fn matchGetClusterNodes(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getClusterNodes);
+    }
+
+    pub fn matchGetFeatureActivationSlot(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getFeatureActivationSlot);
+    }
+
     pub fn matchGetAccountInfo(self: MockRouteBuilder, commitment_value: ?rpc_types.Commitment) MockRouteBuilder {
         return self.rpcRequest(rpc_types.RpcRequest.getAccountInfo).commitment(commitment_value);
     }
@@ -431,12 +463,88 @@ pub const MockRouteBuilder = struct {
         return self.rpcRequest(rpc_types.RpcRequest.getBalance).commitment(commitment_value);
     }
 
+    pub fn matchGetFeeForMessage(self: MockRouteBuilder, commitment_value: ?rpc_types.Commitment) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getFeeForMessage).commitment(commitment_value);
+    }
+
+    pub fn matchGetFirstAvailableBlock(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getFirstAvailableBlock);
+    }
+
+    pub fn matchGetInflationGovernor(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getInflationGovernor);
+    }
+
+    pub fn matchGetInflationRate(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getInflationRate);
+    }
+
+    pub fn matchGetInflationReward(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getInflationReward);
+    }
+
+    pub fn matchGetLargestAccounts(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getLargestAccounts);
+    }
+
     pub fn matchGetBlock(self: MockRouteBuilder, commitment_value: ?rpc_types.Commitment) MockRouteBuilder {
         return self.rpcRequest(rpc_types.RpcRequest.getBlock).commitment(commitment_value);
     }
 
+    pub fn matchGetMaxRetransmitSlot(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getMaxRetransmitSlot);
+    }
+
+    pub fn matchGetMaxShredInsertSlot(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getMaxShredInsertSlot);
+    }
+
+    pub fn matchGetMinimumBalanceForRentExemption(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getMinimumBalanceForRentExemption);
+    }
+
+    pub fn matchGetMultipleAccounts(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getMultipleAccounts);
+    }
+
+    pub fn matchGetProgramAccounts(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getProgramAccounts);
+    }
+
+    pub fn matchGetRecentPerformanceSamples(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getRecentPerformanceSamples);
+    }
+
+    pub fn matchGetRecentPrioritizationFees(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getRecentPrioritizationFees);
+    }
+
     pub fn matchGetLatestBlockhash(self: MockRouteBuilder, commitment_value: ?rpc_types.Commitment) MockRouteBuilder {
         return self.rpcRequest(rpc_types.RpcRequest.getLatestBlockhash).commitment(commitment_value);
+    }
+
+    pub fn matchGetStakeMinimumDelegation(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getStakeMinimumDelegation);
+    }
+
+    pub fn matchGetTokenAccountBalance(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getTokenAccountBalance);
+    }
+
+    pub fn matchGetTokenAccountsByDelegate(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getTokenAccountsByDelegate);
+    }
+
+    pub fn matchGetTokenAccountsByOwner(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getTokenAccountsByOwner);
+    }
+
+    pub fn matchGetTokenLargestAccounts(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getTokenLargestAccounts);
+    }
+
+    pub fn matchGetTokenSupply(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getTokenSupply);
     }
 
     pub fn matchGetSignatureStatuses(self: MockRouteBuilder, commitment_value: ?rpc_types.Commitment) MockRouteBuilder {
@@ -495,6 +603,14 @@ pub const MockRouteBuilder = struct {
         return self.rpcRequest(rpc_types.RpcRequest.getTransactionCount);
     }
 
+    pub fn matchGetVoteAccounts(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getVoteAccounts);
+    }
+
+    pub fn matchIsBlockhashValid(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.isBlockhashValid);
+    }
+
     pub fn matchGetVersion(self: MockRouteBuilder) MockRouteBuilder {
         return self.rpcRequest(rpc_types.RpcRequest.getVersion);
     }
@@ -505,6 +621,10 @@ pub const MockRouteBuilder = struct {
 
     pub fn matchSendTransaction(self: MockRouteBuilder) MockRouteBuilder {
         return self.rpcRequest(rpc_types.RpcRequest.sendTransaction);
+    }
+
+    pub fn matchSimulateTransaction(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.simulateTransaction);
     }
 
     pub fn response(self: MockRouteBuilder, value: MockResponse) MockRouteBuilder {

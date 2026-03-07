@@ -1044,7 +1044,14 @@ test "root.MockRouteBuilder adds common rpc request matchers" {
         .matchGetSlotLeader()
         .resultJson("\"slotLeader\"")
         .build();
-
+    const latest_performance_samples_route = try client.MockRouteBuilder.init()
+        .matchGetRecentPerformanceSamples()
+        .resultJson("[]")
+        .build();
+    const token_supply_route = try client.MockRouteBuilder.init()
+        .matchGetTokenSupply()
+        .resultJson("{\"context\":{\"slot\":2},\"value\":{}}")
+        .build();
     try std.testing.expectEqualStrings("getBlock", finalized_route.matcher.method.?);
     try std.testing.expectEqualStrings("finalized", finalized_route.matcher.params_json_contains.?);
     try std.testing.expectEqualStrings("getBalance", processed_route.matcher.method.?);
@@ -1083,6 +1090,32 @@ test "root.MockRouteBuilder adds common rpc request matchers" {
     try std.testing.expectEqualStrings("getTransactionCount", (try client.MockRouteBuilder.init()
         .matchGetTransactionCount()
         .resultJson("0")
+        .build()).matcher.method.?);
+    try std.testing.expectEqualStrings("getRecentPerformanceSamples", latest_performance_samples_route.matcher.method.?);
+    try std.testing.expectEqualStrings("getTokenSupply", token_supply_route.matcher.method.?);
+    try std.testing.expectEqualStrings("getBlocksWithLimit", (try client.MockRouteBuilder.init()
+        .matchGetBlocksWithLimit()
+        .resultJson("[]")
+        .build()).matcher.method.?);
+    try std.testing.expectEqualStrings("getBlockCommitment", (try client.MockRouteBuilder.init()
+        .matchGetBlockCommitment()
+        .resultJson("{}")
+        .build()).matcher.method.?);
+    try std.testing.expectEqualStrings("getInflationRate", (try client.MockRouteBuilder.init()
+        .matchGetInflationRate()
+        .resultJson("{}")
+        .build()).matcher.method.?);
+    try std.testing.expectEqualStrings("simulateTransaction", (try client.MockRouteBuilder.init()
+        .matchSimulateTransaction()
+        .resultJson("{}")
+        .build()).matcher.method.?);
+    try std.testing.expectEqualStrings("isBlockhashValid", (try client.MockRouteBuilder.init()
+        .matchIsBlockhashValid()
+        .resultJson("true")
+        .build()).matcher.method.?);
+    try std.testing.expectEqualStrings("getVoteAccounts", (try client.MockRouteBuilder.init()
+        .matchGetVoteAccounts()
+        .resultJson("[]")
         .build()).matcher.method.?);
     try std.testing.expect(airdrop_route.matcher.params_json_contains == null);
 }
