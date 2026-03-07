@@ -1,7 +1,7 @@
 # solana-client-zig TODO
 
 Snapshot: 2026-03-07
-Current commit: `322a77a`
+Current commit: `5432086`
 
 ## Purpose
 
@@ -268,7 +268,9 @@ These items are valid Agave features, but they should not be the next thing:
   `accountSubscribe` / `programSubscribe` / `slotSubscribe` /
   `rootSubscribe` / `slotsUpdatesSubscribe` / `voteSubscribe` /
   `blockSubscribe` is now in place, and basic automatic reconnect/re-subscribe
-  is now implemented. receiver views, timeout-based receive convenience,
+  is now implemented. Receiver views, timeout-based receive convenience,
+  reconnect telemetry/policy knobs, and reconnect-status introspection are now also
+  available. Remaining gaps are still in receiver/channel ergonomics.
   public typed receiver views, `waitClosed` / `waitClosedTimeout` lifecycle
   waiting, `closeResult()` / `waitClosedResult*()` lifecycle summaries, public
   `subscriptionId()` access on subscription/receiver/typed handles, direct
