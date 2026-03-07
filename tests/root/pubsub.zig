@@ -222,6 +222,14 @@ fn signatureCallback(
     }
 }
 
+fn slowSignatureCallback(
+    context: ?*anyopaque,
+    notification: client.OwnedPubsubNotification(client.SignatureNotificationValue),
+) void {
+    std.Thread.sleep(20 * std.time.ns_per_ms);
+    signatureCallback(context, notification);
+}
+
 fn accountCallback(
     context: ?*anyopaque,
     notification: client.OwnedPubsubNotification(client.AccountNotificationValue),
@@ -571,6 +579,26 @@ const TestHandler = struct {
                 } else {
                     const notification =
                         "{\"jsonrpc\":\"2.0\",\"method\":\"signatureNotification\",\"params\":{\"result\":{\"context\":{\"slot\":888},\"value\":{\"err\":null}},\"subscription\":243}}";
+                    try self.conn.write(notification);
+                }
+                return;
+            }
+
+            if (std.mem.indexOf(u8, data, "SignatureClose111111111111111111111111111111") != null) {
+                const response = try std.fmt.allocPrint(
+                    self.app.allocator,
+                    "{{\"jsonrpc\":\"2.0\",\"result\":46,\"id\":{}}}",
+                    .{parsed.value.id},
+                );
+                defer self.app.allocator.free(response);
+                try self.conn.write(response);
+
+                const notifications = [_][]const u8{
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"signatureNotification\",\"params\":{\"result\":{\"context\":{\"slot\":301},\"value\":{\"err\":null}},\"subscription\":46}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"signatureNotification\",\"params\":{\"result\":{\"context\":{\"slot\":302},\"value\":{\"err\":null}},\"subscription\":46}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"signatureNotification\",\"params\":{\"result\":{\"context\":{\"slot\":303},\"value\":{\"err\":null}},\"subscription\":46}}",
+                };
+                for (notifications) |notification| {
                     try self.conn.write(notification);
                 }
                 return;
@@ -2250,6 +2278,63 @@ test "root.PubsubClient signatureSubscribeWithCallback invokes callback and unsu
     }
 
     try std.testing.expect(app.signature_unsubscribe_seen);
+}
+
+test "root.PubsubClient signatureSubscribeWithCallback closes subscription when queue overflows" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .subscription_queue_limit = 1,
+        .queue_overflow_policy = .close_subscription,
+    });
+    defer pubsub.deinit();
+
+    var tracker = SignatureCallbackTracker{};
+    {
+        var subscription = try pubsub.signatureSubscribeWithCallback(
+            "SignatureClose111111111111111111111111111111111",
+            .{ .commitment = .confirmed },
+            &tracker,
+            slowSignatureCallback,
+        );
+        defer subscription.deinit();
+
+        try waitForClosed(subscription.rawSubscription(), 2000);
+        try std.testing.expectEqual(@as(usize, 1), subscription.queuedCount());
+        try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
+        try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, subscription.closeReason());
+
+        var receiver = subscription.receiver();
+        try std.testing.expectEqual(subscription.subscriptionId(), receiver.subscriptionId());
+        try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, receiver.closeReason());
+
+        tracker.mutex.lock();
+        const callback_count = tracker.count;
+        tracker.mutex.unlock();
+        try std.testing.expect(callback_count > 0);
+
+        var typed_receiver = subscription.typed(client.SignatureNotificationValue);
+        try std.testing.expectEqual(receiver.subscriptionId(), typed_receiver.subscriptionId());
+        try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, typed_receiver.closeReason());
+
+        var notification = try receiver.recvSignatureNotificationTimeout(1000);
+        defer notification.deinit();
+        try std.testing.expect(notification.notification.value.err == null);
+    }
+
 }
 
 test "root.PubsubClient accountSubscribeWithCallback invokes callback and unsubscribes" {
