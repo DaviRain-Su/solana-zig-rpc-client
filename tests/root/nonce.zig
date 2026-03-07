@@ -94,6 +94,212 @@ test "root.resolveBlockhashQuery resolves cluster, fixed, and nonce account sour
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"commitment\":\"finalized\"") != null);
 }
 
+test "root.buildOwnedLegacyMessageWithBlockhashQuery resolves cluster blockhash for arbitrary instructions" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const recent_blockhash = [_]u8{0x33} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    const latest_blockhash_response = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":66}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":1234}}}},\"id\":1}}",
+        .{recent_blockhash_base58},
+    );
+    defer allocator.free(latest_blockhash_response);
+
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockJsonResponse(latest_blockhash_response);
+
+    const payer = try Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer.public_key, destination, 42);
+    const instructions = [_]client.Instruction{transfer.instruction()};
+
+    var owned = try rpc.buildOwnedLegacyMessageWithBlockhashQuery(
+        payer.public_key,
+        instructions[0..],
+        .{ .cluster = .{ .commitment = .confirmed } },
+        null,
+    );
+    defer owned.deinit(allocator);
+
+    var expected = try client.buildOwnedLegacyMessage(
+        allocator,
+        payer.public_key,
+        Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+    );
+    defer expected.deinit(allocator);
+
+    const encoded = try owned.serialize(allocator);
+    defer allocator.free(encoded);
+    const expected_encoded = try expected.serialize(allocator);
+    defer allocator.free(expected_encoded);
+
+    try std.testing.expectEqualSlices(u8, expected_encoded, encoded);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
+}
+
+test "root.buildSignedLegacyTransactionWithBlockhashQuery supports nonce account queries for arbitrary instructions" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{3} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{4} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{6} ** 32);
+    const recent_blockhash = [_]u8{0x44} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+    const nonce_account_base58 = try encodeBase58(allocator, &nonce_account_raw.public_key.toBytes());
+    defer allocator.free(nonce_account_base58);
+
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    const nonce_account_result_json = try std.mem.concat(allocator, u8, &.{
+        "{\"context\":{\"slot\":88},\"value\":{\"data\":{\"program\":\"system\",\"parsed\":{\"type\":\"initialized\",\"info\":{\"authority\":\"Auth111111111111111111111111111111111111\",\"blockhash\":\"",
+        recent_blockhash_base58,
+        "\",\"feeCalculator\":{\"lamportsPerSignature\":5000}}},\"space\":80},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}",
+    });
+    defer allocator.free(nonce_account_result_json);
+    try rpc.pushMockResultJson(nonce_account_result_json);
+
+    const payer = try Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const nonce_authority = try Keypair.fromSecretKeyBytes(nonce_authority_raw.secret_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const nonce_account = Pubkey.fromBytes(nonce_account_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer.public_key, destination, 77);
+    const instructions = [_]client.Instruction{transfer.instruction()};
+
+    var signed = try rpc.buildSignedLegacyTransactionWithBlockhashQuery(
+        payer.public_key,
+        instructions[0..],
+        &.{ payer, nonce_authority },
+        .{ .nonce_account = .{
+            .pubkey = nonce_account_base58,
+            .commitment = .finalized,
+        } },
+        nonce_authority.public_key,
+    );
+    defer signed.deinit(allocator);
+
+    var expected_signed = try client.buildSignedLegacyTransactionWithNonceInstructions(
+        allocator,
+        payer.public_key,
+        nonce_account,
+        nonce_authority.public_key,
+        Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+        &.{ payer, nonce_authority },
+    );
+    defer expected_signed.deinit(allocator);
+
+    try std.testing.expectEqualSlices(u8, expected_signed.message_bytes, signed.message_bytes);
+    try std.testing.expectEqual(@as(usize, expected_signed.signatures.len), signed.signatures.len);
+    try std.testing.expectEqualSlices(u8, expected_signed.signatures[0].bytes[0..], signed.signatures[0].bytes[0..]);
+    try std.testing.expectEqualSlices(u8, expected_signed.signatures[1].bytes[0..], signed.signatures[1].bytes[0..]);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"encoding\":\"jsonParsed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"finalized\"") != null);
+}
+
+test "root.buildLegacyTransactionBase64WithBlockhashQuery supports fixed blockhashes without RPC" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{8} ** 32);
+    const recent_blockhash = [_]u8{0x45} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    const payer = try Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer.public_key, destination, 99);
+    const instructions = [_]client.Instruction{transfer.instruction()};
+
+    const encoded = try rpc.buildLegacyTransactionBase64WithBlockhashQuery(
+        payer.public_key,
+        instructions[0..],
+        &.{payer},
+        .{ .fixed = recent_blockhash_base58 },
+        null,
+    );
+    defer allocator.free(encoded);
+
+    const expected_encoded = try client.buildLegacyTransactionBase64(
+        allocator,
+        payer.public_key,
+        Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+        &.{payer},
+    );
+    defer allocator.free(expected_encoded);
+
+    try std.testing.expectEqualStrings(expected_encoded, encoded);
+}
+
+test "root.buildLegacyMessageBytesAndBase64WithBlockhashQuery support fixed blockhashes without RPC" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{10} ** 32);
+    const recent_blockhash = [_]u8{0x46} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    var rpc = try client.RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    const payer = try Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer.public_key, destination, 101);
+    const instructions = [_]client.Instruction{transfer.instruction()};
+
+    const message_bytes = try rpc.buildLegacyMessageBytesWithBlockhashQuery(
+        payer.public_key,
+        instructions[0..],
+        .{ .fixed = recent_blockhash_base58 },
+        null,
+    );
+    defer allocator.free(message_bytes);
+
+    const message_base64 = try rpc.buildLegacyMessageBase64WithBlockhashQuery(
+        payer.public_key,
+        instructions[0..],
+        .{ .fixed = recent_blockhash_base58 },
+        null,
+    );
+    defer allocator.free(message_base64);
+
+    const expected_bytes = try client.buildLegacyMessageBytes(
+        allocator,
+        payer.public_key,
+        Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+    );
+    defer allocator.free(expected_bytes);
+
+    const expected_base64 = try client.buildLegacyMessageBase64(
+        allocator,
+        payer.public_key,
+        Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+    );
+    defer allocator.free(expected_base64);
+
+    try std.testing.expectEqualSlices(u8, expected_bytes, message_bytes);
+    try std.testing.expectEqualStrings(expected_base64, message_base64);
+}
+
 test "root.buildInitializeNonceAccountSignedTransactionWithOptions fetches latest blockhash" {
     const allocator = std.testing.allocator;
 

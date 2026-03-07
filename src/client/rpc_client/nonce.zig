@@ -13,11 +13,18 @@ const SendNonceAccountOptions = rpc_types.SendNonceAccountOptions;
 const SendTransactionOptions = rpc_types.SendTransactionOptions;
 const UiAccountQueryOptions = rpc_types.UiAccountQueryOptions;
 const Hash = @import("../sdk.zig").Hash;
+const Instruction = @import("../sdk.zig").Instruction;
 const Keypair = @import("../sdk.zig").Keypair;
 const LegacyTransaction = @import("../sdk.zig").LegacyTransaction;
+const OwnedLegacyMessage = @import("../sdk.zig").OwnedLegacyMessage;
 const Pubkey = @import("../sdk.zig").Pubkey;
 const SignedLegacyTransaction = @import("../sdk.zig").SignedLegacyTransaction;
 const SystemProgram = @import("../sdk.zig").SystemProgram;
+const buildLegacyTransactionBase64 = @import("../sdk.zig").buildLegacyTransactionBase64;
+const buildOwnedLegacyMessage = @import("../sdk.zig").buildOwnedLegacyMessage;
+const buildOwnedLegacyMessageWithNonceInstructions = @import("../sdk.zig").buildOwnedLegacyMessageWithNonceInstructions;
+const buildSignedLegacyTransaction = @import("../sdk.zig").buildSignedLegacyTransaction;
+const buildSignedLegacyTransactionWithNonceInstructions = @import("../sdk.zig").buildSignedLegacyTransactionWithNonceInstructions;
 const poll_for_signature_confirmation_timeout_ms = @import("../sdk.zig").poll_for_signature_confirmation_timeout_ms;
 const signature_poll_interval_ms = @import("../sdk.zig").signature_poll_interval_ms;
 
@@ -240,6 +247,149 @@ pub fn resolveBlockhashQuery(self: anytype, query: BlockhashQuery) !ResolvedBloc
                 .last_valid_block_height = null,
             };
         },
+    };
+}
+
+pub fn buildOwnedLegacyMessageWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+) !OwnedLegacyMessage {
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    const recent_blockhash = try Hash.fromBase58(self.allocator, resolved.blockhash);
+    return switch (blockhash_query) {
+        .nonce_account => |nonce_query| {
+            const authority = nonce_authority orelse return error.MissingNonceAuthority;
+            const nonce_account = try Pubkey.fromBase58(self.allocator, nonce_query.pubkey);
+            return try buildOwnedLegacyMessageWithNonceInstructions(
+                self.allocator,
+                payer,
+                nonce_account,
+                authority,
+                recent_blockhash,
+                instructions,
+            );
+        },
+        else => try buildOwnedLegacyMessage(
+            self.allocator,
+            payer,
+            recent_blockhash,
+            instructions,
+        ),
+    };
+}
+
+pub fn buildSignedLegacyTransactionWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+) !SignedLegacyTransaction {
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    const recent_blockhash = try Hash.fromBase58(self.allocator, resolved.blockhash);
+    return switch (blockhash_query) {
+        .nonce_account => |nonce_query| {
+            const authority = nonce_authority orelse return error.MissingNonceAuthority;
+            const nonce_account = try Pubkey.fromBase58(self.allocator, nonce_query.pubkey);
+            return try buildSignedLegacyTransactionWithNonceInstructions(
+                self.allocator,
+                payer,
+                nonce_account,
+                authority,
+                recent_blockhash,
+                instructions,
+                signers,
+            );
+        },
+        else => try buildSignedLegacyTransaction(
+            self.allocator,
+            payer,
+            recent_blockhash,
+            instructions,
+            signers,
+        ),
+    };
+}
+
+pub fn buildLegacyMessageBytesWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+) ![]u8 {
+    var owned = try self.buildOwnedLegacyMessageWithBlockhashQuery(
+        payer,
+        instructions,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer owned.deinit(self.allocator);
+
+    return try owned.serialize(self.allocator);
+}
+
+pub fn buildLegacyMessageBase64WithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+) ![]u8 {
+    var owned = try self.buildOwnedLegacyMessageWithBlockhashQuery(
+        payer,
+        instructions,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer owned.deinit(self.allocator);
+
+    return try owned.toBase64(self.allocator);
+}
+
+pub fn buildLegacyTransactionBase64WithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+) ![]u8 {
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    const recent_blockhash = try Hash.fromBase58(self.allocator, resolved.blockhash);
+    return switch (blockhash_query) {
+        .nonce_account => |nonce_query| {
+            const authority = nonce_authority orelse return error.MissingNonceAuthority;
+            const nonce_account = try Pubkey.fromBase58(self.allocator, nonce_query.pubkey);
+            var signed = try buildSignedLegacyTransactionWithNonceInstructions(
+                self.allocator,
+                payer,
+                nonce_account,
+                authority,
+                recent_blockhash,
+                instructions,
+                signers,
+            );
+            defer signed.deinit(self.allocator);
+            return try signed.toBase64(self.allocator);
+        },
+        else => try buildLegacyTransactionBase64(
+            self.allocator,
+            payer,
+            recent_blockhash,
+            instructions,
+            signers,
+        ),
     };
 }
 
