@@ -262,6 +262,14 @@ fn slowAccountCallback(
     accountCallback(context, notification);
 }
 
+fn slowProgramCallback(
+    context: ?*anyopaque,
+    notification: client.OwnedPubsubNotification(client.ProgramNotificationValue),
+) void {
+    std.time.sleep(20 * std.time.ns_per_ms);
+    programCallback(context, notification);
+}
+
 fn programCallback(
     context: ?*anyopaque,
     notification: client.OwnedPubsubNotification(client.ProgramNotificationValue),
@@ -759,6 +767,26 @@ const TestHandler = struct {
         }
 
         if (std.mem.eql(u8, parsed.value.method, "programSubscribe")) {
+            if (std.mem.indexOf(u8, data, "ProgramClose111111111111111111111111111111111111") != null) {
+                const response = try std.fmt.allocPrint(
+                    self.app.allocator,
+                    "{{\"jsonrpc\":\"2.0\",\"result\":62,\"id\":{}}}",
+                    .{parsed.value.id},
+                );
+                defer self.app.allocator.free(response);
+                try self.conn.write(response);
+
+                const notifications = [_][]const u8{
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"programNotification\",\"params\":{\"result\":{\"context\":{\"slot\":551},\"value\":{\"pubkey\":\"7YttLkHDoNj9wyQkL8vL7h4sQ6x9x1Fs6sT4m7G4S3xX\",\"account\":{\"data\":{\"program\":\"spl-token\",\"parsed\":{\"type\":\"account\",\"info\":{\"mint\":\"Mint111111111111111111111111111111111111111\",\"owner\":\"Owner1111111111111111111111111111111111111\",\"state\":\"initialized\",\"tokenAmount\":{\"amount\":\"42\",\"decimals\":9,\"uiAmountString\":\"0.000000042\"}}}},\"executable\":false,\"lamports\":999,\"owner\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\",\"rentEpoch\":8,\"space\":165}},\"subscription\":62}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"programNotification\",\"params\":{\"result\":{\"context\":{\"slot\":552},\"value\":{\"pubkey\":\"7YttLkHDoNj9wyQkL8vL7h4sQ6x9x1Fs6sT4m7G4S3xX\",\"account\":{\"data\":{\"program\":\"spl-token\",\"parsed\":{\"type\":\"account\",\"info\":{\"mint\":\"Mint111111111111111111111111111111111111111\",\"owner\":\"Owner1111111111111111111111111111111111111\",\"state\":\"initialized\",\"tokenAmount\":{\"amount\":\"43\",\"decimals\":9,\"uiAmountString\":\"0.000000043\"}}}},\"executable\":false,\"lamports\":1000,\"owner\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\",\"rentEpoch\":8,\"space\":165}},\"subscription\":62}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"programNotification\",\"params\":{\"result\":{\"context\":{\"slot\":553},\"value\":{\"pubkey\":\"7YttLkHDoNj9wyQkL8vL7h4sQ6x9x1Fs6sT4m7G4S3xX\",\"account\":{\"data\":{\"program\":\"spl-token\",\"parsed\":{\"type\":\"account\",\"info\":{\"mint\":\"Mint111111111111111111111111111111111111111\",\"owner\":\"Owner1111111111111111111111111111111111111\",\"state\":\"initialized\",\"tokenAmount\":{\"amount\":\"44\",\"decimals\":9,\"uiAmountString\":\"0.000000044\"}}}},\"executable\":false,\"lamports\":1001,\"owner\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\",\"rentEpoch\":8,\"space\":165}},\"subscription\":62}}",
+                };
+                for (notifications) |notification| {
+                    try self.conn.write(notification);
+                }
+                return;
+            }
+
             const response = try std.fmt.allocPrint(
                 self.app.allocator,
                 "{{\"jsonrpc\":\"2.0\",\"result\":62,\"id\":{}}}",
@@ -2318,6 +2346,64 @@ test "root.PubsubClient accountSubscribeWithCallback closes subscription when qu
         var notification = try receiver.recvAccountNotificationTimeout(1000);
         defer notification.deinit();
         try std.testing.expectEqual(@as(u64, 777), notification.notification.value.lamports);
+    }
+
+    _ = app;
+}
+
+test "root.PubsubClient programSubscribeWithCallback closes subscription when queue overflows" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .subscription_queue_limit = 1,
+        .queue_overflow_policy = .close_subscription,
+    });
+    defer pubsub.deinit();
+
+    var tracker = ProgramCallbackTracker{};
+    {
+        var subscription = try pubsub.programSubscribeWithCallback(
+            "ProgramClose11111111111111111111111111111111111111",
+            .{ .commitment = .confirmed },
+            &tracker,
+            slowProgramCallback,
+        );
+        defer subscription.deinit();
+
+        try waitForClosed(subscription.rawSubscription(), 2000);
+        try std.testing.expectEqual(@as(usize, 1), subscription.queuedCount());
+        try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
+        try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, subscription.closeReason());
+
+        const receiver = subscription.receiver();
+        try std.testing.expectEqual(subscription.subscriptionId(), receiver.subscriptionId());
+        try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, receiver.closeReason());
+
+        tracker.mutex.lock();
+        const callback_count = tracker.count;
+        tracker.mutex.unlock();
+        try std.testing.expect(callback_count > 0);
+
+        const typed_receiver = subscription.typed(client.ProgramNotificationValue);
+        try std.testing.expectEqual(receiver.subscriptionId(), typed_receiver.subscriptionId());
+        try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, typed_receiver.closeReason());
+
+        var notification = try receiver.recvProgramNotificationTimeout(1000);
+        defer notification.deinit();
+        try std.testing.expectEqual(@as(u64, 999), notification.notification.value.account.lamports);
     }
 
     _ = app;
