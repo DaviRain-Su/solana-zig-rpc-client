@@ -2872,6 +2872,11 @@ const State = struct {
                 return error.Closed;
             }
 
+            self.reconnect_limit_reached = false;
+            const reconnect_delay_ms = self.reconnectDelayMsLocked();
+            if (self.total_reconnect_attempts < std.math.maxInt(u32)) {
+                self.total_reconnect_attempts += 1;
+            }
             if (self.options.reconnect_max_attempts) |max_reconnect_attempts| {
                 if (self.total_reconnect_attempts >= max_reconnect_attempts) {
                     self.reconnect_limit_reached = true;
@@ -2880,12 +2885,6 @@ const State = struct {
                     self.mutex.unlock();
                     return error.Closed;
                 }
-            }
-
-            self.reconnect_limit_reached = false;
-            const reconnect_delay_ms = self.reconnectDelayMsLocked();
-            if (self.total_reconnect_attempts < std.math.maxInt(u32)) {
-                self.total_reconnect_attempts += 1;
             }
             self.mutex.unlock();
 
@@ -2915,7 +2914,6 @@ const State = struct {
             self.reader_thread = try self.ws_client.readLoopInNewThread(self);
             try self.resubscribeAllLocked();
             self.reconnect_attempt = 0;
-            self.total_reconnect_attempts = 0;
             self.reconnecting = false;
             self.resetHeartbeatState();
             self.cond.broadcast();
