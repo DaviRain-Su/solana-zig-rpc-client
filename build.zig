@@ -67,14 +67,8 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    const websocket_module = b.createModule(.{
-        .root_source_file = b.path("vendor/websocket.zig/src/websocket.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const websocket_build_options = b.addOptions();
-    websocket_build_options.addOption(bool, "websocket_blocking", false);
-    websocket_module.addOptions("build", websocket_build_options);
+    const websocket_dep = b.dependency("websocket", .{});
+    const websocket_module = websocket_dep.module("websocket");
     // It's also possible to define more custom flags to toggle optional features
     // of this build script using `b.option()`. All defined flags (including
     // target and optimize options) will be listed when running `zig build --help`
