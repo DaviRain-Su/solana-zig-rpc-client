@@ -481,6 +481,74 @@ test "root.buildLegacyMessageBase64WithOptions uses explicit recent blockhash wi
     try std.testing.expectEqual(@as(usize, 0), rpc.mockRequestCount());
 }
 
+test "root.sendAndConfirmLegacyInstructions uses explicit recent blockhash without blockhash lookup" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{27} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{28} ** 32);
+    const recent_blockhash = [_]u8{0x4E} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "SigLegacyPlain1111111111111111111111111111111111111111111111111111111111",
+        &.{
+            .{ .context_slot = 101, .status = .{
+                .slot = 101,
+                .confirmations = 1,
+                .confirmation_status = "processed",
+                .has_error = false,
+            } },
+            .{ .context_slot = 102, .status = .{
+                .slot = 102,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+
+    const payer = try Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer.public_key, destination, 1111);
+    const instructions = [_]client.Instruction{transfer.instruction()};
+
+    var expected_signed = try client.buildSignedLegacyTransaction(
+        allocator,
+        payer.public_key,
+        Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+        &.{payer},
+    );
+    defer expected_signed.deinit(allocator);
+    const expected_encoded = try expected_signed.toBase64(allocator);
+    defer allocator.free(expected_encoded);
+
+    const signature = try rpc.sendAndConfirmLegacyInstructions(
+        payer.public_key,
+        instructions[0..],
+        &.{payer},
+        recent_blockhash_base58,
+        .confirmed,
+        .{ .skip_preflight = true, .max_retries = 5 },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigLegacyPlain1111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 3), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, expected_encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"maxRetries\":5") != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[2].method);
+}
+
 test "root.sendAndConfirmLegacyInstructionsWithBlockhashQuery supports nonce account queries for arbitrary instructions" {
     const allocator = std.testing.allocator;
 
