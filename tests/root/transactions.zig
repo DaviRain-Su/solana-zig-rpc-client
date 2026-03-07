@@ -1271,6 +1271,8 @@ test "root.buildVersionedTransferTransaction with fixed blockhash returns versio
     defer allocator.free(destination_base58);
 
     const recent_blockhash = [_]u8{0x22} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
 
     var rpc = try RpcClient.init(allocator, "https://example.com");
     defer rpc.deinit();
@@ -1279,7 +1281,7 @@ test "root.buildVersionedTransferTransaction with fixed blockhash returns versio
         sender_secret_key_base58,
         destination_base58,
         1_000,
-        &recent_blockhash,
+        recent_blockhash_base58,
         &.{},
     );
     defer allocator.free(encoded);

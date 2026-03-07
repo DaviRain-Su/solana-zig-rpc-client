@@ -250,7 +250,7 @@ fn slowLogsCallback(
     context: ?*anyopaque,
     notification: client.OwnedPubsubNotification(client.LogsNotificationValue),
 ) void {
-    std.time.sleep(20 * std.time.ns_per_ms);
+    std.Thread.sleep(20 * std.time.ns_per_ms);
     logsCallback(context, notification);
 }
 
@@ -258,7 +258,7 @@ fn slowAccountCallback(
     context: ?*anyopaque,
     notification: client.OwnedPubsubNotification(client.AccountNotificationValue),
 ) void {
-    std.time.sleep(20 * std.time.ns_per_ms);
+    std.Thread.sleep(20 * std.time.ns_per_ms);
     accountCallback(context, notification);
 }
 
@@ -266,7 +266,7 @@ fn slowProgramCallback(
     context: ?*anyopaque,
     notification: client.OwnedPubsubNotification(client.ProgramNotificationValue),
 ) void {
-    std.time.sleep(20 * std.time.ns_per_ms);
+    std.Thread.sleep(20 * std.time.ns_per_ms);
     programCallback(context, notification);
 }
 
@@ -1424,7 +1424,6 @@ test "root.PubsubClient heartbeat interval can be changed at runtime" {
     try std.testing.expectEqual(@as(?u32, 5), pubsub.getHeartbeatIntervalMs());
 
     app.mutex.lock();
-    const before_disable_count = app.heartbeat_ping_count;
     app.mutex.unlock();
     try pubsub.setHeartbeatIntervalMs(null);
     try std.testing.expectEqual(@as(?u32, null), pubsub.getHeartbeatIntervalMs());
@@ -2330,7 +2329,7 @@ test "root.PubsubClient accountSubscribeWithCallback closes subscription when qu
         try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
         try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, subscription.closeReason());
 
-        const receiver = subscription.receiver();
+        var receiver = subscription.receiver();
         try std.testing.expectEqual(subscription.subscriptionId(), receiver.subscriptionId());
         try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, receiver.closeReason());
 
@@ -2339,7 +2338,7 @@ test "root.PubsubClient accountSubscribeWithCallback closes subscription when qu
         tracker.mutex.unlock();
         try std.testing.expect(callback_count > 0);
 
-        const typed_receiver = subscription.typed(client.AccountNotificationValue);
+        var typed_receiver = subscription.typed(client.AccountNotificationValue);
         try std.testing.expectEqual(receiver.subscriptionId(), typed_receiver.subscriptionId());
         try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, typed_receiver.closeReason());
 
@@ -2348,7 +2347,6 @@ test "root.PubsubClient accountSubscribeWithCallback closes subscription when qu
         try std.testing.expectEqual(@as(u64, 777), notification.notification.value.lamports);
     }
 
-    _ = app;
 }
 
 test "root.PubsubClient programSubscribeWithCallback closes subscription when queue overflows" {
@@ -2388,7 +2386,7 @@ test "root.PubsubClient programSubscribeWithCallback closes subscription when qu
         try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
         try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, subscription.closeReason());
 
-        const receiver = subscription.receiver();
+        var receiver = subscription.receiver();
         try std.testing.expectEqual(subscription.subscriptionId(), receiver.subscriptionId());
         try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, receiver.closeReason());
 
@@ -2397,7 +2395,7 @@ test "root.PubsubClient programSubscribeWithCallback closes subscription when qu
         tracker.mutex.unlock();
         try std.testing.expect(callback_count > 0);
 
-        const typed_receiver = subscription.typed(client.ProgramNotificationValue);
+        var typed_receiver = subscription.typed(client.ProgramNotificationValue);
         try std.testing.expectEqual(receiver.subscriptionId(), typed_receiver.subscriptionId());
         try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, typed_receiver.closeReason());
 
@@ -2406,7 +2404,6 @@ test "root.PubsubClient programSubscribeWithCallback closes subscription when qu
         try std.testing.expectEqual(@as(u64, 999), notification.notification.value.account.lamports);
     }
 
-    _ = app;
 }
 
 test "root.PubsubClient logsSubscribeWithCallback invokes callback and unsubscribes" {
@@ -2533,12 +2530,12 @@ test "root.PubsubClient logsSubscribeWithCallback closes subscription when queue
         try std.testing.expectEqual(@as(usize, 1), subscription.queuedCount());
         try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
 
-        const receiver = subscription.receiver();
+        var receiver = subscription.receiver();
         try std.testing.expectEqual(subscription.subscriptionId(), receiver.subscriptionId());
         try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, receiver.closeReason());
         try std.testing.expectEqual(@as(usize, 1), receiver.queuedCount());
 
-        const typed_receiver = subscription.typed(client.LogsNotificationValue);
+        var typed_receiver = subscription.typed(client.LogsNotificationValue);
         try std.testing.expectEqual(receiver.subscriptionId(), typed_receiver.subscriptionId());
         try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, typed_receiver.closeReason());
 
@@ -2547,7 +2544,7 @@ test "root.PubsubClient logsSubscribeWithCallback closes subscription when queue
         try std.testing.expectEqualStrings("close1", notification.notification.value.signature);
     }
 
-    _ = tracker;
+
 }
 
 test "root.PubsubClient programSubscribeWithCallback invokes callback and unsubscribes" {
@@ -2628,10 +2625,10 @@ test "root.PubsubClient slotSubscribeWithCallback invokes callback and unsubscri
         subscription.clearLastError();
         try std.testing.expect(subscription.getLastError() == null);
 
-        const receiver = subscription.receiver();
+        var receiver = subscription.receiver();
         try std.testing.expectEqual(subscription.subscriptionId(), receiver.subscriptionId());
 
-        const typed_receiver = subscription.typed(client.SlotNotificationValue);
+        var typed_receiver = subscription.typed(client.SlotNotificationValue);
         try std.testing.expectEqual(receiver.subscriptionId(), typed_receiver.subscriptionId());
     }
 
@@ -2667,7 +2664,7 @@ test "root.PubsubClient slotSubscribeWithOptionsWithCallback surfaces subscribe 
         ),
     );
 
-    try std.testing.expectEqual(@as(usize, 1), app.slot_subscribe_error_seen);
+    try std.testing.expect(app.slot_subscribe_error_seen);
     const last_error = pubsub.getLastError() orelse return error.TestExpectedError;
     try std.testing.expectEqual(@as(i64, -32010), last_error.code);
     try std.testing.expectEqualStrings("slot subscribe failed", last_error.message);
