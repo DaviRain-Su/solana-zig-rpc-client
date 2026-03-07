@@ -111,11 +111,11 @@ test "root.inner accessors expose inner client handles" {
     var sender_context = RequestSenderContext{ .base_slot = 1000 };
     var rpc_with_sender = try client.RpcClient.newWithRequestSender(
         allocator,
-        .{
-            .context = &sender_context,
-            .callback = customRequestSender,
-            .deinit_callback = customRequestSenderDeinit,
-        },
+        client.RequestSender.initWithDeinit(
+            &sender_context,
+            customRequestSender,
+            customRequestSenderDeinit,
+        )
     );
     defer rpc_with_sender.deinit();
 
@@ -670,11 +670,11 @@ test "root.newWithRequestSenderAndOptions injects generic request sender" {
     {
         var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
             allocator,
-            .{
-                .context = &context,
-                .callback = customRequestSender,
-                .deinit_callback = customRequestSenderDeinit,
-            },
+            client.RequestSender.initWithDeinit(
+                &context,
+                customRequestSender,
+                customRequestSenderDeinit,
+            ),
             .{
                 .endpoint = "custom://sender",
                 .commitment = .confirmed,
@@ -712,11 +712,11 @@ test "root.replaceRequestSender resets stats and deinitializes previous sender" 
 
     var rpc = try client.RpcClient.newWithRequestSender(
         allocator,
-        .{
-            .context = &first_context,
-            .callback = customRequestSender,
-            .deinit_callback = customRequestSenderDeinit,
-        },
+        client.RequestSender.initWithDeinit(
+            &first_context,
+            customRequestSender,
+            customRequestSenderDeinit,
+        )
     );
     defer rpc.deinit();
 
@@ -725,11 +725,13 @@ test "root.replaceRequestSender resets stats and deinitializes previous sender" 
     try std.testing.expectEqual(@as(usize, 1), rpc.getTransportStats().request_count);
     try std.testing.expectEqual(@as(u64, 1), first_context.last_request_id);
 
-    try rpc.replaceRequestSender(.{
-        .context = &second_context,
-        .callback = customRequestSender,
-        .deinit_callback = customRequestSenderDeinit,
-    });
+    try rpc.replaceRequestSender(
+        client.RequestSender.initWithDeinit(
+            &second_context,
+            customRequestSender,
+            customRequestSenderDeinit,
+        ),
+    );
     try std.testing.expectEqual(@as(usize, 1), first_context.deinit_count);
     try std.testing.expect(rpc.hasRequestSender());
 
@@ -804,11 +806,13 @@ test "root.RequestSender.fromOwnedMockSender supports scripted sender replacemen
     try std.testing.expectEqual(@as(u64, 777), scripted_slot);
     try std.testing.expect(rpc.hasRequestSender());
 
-    try rpc.replaceRequestSender(.{
-        .context = &replacement_context,
-        .callback = customRequestSender,
-        .deinit_callback = customRequestSenderDeinit,
-    });
+    try rpc.replaceRequestSender(
+        client.RequestSender.initWithDeinit(
+            &replacement_context,
+            customRequestSender,
+            customRequestSenderDeinit,
+        ),
+    );
 
     const replacement_slot = try rpc.getSlot(.processed);
     try std.testing.expectEqual(@as(u64, 801), replacement_slot);
