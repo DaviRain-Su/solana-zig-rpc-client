@@ -106,6 +106,12 @@ const VoteCallbackTracker = struct {
     last_first_slot: ?u64 = null,
 };
 
+const BlockCallbackTracker = struct {
+    mutex: std.Thread.Mutex = .{},
+    count: usize = 0,
+    last_slot: ?u64 = null,
+};
+
 fn slotsUpdatesCallback(
     context: ?*anyopaque,
     notification: client.OwnedPubsubNotification(client.SlotsUpdatesNotificationValue),
@@ -144,6 +150,18 @@ fn voteCallback(
     }
 }
 
+fn blockCallback(
+    context: ?*anyopaque,
+    notification: client.OwnedPubsubNotification(client.BlockNotificationValue),
+) void {
+    const tracker: *BlockCallbackTracker = @ptrCast(@alignCast(context.?));
+    tracker.mutex.lock();
+    defer tracker.mutex.unlock();
+
+    tracker.count += 1;
+    tracker.last_slot = notification.notification.value.slot;
+}
+
 fn waitForSlotsUpdatesCallbackCount(
     tracker: *SlotsUpdatesCallbackTracker,
     expected: usize,
@@ -180,6 +198,23 @@ fn waitForRootCallbackCount(
 
 fn waitForVoteCallbackCount(
     tracker: *VoteCallbackTracker,
+    expected: usize,
+    timeout_ms: u64,
+) !void {
+    const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ms * std.time.ns_per_ms));
+    while (std.time.nanoTimestamp() < deadline) {
+        tracker.mutex.lock();
+        const count = tracker.count;
+        tracker.mutex.unlock();
+
+        if (count >= expected) return;
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
+    return error.Timeout;
+}
+
+fn waitForBlockCallbackCount(
+    tracker: *BlockCallbackTracker,
     expected: usize,
     timeout_ms: u64,
 ) !void {
@@ -1619,6 +1654,52 @@ test "root.PubsubClient voteSubscribeWithCallback invokes callback and unsubscri
     }
 
     try std.testing.expect(app.vote_unsubscribe_seen);
+}
+
+test "root.PubsubClient blockSubscribeWithCallback invokes callback and unsubscribes" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var tracker = BlockCallbackTracker{};
+    {
+        var subscription = try pubsub.blockSubscribeWithCallback(
+            .{ .mentions_account_or_program = "11111111111111111111111111111111" },
+            .{
+                .commitment = .finalized,
+                .encoding = .json,
+                .transaction_details = .signatures,
+                .max_supported_transaction_version = 0,
+                .show_rewards = false,
+            },
+            &tracker,
+            blockCallback,
+        );
+        defer subscription.deinit();
+
+        try waitForBlockCallbackCount(&tracker, 1, 2000);
+
+        tracker.mutex.lock();
+        defer tracker.mutex.unlock();
+        try std.testing.expectEqual(@as(usize, 1), tracker.count);
+        try std.testing.expectEqual(@as(u64, 900), tracker.last_slot.?);
+    }
+
+    try std.testing.expect(app.block_unsubscribe_seen);
 }
 
 test "root.PubsubClient voteSubscribe receives vote notifications" {
