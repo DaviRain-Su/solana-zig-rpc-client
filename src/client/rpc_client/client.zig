@@ -52,8 +52,13 @@ pub const RpcClient = struct {
     pub const MockRequest = mock_methods.MockRequest;
     pub const MockRequestMatcher = mock_methods.MockRequestMatcher;
     pub const MockRequestView = mock_methods.MockRequestView;
+    pub const MockSignatureStatus = mock_methods.MockSignatureStatus;
+    pub const MockSignatureStatusPollStep = mock_methods.MockSignatureStatusPollStep;
+    pub const MockSignatureObservationPollStep = mock_methods.MockSignatureObservationPollStep;
+    pub const MockBalancePollStep = mock_methods.MockBalancePollStep;
     pub const MockRequestHandler = mock_methods.MockRequestHandler;
     pub const MockRoute = mock_methods.MockRoute;
+    pub const MockRouteBuilder = mock_methods.MockRouteBuilder;
     pub const MockResponse = mock_methods.MockResponse;
     pub const MockHandlerResponse = mock_methods.MockHandlerResponse;
     pub const MockSender = mock_methods.MockSender;
@@ -603,6 +608,26 @@ pub const RpcClient = struct {
         return if (self.mock_sender) |sender| sender.routeCount() else 0;
     }
 
+    pub fn mockMatchedRouteCount(self: *const RpcClient) usize {
+        return if (self.mock_sender) |sender| sender.matchedRouteCount() else 0;
+    }
+
+    pub fn mockRouteMatchCount(self: *const RpcClient, label: []const u8) usize {
+        return if (self.mock_sender) |sender| sender.routeMatchCountForLabel(label) else 0;
+    }
+
+    pub fn mockPersistentRouteCount(self: *const RpcClient) usize {
+        return if (self.mock_sender) |sender| sender.persistentRouteCount() else 0;
+    }
+
+    pub fn mockPendingScriptedDispatchCount(self: *const RpcClient) usize {
+        return if (self.mock_sender) |sender| sender.pendingScriptedDispatchCount() else 0;
+    }
+
+    pub fn mockScriptMissCount(self: *const RpcClient) usize {
+        return if (self.mock_sender) |sender| sender.scriptMissCount() else 0;
+    }
+
     pub fn mockRequestCount(self: *const RpcClient) usize {
         return if (self.mock_sender) |sender| sender.requestCount() else 0;
     }
@@ -631,6 +656,14 @@ pub const RpcClient = struct {
 
     pub fn capturedMockRequests(self: *const RpcClient) []const MockRequestType {
         return if (self.mock_sender) |sender| sender.capturedRequests() else &.{};
+    }
+
+    pub fn lastMockScriptMissRequest(self: *const RpcClient) ?MockRequestViewType {
+        return if (self.mock_sender) |sender| sender.lastScriptMissRequest() else null;
+    }
+
+    pub fn mockScriptSummaryAlloc(self: *const RpcClient, allocator: Allocator) ![]u8 {
+        return if (self.mock_sender) |sender| sender.scriptSummaryAlloc(allocator) else allocator.dupe(u8, "not a mock client\n");
     }
 
     pub fn clearCapturedMockRequests(self: *RpcClient) void {
@@ -719,6 +752,270 @@ pub const RpcClient = struct {
         return error.NotMockClient;
     }
 
+    pub fn pushMockStringResult(self: *RpcClient, value: []const u8) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushStringResult(value);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockSlotResult(self: *RpcClient, slot: u64) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushSlotResult(slot);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockBoolResult(self: *RpcClient, value: bool) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushBoolResult(value);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockBalanceResponse(
+        self: *RpcClient,
+        context_slot: u64,
+        value: u64,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushBalanceResponse(context_slot, value);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockBalancePollResults(
+        self: *RpcClient,
+        steps: []const MockBalancePollStep,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushBalancePollResults(steps);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockHealthOk(self: *RpcClient) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushHealthOk();
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockSignatureResult(self: *RpcClient, signature: []const u8) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushSignatureResult(signature);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockSignatureStatusesResult(
+        self: *RpcClient,
+        context_slot: u64,
+        statuses: []const ?MockSignatureStatus,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushSignatureStatusesResult(context_slot, statuses);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockSingleSignatureStatusResult(
+        self: *RpcClient,
+        context_slot: u64,
+        status: ?MockSignatureStatus,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushSingleSignatureStatusResult(context_slot, status);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockSignatureStatusNotFound(self: *RpcClient, context_slot: u64) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushSignatureStatusNotFound(context_slot);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockSignatureStatusPollResults(
+        self: *RpcClient,
+        steps: []const MockSignatureStatusPollStep,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushSignatureStatusPollResults(steps);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockSignatureObservationPollResults(
+        self: *RpcClient,
+        steps: []const MockSignatureObservationPollStep,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushSignatureObservationPollResults(steps);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockLatestBlockhashResponse(
+        self: *RpcClient,
+        context_slot: u64,
+        blockhash: []const u8,
+        last_valid_block_height: u64,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushLatestBlockhashResponse(context_slot, blockhash, last_valid_block_height);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockLatestBlockhashSendAndSignatureStatusesFlow(
+        self: *RpcClient,
+        latest_blockhash_context_slot: u64,
+        blockhash: []const u8,
+        last_valid_block_height: u64,
+        signature: []const u8,
+        statuses_context_slot: u64,
+        statuses: []const ?MockSignatureStatus,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushLatestBlockhashSendAndSignatureStatusesFlow(
+                latest_blockhash_context_slot,
+                blockhash,
+                last_valid_block_height,
+                signature,
+                statuses_context_slot,
+                statuses,
+            );
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockSendAndSignatureStatusPollFlow(
+        self: *RpcClient,
+        signature: []const u8,
+        steps: []const MockSignatureStatusPollStep,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushSendAndSignatureStatusPollFlow(signature, steps);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockLatestBlockhashSendAndSignatureStatusPollFlow(
+        self: *RpcClient,
+        latest_blockhash_context_slot: u64,
+        blockhash: []const u8,
+        last_valid_block_height: u64,
+        signature: []const u8,
+        steps: []const MockSignatureStatusPollStep,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushLatestBlockhashSendAndSignatureStatusPollFlow(
+                latest_blockhash_context_slot,
+                blockhash,
+                last_valid_block_height,
+                signature,
+                steps,
+            );
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockConfirmTransactionSpinnerFlow(
+        self: *RpcClient,
+        observation_steps: []const MockSignatureObservationPollStep,
+        confirmation_steps: []const MockSignatureStatusPollStep,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushConfirmTransactionSpinnerFlow(
+                observation_steps,
+                confirmation_steps,
+            );
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockLatestBlockhashSendAndSingleSignatureStatusFlow(
+        self: *RpcClient,
+        latest_blockhash_context_slot: u64,
+        blockhash: []const u8,
+        last_valid_block_height: u64,
+        signature: []const u8,
+        status_context_slot: u64,
+        status: ?MockSignatureStatus,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushLatestBlockhashSendAndSingleSignatureStatusFlow(
+                latest_blockhash_context_slot,
+                blockhash,
+                last_valid_block_height,
+                signature,
+                status_context_slot,
+                status,
+            );
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockLatestBlockhashSendAndStatusNotFoundFlow(
+        self: *RpcClient,
+        latest_blockhash_context_slot: u64,
+        blockhash: []const u8,
+        last_valid_block_height: u64,
+        signature: []const u8,
+        status_context_slot: u64,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushLatestBlockhashSendAndStatusNotFoundFlow(
+                latest_blockhash_context_slot,
+                blockhash,
+                last_valid_block_height,
+                signature,
+                status_context_slot,
+            );
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
     pub fn pushMockRpcError(self: *RpcClient, rpc_error: MockRpcErrorType) !void {
         if (self.mock_sender) |sender| {
             try sender.pushRpcError(rpc_error);
@@ -746,6 +1043,32 @@ pub const RpcClient = struct {
         return error.NotMockClient;
     }
 
+    pub fn pushMockOnceRoute(
+        self: *RpcClient,
+        matcher: MockRequestMatcherType,
+        response: MockResponseType,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushOnceRoute(matcher, response);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockPersistentRoute(
+        self: *RpcClient,
+        matcher: MockRequestMatcherType,
+        response: MockResponseType,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushPersistentRoute(matcher, response);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
     pub fn pushMockResultRoute(
         self: *RpcClient,
         matcher: MockRequestMatcherType,
@@ -760,6 +1083,32 @@ pub const RpcClient = struct {
         return error.NotMockClient;
     }
 
+    pub fn pushMockOnceResultRoute(
+        self: *RpcClient,
+        matcher: MockRequestMatcherType,
+        result_json: []const u8,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushOnceResultRoute(matcher, result_json);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockPersistentResultRoute(
+        self: *RpcClient,
+        matcher: MockRequestMatcherType,
+        result_json: []const u8,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushPersistentResultRoute(matcher, result_json);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
     pub fn pushMockRpcErrorRoute(
         self: *RpcClient,
         matcher: MockRequestMatcherType,
@@ -768,6 +1117,72 @@ pub const RpcClient = struct {
     ) !void {
         if (self.mock_sender) |sender| {
             try sender.pushRpcErrorRoute(matcher, rpc_error, remaining_uses);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockOnceRpcErrorRoute(
+        self: *RpcClient,
+        matcher: MockRequestMatcherType,
+        rpc_error: MockRpcErrorType,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushOnceRpcErrorRoute(matcher, rpc_error);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockPersistentRpcErrorRoute(
+        self: *RpcClient,
+        matcher: MockRequestMatcherType,
+        rpc_error: MockRpcErrorType,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushPersistentRpcErrorRoute(matcher, rpc_error);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockTransportErrorRoute(
+        self: *RpcClient,
+        matcher: MockRequestMatcherType,
+        transport_error: MockTransportErrorType,
+        remaining_uses: ?usize,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushTransportErrorRoute(matcher, transport_error, remaining_uses);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockOnceTransportErrorRoute(
+        self: *RpcClient,
+        matcher: MockRequestMatcherType,
+        transport_error: MockTransportErrorType,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushOnceTransportErrorRoute(matcher, transport_error);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockPersistentTransportErrorRoute(
+        self: *RpcClient,
+        matcher: MockRequestMatcherType,
+        transport_error: MockTransportErrorType,
+    ) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushPersistentTransportErrorRoute(matcher, transport_error);
             return;
         }
 

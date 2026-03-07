@@ -26,6 +26,7 @@ fn createRootTestModule(
     client_module: *std.Build.Module,
     root_test_support_module: *std.Build.Module,
     request_sender_test_support_module: *std.Build.Module,
+    mock_sender_assertions_module: *std.Build.Module,
     websocket_module: *std.Build.Module,
 ) *std.Build.Module {
     return b.createModule(.{
@@ -36,6 +37,7 @@ fn createRootTestModule(
             .{ .name = "solana_client_zig", .module = client_module },
             .{ .name = "root_test_support", .module = root_test_support_module },
             .{ .name = "request_sender_test_support", .module = request_sender_test_support_module },
+            .{ .name = "mock_sender_assertions", .module = mock_sender_assertions_module },
             .{ .name = "websocket", .module = websocket_module },
         },
     });
@@ -190,6 +192,15 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const mock_sender_assertions_module = b.createModule(.{
+        .root_source_file = b.path("tests/support/mock_sender_assertions.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "solana_client_zig", .module = mod },
+        },
+    });
+
     const root_test_sources = [_][]const u8{
         "tests/root/sdk.zig",
         "tests/root/ledger.zig",
@@ -211,6 +222,7 @@ pub fn build(b: *std.Build) void {
             mod,
             root_test_support_module,
             request_sender_test_support_module,
+            mock_sender_assertions_module,
             websocket_module,
         );
         run_root_tests[index] = addRunTestForModule(b, module);
@@ -253,6 +265,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "solana_client_zig", .module = mod },
             .{ .name = "command_test_support", .module = command_test_support_module },
+            .{ .name = "mock_sender_assertions", .module = mock_sender_assertions_module },
         },
     });
 

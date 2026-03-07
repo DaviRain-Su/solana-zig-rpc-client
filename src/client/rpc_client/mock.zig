@@ -1,4 +1,5 @@
 const std = @import("std");
+const rpc_types = @import("../rpc_types.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -39,6 +40,24 @@ pub const MockRequestView = struct {
     method: []const u8,
     params_json: []const u8,
     request_body: []const u8,
+};
+
+pub const MockSignatureStatus = rpc_types.SignatureStatus;
+
+pub const MockSignatureStatusPollStep = struct {
+    context_slot: u64,
+    status: ?MockSignatureStatus,
+};
+
+pub const MockSignatureObservationPollStep = struct {
+    context_slot: u64,
+    status: ?MockSignatureStatus,
+    blockhash_still_valid: ?bool = null,
+};
+
+pub const MockBalancePollStep = struct {
+    context_slot: u64,
+    value: u64,
 };
 
 pub const MockRequestMatcher = struct {
@@ -97,6 +116,11 @@ pub const MockRequest = struct {
         allocator.free(self.params_json);
         allocator.free(self.request_body);
     }
+};
+
+const MockRouteMatchCount = struct {
+    label: []const u8,
+    count: usize,
 };
 
 fn cloneResponse(allocator: Allocator, response: MockResponse) !MockResponse {
@@ -172,21 +196,189 @@ fn formatRpcErrorEnvelope(allocator: Allocator, request_id: u64, rpc_error: Mock
 }
 
 pub const MockRoute = struct {
+    label: ?[]const u8 = null,
     matcher: MockRequestMatcher = .{},
     response: MockResponse,
     remaining_uses: ?usize = 1,
+    match_count: usize = 0,
+
+    pub fn once(matcher: MockRequestMatcher, response: MockResponse) MockRoute {
+        return .{
+            .matcher = matcher,
+            .response = response,
+            .remaining_uses = 1,
+        };
+    }
+
+    pub fn onceNamed(label: []const u8, matcher: MockRequestMatcher, response: MockResponse) MockRoute {
+        return .{
+            .label = label,
+            .matcher = matcher,
+            .response = response,
+            .remaining_uses = 1,
+        };
+    }
+
+    pub fn persistent(matcher: MockRequestMatcher, response: MockResponse) MockRoute {
+        return .{
+            .matcher = matcher,
+            .response = response,
+            .remaining_uses = null,
+        };
+    }
+
+    pub fn persistentNamed(label: []const u8, matcher: MockRequestMatcher, response: MockResponse) MockRoute {
+        return .{
+            .label = label,
+            .matcher = matcher,
+            .response = response,
+            .remaining_uses = null,
+        };
+    }
+
+    pub fn named(
+        label: []const u8,
+        matcher: MockRequestMatcher,
+        response: MockResponse,
+        remaining_uses: ?usize,
+    ) MockRoute {
+        return .{
+            .label = label,
+            .matcher = matcher,
+            .response = response,
+            .remaining_uses = remaining_uses,
+        };
+    }
+
+    pub fn isPersistent(self: MockRoute) bool {
+        return self.remaining_uses == null;
+    }
+
+    pub fn pendingDispatchCount(self: MockRoute) usize {
+        return self.remaining_uses orelse 0;
+    }
 
     pub fn dupe(self: MockRoute, allocator: Allocator) !MockRoute {
         return .{
+            .label = if (self.label) |value| try allocator.dupe(u8, value) else null,
             .matcher = try self.matcher.dupe(allocator),
             .response = try cloneResponse(allocator, self.response),
             .remaining_uses = self.remaining_uses,
+            .match_count = self.match_count,
         };
     }
 
     pub fn deinit(self: MockRoute, allocator: Allocator) void {
+        if (self.label) |value| allocator.free(value);
         self.matcher.deinit(allocator);
         freeResponse(allocator, self.response);
+    }
+};
+
+pub const MockRouteBuilder = struct {
+    label_value: ?[]const u8 = null,
+    matcher_value: MockRequestMatcher = .{},
+    response_value: ?MockResponse = null,
+    remaining_uses_value: ?usize = 1,
+
+    pub fn init() MockRouteBuilder {
+        return .{};
+    }
+
+    pub fn label(self: MockRouteBuilder, value: []const u8) MockRouteBuilder {
+        var next = self;
+        next.label_value = value;
+        return next;
+    }
+
+    pub fn method(self: MockRouteBuilder, value: []const u8) MockRouteBuilder {
+        var next = self;
+        next.matcher_value.method = value;
+        return next;
+    }
+
+    pub fn rpcRequest(self: MockRouteBuilder, request: rpc_types.RpcRequest) MockRouteBuilder {
+        return self.method(request.method);
+    }
+
+    pub fn paramsJsonContains(self: MockRouteBuilder, value: []const u8) MockRouteBuilder {
+        var next = self;
+        next.matcher_value.params_json_contains = value;
+        return next;
+    }
+
+    pub fn commitment(self: MockRouteBuilder, value: ?rpc_types.Commitment) MockRouteBuilder {
+        if (value) |commitment_value| {
+            return self.paramsJsonContains(rpc_types.commitmentToString(commitment_value));
+        }
+        return self;
+    }
+
+    pub fn requestBodyContains(self: MockRouteBuilder, value: []const u8) MockRouteBuilder {
+        var next = self;
+        next.matcher_value.request_body_contains = value;
+        return next;
+    }
+
+    pub fn matchGetSlot(self: MockRouteBuilder, commitment_value: ?rpc_types.Commitment) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getSlot).commitment(commitment_value);
+    }
+
+    pub fn matchGetHealth(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getHealth);
+    }
+
+    pub fn matchGetLatestBlockhash(self: MockRouteBuilder, commitment_value: ?rpc_types.Commitment) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.getLatestBlockhash).commitment(commitment_value);
+    }
+
+    pub fn matchSendTransaction(self: MockRouteBuilder) MockRouteBuilder {
+        return self.rpcRequest(rpc_types.RpcRequest.sendTransaction);
+    }
+
+    pub fn response(self: MockRouteBuilder, value: MockResponse) MockRouteBuilder {
+        var next = self;
+        next.response_value = value;
+        return next;
+    }
+
+    pub fn json(self: MockRouteBuilder, value: []const u8) MockRouteBuilder {
+        return self.response(.{ .json = value });
+    }
+
+    pub fn resultJson(self: MockRouteBuilder, value: []const u8) MockRouteBuilder {
+        return self.response(.{ .result_json = value });
+    }
+
+    pub fn rpcError(self: MockRouteBuilder, value: MockRpcError) MockRouteBuilder {
+        return self.response(.{ .rpc_error = value });
+    }
+
+    pub fn transportError(self: MockRouteBuilder, value: MockTransportError) MockRouteBuilder {
+        return self.response(.{ .transport_error = value });
+    }
+
+    pub fn uses(self: MockRouteBuilder, value: ?usize) MockRouteBuilder {
+        var next = self;
+        next.remaining_uses_value = value;
+        return next;
+    }
+
+    pub fn once(self: MockRouteBuilder) MockRouteBuilder {
+        return self.uses(1);
+    }
+
+    pub fn persistent(self: MockRouteBuilder) MockRouteBuilder {
+        return self.uses(null);
+    }
+
+    pub fn build(self: MockRouteBuilder) !MockRoute {
+        return .{
+            .label = self.label_value,
+            .matcher = self.matcher_value,
+            .response = self.response_value orelse return error.MockRouteResponseRequired,
+            .remaining_uses = self.remaining_uses_value,
+        };
     }
 };
 
@@ -194,8 +386,12 @@ pub const MockSender = struct {
     allocator: Allocator,
     responses: std.ArrayListUnmanaged(MockResponse) = .{},
     routes: std.ArrayListUnmanaged(MockRoute) = .{},
+    route_match_counts: std.ArrayListUnmanaged(MockRouteMatchCount) = .{},
     requests: std.ArrayListUnmanaged(MockRequest) = .{},
     handler: ?MockRequestHandler = null,
+    matched_route_count: usize = 0,
+    script_miss_count: usize = 0,
+    last_script_miss_request_index: ?usize = null,
 
     pub fn init(allocator: Allocator) MockSender {
         return .{ .allocator = allocator };
@@ -230,6 +426,11 @@ pub const MockSender = struct {
         }
         self.routes.deinit(self.allocator);
 
+        for (self.route_match_counts.items) |entry| {
+            self.allocator.free(entry.label);
+        }
+        self.route_match_counts.deinit(self.allocator);
+
         for (self.requests.items) |request| {
             request.deinit(self.allocator);
         }
@@ -263,6 +464,235 @@ pub const MockSender = struct {
         try self.pushResponse(.{ .json = response_body });
     }
 
+    pub fn pushStringResult(self: *MockSender, value: []const u8) !void {
+        const encoded = try encodeJsonString(self.allocator, value);
+        defer self.allocator.free(encoded);
+        try self.pushResultJson(encoded);
+    }
+
+    pub fn pushSlotResult(self: *MockSender, slot: u64) !void {
+        const result_json = try std.fmt.allocPrint(self.allocator, "{}", .{slot});
+        defer self.allocator.free(result_json);
+        try self.pushResultJson(result_json);
+    }
+
+    pub fn pushBoolResult(self: *MockSender, value: bool) !void {
+        try self.pushResultJson(if (value) "true" else "false");
+    }
+
+    pub fn pushBalanceResponse(self: *MockSender, context_slot: u64, value: u64) !void {
+        const result_json = try std.fmt.allocPrint(
+            self.allocator,
+            "{{\"context\":{{\"slot\":{}}},\"value\":{}}}",
+            .{ context_slot, value },
+        );
+        defer self.allocator.free(result_json);
+        try self.pushResultJson(result_json);
+    }
+
+    pub fn pushBalancePollResults(self: *MockSender, steps: []const MockBalancePollStep) !void {
+        for (steps) |step| {
+            try self.pushBalanceResponse(step.context_slot, step.value);
+        }
+    }
+
+    pub fn pushHealthOk(self: *MockSender) !void {
+        try self.pushStringResult("ok");
+    }
+
+    pub fn pushSignatureResult(self: *MockSender, signature: []const u8) !void {
+        try self.pushStringResult(signature);
+    }
+
+    pub fn pushSignatureStatusesResult(
+        self: *MockSender,
+        context_slot: u64,
+        statuses: []const ?MockSignatureStatus,
+    ) !void {
+        var out = std.io.Writer.Allocating.init(self.allocator);
+        defer out.deinit();
+
+        try out.writer.print("{{\"context\":{{\"slot\":{}}},\"value\":[", .{context_slot});
+        for (statuses, 0..) |maybe_status, index| {
+            if (index != 0) try out.writer.writeByte(',');
+
+            if (maybe_status) |status| {
+                try out.writer.writeByte('{');
+
+                if (status.slot) |slot| {
+                    try out.writer.print("\"slot\":{},", .{slot});
+                } else {
+                    try out.writer.writeAll("\"slot\":null,");
+                }
+
+                if (status.confirmations) |confirmations| {
+                    try out.writer.print("\"confirmations\":{},", .{confirmations});
+                } else {
+                    try out.writer.writeAll("\"confirmations\":null,");
+                }
+
+                if (status.confirmation_status) |confirmation_status| {
+                    const encoded_status = try encodeJsonString(self.allocator, confirmation_status);
+                    defer self.allocator.free(encoded_status);
+                    try out.writer.print("\"confirmationStatus\":{s},", .{encoded_status});
+                } else {
+                    try out.writer.writeAll("\"confirmationStatus\":null,");
+                }
+
+                if (status.has_error) {
+                    try out.writer.writeAll("\"err\":{}");
+                } else {
+                    try out.writer.writeAll("\"err\":null");
+                }
+                try out.writer.writeByte('}');
+            } else {
+                try out.writer.writeAll("null");
+            }
+        }
+        try out.writer.writeAll("]}");
+
+        try self.pushResultJson(out.written());
+    }
+
+    pub fn pushSingleSignatureStatusResult(
+        self: *MockSender,
+        context_slot: u64,
+        status: ?MockSignatureStatus,
+    ) !void {
+        const statuses = [_]?MockSignatureStatus{status};
+        try self.pushSignatureStatusesResult(context_slot, statuses[0..]);
+    }
+
+    pub fn pushSignatureStatusNotFound(self: *MockSender, context_slot: u64) !void {
+        try self.pushSingleSignatureStatusResult(context_slot, null);
+    }
+
+    pub fn pushSignatureStatusPollResults(
+        self: *MockSender,
+        steps: []const MockSignatureStatusPollStep,
+    ) !void {
+        for (steps) |step| {
+            try self.pushSingleSignatureStatusResult(step.context_slot, step.status);
+        }
+    }
+
+    pub fn pushSignatureObservationPollResults(
+        self: *MockSender,
+        steps: []const MockSignatureObservationPollStep,
+    ) !void {
+        for (steps) |step| {
+            try self.pushSingleSignatureStatusResult(step.context_slot, step.status);
+            if (step.status == null) {
+                if (step.blockhash_still_valid) |value| {
+                    try self.pushBoolResult(value);
+                }
+            }
+        }
+    }
+
+    pub fn pushLatestBlockhashResponse(
+        self: *MockSender,
+        context_slot: u64,
+        blockhash: []const u8,
+        last_valid_block_height: u64,
+    ) !void {
+        const result_json = try std.fmt.allocPrint(
+            self.allocator,
+            "{{\"context\":{{\"slot\":{}}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":{}}}}}",
+            .{ context_slot, blockhash, last_valid_block_height },
+        );
+        defer self.allocator.free(result_json);
+        try self.pushResultJson(result_json);
+    }
+
+    pub fn pushSendAndSignatureStatusPollFlow(
+        self: *MockSender,
+        signature: []const u8,
+        steps: []const MockSignatureStatusPollStep,
+    ) !void {
+        try self.pushSignatureResult(signature);
+        try self.pushSignatureStatusPollResults(steps);
+    }
+
+    pub fn pushLatestBlockhashSendAndSignatureStatusesFlow(
+        self: *MockSender,
+        latest_blockhash_context_slot: u64,
+        blockhash: []const u8,
+        last_valid_block_height: u64,
+        signature: []const u8,
+        statuses_context_slot: u64,
+        statuses: []const ?MockSignatureStatus,
+    ) !void {
+        try self.pushLatestBlockhashResponse(
+            latest_blockhash_context_slot,
+            blockhash,
+            last_valid_block_height,
+        );
+        try self.pushSignatureResult(signature);
+        try self.pushSignatureStatusesResult(statuses_context_slot, statuses);
+    }
+
+    pub fn pushLatestBlockhashSendAndSignatureStatusPollFlow(
+        self: *MockSender,
+        latest_blockhash_context_slot: u64,
+        blockhash: []const u8,
+        last_valid_block_height: u64,
+        signature: []const u8,
+        steps: []const MockSignatureStatusPollStep,
+    ) !void {
+        try self.pushLatestBlockhashResponse(
+            latest_blockhash_context_slot,
+            blockhash,
+            last_valid_block_height,
+        );
+        try self.pushSendAndSignatureStatusPollFlow(signature, steps);
+    }
+
+    pub fn pushConfirmTransactionSpinnerFlow(
+        self: *MockSender,
+        observation_steps: []const MockSignatureObservationPollStep,
+        confirmation_steps: []const MockSignatureStatusPollStep,
+    ) !void {
+        try self.pushSignatureObservationPollResults(observation_steps);
+        try self.pushSignatureStatusPollResults(confirmation_steps);
+    }
+
+    pub fn pushLatestBlockhashSendAndSingleSignatureStatusFlow(
+        self: *MockSender,
+        latest_blockhash_context_slot: u64,
+        blockhash: []const u8,
+        last_valid_block_height: u64,
+        signature: []const u8,
+        status_context_slot: u64,
+        status: ?MockSignatureStatus,
+    ) !void {
+        try self.pushLatestBlockhashResponse(
+            latest_blockhash_context_slot,
+            blockhash,
+            last_valid_block_height,
+        );
+        try self.pushSignatureResult(signature);
+        try self.pushSingleSignatureStatusResult(status_context_slot, status);
+    }
+
+    pub fn pushLatestBlockhashSendAndStatusNotFoundFlow(
+        self: *MockSender,
+        latest_blockhash_context_slot: u64,
+        blockhash: []const u8,
+        last_valid_block_height: u64,
+        signature: []const u8,
+        status_context_slot: u64,
+    ) !void {
+        try self.pushLatestBlockhashSendAndSingleSignatureStatusFlow(
+            latest_blockhash_context_slot,
+            blockhash,
+            last_valid_block_height,
+            signature,
+            status_context_slot,
+            null,
+        );
+    }
+
     pub fn pushResultJson(self: *MockSender, result_json: []const u8) !void {
         try self.pushResponse(.{ .result_json = result_json });
     }
@@ -286,6 +716,14 @@ pub const MockSender = struct {
         try self.routes.append(self.allocator, try route.dupe(self.allocator));
     }
 
+    pub fn pushOnceRoute(self: *MockSender, matcher: MockRequestMatcher, response: MockResponse) !void {
+        try self.pushRoute(.once(matcher, response));
+    }
+
+    pub fn pushPersistentRoute(self: *MockSender, matcher: MockRequestMatcher, response: MockResponse) !void {
+        try self.pushRoute(.persistent(matcher, response));
+    }
+
     pub fn pushResultRoute(
         self: *MockSender,
         matcher: MockRequestMatcher,
@@ -297,6 +735,22 @@ pub const MockSender = struct {
             .response = .{ .result_json = result_json },
             .remaining_uses = remaining_uses,
         });
+    }
+
+    pub fn pushOnceResultRoute(
+        self: *MockSender,
+        matcher: MockRequestMatcher,
+        result_json: []const u8,
+    ) !void {
+        try self.pushOnceRoute(matcher, .{ .result_json = result_json });
+    }
+
+    pub fn pushPersistentResultRoute(
+        self: *MockSender,
+        matcher: MockRequestMatcher,
+        result_json: []const u8,
+    ) !void {
+        try self.pushPersistentRoute(matcher, .{ .result_json = result_json });
     }
 
     pub fn pushRpcErrorRoute(
@@ -312,6 +766,51 @@ pub const MockSender = struct {
         });
     }
 
+    pub fn pushOnceRpcErrorRoute(
+        self: *MockSender,
+        matcher: MockRequestMatcher,
+        rpc_error: MockRpcError,
+    ) !void {
+        try self.pushOnceRoute(matcher, .{ .rpc_error = rpc_error });
+    }
+
+    pub fn pushPersistentRpcErrorRoute(
+        self: *MockSender,
+        matcher: MockRequestMatcher,
+        rpc_error: MockRpcError,
+    ) !void {
+        try self.pushPersistentRoute(matcher, .{ .rpc_error = rpc_error });
+    }
+
+    pub fn pushTransportErrorRoute(
+        self: *MockSender,
+        matcher: MockRequestMatcher,
+        transport_error: MockTransportError,
+        remaining_uses: ?usize,
+    ) !void {
+        try self.pushRoute(.{
+            .matcher = matcher,
+            .response = .{ .transport_error = transport_error },
+            .remaining_uses = remaining_uses,
+        });
+    }
+
+    pub fn pushOnceTransportErrorRoute(
+        self: *MockSender,
+        matcher: MockRequestMatcher,
+        transport_error: MockTransportError,
+    ) !void {
+        try self.pushOnceRoute(matcher, .{ .transport_error = transport_error });
+    }
+
+    pub fn pushPersistentTransportErrorRoute(
+        self: *MockSender,
+        matcher: MockRequestMatcher,
+        transport_error: MockTransportError,
+    ) !void {
+        try self.pushPersistentRoute(matcher, .{ .transport_error = transport_error });
+    }
+
     pub fn capturedRequests(self: *const MockSender) []const MockRequest {
         return self.requests.items;
     }
@@ -321,6 +820,7 @@ pub const MockSender = struct {
             request.deinit(self.allocator);
         }
         self.requests.clearRetainingCapacity();
+        self.last_script_miss_request_index = null;
     }
 
     pub fn responseCount(self: *const MockSender) usize {
@@ -331,8 +831,104 @@ pub const MockSender = struct {
         return self.routes.items.len;
     }
 
+    pub fn matchedRouteCount(self: *const MockSender) usize {
+        return self.matched_route_count;
+    }
+
+    pub fn routeMatchCountForLabel(self: *const MockSender, label: []const u8) usize {
+        for (self.route_match_counts.items) |entry| {
+            if (std.mem.eql(u8, entry.label, label)) return entry.count;
+        }
+        return 0;
+    }
+
+    pub fn persistentRouteCount(self: *const MockSender) usize {
+        var count: usize = 0;
+        for (self.routes.items) |route| {
+            if (route.isPersistent()) count += 1;
+        }
+        return count;
+    }
+
+    pub fn pendingScriptedDispatchCount(self: *const MockSender) usize {
+        var count = self.responses.items.len;
+        for (self.routes.items) |route| {
+            count += route.pendingDispatchCount();
+        }
+        return count;
+    }
+
+    pub fn scriptMissCount(self: *const MockSender) usize {
+        return self.script_miss_count;
+    }
+
+    pub fn lastScriptMissRequest(self: *const MockSender) ?MockRequestView {
+        const index = self.last_script_miss_request_index orelse return null;
+        const request = self.requests.items[index];
+        return .{
+            .id = request.id,
+            .method = request.method,
+            .params_json = request.params_json,
+            .request_body = request.request_body,
+        };
+    }
+
     pub fn requestCount(self: *const MockSender) usize {
         return self.requests.items.len;
+    }
+
+    pub fn scriptSummaryAlloc(self: *const MockSender, allocator: Allocator) ![]u8 {
+        var out = std.io.Writer.Allocating.init(allocator);
+        errdefer out.deinit();
+
+        try out.writer.print(
+            "responses_remaining={}\nroutes_remaining={}\npersistent_routes_remaining={}\npending_scripted_dispatches={}\nmatched_route_count={}\nscript_miss_count={}\n",
+            .{
+                self.responseCount(),
+                self.routeCount(),
+                self.persistentRouteCount(),
+                self.pendingScriptedDispatchCount(),
+                self.matchedRouteCount(),
+                self.scriptMissCount(),
+            },
+        );
+
+        if (self.lastScriptMissRequest()) |request| {
+            try out.writer.print(
+                "last_script_miss: id={} method={s}\n",
+                .{ request.id, request.method },
+            );
+        }
+
+        if (self.route_match_counts.items.len > 0) {
+            try out.writer.writeAll("route_match_counts:\n");
+            for (self.route_match_counts.items) |entry| {
+                try out.writer.print("  {s}: {}\n", .{ entry.label, entry.count });
+            }
+        }
+
+        if (self.routes.items.len > 0) {
+            try out.writer.writeAll("remaining_routes:\n");
+            for (self.routes.items, 0..) |route, index| {
+                const label = route.label orelse "<unlabeled>";
+                const method = route.matcher.method orelse "<any>";
+                if (route.remaining_uses) |remaining| {
+                    try out.writer.print(
+                        "  [{}] label={s} method={s} pending={} matched={}\n",
+                        .{ index, label, method, remaining, route.match_count },
+                    );
+                } else {
+                    try out.writer.print(
+                        "  [{}] label={s} method={s} pending=persistent matched={}\n",
+                        .{ index, label, method, route.match_count },
+                    );
+                }
+            }
+        }
+
+        const summary = try allocator.dupe(u8, out.written());
+        out.deinit();
+        return summary;
     }
 
     fn captureRequest(
@@ -347,6 +943,25 @@ pub const MockSender = struct {
             .method = try self.allocator.dupe(u8, method),
             .params_json = try self.allocator.dupe(u8, params_json),
             .request_body = try self.allocator.dupe(u8, request_body),
+        });
+    }
+
+    fn noteScriptMiss(self: *MockSender) void {
+        self.script_miss_count += 1;
+        self.last_script_miss_request_index = self.requests.items.len - 1;
+    }
+
+    fn incrementRouteLabelMatchCount(self: *MockSender, label: []const u8) !void {
+        for (self.route_match_counts.items) |*entry| {
+            if (std.mem.eql(u8, entry.label, label)) {
+                entry.count += 1;
+                return;
+            }
+        }
+
+        try self.route_match_counts.append(self.allocator, .{
+            .label = try self.allocator.dupe(u8, label),
+            .count = 1,
         });
     }
 
@@ -377,16 +992,29 @@ pub const MockSender = struct {
         request: MockRequestView,
     ) !?[]u8 {
         for (self.routes.items, 0..) |*route, index| {
+            if (route.remaining_uses) |remaining| {
+                if (remaining == 0) continue;
+            }
             if (!route.matcher.matches(request)) continue;
 
             const response = try cloneResponse(self.allocator, route.response);
             defer freeResponse(self.allocator, response);
+            self.matched_route_count += 1;
+            route.match_count += 1;
+            if (route.label) |label| {
+                try self.incrementRouteLabelMatchCount(label);
+            }
 
             const should_remove = if (route.remaining_uses) |remaining| remaining <= 1 else false;
             if (route.remaining_uses) |remaining| {
                 if (remaining > 1) {
                     route.remaining_uses = remaining - 1;
                 }
+            }
+
+            if (should_remove) {
+                var owned_route = self.routes.orderedRemove(index);
+                owned_route.deinit(self.allocator);
             }
 
             const encoded: []u8 = switch (response) {
@@ -399,11 +1027,6 @@ pub const MockSender = struct {
                     .http_error => return error.HttpError,
                 },
             };
-
-            if (should_remove) {
-                var owned_route = self.routes.orderedRemove(index);
-                owned_route.deinit(self.allocator);
-            }
 
             return encoded;
         }
@@ -476,6 +1099,7 @@ pub const MockSender = struct {
             return response;
         }
 
+        self.noteScriptMiss();
         return try self.handleWithCallback(id, method, params_json, request_body);
     }
 };

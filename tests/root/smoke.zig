@@ -1,5 +1,6 @@
 const std = @import("std");
 const client = @import("solana_client_zig");
+const mock_sender_assertions = @import("mock_sender_assertions");
 const request_sender_test_support = @import("request_sender_test_support");
 
 const MockHandlerContext = request_sender_test_support.MockHandlerContext;
@@ -371,7 +372,7 @@ test "root.newMockWithSenderAndOptions accepts prebuilt sender and structured mo
     const allocator = std.testing.allocator;
 
     var sender = client.MockSender.init(allocator);
-    try sender.pushResultJson("123");
+    try sender.pushSlotResult(123);
     try sender.pushRpcError(.{
         .code = -32001,
         .message = "mock balance unavailable",
@@ -403,6 +404,45 @@ test "root.newMockWithSenderAndOptions accepts prebuilt sender and structured mo
     try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
 }
 
+test "root.mock common response helpers cover common RPC methods" {
+    const allocator = std.testing.allocator;
+
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+
+    const blockhash = "Blockhash111111111111111111111111111111111111";
+    const signature = "Sig111111111111111111111111111111111111111111111111111111111111111111";
+
+    try rpc.pushMockSlotResult(321);
+    try rpc.pushMockHealthOk();
+    try rpc.pushMockLatestBlockhashResponse(44, blockhash, 77);
+    try rpc.pushMockSignatureResult(signature);
+
+    const slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 321), slot);
+
+    const health = try rpc.getHealth();
+    defer allocator.free(health);
+    try std.testing.expectEqualStrings("ok", health);
+
+    const latest = try rpc.getLatestBlockhashResponse(.confirmed);
+    defer allocator.free(latest.value.blockhash);
+    try std.testing.expectEqual(@as(u64, 44), latest.context_slot);
+    try std.testing.expectEqualStrings(blockhash, latest.value.blockhash);
+    try std.testing.expectEqual(@as(u64, 77), latest.value.last_valid_block_height);
+
+    const send_signature = try rpc.send("SignedTransactionBase64==");
+    defer allocator.free(send_signature);
+    try std.testing.expectEqualStrings(signature, send_signature);
+
+    try std.testing.expectEqual(@as(usize, 4), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getSlot", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("getHealth", rpc.capturedMockRequests()[1].method);
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[2].method);
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[3].method);
+    try mock_sender_assertions.expectMockRpcScriptSatisfied(&rpc);
+}
+
 test "root.mockSender exposes mutable scripted sender state" {
     const allocator = std.testing.allocator;
 
@@ -414,7 +454,7 @@ test "root.mockSender exposes mutable scripted sender state" {
     defer rpc.deinit();
 
     var sender = try rpc.mockSender();
-    try sender.pushResultJson("\"ok\"");
+    try sender.pushHealthOk();
     try sender.pushTransportError(.connection_reset);
 
     const health = try rpc.getHealth();
@@ -605,6 +645,64 @@ test "root.RequestSender.fromOwnedMockSender supports scripted sender replacemen
     try std.testing.expectEqual(@as(usize, 1), replacement_context.call_count);
 }
 
+test "root.MockSender tracks pending scripted dispatches and persistent routes" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
+
+    try sender.pushResultJson("123");
+    try sender.pushResultJson("456");
+    try sender.pushResultRoute(.{
+        .method = "getHealth",
+    }, "\"ok\"", 3);
+    try sender.pushPersistentRpcErrorRoute(.{
+        .method = "getSlot",
+    }, .{
+        .code = -32022,
+        .message = "slot unavailable",
+    });
+
+    try mock_sender_assertions.expectMockSenderPendingScriptedDispatchCount(&sender, 5);
+    try std.testing.expectEqual(@as(usize, 1), sender.persistentRouteCount());
+    try mock_sender_assertions.expectMockSenderMatchedRouteCount(&sender, 0);
+}
+
+test "root.MockRouteBuilder builds matcher fields and requires a response" {
+    const route = try client.MockRouteBuilder.init()
+        .label("body-match")
+        .matchSendTransaction()
+        .paramsJsonContains("\"base64\"")
+        .requestBodyContains("\"id\":9")
+        .transportError(.http_error)
+        .uses(2)
+        .build();
+
+    try std.testing.expectEqualStrings("body-match", route.label.?);
+    try std.testing.expectEqualStrings("sendTransaction", route.matcher.method.?);
+    try std.testing.expectEqualStrings("\"base64\"", route.matcher.params_json_contains.?);
+    try std.testing.expectEqualStrings("\"id\":9", route.matcher.request_body_contains.?);
+    try std.testing.expectEqual(@as(?usize, 2), route.remaining_uses);
+    try std.testing.expect(route.response == .transport_error);
+    try std.testing.expectEqual(client.MockTransportError.http_error, route.response.transport_error);
+
+    const rpc_route = try client.MockRouteBuilder.init()
+        .label("slot-finalized")
+        .matchGetSlot(.finalized)
+        .resultJson("999")
+        .once()
+        .build();
+    try std.testing.expectEqualStrings("getSlot", rpc_route.matcher.method.?);
+    try std.testing.expectEqualStrings("finalized", rpc_route.matcher.params_json_contains.?);
+
+    try std.testing.expectError(
+        error.MockRouteResponseRequired,
+        client.MockRouteBuilder.init()
+            .matchGetSlot(null)
+            .once()
+            .build(),
+    );
+}
+
 test "root.mock routes match by method and params fragment" {
     const allocator = std.testing.allocator;
     var handler_context = MockHandlerContext{};
@@ -633,6 +731,74 @@ test "root.mock routes match by method and params fragment" {
     const processed_slot = try rpc.getSlot(.processed);
     try std.testing.expectEqual(@as(u64, 456), processed_slot);
     try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+}
+
+test "root.mock route helpers expose match counts and pending scripted dispatches" {
+    const allocator = std.testing.allocator;
+
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+
+    try rpc.pushMockRoute(try client.MockRouteBuilder.init()
+        .label("finalized-slot")
+        .matchGetSlot(.finalized)
+        .resultJson("111")
+        .once()
+        .build());
+    try rpc.pushMockRoute(try client.MockRouteBuilder.init()
+        .label("processed-timeout")
+        .matchGetSlot(.processed)
+        .transportError(.timeout)
+        .uses(2)
+        .build());
+    try rpc.pushMockRoute(try client.MockRouteBuilder.init()
+        .label("health-error")
+        .matchGetHealth()
+        .rpcError(.{
+            .code = -32012,
+            .message = "health unavailable",
+        })
+        .persistent()
+        .build());
+
+    try std.testing.expectEqual(@as(usize, 3), rpc.mockRouteCount());
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockPersistentRouteCount());
+    try mock_sender_assertions.expectMockRpcPendingScriptedDispatchCount(&rpc, 3);
+    try mock_sender_assertions.expectMockRpcMatchedRouteCount(&rpc, 0);
+
+    const finalized_slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 111), finalized_slot);
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRouteCount());
+    try mock_sender_assertions.expectMockRpcRouteMatchCount(&rpc, "finalized-slot", 1);
+    try mock_sender_assertions.expectMockRpcMatchedRouteCount(&rpc, 1);
+    try mock_sender_assertions.expectMockRpcPendingScriptedDispatchCount(&rpc, 2);
+
+    try std.testing.expectError(error.Timeout, rpc.getSlot(.processed));
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRouteCount());
+    try mock_sender_assertions.expectMockRpcRouteMatchCount(&rpc, "processed-timeout", 1);
+    try mock_sender_assertions.expectMockRpcMatchedRouteCount(&rpc, 2);
+    try mock_sender_assertions.expectMockRpcPendingScriptedDispatchCount(&rpc, 1);
+
+    try std.testing.expectError(error.Timeout, rpc.getSlot(.processed));
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRouteCount());
+    try mock_sender_assertions.expectMockRpcRouteMatchCount(&rpc, "processed-timeout", 2);
+    try mock_sender_assertions.expectMockRpcMatchedRouteCount(&rpc, 3);
+    try mock_sender_assertions.expectMockRpcScriptExhausted(&rpc);
+
+    try std.testing.expectError(error.RpcError, rpc.getHealth());
+    const last_error = rpc.getLastError() orelse return error.TestExpectedError;
+    try std.testing.expectEqual(@as(i64, -32012), last_error.code);
+    try std.testing.expectEqualStrings("health unavailable", last_error.message);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRouteCount());
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockPersistentRouteCount());
+    try mock_sender_assertions.expectMockRpcRouteMatchCount(&rpc, "health-error", 1);
+    try mock_sender_assertions.expectMockRpcMatchedRouteCount(&rpc, 4);
+    try mock_sender_assertions.expectMockRpcScriptExhausted(&rpc);
+
+    const script_summary = try rpc.mockScriptSummaryAlloc(allocator);
+    defer allocator.free(script_summary);
+    try std.testing.expect(std.mem.indexOf(u8, script_summary, "health-error: 1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, script_summary, "remaining_routes:") != null);
 }
 
 test "root.mock routes can be reused and cleared explicitly" {
@@ -690,13 +856,17 @@ test "root.mock transport prefers queue then route then handler" {
     try std.testing.expectEqual(@as(u64, 111), queued_slot);
     try std.testing.expectEqual(@as(usize, 1), rpc.mockRouteCount());
     try std.testing.expectEqual(@as(usize, 0), handler_context.call_count);
+    try mock_sender_assertions.expectMockRpcNoScriptMisses(&rpc);
 
     const routed_slot = try rpc.getSlot(.processed);
     try std.testing.expectEqual(@as(u64, 333), routed_slot);
     try std.testing.expectEqual(@as(usize, 0), rpc.mockRouteCount());
     try std.testing.expectEqual(@as(usize, 0), handler_context.call_count);
+    try mock_sender_assertions.expectMockRpcNoScriptMisses(&rpc);
 
     const handled_slot = try rpc.getSlot(.processed);
     try std.testing.expectEqual(@as(u64, 456), handled_slot);
     try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockScriptMissCount());
+    try mock_sender_assertions.expectMockRpcLastScriptMissMethod(&rpc, "getSlot");
 }

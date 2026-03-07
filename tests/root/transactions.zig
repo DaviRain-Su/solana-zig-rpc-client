@@ -137,11 +137,16 @@ test "root.sendLegacyTransaction signs and serializes legacy transaction" {
 
 test "root.sendAndConfirmTransaction aliases wait on signature status" {
     const allocator = std.testing.allocator;
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"Sig111111111111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[{\"slot\":10,\"confirmations\":1,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":2}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+
+    try rpc.pushMockSignatureResult("Sig111111111111111111111111111111111111111111111111111111111111111111");
+    try rpc.pushMockSingleSignatureStatusResult(10, .{
+        .slot = 10,
+        .confirmations = 1,
+        .confirmation_status = "processed",
+        .has_error = false,
+    });
 
     const signature = try rpc.sendAndConfirmTransaction("SignedTransactionBase64==");
     defer allocator.free(signature);
@@ -153,6 +158,151 @@ test "root.sendAndConfirmTransaction aliases wait on signature status" {
     try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
     try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
     try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
+}
+
+test "root.mock latest blockhash send and status flow helper covers common send path" {
+    const allocator = std.testing.allocator;
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+
+    try rpc.pushMockLatestBlockhashSendAndSingleSignatureStatusFlow(
+        30,
+        "BH11111111111111111111111111111111111111111111",
+        88,
+        "SigFlow1111111111111111111111111111111111111111111111111111111111111",
+        31,
+        .{
+            .slot = 31,
+            .confirmations = 2,
+            .confirmation_status = "confirmed",
+            .has_error = false,
+        },
+    );
+
+    const latest = try rpc.getLatestBlockhashResponse(.confirmed);
+    defer allocator.free(latest.value.blockhash);
+    try std.testing.expectEqual(@as(u64, 30), latest.context_slot);
+    try std.testing.expectEqualStrings(
+        "BH11111111111111111111111111111111111111111111",
+        latest.value.blockhash,
+    );
+    try std.testing.expectEqual(@as(u64, 88), latest.value.last_valid_block_height);
+
+    const signature = try rpc.sendTransaction("SignedTransactionBase64==", null);
+    defer allocator.free(signature);
+    try std.testing.expectEqualStrings(
+        "SigFlow1111111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+
+    const statuses = try rpc.getSignatureStatusesWithOptions(&.{signature}, .{
+        .search_transaction_history = true,
+        .commitment = .confirmed,
+    });
+    defer {
+        for (statuses) |maybe_status| {
+            if (maybe_status) |status| {
+                if (status.confirmation_status) |value| allocator.free(value);
+            }
+        }
+        allocator.free(statuses);
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), statuses.len);
+    try std.testing.expect(statuses[0] != null);
+    try std.testing.expectEqual(@as(?u64, 31), statuses[0].?.slot);
+    try std.testing.expectEqualStrings("confirmed", statuses[0].?.confirmation_status.?);
+    try std.testing.expectEqual(@as(usize, 3), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[1].method);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[2].method);
+}
+
+test "root.mock send and status poll flow helper covers repeated confirmation polling" {
+    const allocator = std.testing.allocator;
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "SigPollFlow111111111111111111111111111111111111111111111111111111111111",
+        &.{
+            .{ .context_slot = 40, .status = null },
+            .{ .context_slot = 41, .status = .{
+                .slot = 41,
+                .confirmations = 1,
+                .confirmation_status = "processed",
+                .has_error = false,
+            } },
+            .{ .context_slot = 42, .status = .{
+                .slot = 42,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+
+    const signature = try rpc.sendTransactionAndConfirm(
+        "SignedTransactionBase64==",
+        null,
+        .confirmed,
+        false,
+        200,
+        0,
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigPollFlow111111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 4), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[2].method);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[3].method);
+}
+
+test "root.mock signature status helpers cover not-found and errored results" {
+    const allocator = std.testing.allocator;
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+
+    try rpc.pushMockSignatureStatusesResult(21, &.{
+        null,
+        .{
+            .slot = 22,
+            .confirmations = 2,
+            .confirmation_status = "confirmed",
+            .has_error = true,
+        },
+    });
+
+    const statuses = try rpc.getSignatureStatusesWithOptions(
+        &.{
+            "SigA111111111111111111111111111111111111",
+            "SigB111111111111111111111111111111111111",
+        },
+        null,
+    );
+    defer {
+        for (statuses) |maybe_status| {
+            if (maybe_status) |status| {
+                if (status.confirmation_status) |value| allocator.free(value);
+            }
+        }
+        allocator.free(statuses);
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), statuses.len);
+    try std.testing.expect(statuses[0] == null);
+    try std.testing.expect(statuses[1] != null);
+    try std.testing.expectEqual(@as(?u64, 22), statuses[1].?.slot);
+    try std.testing.expectEqual(@as(?u64, 2), statuses[1].?.confirmations);
+    try std.testing.expectEqualStrings("confirmed", statuses[1].?.confirmation_status.?);
+    try std.testing.expect(statuses[1].?.has_error);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[0].method);
 }
 
 test "root.sendTransactionAndConfirmTyped submits and confirms signed legacy transaction" {
@@ -184,11 +334,19 @@ test "root.sendTransactionAndConfirmTyped submits and confirms signed legacy tra
     const encoded = try signed.toBase64(allocator);
     defer allocator.free(encoded);
 
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"SigTypedConfirm11111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[{\"slot\":10,\"confirmations\":1,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":2}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "SigTypedConfirm11111111111111111111111111111111111111111111111111111111111",
+        &.{
+            .{ .context_slot = 10, .status = .{
+                .slot = 10,
+                .confirmations = 1,
+                .confirmation_status = "processed",
+                .has_error = false,
+            } },
+        },
+    );
 
     const signature = try rpc.sendTransactionAndConfirmTyped(
         signed,
@@ -215,17 +373,25 @@ test "root.sendTransactionAndConfirm uses initial transaction-not-found timeout 
     const allocator = std.testing.allocator;
     var rpc = try RpcClient.newMockWithTimeoutsAndCommitment(
         allocator,
-        &.{
-            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"SigInitialTimeout111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
-            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[null]},\"id\":2}" },
-            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":11},\"value\":[null]},\"id\":3}" },
-            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":[{\"slot\":12,\"confirmations\":1,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":4}" },
-        },
+        &.{},
         40,
         80,
         null,
     );
     defer rpc.deinit();
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "SigInitialTimeout111111111111111111111111111111111111111111111111111111111",
+        &.{
+            .{ .context_slot = 10, .status = null },
+            .{ .context_slot = 11, .status = null },
+            .{ .context_slot = 12, .status = .{
+                .slot = 12,
+                .confirmations = 1,
+                .confirmation_status = "processed",
+                .has_error = false,
+            } },
+        },
+    );
 
     const signature = try rpc.sendTransactionAndConfirm(
         "SignedTransactionBase64==",
@@ -252,17 +418,30 @@ test "root.sendAndConfirmTransactionWithSpinner prints progress and honors confi
     const allocator = std.testing.allocator;
     var rpc = try RpcClient.newMockWithTimeoutsAndCommitment(
         allocator,
-        &.{
-            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"SigSpinner11111111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
-            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[null]},\"id\":2}" },
-            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":11},\"value\":[{\"slot\":11,\"confirmations\":1,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":3}" },
-            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":[{\"slot\":12,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":4}" },
-        },
+        &.{},
         200,
         80,
         null,
     );
     defer rpc.deinit();
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "SigSpinner11111111111111111111111111111111111111111111111111111111111111",
+        &.{
+            .{ .context_slot = 10, .status = null },
+            .{ .context_slot = 11, .status = .{
+                .slot = 11,
+                .confirmations = 1,
+                .confirmation_status = "processed",
+                .has_error = false,
+            } },
+            .{ .context_slot = 12, .status = .{
+                .slot = 12,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
 
     const pipe_fds = try std.posix.pipe();
     defer std.posix.close(pipe_fds[0]);
@@ -309,17 +488,41 @@ test "root.confirmTransactionWithSpinner waits for observation then commitment" 
     const allocator = std.testing.allocator;
     var rpc = try RpcClient.newMockWithTimeoutsAndCommitment(
         allocator,
-        &.{
-            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[null]},\"id\":1}" },
-            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":true,\"id\":2}" },
-            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":[{\"slot\":12,\"confirmations\":1,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":3}" },
-            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":13},\"value\":[{\"slot\":13,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":4}" },
-        },
+        &.{},
         200,
         80,
         null,
     );
     defer rpc.deinit();
+    try rpc.pushMockConfirmTransactionSpinnerFlow(
+        &.{
+            .{
+                .context_slot = 10,
+                .status = null,
+                .blockhash_still_valid = true,
+            },
+            .{
+                .context_slot = 12,
+                .status = .{
+                    .slot = 12,
+                    .confirmations = 1,
+                    .confirmation_status = "processed",
+                    .has_error = false,
+                },
+            },
+        },
+        &.{
+            .{
+                .context_slot = 13,
+                .status = .{
+                    .slot = 13,
+                    .confirmations = 2,
+                    .confirmation_status = "confirmed",
+                    .has_error = false,
+                },
+            },
+        },
+    );
 
     const pipe_fds = try std.posix.pipe();
     defer std.posix.close(pipe_fds[0]);
@@ -360,15 +563,22 @@ test "root.confirmTransactionWithSpinner returns blockhash expired when not obse
     const allocator = std.testing.allocator;
     var rpc = try RpcClient.newMockWithTimeoutsAndCommitment(
         allocator,
-        &.{
-            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[null]},\"id\":1}" },
-            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":false,\"id\":2}" },
-        },
+        &.{},
         200,
         0,
         null,
     );
     defer rpc.deinit();
+    try rpc.pushMockConfirmTransactionSpinnerFlow(
+        &.{
+            .{
+                .context_slot = 10,
+                .status = null,
+                .blockhash_still_valid = false,
+            },
+        },
+        &.{},
+    );
 
     const pipe_fds = try std.posix.pipe();
     defer std.posix.close(pipe_fds[0]);
@@ -402,11 +612,19 @@ test "root.confirmTransactionWithSpinner returns blockhash expired when not obse
 
 test "root.sendAndConfirmTransactionWithConfig supports send options" {
     const allocator = std.testing.allocator;
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"Sig222222222222222222222222222222222222222222222222222222222222222222\",\"id\":1}" },
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":11},\"value\":[{\"slot\":11,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":2}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "Sig222222222222222222222222222222222222222222222222222222222222222222",
+        &.{
+            .{ .context_slot = 11, .status = .{
+                .slot = 11,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
 
     const signature = try rpc.sendAndConfirmTransactionWithConfig(
         "SignedTransactionBase64==",
@@ -426,11 +644,19 @@ test "root.sendAndConfirmTransactionWithConfig supports send options" {
 
 test "root.sendAndConfirmTransactionWithCommitmentAndConfig supports both commitment and send options" {
     const allocator = std.testing.allocator;
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"Sig333333333333333333333333333333333333333333333333333333333333333333\",\"id\":1}" },
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":[{\"slot\":12,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":2}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "Sig333333333333333333333333333333333333333333333333333333333333333333",
+        &.{
+            .{ .context_slot = 12, .status = .{
+                .slot = 12,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
 
     const signature = try rpc.sendAndConfirmTransactionWithCommitmentAndConfig(
         "SignedTransactionBase64==",
@@ -450,11 +676,19 @@ test "root.sendAndConfirmTransactionWithCommitmentAndConfig supports both commit
 
 test "root.sendAndConfirmTransactionWithCommitment requires commitment-aware confirmation" {
     const allocator = std.testing.allocator;
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"Sig333333333333333333333333333333333333333333333333333333333333333333\",\"id\":1}" },
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":[{\"slot\":12,\"confirmations\":1,\"confirmationStatus\":\"finalized\",\"err\":null}]},\"id\":2}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "Sig333333333333333333333333333333333333333333333333333333333333333333",
+        &.{
+            .{ .context_slot = 12, .status = .{
+                .slot = 12,
+                .confirmations = 1,
+                .confirmation_status = "finalized",
+                .has_error = false,
+            } },
+        },
+    );
 
     const signature = try rpc.sendAndConfirmTransactionWithCommitment(
         "SignedTransactionBase64==",
@@ -472,11 +706,13 @@ test "root.sendAndConfirmTransactionWithCommitment requires commitment-aware con
 
 test "root.pollGetBalanceWithCommitmentAndTimeouts retries until success" {
     const allocator = std.testing.allocator;
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32000,\"message\":\"node behind\"}}" },
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":77},\"id\":2}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockRpcError(.{
+        .code = -32000,
+        .message = "node behind",
+    });
+    try rpc.pushMockBalanceResponse(44, 77);
 
     const balance = try rpc.pollGetBalanceWithCommitmentAndTimeouts(
         "Address11111111111111111111111111111111",
@@ -492,11 +728,12 @@ test "root.pollGetBalanceWithCommitmentAndTimeouts retries until success" {
 
 test "root.waitForBalanceWithCommitmentAndTimeouts waits for expected value" {
     const allocator = std.testing.allocator;
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":45},\"value\":1},\"id\":1}" },
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":46},\"value\":5},\"id\":2}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockBalancePollResults(&.{
+        .{ .context_slot = 45, .value = 1 },
+        .{ .context_slot = 46, .value = 5 },
+    });
 
     const balance = try rpc.waitForBalanceWithCommitmentAndTimeouts(
         "Address11111111111111111111111111111111",
@@ -511,11 +748,16 @@ test "root.waitForBalanceWithCommitmentAndTimeouts waits for expected value" {
 
 test "root.confirmTransaction checks transaction confirmed status" {
     const allocator = std.testing.allocator;
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[{\"slot\":10,\"confirmations\":1,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}" },
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":11},\"value\":[{\"slot\":11,\"confirmations\":2,\"confirmationStatus\":\"finalized\",\"err\":null}]},\"id\":2}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockSignatureStatusPollResults(&.{
+        .{ .context_slot = 10, .status = .{
+            .slot = 10,
+            .confirmations = 1,
+            .confirmation_status = "confirmed",
+            .has_error = false,
+        } },
+    });
 
     const confirmed = try rpc.confirmTransaction("Sig111111111111111111111111111111111111", .confirmed, false);
     try std.testing.expect(confirmed);
@@ -524,10 +766,9 @@ test "root.confirmTransaction checks transaction confirmed status" {
 
 test "root.confirmTransaction returns false for missing signature" {
     const allocator = std.testing.allocator;
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":1},\"value\":[null]},\"id\":1}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockSignatureStatusNotFound(1);
 
     const confirmed = try rpc.confirmTransaction("Sig111111111111111111111111111111111111", .processed, false);
     try std.testing.expect(!confirmed);
@@ -536,12 +777,28 @@ test "root.confirmTransaction returns false for missing signature" {
 
 test "root.pollForSignatureConfirmationWithTimeouts waits for configured lockout" {
     const allocator = std.testing.allocator;
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":21},\"value\":[{\"slot\":21,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}" },
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":22},\"value\":[{\"slot\":22,\"confirmations\":3,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":2}" },
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":23},\"value\":[{\"slot\":23,\"confirmations\":10,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":3}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockSignatureStatusPollResults(&.{
+        .{ .context_slot = 21, .status = .{
+            .slot = 21,
+            .confirmations = 2,
+            .confirmation_status = "confirmed",
+            .has_error = false,
+        } },
+        .{ .context_slot = 22, .status = .{
+            .slot = 22,
+            .confirmations = 3,
+            .confirmation_status = "confirmed",
+            .has_error = false,
+        } },
+        .{ .context_slot = 23, .status = .{
+            .slot = 23,
+            .confirmations = 10,
+            .confirmation_status = "confirmed",
+            .has_error = false,
+        } },
+    });
 
     const confirmed_blocks = try rpc.pollForSignatureConfirmationWithTimeouts(
         "Sig111111111111111111111111111111111111",
@@ -556,11 +813,22 @@ test "root.pollForSignatureConfirmationWithTimeouts waits for configured lockout
 
 test "root.pollForSignatureConfirmationWithCommitmentAndTimeouts waits for commitment level" {
     const allocator = std.testing.allocator;
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":31},\"value\":[{\"slot\":31,\"confirmations\":1,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}" },
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":32},\"value\":[{\"slot\":32,\"confirmations\":10,\"confirmationStatus\":\"finalized\",\"err\":null}]},\"id\":2}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockSignatureStatusPollResults(&.{
+        .{ .context_slot = 31, .status = .{
+            .slot = 31,
+            .confirmations = 1,
+            .confirmation_status = "confirmed",
+            .has_error = false,
+        } },
+        .{ .context_slot = 32, .status = .{
+            .slot = 32,
+            .confirmations = 10,
+            .confirmation_status = "finalized",
+            .has_error = false,
+        } },
+    });
 
     const confirmed_blocks = try rpc.pollForSignatureConfirmationWithCommitmentAndTimeouts(
         "Sig111111111111111111111111111111111111",
@@ -576,10 +844,16 @@ test "root.pollForSignatureConfirmationWithCommitmentAndTimeouts waits for commi
 
 test "root.pollForSignature returns on failed signature" {
     const allocator = std.testing.allocator;
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":41},\"value\":[{\"slot\":41,\"confirmations\":1,\"confirmationStatus\":\"processed\",\"err\":{\"InstructionError\":\"GenericError\"}}]},\"id\":1}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockSignatureStatusPollResults(&.{
+        .{ .context_slot = 41, .status = .{
+            .slot = 41,
+            .confirmations = 1,
+            .confirmation_status = "processed",
+            .has_error = true,
+        } },
+    });
 
     try rpc.pollForSignature(
         "Sig111111111111111111111111111111111111",
@@ -594,9 +868,12 @@ test "root.pollForSignatureConfirmation returns partial confirmations on timeout
     var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
     for (0..20) |_| {
-        try rpc.pushMockJsonResponse(
-            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":41},\"value\":[{\"slot\":41,\"confirmations\":3,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":1}",
-        );
+        try rpc.pushMockSingleSignatureStatusResult(41, .{
+            .slot = 41,
+            .confirmations = 3,
+            .confirmation_status = "processed",
+            .has_error = false,
+        });
     }
 
     const confirmed_blocks = try rpc.pollForSignatureConfirmationWithTimeouts(
@@ -612,10 +889,13 @@ test "root.pollForSignatureConfirmation returns partial confirmations on timeout
 
 test "root.getNumBlocksSinceSignatureConfirmation returns lockout fallback when confirmations missing" {
     const allocator = std.testing.allocator;
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":31},\"value\":[{\"slot\":31,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockSingleSignatureStatusResult(31, .{
+        .slot = 31,
+        .confirmation_status = "confirmed",
+        .has_error = false,
+    });
 
     const confirmed_blocks = try rpc.getNumBlocksSinceSignatureConfirmation("Sig111111111111111111111111111111111111", false);
     try std.testing.expectEqual(@as(u64, max_lockout_history + 1), confirmed_blocks);
@@ -624,10 +904,13 @@ test "root.getNumBlocksSinceSignatureConfirmation returns lockout fallback when 
 
 test "root.getNumBlocksSinceSignatureConfirmationWithCommitment passes commitment into signature status query" {
     const allocator = std.testing.allocator;
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":31},\"value\":[{\"slot\":31,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockSingleSignatureStatusResult(31, .{
+        .slot = 31,
+        .confirmation_status = "confirmed",
+        .has_error = false,
+    });
 
     const confirmed_blocks = try rpc.getNumBlocksSinceSignatureConfirmationWithCommitment(
         "Sig111111111111111111111111111111111111",
@@ -1023,17 +1306,21 @@ test "root.transferWithOptions fetches latest blockhash and confirms" {
     const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
     defer allocator.free(recent_blockhash_base58);
 
-    const latest_blockhash_response = try std.fmt.allocPrint(
-        allocator,
-        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":12}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":77}}}},\"id\":1}}",
-        .{recent_blockhash_base58},
-    );
-    defer allocator.free(latest_blockhash_response);
     var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
-    try rpc.pushMockJsonResponse(latest_blockhash_response);
-    try rpc.pushMockJsonResponse("{\"jsonrpc\":\"2.0\",\"result\":\"Sig555555555555555555555555555555555555555555555555555555555555555555\",\"id\":2}");
-    try rpc.pushMockJsonResponse("{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":13},\"value\":[{\"slot\":13,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":3}");
+    try rpc.pushMockLatestBlockhashSendAndSingleSignatureStatusFlow(
+        12,
+        recent_blockhash_base58,
+        77,
+        "Sig555555555555555555555555555555555555555555555555555555555555555555",
+        13,
+        .{
+            .slot = 13,
+            .confirmations = 2,
+            .confirmation_status = "confirmed",
+            .has_error = false,
+        },
+    );
 
     const signature = try rpc.transferWithOptions(
         sender_secret_key_base58,
@@ -1108,8 +1395,17 @@ test "root.transferWithOptions supports nonce blockhash query and confirms" {
     var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
     try rpc.pushMockJsonResponse(nonce_account_response);
-    try rpc.pushMockJsonResponse("{\"jsonrpc\":\"2.0\",\"result\":\"Sig999999999999999999999999999999999999999999999999999999999999999999\",\"id\":2}");
-    try rpc.pushMockJsonResponse("{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":13},\"value\":[{\"slot\":13,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":3}");
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "Sig999999999999999999999999999999999999999999999999999999999999999999",
+        &.{
+            .{ .context_slot = 13, .status = .{
+                .slot = 13,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
 
     const signature = try rpc.transferWithOptions(
         sender_secret_key_base58,
@@ -1205,8 +1501,17 @@ test "root.nonceTransferWithOptions supports distinct payer sender and nonce aut
     var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
     try rpc.pushMockJsonResponse(nonce_account_response);
-    try rpc.pushMockJsonResponse("{\"jsonrpc\":\"2.0\",\"result\":\"Sig777777777777777777777777777777777777777777777777777777777777777777\",\"id\":2}");
-    try rpc.pushMockJsonResponse("{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":13},\"value\":[{\"slot\":13,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":3}");
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "Sig777777777777777777777777777777777777777777777777777777777777777777",
+        &.{
+            .{ .context_slot = 13, .status = .{
+                .slot = 13,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
 
     const signature = try rpc.nonceTransferWithOptions(
         fee_payer_secret_key_base58,
@@ -1619,11 +1924,19 @@ test "root.sendAndConfirmVersionedTransactionTyped submits and confirms signed v
     const encoded = try signed.toBase64(allocator);
     defer allocator.free(encoded);
 
-    var rpc = try RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"SigVersionedConfirm111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":10},\"value\":[{\"slot\":10,\"confirmations\":1,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":2}" },
-    });
+    var rpc = try RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "SigVersionedConfirm111111111111111111111111111111111111111111111111111111111",
+        &.{
+            .{ .context_slot = 10, .status = .{
+                .slot = 10,
+                .confirmations = 1,
+                .confirmation_status = "processed",
+                .has_error = false,
+            } },
+        },
+    );
 
     const signature = try rpc.sendAndConfirmVersionedTransactionTyped(
         signed,

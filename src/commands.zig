@@ -37,12 +37,18 @@ const command_test_support = if (builtin.is_test) @import("command_test_support"
         unreachable;
     }
 };
+const mock_sender_assertions = if (builtin.is_test) @import("mock_sender_assertions") else struct {
+    pub fn expectMockSenderScriptSatisfied(_: *const client.MockSender) !void {
+        unreachable;
+    }
+};
 const CommandTestSender = if (builtin.is_test) command_test_support.CommandTestSender else command_test_support.SenderType;
 const commandCapturedRequest = command_test_support.commandCapturedRequest;
 const commandCapturedRequestAt = command_test_support.commandCapturedRequestAt;
 const commandCapturedRequestCount = command_test_support.commandCapturedRequestCount;
 const initCommandTestRpcWithSingleResponse = command_test_support.initCommandTestRpcWithSingleResponse;
 const initCommandTestRpcWithSequenceResponses = command_test_support.initCommandTestRpcWithSequenceResponses;
+const expectMockSenderScriptSatisfied = mock_sender_assertions.expectMockSenderScriptSatisfied;
 
 fn loadSecretKeyFromKeypairFile(allocator: Allocator, path: []const u8) ![]u8 {
     const file_contents = try std.fs.cwd().readFileAlloc(allocator, path, 1 << 20);
@@ -3618,11 +3624,16 @@ test "runCommand validates wait-for-balance requires expected lamports" {
 
 test "runCommand balance with context prints slot and value" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":345},\"id\":1}";
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushBalanceResponse(12, 345);
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{
+            .endpoint = "command-test://balance",
+        },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -3649,6 +3660,7 @@ test "runCommand balance with context prints slot and value" {
     defer allocator.free(captured);
 
     try expectGetBalanceRequest(allocator, commandCapturedRequest(&sender_context), "Address11111111111111111111111111111111", "confirmed");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "balance context slot: 12\nbalance for Address11111111111111111111111111111111: 345\n",
         captured,
@@ -3657,11 +3669,16 @@ test "runCommand balance with context prints slot and value" {
 
 test "runCommand poll-balance prints value" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":15},\"value\":678},\"id\":1}";
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushBalanceResponse(15, 678);
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{
+            .endpoint = "command-test://poll-balance",
+        },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -3689,6 +3706,7 @@ test "runCommand poll-balance prints value" {
     defer allocator.free(captured);
 
     try expectGetBalanceRequest(allocator, commandCapturedRequest(&sender_context), "Address11111111111111111111111111111111", null);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "polled balance for Address11111111111111111111111111111111: 678\n",
         captured,
@@ -3767,6 +3785,7 @@ test "runCommand new-latest-blockhash waits for updated value" {
     try std.testing.expectEqual(@as(usize, 2), commandCapturedRequestCount(&sender_context));
     try expectGetLatestBlockhashRequest(allocator, commandCapturedRequestAt(&sender_context, 0), null);
     try expectGetLatestBlockhashRequest(allocator, commandCapturedRequestAt(&sender_context, 1), null);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "Latest blockhash: Blockhash222222222222222222222222222222222222\n",
         captured,
@@ -4139,15 +4158,22 @@ test "runCommand transaction prints summary and raw json" {
 
 test "runCommand status waits for signature status with search history and commitment" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":77},"value":[null]},"id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":78},"value":[{"slot":78,"confirmations":1,"confirmationStatus":"confirmed","err":null}]},"id":2}
-        ,
-    };
-    var rpc = try initCommandTestRpcWithSequenceResponses(allocator, &sender_context, &response_bodies);
+    try sender_context.sender.pushSignatureStatusPollResults(&.{
+        .{ .context_slot = 77, .status = null },
+        .{ .context_slot = 78, .status = .{
+            .slot = 78,
+            .confirmations = 1,
+            .confirmation_status = "confirmed",
+            .has_error = false,
+        } },
+    });
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://status" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4192,17 +4218,25 @@ test "runCommand status waits for signature status with search history and commi
         "confirmed",
     );
     try std.testing.expectEqual(@as(usize, 2), commandCapturedRequestCount(&sender_context));
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings("signature confirmed\n", captured);
 }
 
 test "runCommand confirm-transaction respects commitment" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":44},"value":[{"slot":44,"confirmations":1,"confirmationStatus":"processed","err":null}]},"id":1}
-    ;
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushSingleSignatureStatusResult(44, .{
+        .slot = 44,
+        .confirmations = 1,
+        .confirmation_status = "processed",
+        .has_error = false,
+    });
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://confirm-transaction" },
+    );
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -4235,17 +4269,25 @@ test "runCommand confirm-transaction respects commitment" {
         true,
         "confirmed",
     );
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings("signature Sig111111111111111111111111111111111111 confirmed: false\n", captured);
 }
 
 test "runCommand signature-status prints status" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":55},"value":[{"slot":55,"confirmations":7,"confirmationStatus":"confirmed","err":null}]},"id":1}
-    ;
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushSingleSignatureStatusResult(55, .{
+        .slot = 55,
+        .confirmations = 7,
+        .confirmation_status = "confirmed",
+        .has_error = false,
+    });
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://signature-status" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4277,6 +4319,7 @@ test "runCommand signature-status prints status" {
         false,
         "confirmed",
     );
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature status: has_error=false slot=55 confirmations=7 confirmation=confirmed\n",
         captured,
@@ -4285,12 +4328,28 @@ test "runCommand signature-status prints status" {
 
 test "runCommand signature-statuses prints per-signature output" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":61},"value":[null,{"slot":61,"confirmations":2,"confirmationStatus":"confirmed","err":null},{"slot":62,"confirmations":4,"confirmationStatus":"processed","err":{"InstructionError":0}}]},"id":1}
-    ;
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushSignatureStatusesResult(61, &.{
+        null,
+        .{
+            .slot = 61,
+            .confirmations = 2,
+            .confirmation_status = "confirmed",
+            .has_error = false,
+        },
+        .{
+            .slot = 62,
+            .confirmations = 4,
+            .confirmation_status = "processed",
+            .has_error = true,
+        },
+    });
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://signature-statuses" },
+    );
     defer rpc.deinit();
 
     const pipe_fds = try std.posix.pipe();
@@ -4323,6 +4382,7 @@ test "runCommand signature-statuses prints per-signature output" {
         true,
         null,
     );
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "signature statuses: 3\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  [0] SigA111111111111111111111111111111111111: not found\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  [1] SigB111111111111111111111111111111111111: error=false slot=61 confirmations=2 confirmation=confirmed\n") != null);
@@ -4331,15 +4391,27 @@ test "runCommand signature-statuses prints per-signature output" {
 
 test "runCommand poll-for-signature-confirmation polls until min confirmed blocks" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":77},"value":[{"slot":77,"confirmations":1,"confirmationStatus":"confirmed","err":null}]},"id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":78},"value":[{"slot":78,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":2}
-        ,
-    };
-    var rpc = try initCommandTestRpcWithSequenceResponses(allocator, &sender_context, &response_bodies);
+    try sender_context.sender.pushSignatureStatusPollResults(&.{
+        .{ .context_slot = 77, .status = .{
+            .slot = 77,
+            .confirmations = 1,
+            .confirmation_status = "confirmed",
+            .has_error = false,
+        } },
+        .{ .context_slot = 78, .status = .{
+            .slot = 78,
+            .confirmations = 2,
+            .confirmation_status = "confirmed",
+            .has_error = false,
+        } },
+    });
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://poll-signature-confirmation" },
+    );
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -4385,6 +4457,7 @@ test "runCommand poll-for-signature-confirmation polls until min confirmed block
         "confirmed",
     );
     try std.testing.expectEqual(@as(usize, 2), commandCapturedRequestCount(&sender_context));
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature Sig111111111111111111111111111111111111 reached 2 confirmed blocks (target=2)\n",
         captured,
@@ -4393,12 +4466,19 @@ test "runCommand poll-for-signature-confirmation polls until min confirmed block
 
 test "runCommand blocks-since-signature-confirmation prints confirmations" {
     const allocator = std.testing.allocator;
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_body =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":88},"value":[{"slot":88,"confirmations":9,"confirmationStatus":"finalized","err":null}]},"id":1}
-    ;
-    var rpc = try initCommandTestRpcWithSingleResponse(allocator, &sender_context, response_body);
+    try sender_context.sender.pushSingleSignatureStatusResult(88, .{
+        .slot = 88,
+        .confirmations = 9,
+        .confirmation_status = "finalized",
+        .has_error = false,
+    });
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://blocks-since-signature-confirmation" },
+    );
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -4430,6 +4510,7 @@ test "runCommand blocks-since-signature-confirmation prints confirmations" {
         false,
         "confirmed",
     );
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature Sig111111111111111111111111111111111111 confirmed blocks: 9\n",
         captured,
@@ -4516,28 +4597,28 @@ test "runCommand transfer fetches blockhash builds transaction and confirms sign
     const recent_blockhash_base58 = try client.encodeBase58(allocator, &recent_blockhash);
     defer allocator.free(recent_blockhash_base58);
 
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const latest_blockhash_response = try std.fmt.allocPrint(
-        allocator,
-        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":44}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":88}}}},\"id\":1}}",
-        .{recent_blockhash_base58},
+    try sender_context.sender.pushLatestBlockhashSendAndSingleSignatureStatusFlow(
+        44,
+        recent_blockhash_base58,
+        88,
+        "Sig444444444444444444444444444444444444444444444444444444444444444444",
+        45,
+        .{
+            .slot = 45,
+            .confirmations = 2,
+            .confirmation_status = "confirmed",
+            .has_error = false,
+        },
     );
-    defer allocator.free(latest_blockhash_response);
-
-    const send_transaction_response =
-        \\{"jsonrpc":"2.0","result":"Sig444444444444444444444444444444444444444444444444444444444444444444","id":2}
-    ;
-    const signature_status_response =
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":45},"value":[{"slot":45,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":3}
-    ;
-
-    const response_bodies = [_][]const u8{
-        latest_blockhash_response,
-        send_transaction_response,
-        signature_status_response,
-    };
-    var rpc = try initCommandTestRpcWithSequenceResponses(allocator, &sender_context, &response_bodies);
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{
+            .endpoint = "command-test://transfer-flow",
+        },
+    );
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -4593,6 +4674,7 @@ test "runCommand transfer fetches blockhash builds transaction and confirms sign
         true,
         "confirmed",
     );
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "confirmed transfer signature: Sig444444444444444444444444444444444444444444444444444444444444444444\n",
         captured,
@@ -4624,14 +4706,26 @@ test "runCommand transfer accepts sender keypair file" {
     const recent_blockhash_base58 = try client.encodeBase58(allocator, &recent_blockhash);
     defer allocator.free(recent_blockhash_base58);
 
-    var sender_context: CommandTestSender = undefined;
+    var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    const response_bodies = [_][]const u8{
-        \\{"jsonrpc":"2.0","result":"Sig666666666666666666666666666666666666666666666666666666666666666666","id":1}
-        ,
-        \\{"jsonrpc":"2.0","result":{"context":{"slot":46},"value":[{"slot":46,"confirmations":2,"confirmationStatus":"confirmed","err":null}]},"id":2}
-    };
-    var rpc = try initCommandTestRpcWithSequenceResponses(allocator, &sender_context, &response_bodies);
+    try sender_context.sender.pushSendAndSignatureStatusPollFlow(
+        "Sig666666666666666666666666666666666666666666666666666666666666666666",
+        &.{
+            .{ .context_slot = 46, .status = .{
+                .slot = 46,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{
+            .endpoint = "command-test://transfer-existing-blockhash",
+        },
+    );
     defer rpc.deinit();
 
     var parsed = try cli.parseCliArgs(allocator, &.{
@@ -4681,6 +4775,7 @@ test "runCommand transfer accepts sender keypair file" {
         false,
         "confirmed",
     );
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "confirmed transfer signature: Sig666666666666666666666666666666666666666666666666666666666666666666\n",
         captured,

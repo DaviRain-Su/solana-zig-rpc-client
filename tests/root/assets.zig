@@ -95,10 +95,9 @@ test "root.ui and token account config aliases return same parsed account" {
 
 test "root.getBalanceResponse preserves context slot" {
     const allocator = std.testing.allocator;
-    var rpc = try client.RpcClient.newMock(allocator, &.{
-        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":42},\"value\":9001},\"id\":1}" },
-    });
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
     defer rpc.deinit();
+    try rpc.pushMockBalanceResponse(42, 9001);
 
     const balance_response = try rpc.getBalanceResponse("Address11111111111111111111111111111111", .confirmed);
     try std.testing.expectEqual(@as(u64, 42), balance_response.context_slot);

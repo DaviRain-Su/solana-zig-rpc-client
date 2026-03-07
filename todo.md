@@ -1,7 +1,7 @@
 # solana-client-zig TODO
 
 Snapshot: 2026-03-07
-Current commit: `7257957`
+Current commit: `ab10d8e`
 
 ## Purpose
 
@@ -85,7 +85,7 @@ So "feature parity with Rust client" should be read in two layers:
 | `tpu_client` | Not implemented | No direct-to-leader TPU sending path. |
 | `transaction_executor` | Not implemented | No background pending-transaction executor. |
 | `send_and_confirm_transactions_in_parallel` | Not implemented | No parallel sender/re-sign/retry flow. |
-| mock sender helpers | Partially implemented | `RpcClient.newMock*` constructors, queued mock responses, structured `result_json` / `rpc_error` mock envelopes, captured mock requests, mock transport error injection, handler-based mock transport callbacks, prebuilt `MockSender` injection, direct mutable sender access, route/matcher-based scripted responses, and a generic callback-based `RequestSender` injection surface now exist; `RequestSender` can now also borrow or own a `MockSender` directly, so scripted mock behavior can flow through the generic sender path, and root plus a growing subset of command tests now run on this transport, but there is not yet a fuller Rust-style sender trait surface across all client entry points. |
+| mock sender helpers | Partially implemented | `RpcClient.newMock*` constructors, queued mock responses, structured `result_json` / `rpc_error` mock envelopes, captured mock requests, mock transport error injection, handler-based mock transport callbacks, prebuilt `MockSender` injection, direct mutable sender access, route/matcher-based scripted responses, a `MockRouteBuilder` DSL with common RPC matcher helpers (`getSlot`, `getHealth`, `getLatestBlockhash`, `sendTransaction`), high-frequency mock response helpers (`slot`, `health ok`, `latestBlockhash`, `signature`, `signature status`, `bool`, `balance`), common send/confirm flow helpers for both single-shot and polled status sequences (`sendTransaction -> signature status`, `latestBlockhash -> sendTransaction -> signature status`), plus confirm-spinner observation flows that interleave `getSignatureStatuses` and `isBlockhashValid`, named once/persistent route helpers, total and per-label route match counters, pending scripted-dispatch counters, script-miss counters with last-miss request views, mock script summary output, shared test support built on `MockSender`, shared mock-script assertion helpers for root/command tests, and a generic callback-based `RequestSender` injection surface now exist; `RequestSender` can now also borrow or own a `MockSender` directly, so scripted mock behavior can flow through the generic sender path, but there is not yet a fuller Rust-style sender trait surface across all client entry points. |
 
 ### Blocking `rpc-client` Surface
 
@@ -273,12 +273,20 @@ These items are valid Agave features, but they should not be the next thing:
   responses, structured result/error helpers, request capture, prebuilt
   `MockSender` injection, direct `mockSender()` access, runtime handler
   mutation, injected transport errors, route/matcher-based scripted
-  responses, and a generic callback-based `RequestSender` injection surface
-  now exist; `RequestSender` can now also borrow or own `MockSender` state
-  directly, command tests now use a shared MockSender-backed sender helper
-  rather than bespoke callback contexts, and root request-sender/mock helper
-  scaffolding has started moving into `tests/support`; broader sender
-  polymorphism is still missing.
+  responses, a `MockRouteBuilder` DSL with common RPC matcher helpers,
+  high-frequency mock response helpers, common single-shot and polled
+  send/confirm flow helpers, confirm-spinner observation flows that interleave
+  signature-status and blockhash-validity checks, balance response helpers,
+  named once/persistent route helpers, total and per-label route match
+  counters, pending scripted-dispatch counters, script-miss counters with
+  last-miss request views, mock script summary output, shared mock-script
+  assertion helpers, and a generic callback-based `RequestSender` injection
+  surface now exist;
+  `RequestSender` can now also borrow or own `MockSender` state directly,
+  command tests now use a shared MockSender-backed sender helper rather than
+  bespoke callback contexts, and root request-sender/mock helper scaffolding
+  has started moving into `tests/support`; broader sender polymorphism is
+  still missing.
 
 Reason for defer:
 
