@@ -32,6 +32,12 @@ const commandCapturedRequestAt = command_test_support.commandCapturedRequestAt;
 const commandCapturedRequestCount = command_test_support.commandCapturedRequestCount;
 const expectMockSenderScriptSatisfied = mock_sender_assertions.expectMockSenderScriptSatisfied;
 
+fn reportInvalidCliMessage(comptime msg: []const u8, args: anytype) void {
+    if (!builtin.is_test) {
+        std.debug.print(msg, args);
+    }
+}
+
 fn loadSecretKeyFromKeypairFile(allocator: Allocator, path: []const u8) ![]u8 {
     const file_contents = try std.fs.cwd().readFileAlloc(allocator, path, 1 << 20);
     defer allocator.free(file_contents);
@@ -214,7 +220,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     else
         status_poll_ms;
     if ((send_skip_preflight or send_max_retries != null or send_preflight_commitment != null) and !is_send_command) {
-        std.debug.print(
+        reportInvalidCliMessage(
             "error: send options (--skip-preflight, --max-retries, --preflight-commitment) require send-transaction, send-transaction-and-confirm, or transfer\n",
             .{},
         );
@@ -222,22 +228,22 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (airdrop_recent_blockhash_arg != null and command != .request_airdrop) {
-        std.debug.print("error: --airdrop-recent-blockhash requires request-airdrop\n", .{});
+        reportInvalidCliMessage("error: --airdrop-recent-blockhash requires request-airdrop\n", .{});
         return error.InvalidCli;
     }
 
     if (transfer_recent_blockhash_arg != null and command != .transfer) {
-        std.debug.print("error: --transfer-recent-blockhash requires transfer\n", .{});
+        reportInvalidCliMessage("error: --transfer-recent-blockhash requires transfer\n", .{});
         return error.InvalidCli;
     }
 
     if (sender_keypair_path_arg != null and command != .transfer) {
-        std.debug.print("error: --sender-keypair requires transfer\n", .{});
+        reportInvalidCliMessage("error: --sender-keypair requires transfer\n", .{});
         return error.InvalidCli;
     }
 
     if ((timeout_ms_overridden or poll_ms_overridden) and command != .status and command != .poll_balance and command != .wait_for_balance and command != .send_transaction_and_confirm and command != .poll_for_signature_confirmation and command != .transfer) {
-        std.debug.print("error: wait options (--timeout-ms, --poll-ms) require status, poll-balance, wait-for-balance, poll-for-signature-confirmation, send-transaction-and-confirm, or transfer\n", .{});
+        reportInvalidCliMessage("error: wait options (--timeout-ms, --poll-ms) require status, poll-balance, wait-for-balance, poll-for-signature-confirmation, send-transaction-and-confirm, or transfer\n", .{});
         return error.InvalidCli;
     }
 
@@ -251,7 +257,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_transaction_and_confirm and
         command != .transfer)
     {
-        std.debug.print(
+        reportInvalidCliMessage(
             "error: --search-transaction-history requires status, confirm-transaction, signature-status, signature-statuses, blocks-since-signature-confirmation, poll-for-signature-confirmation, send-transaction-and-confirm, or transfer\n",
             .{},
         );
@@ -261,12 +267,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     if ((signatures_for_address_before_arg != null or signatures_for_address_until_arg != null or signatures_for_address_limit_arg != null) and
         command != .signatures_for_address)
     {
-        std.debug.print("error: --before, --until, --limit are only supported by signatures-for-address\n", .{});
+        reportInvalidCliMessage("error: --before, --until, --limit are only supported by signatures-for-address\n", .{});
         return error.InvalidCli;
     }
 
     if (min_context_slot_arg != null and !is_send_command and command != .signatures_for_address and !is_account_min_context_command) {
-        std.debug.print(
+        reportInvalidCliMessage(
             "error: --min-context-slot requires send commands, signatures-for-address, or account/program queries\n",
             .{},
         );
@@ -274,14 +280,14 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if ((simulate_sig_verify or simulate_replace_recent_blockhash) and command != .simulate_transaction) {
-        std.debug.print("error: --sig-verify and --replace-recent-blockhash require simulate-transaction\n", .{});
+        reportInvalidCliMessage("error: --sig-verify and --replace-recent-blockhash require simulate-transaction\n", .{});
         return error.InvalidCli;
     }
 
     if ((simulate_inner_instructions or simulation_account_encoding_arg != null or simulation_min_context_slot_arg != null or simulation_accounts.items.len > 0) and
         command != .simulate_transaction)
     {
-        std.debug.print(
+        reportInvalidCliMessage(
             "error: simulation query options require simulate-transaction\n",
             .{},
         );
@@ -289,59 +295,59 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (simulation_account_encoding_arg != null and simulation_accounts.items.len == 0) {
-        std.debug.print("error: --simulation-account-encoding requires at least one --simulation-account\n", .{});
+        reportInvalidCliMessage("error: --simulation-account-encoding requires at least one --simulation-account\n", .{});
         return error.InvalidCli;
     }
 
     const is_token_accounts_command = command == .token_accounts_by_owner or command == .token_accounts_by_delegate;
     if ((mint_arg != null or token_program_id_arg != null) and !is_token_accounts_command) {
-        std.debug.print("error: --mint and --token-program-id are only supported by token-accounts-by-owner and token-accounts-by-delegate\n", .{});
+        reportInvalidCliMessage("error: --mint and --token-program-id are only supported by token-accounts-by-owner and token-accounts-by-delegate\n", .{});
         return error.InvalidCli;
     }
 
     if (is_token_accounts_command and mint_arg == null and token_program_id_arg == null) {
-        std.debug.print("error: token account queries require exactly one filter: --mint or --token-program-id\n", .{});
+        reportInvalidCliMessage("error: token account queries require exactly one filter: --mint or --token-program-id\n", .{});
         return error.InvalidCli;
     }
 
     if (is_token_accounts_command and mint_arg != null and token_program_id_arg != null) {
-        std.debug.print("error: token account queries require exactly one filter: --mint or --token-program-id\n", .{});
+        reportInvalidCliMessage("error: token account queries require exactly one filter: --mint or --token-program-id\n", .{});
         return error.InvalidCli;
     }
 
     const is_transaction_query_command = command == .block or command == .transaction;
     if ((encoding_arg != null or max_supported_transaction_version_arg != null) and !is_transaction_query_command) {
-        std.debug.print("error: --encoding and --max-supported-transaction-version require block or transaction\n", .{});
+        reportInvalidCliMessage("error: --encoding and --max-supported-transaction-version require block or transaction\n", .{});
         return error.InvalidCli;
     }
 
     if ((transaction_details_arg != null or rewards_arg != null) and command != .block) {
-        std.debug.print("error: --transaction-details and --rewards require block\n", .{});
+        reportInvalidCliMessage("error: --transaction-details and --rewards require block\n", .{});
         return error.InvalidCli;
     }
 
     if (epoch_arg != null and command != .inflation_reward) {
-        std.debug.print("error: --epoch requires inflation-reward\n", .{});
+        reportInvalidCliMessage("error: --epoch requires inflation-reward\n", .{});
         return error.InvalidCli;
     }
 
     if ((vote_pubkey_arg != null or vote_keep_unstaked_delinquents or delinquent_slot_distance_arg != null) and command != .vote_accounts) {
-        std.debug.print("error: vote account filters require vote-accounts\n", .{});
+        reportInvalidCliMessage("error: vote account filters require vote-accounts\n", .{});
         return error.InvalidCli;
     }
 
     if (largest_filter_arg != null and command != .largest_accounts) {
-        std.debug.print("error: --largest-filter requires largest-accounts\n", .{});
+        reportInvalidCliMessage("error: --largest-filter requires largest-accounts\n", .{});
         return error.InvalidCli;
     }
 
     if ((block_production_identity_arg != null or block_production_first_slot_arg != null or block_production_last_slot_arg != null) and command != .block_production) {
-        std.debug.print("error: block production filters require block-production\n", .{});
+        reportInvalidCliMessage("error: block production filters require block-production\n", .{});
         return error.InvalidCli;
     }
 
     if (with_context and !is_with_context_command) {
-        std.debug.print(
+        reportInvalidCliMessage(
             "error: --with-context requires latest-blockhash, balance, fee-for-message, token-account-balance, token-supply, token-largest-accounts, account-info, ui-account, multiple-accounts, multiple-ui-accounts, program-accounts, or program-ui-accounts\n",
             .{},
         );
@@ -349,7 +355,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (supply_exclude_non_circulating_accounts_list and command != .supply) {
-        std.debug.print("error: --exclude-non-circulating-accounts-list requires supply\n", .{});
+        reportInvalidCliMessage("error: --exclude-non-circulating-accounts-list requires supply\n", .{});
         return error.InvalidCli;
     }
 
@@ -360,17 +366,17 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         program_data_slice_length_arg != null or
         program_sort_results;
     if (has_program_accounts_filters and command != .program_accounts and command != .program_ui_accounts) {
-        std.debug.print("error: program account filters require program-accounts or program-ui-accounts\n", .{});
+        reportInvalidCliMessage("error: program account filters require program-accounts or program-ui-accounts\n", .{});
         return error.InvalidCli;
     }
 
     if ((program_memcmp_offset_arg == null) != (program_memcmp_bytes_arg == null)) {
-        std.debug.print("error: --program-memcmp-offset and --program-memcmp-bytes must be used together\n", .{});
+        reportInvalidCliMessage("error: --program-memcmp-offset and --program-memcmp-bytes must be used together\n", .{});
         return error.InvalidCli;
     }
 
     if ((program_data_slice_offset_arg == null) != (program_data_slice_length_arg == null)) {
-        std.debug.print("error: --program-data-slice-offset and --program-data-slice-length must be used together\n", .{});
+        reportInvalidCliMessage("error: --program-data-slice-offset and --program-data-slice-length must be used together\n", .{});
         return error.InvalidCli;
     }
 
@@ -378,12 +384,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         account_data_slice_offset_arg != null or
         account_data_slice_length_arg != null;
     if (has_account_query_filters and command != .account_info and command != .multiple_accounts) {
-        std.debug.print("error: account query filters require account-info or multiple-accounts\n", .{});
+        reportInvalidCliMessage("error: account query filters require account-info or multiple-accounts\n", .{});
         return error.InvalidCli;
     }
 
     if ((account_data_slice_offset_arg == null) != (account_data_slice_length_arg == null)) {
-        std.debug.print("error: --account-data-slice-offset and --account-data-slice-length must be used together\n", .{});
+        reportInvalidCliMessage("error: --account-data-slice-offset and --account-data-slice-length must be used together\n", .{});
         return error.InvalidCli;
     }
 
