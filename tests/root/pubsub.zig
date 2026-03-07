@@ -254,6 +254,14 @@ fn slowLogsCallback(
     logsCallback(context, notification);
 }
 
+fn slowAccountCallback(
+    context: ?*anyopaque,
+    notification: client.OwnedPubsubNotification(client.AccountNotificationValue),
+) void {
+    std.time.sleep(20 * std.time.ns_per_ms);
+    accountCallback(context, notification);
+}
+
 fn programCallback(
     context: ?*anyopaque,
     notification: client.OwnedPubsubNotification(client.ProgramNotificationValue),
@@ -702,6 +710,28 @@ const TestHandler = struct {
         }
 
         if (std.mem.eql(u8, parsed.value.method, "accountSubscribe")) {
+            if (std.mem.indexOf(u8, data, "1111111111111111111111111111111111111") != null and
+                std.mem.indexOf(u8, data, "close") != null)
+            {
+                const response = try std.fmt.allocPrint(
+                    self.app.allocator,
+                    "{{\"jsonrpc\":\"2.0\",\"result\":63,\"id\":{}}}",
+                    .{parsed.value.id},
+                );
+                defer self.app.allocator.free(response);
+                try self.conn.write(response);
+
+                const notifications = [_][]const u8{
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"accountNotification\",\"params\":{\"result\":{\"context\":{\"slot\":401},\"value\":{\"data\":{\"program\":\"nonce\",\"parsed\":{\"type\":\"initialized\",\"info\":{\"authority\":\"Auth1111111111111111111111111111111111111\",\"blockhash\":\"NonceBlockhash111111111111111111111111111111\",\"lamportsPerSignature\":5000}}},\"executable\":false,\"lamports\":777,\"owner\":\"1111111111111111111111111111111111111\",\"rentEpoch\":4,\"space\":80}},\"subscription\":63}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"accountNotification\",\"params\":{\"result\":{\"context\":{\"slot\":402},\"value\":{\"data\":{\"program\":\"nonce\",\"parsed\":{\"type\":\"initialized\",\"info\":{\"authority\":\"Auth1111111111111111111111111111111111111\",\"blockhash\":\"NonceBlockhash111111111111111111111111111111\",\"lamportsPerSignature\":5000}}},\"executable\":false,\"lamports\":778,\"owner\":\"1111111111111111111111111111111111111\",\"rentEpoch\":4,\"space\":80}},\"subscription\":63}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"accountNotification\",\"params\":{\"result\":{\"context\":{\"slot\":403},\"value\":{\"data\":{\"program\":\"nonce\",\"parsed\":{\"type\":\"initialized\",\"info\":{\"authority\":\"Auth1111111111111111111111111111111111111\",\"blockhash\":\"NonceBlockhash111111111111111111111111111111\",\"lamportsPerSignature\":5000}}},\"executable\":false,\"lamports\":779,\"owner\":\"1111111111111111111111111111111111111\",\"rentEpoch\":4,\"space\":80}},\"subscription\":63}}",
+                };
+                for (notifications) |notification| {
+                    try self.conn.write(notification);
+                }
+                return;
+            }
+
             const response = try std.fmt.allocPrint(
                 self.app.allocator,
                 "{{\"jsonrpc\":\"2.0\",\"result\":61,\"id\":{}}}",
@@ -2233,6 +2263,64 @@ test "root.PubsubClient accountSubscribeWithCallback invokes callback and unsubs
     }
 
     try std.testing.expect(app.account_unsubscribe_seen);
+}
+
+test "root.PubsubClient accountSubscribeWithCallback closes subscription when queue overflows" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .subscription_queue_limit = 1,
+        .queue_overflow_policy = .close_subscription,
+    });
+    defer pubsub.deinit();
+
+    var tracker = AccountCallbackTracker{};
+    {
+        var subscription = try pubsub.accountSubscribeWithCallback(
+            "1111111111111111111111111111111111111close",
+            .{ .commitment = .confirmed },
+            &tracker,
+            slowAccountCallback,
+        );
+        defer subscription.deinit();
+
+        try waitForClosed(subscription.rawSubscription(), 2000);
+        try std.testing.expectEqual(@as(usize, 1), subscription.queuedCount());
+        try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
+        try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, subscription.closeReason());
+
+        const receiver = subscription.receiver();
+        try std.testing.expectEqual(subscription.subscriptionId(), receiver.subscriptionId());
+        try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, receiver.closeReason());
+
+        tracker.mutex.lock();
+        const callback_count = tracker.count;
+        tracker.mutex.unlock();
+        try std.testing.expect(callback_count > 0);
+
+        const typed_receiver = subscription.typed(client.AccountNotificationValue);
+        try std.testing.expectEqual(receiver.subscriptionId(), typed_receiver.subscriptionId());
+        try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, typed_receiver.closeReason());
+
+        var notification = try receiver.recvAccountNotificationTimeout(1000);
+        defer notification.deinit();
+        try std.testing.expectEqual(@as(u64, 777), notification.notification.value.lamports);
+    }
+
+    _ = app;
 }
 
 test "root.PubsubClient logsSubscribeWithCallback invokes callback and unsubscribes" {
