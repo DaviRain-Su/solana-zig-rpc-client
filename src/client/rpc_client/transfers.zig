@@ -15,7 +15,9 @@ const Hash = sdk.Hash;
 const Instruction = sdk.Instruction;
 const Keypair = sdk.Keypair;
 const LegacyTransaction = sdk.LegacyTransaction;
+const SignedVersionedTransaction = sdk.SignedVersionedTransaction;
 const Pubkey = sdk.Pubkey;
+const AddressLookupTableAccount = sdk.AddressLookupTableAccount;
 const SignedLegacyTransaction = sdk.SignedLegacyTransaction;
 const SystemProgram = sdk.SystemProgram;
 const poll_for_signature_confirmation_timeout_ms = sdk.poll_for_signature_confirmation_timeout_ms;
@@ -102,6 +104,29 @@ fn buildTransferSignedTransactionWithResolvedBlockhash(
     return try transaction.sign(self.allocator, &.{keypair});
 }
 
+fn buildVersionedTransferSignedTransactionWithResolvedBlockhash(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !SignedVersionedTransaction {
+    const keypair = try Keypair.fromBase58SecretKey(self.allocator, sender_secret_key);
+    const destination_pubkey = try Pubkey.fromBase58(self.allocator, destination);
+    const blockhash = try Hash.fromBase58(self.allocator, recent_blockhash);
+    const transfer_instruction = SystemProgram.transfer(keypair.public_key, destination_pubkey, lamports);
+
+    return try sdk.buildSignedVersionedTransactionV0(
+        self.allocator,
+        keypair.public_key,
+        blockhash,
+        &[_]Instruction{transfer_instruction.instruction()},
+        address_lookup_tables,
+        &.{keypair},
+    );
+}
+
 fn buildNonceTransferSignedTransactionWithResolvedBlockhash(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -146,6 +171,63 @@ pub fn buildTransferSignedTransaction(
         lamports,
         recent_blockhash,
         null,
+    );
+}
+
+pub fn buildVersionedTransferSignedTransaction(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !SignedVersionedTransaction {
+    return try buildVersionedTransferSignedTransactionWithResolvedBlockhash(
+        self,
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildVersionedTransferSignedTransactionWithOptions(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) !SignedVersionedTransaction {
+    const blockhash_query = resolveTransferBlockhashQuery(options);
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    return try buildVersionedTransferSignedTransactionWithResolvedBlockhash(
+        self,
+        sender_secret_key,
+        destination,
+        lamports,
+        resolved.blockhash,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildVersionedTransferSignedTransactionWithConfig(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) !SignedVersionedTransaction {
+    return try self.buildVersionedTransferSignedTransactionWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
     );
 }
 
@@ -266,6 +348,61 @@ pub fn buildTransferTransaction(
     return try signed.toBase64(self.allocator);
 }
 
+pub fn buildVersionedTransferTransaction(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]const u8 {
+    var signed = try self.buildVersionedTransferSignedTransaction(
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+    );
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
+}
+
+pub fn buildVersionedTransferTransactionWithOptions(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) ![]const u8 {
+    var signed = try self.buildVersionedTransferSignedTransactionWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
+}
+
+pub fn buildVersionedTransferTransactionWithConfig(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) ![]const u8 {
+    return try self.buildVersionedTransferTransactionWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+}
+
 pub fn buildNonceTransferTransaction(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -375,6 +512,23 @@ pub fn sendTransfer(
     );
 }
 
+pub fn sendVersionedTransfer(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]const u8 {
+    return try self.sendVersionedTransferWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        .{ .recent_blockhash = recent_blockhash },
+    );
+}
+
 pub fn sendTransferWithOptions(
     self: anytype,
     sender_secret_key: []const u8,
@@ -400,6 +554,53 @@ pub fn sendTransferWithOptions(
     return try self.sendTransaction(
         signed_tx_base64,
         if (options) |value| value.send_transaction_options else null,
+    );
+}
+
+pub fn sendVersionedTransferWithOptions(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?SendTransferOptions,
+) ![]const u8 {
+    const signed_tx_base64 = try self.buildVersionedTransferTransactionWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        if (options) |value|
+            TransferBuildOptions{
+                .recent_blockhash = value.recent_blockhash,
+                .blockhash_commitment = value.blockhash_commitment,
+                .blockhash_query = value.blockhash_query,
+            }
+        else
+            null,
+    );
+    defer self.allocator.free(signed_tx_base64);
+
+    return try self.sendTransaction(
+        signed_tx_base64,
+        if (options) |value| value.send_transaction_options else null,
+    );
+}
+
+pub fn sendVersionedTransferWithConfig(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?SendTransferOptions,
+) ![]const u8 {
+    return try self.sendVersionedTransferWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
     );
 }
 
@@ -550,6 +751,80 @@ pub fn transferWithConfig(
     options: ?TransferOptions,
 ) ![]const u8 {
     return try self.transferWithOptions(sender_secret_key, destination, lamports, options);
+}
+
+pub fn versionedTransfer(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    commitment: ?Commitment,
+    options: ?SendTransactionOptions,
+) ![]const u8 {
+    return try self.versionedTransferWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        .{
+            .recent_blockhash = recent_blockhash,
+            .send_transaction_options = options,
+            .commitment = commitment,
+        },
+    );
+}
+
+pub fn versionedTransferWithOptions(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferOptions,
+) ![]const u8 {
+    const signed_tx_base64 = try self.buildVersionedTransferTransactionWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        if (options) |value|
+            TransferBuildOptions{
+                .recent_blockhash = value.recent_blockhash,
+                .blockhash_commitment = value.blockhash_commitment,
+                .blockhash_query = value.blockhash_query,
+            }
+        else
+            null,
+    );
+    defer self.allocator.free(signed_tx_base64);
+
+    return try self.sendTransactionAndConfirm(
+        signed_tx_base64,
+        if (options) |value| value.send_transaction_options else null,
+        if (options) |value| value.commitment else null,
+        if (options) |value| value.search_transaction_history else false,
+        if (options) |value| value.timeout_ms else poll_for_signature_confirmation_timeout_ms,
+        if (options) |value| value.poll_interval_ms else signature_poll_interval_ms,
+    );
+}
+
+pub fn versionedTransferWithConfig(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferOptions,
+) ![]const u8 {
+    return try self.versionedTransferWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
 }
 
 pub fn nonceTransfer(
