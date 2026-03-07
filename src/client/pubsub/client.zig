@@ -3365,12 +3365,16 @@ const State = struct {
     }
 
     fn heartbeatLoop(self: *State) void {
-        const interval_ms = self.options.heartbeat_interval_ms orelse return;
-        const timeout_ms = self.options.heartbeat_timeout_ms orelse interval_ms * 3;
-        const timeout_ns = @as(i128, @intCast(timeout_ms)) * std.time.ns_per_ms;
-
         while (true) {
             self.mutex.lock();
+            const interval_ms = self.options.heartbeat_interval_ms orelse {
+                self.heartbeat_thread = null;
+                self.mutex.unlock();
+                return;
+            };
+            const timeout_ms = self.options.heartbeat_timeout_ms orelse interval_ms * 3;
+            const timeout_ns = @as(i128, @intCast(timeout_ms)) * std.time.ns_per_ms;
+
             if (self.shutdown_started or self.closed) {
                 self.mutex.unlock();
                 return;
@@ -3379,6 +3383,12 @@ const State = struct {
             self.cond.timedWait(&self.mutex, @as(u64, interval_ms) * std.time.ns_per_ms) catch |err| switch (err) {
                 error.Timeout => {},
             };
+
+            if (self.options.heartbeat_interval_ms == null) {
+                self.heartbeat_thread = null;
+                self.mutex.unlock();
+                return;
+            }
 
             if (self.shutdown_started or self.closed) {
                 self.mutex.unlock();
@@ -3576,6 +3586,94 @@ pub const PubsubClient = struct {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
         return self.state.options.buffer_size;
+    }
+
+    pub fn setAutoReconnectEnabled(self: *Self, enabled: bool) void {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        self.state.options.auto_reconnect = enabled;
+    }
+
+    pub fn setHeartbeatIntervalMs(self: *Self, interval_ms: ?u32) !void {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+
+        if (self.state.shutdown_started or self.state.closed) {
+            return error.Unavailable;
+        }
+
+        self.state.options.heartbeat_interval_ms = interval_ms;
+        self.state.cond.broadcast();
+
+        if (interval_ms != null and self.state.heartbeat_thread == null) {
+            self.state.heartbeat_thread = try std.Thread.spawn(.{}, State.heartbeatLoopThread, .{self.state});
+        }
+    }
+
+    pub fn setHeartbeatTimeoutMs(self: *Self, timeout_ms: ?u32) void {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        self.state.options.heartbeat_timeout_ms = timeout_ms;
+    }
+
+    pub fn setReconnectDelayMs(self: *Self, delay_ms: u32) void {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        self.state.options.reconnect_delay_ms = delay_ms;
+    }
+
+    pub fn setReconnectBackoffFactor(self: *Self, factor: u8) void {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        self.state.options.reconnect_backoff_factor = factor;
+    }
+
+    pub fn setReconnectMaxDelayMs(self: *Self, max_delay_ms: ?u32) void {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        self.state.options.reconnect_max_delay_ms = max_delay_ms;
+    }
+
+    pub fn setReconnectMaxAttempts(self: *Self, max_attempts: ?u32) void {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        self.state.options.reconnect_max_attempts = max_attempts;
+    }
+
+    pub fn setSubscriptionQueueLimit(self: *Self, limit: usize) void {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        self.state.options.subscription_queue_limit = limit;
+    }
+
+    pub fn setQueueOverflowPolicy(self: *Self, policy: pubsub_types.PubsubQueueOverflowPolicy) void {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        self.state.options.queue_overflow_policy = policy;
+    }
+
+    pub fn setHandshakeTimeoutMs(self: *Self, timeout_ms: u32) void {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        self.state.options.handshake_timeout_ms = timeout_ms;
+    }
+
+    pub fn setWriteTimeoutMs(self: *Self, timeout_ms: ?u32) void {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        self.state.options.write_timeout_ms = timeout_ms;
+    }
+
+    pub fn setMaxMessageSize(self: *Self, max_message_size: usize) void {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        self.state.options.max_message_size = max_message_size;
+    }
+
+    pub fn setBufferSize(self: *Self, buffer_size: usize) void {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        self.state.options.buffer_size = buffer_size;
     }
 
     pub fn getReconnectLimitReached(self: *const Self) bool {

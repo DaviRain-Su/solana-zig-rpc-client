@@ -1316,6 +1316,52 @@ test "root.PubsubClient heartbeat timeout closes subscriptions when server stops
     try std.testing.expectEqual(client.PubsubCloseReason.transport_closed, subscription.closeReason());
 }
 
+test "root.PubsubClient heartbeat interval can be changed at runtime" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    try std.testing.expectEqual(@as(?u32, null), pubsub.getHeartbeatIntervalMs());
+
+    try pubsub.setHeartbeatIntervalMs(15);
+    try waitForHeartbeatPingCount(&app, 1, 1000);
+    try std.testing.expectEqual(@as(?u32, 15), pubsub.getHeartbeatIntervalMs());
+
+    try pubsub.setHeartbeatIntervalMs(5);
+    try std.testing.expectEqual(@as(?u32, 5), pubsub.getHeartbeatIntervalMs());
+
+    app.mutex.lock();
+    const before_disable_count = app.heartbeat_ping_count;
+    app.mutex.unlock();
+    try pubsub.setHeartbeatIntervalMs(null);
+    try std.testing.expectEqual(@as(?u32, null), pubsub.getHeartbeatIntervalMs());
+
+    std.Thread.sleep(120 * std.time.ns_per_ms);
+    app.mutex.lock();
+    const after_disable_count = app.heartbeat_ping_count;
+    app.mutex.unlock();
+    std.Thread.sleep(120 * std.time.ns_per_ms);
+    app.mutex.lock();
+    const final_ping_count = app.heartbeat_ping_count;
+    app.mutex.unlock();
+
+    try std.testing.expectEqual(after_disable_count, final_ping_count);
+}
+
 test "root.PubsubClient reconnect backoff increases delay across retries" {
     const port = try reservePort();
     var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
