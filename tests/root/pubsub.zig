@@ -8,8 +8,57 @@ fn reservePort() !u16 {
     return listener.listen_address.getPort();
 }
 
+fn waitForQueuedCount(subscription: *client.PubsubSubscription, expected: usize, timeout_ms: u64) !void {
+    const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ms * std.time.ns_per_ms));
+    while (std.time.nanoTimestamp() < deadline) {
+        if (subscription.queuedCount() == expected) return;
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
+    return error.Timeout;
+}
+
+fn waitForClosed(subscription: *client.PubsubSubscription, timeout_ms: u64) !void {
+    const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ms * std.time.ns_per_ms));
+    while (std.time.nanoTimestamp() < deadline) {
+        if (subscription.isClosed()) return;
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
+    return error.Timeout;
+}
+
+fn waitForHeartbeatPingCount(app: *TestApp, expected: usize, timeout_ms: u64) !void {
+    const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ms * std.time.ns_per_ms));
+    while (std.time.nanoTimestamp() < deadline) {
+        app.mutex.lock();
+        const ping_count = app.heartbeat_ping_count;
+        app.mutex.unlock();
+        if (ping_count >= expected) return;
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
+    return error.Timeout;
+}
+
+fn waitForBackoffReconnectCount(app: *TestApp, expected: usize, timeout_ms: u64) !void {
+    const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ms * std.time.ns_per_ms));
+    while (std.time.nanoTimestamp() < deadline) {
+        app.mutex.lock();
+        const reconnect_count = app.reconnect_backoff_subscribe_count;
+        app.mutex.unlock();
+        if (reconnect_count >= expected) return;
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
+    return error.Timeout;
+}
+
+fn reconnectBackoffTime(app: *TestApp, index: usize) i64 {
+    app.mutex.lock();
+    defer app.mutex.unlock();
+    return app.reconnect_backoff_subscribe_times_ns[index];
+}
+
 const TestApp = struct {
     allocator: std.mem.Allocator,
+    mutex: std.Thread.Mutex = .{},
     signature_unsubscribe_seen: bool = false,
     account_unsubscribe_seen: bool = false,
     program_unsubscribe_seen: bool = false,
@@ -19,6 +68,10 @@ const TestApp = struct {
     vote_unsubscribe_seen: bool = false,
     block_unsubscribe_seen: bool = false,
     reconnect_signature_subscribe_count: usize = 0,
+    heartbeat_ping_count: usize = 0,
+    reply_to_client_ping: bool = true,
+    reconnect_backoff_subscribe_count: usize = 0,
+    reconnect_backoff_subscribe_times_ns: [4]i64 = .{ 0, 0, 0, 0 },
 };
 
 const TestHandler = struct {
@@ -60,6 +113,34 @@ const TestHandler = struct {
                 } else {
                     const notification =
                         "{\"jsonrpc\":\"2.0\",\"method\":\"signatureNotification\",\"params\":{\"result\":{\"context\":{\"slot\":777},\"value\":{\"err\":null}},\"subscription\":142}}";
+                    try self.conn.write(notification);
+                }
+                return;
+            }
+
+            if (std.mem.indexOf(u8, data, "BackoffReconnect11111111111111111111111111111") != null) {
+                self.app.mutex.lock();
+                self.app.reconnect_backoff_subscribe_count += 1;
+                const reconnect_count = self.app.reconnect_backoff_subscribe_count;
+                if (reconnect_count < self.app.reconnect_backoff_subscribe_times_ns.len) {
+                    self.app.reconnect_backoff_subscribe_times_ns[reconnect_count] = @as(i64, @intCast(std.time.nanoTimestamp()));
+                }
+                self.app.mutex.unlock();
+
+                const response = try std.fmt.allocPrint(
+                    self.app.allocator,
+                    "{{\"jsonrpc\":\"2.0\",\"result\":{},\"id\":{}}}",
+                    .{ 240 + reconnect_count, parsed.value.id },
+                );
+                defer self.app.allocator.free(response);
+                try self.conn.write(response);
+
+                if (reconnect_count < 3) {
+                    std.Thread.sleep(10 * std.time.ns_per_ms);
+                    try self.conn.close(.{});
+                } else {
+                    const notification =
+                        "{\"jsonrpc\":\"2.0\",\"method\":\"signatureNotification\",\"params\":{\"result\":{\"context\":{\"slot\":888},\"value\":{\"err\":null}},\"subscription\":243}}";
                     try self.conn.write(notification);
                 }
                 return;
@@ -112,6 +193,47 @@ const TestHandler = struct {
         }
 
         if (std.mem.eql(u8, parsed.value.method, "logsSubscribe")) {
+            if (std.mem.indexOf(u8, data, "BurstDrop111111111111111111111111111111111111") != null) {
+                const response = try std.fmt.allocPrint(
+                    self.app.allocator,
+                    "{{\"jsonrpc\":\"2.0\",\"result\":54,\"id\":{}}}",
+                    .{parsed.value.id},
+                );
+                defer self.app.allocator.free(response);
+                try self.conn.write(response);
+
+                const notifications = [_][]const u8{
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"logsNotification\",\"params\":{\"result\":{\"context\":{\"slot\":201},\"value\":{\"signature\":\"drop1\",\"err\":null,\"logs\":[\"program log: 1\"]}},\"subscription\":54}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"logsNotification\",\"params\":{\"result\":{\"context\":{\"slot\":202},\"value\":{\"signature\":\"drop2\",\"err\":null,\"logs\":[\"program log: 2\"]}},\"subscription\":54}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"logsNotification\",\"params\":{\"result\":{\"context\":{\"slot\":203},\"value\":{\"signature\":\"drop3\",\"err\":null,\"logs\":[\"program log: 3\"]}},\"subscription\":54}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"logsNotification\",\"params\":{\"result\":{\"context\":{\"slot\":204},\"value\":{\"signature\":\"drop4\",\"err\":null,\"logs\":[\"program log: 4\"]}},\"subscription\":54}}",
+                };
+                for (notifications) |notification| {
+                    try self.conn.write(notification);
+                }
+                return;
+            }
+
+            if (std.mem.indexOf(u8, data, "BurstClose11111111111111111111111111111111111") != null) {
+                const response = try std.fmt.allocPrint(
+                    self.app.allocator,
+                    "{{\"jsonrpc\":\"2.0\",\"result\":55,\"id\":{}}}",
+                    .{parsed.value.id},
+                );
+                defer self.app.allocator.free(response);
+                try self.conn.write(response);
+
+                const notifications = [_][]const u8{
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"logsNotification\",\"params\":{\"result\":{\"context\":{\"slot\":301},\"value\":{\"signature\":\"close1\",\"err\":null,\"logs\":[\"program log: keep\"]}},\"subscription\":55}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"logsNotification\",\"params\":{\"result\":{\"context\":{\"slot\":302},\"value\":{\"signature\":\"close2\",\"err\":null,\"logs\":[\"program log: overflow\"]}},\"subscription\":55}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"logsNotification\",\"params\":{\"result\":{\"context\":{\"slot\":303},\"value\":{\"signature\":\"close3\",\"err\":null,\"logs\":[\"program log: ignored\"]}},\"subscription\":55}}",
+                };
+                for (notifications) |notification| {
+                    try self.conn.write(notification);
+                }
+                return;
+            }
+
             if (std.mem.indexOf(u8, data, "Err111111111111111111111111111111111111111") != null) {
                 const response = try std.fmt.allocPrint(
                     self.app.allocator,
@@ -318,8 +440,42 @@ const TestHandler = struct {
             try std.testing.expect(std.mem.indexOf(u8, data, "\"mentionsAccountOrProgram\":\"11111111111111111111111111111111\"") != null);
             try std.testing.expect(std.mem.indexOf(u8, data, "\"commitment\":\"finalized\"") != null);
             try std.testing.expect(std.mem.indexOf(u8, data, "\"encoding\":\"json\"") != null);
-            try std.testing.expect(std.mem.indexOf(u8, data, "\"transactionDetails\":\"signatures\"") != null);
             try std.testing.expect(std.mem.indexOf(u8, data, "\"maxSupportedTransactionVersion\":0") != null);
+            if (std.mem.indexOf(u8, data, "\"transactionDetails\":\"accounts\"") != null) {
+                try std.testing.expect(std.mem.indexOf(u8, data, "\"showRewards\":false") != null);
+
+                const response = try std.fmt.allocPrint(
+                    self.app.allocator,
+                    "{{\"jsonrpc\":\"2.0\",\"result\":77,\"id\":{}}}",
+                    .{parsed.value.id},
+                );
+                defer self.app.allocator.free(response);
+                try self.conn.write(response);
+
+                const notification =
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"blockNotification\",\"params\":{\"result\":{\"context\":{\"slot\":907},\"value\":{\"slot\":906,\"err\":null,\"block\":{\"blockhash\":\"AccountsBlockhash1111111111111111111111111111\",\"previousBlockhash\":\"AccountsPrev111111111111111111111111111111\",\"parentSlot\":905,\"blockHeight\":601,\"blockTime\":1710000300,\"transactions\":[{\"transaction\":{\"signatures\":[\"accsig1\"],\"accountKeys\":[{\"pubkey\":\"11111111111111111111111111111111\",\"signer\":true,\"writable\":true,\"source\":\"transaction\"},{\"pubkey\":\"Lookup1111111111111111111111111111111111111\",\"signer\":false,\"writable\":false,\"source\":\"lookupTable\"}]}}],\"rewards\":[]}}},\"subscription\":77}}";
+                try self.conn.write(notification);
+                return;
+            }
+
+            if (std.mem.indexOf(u8, data, "\"transactionDetails\":\"full\"") != null) {
+                try std.testing.expect(std.mem.indexOf(u8, data, "\"showRewards\":true") != null);
+
+                const response = try std.fmt.allocPrint(
+                    self.app.allocator,
+                    "{{\"jsonrpc\":\"2.0\",\"result\":76,\"id\":{}}}",
+                    .{parsed.value.id},
+                );
+                defer self.app.allocator.free(response);
+                try self.conn.write(response);
+
+                const notification =
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"blockNotification\",\"params\":{\"result\":{\"context\":{\"slot\":905},\"value\":{\"slot\":904,\"err\":null,\"block\":{\"blockhash\":\"FullBlockhash11111111111111111111111111111111\",\"previousBlockhash\":\"FullPrev11111111111111111111111111111111111\",\"parentSlot\":903,\"blockHeight\":502,\"blockTime\":1710000200,\"transactions\":[{\"version\":\"legacy\",\"meta\":{\"err\":null,\"fee\":5000,\"logMessages\":[\"program log: one\",\"program log: two\"]},\"transaction\":{\"signatures\":[\"9abc\",\"9def\"],\"message\":{\"accountKeys\":[\"11111111111111111111111111111111\",\"Sysvar1111111111111111111111111111111111111\",\"Program111111111111111111111111111111111111\"],\"instructions\":[{\"programIdIndex\":2,\"accounts\":[0,1],\"data\":\"3Bxs4M\"},{\"programIdIndex\":2,\"accounts\":[1],\"data\":\"7Z\"}],\"addressTableLookups\":[{\"accountKey\":\"LookupTable1111111111111111111111111111111\",\"writableIndexes\":[0],\"readonlyIndexes\":[1]}]}}},{\"version\":0,\"meta\":{\"err\":{\"InstructionError\":[1,{\"Custom\":6001}]},\"fee\":7000,\"logMessages\":[\"program log: fail\"],\"loadedAddresses\":{\"writable\":[\"LoadedWritable11111111111111111111111111111\"],\"readonly\":[\"LoadedReadonly1111111111111111111111111111\",\"LoadedReadonly2222222222222222222222222222\"]}},\"transaction\":{\"signatures\":[\"7xyz\"],\"message\":{\"accountKeys\":[\"FeePayer11111111111111111111111111111111111\"],\"instructions\":[{\"programIdIndex\":0,\"accounts\":[0],\"data\":\"9Q\"}],\"addressTableLookups\":[]}}}],\"rewards\":[{\"pubkey\":\"Reward111111111111111111111111111111111111\"}]}}},\"subscription\":76}}";
+                try self.conn.write(notification);
+                return;
+            }
+
+            try std.testing.expect(std.mem.indexOf(u8, data, "\"transactionDetails\":\"signatures\"") != null);
             try std.testing.expect(std.mem.indexOf(u8, data, "\"showRewards\":false") != null);
 
             const response = try std.fmt.allocPrint(
@@ -346,6 +502,17 @@ const TestHandler = struct {
             defer self.app.allocator.free(response);
             try self.conn.write(response);
             return;
+        }
+    }
+
+    pub fn clientPing(self: *TestHandler, data: []u8) !void {
+        self.app.mutex.lock();
+        self.app.heartbeat_ping_count += 1;
+        const reply_to_client_ping = self.app.reply_to_client_ping;
+        self.app.mutex.unlock();
+
+        if (reply_to_client_ping) {
+            try self.conn.writeFrame(.pong, data);
         }
     }
 };
@@ -501,6 +668,199 @@ test "root.PubsubReceiver parses logs summary notifications with error payloads"
     );
     try std.testing.expectEqual(@as(usize, 2), notification.notification.value.logsCount);
     try std.testing.expectEqualStrings("program log: fail", notification.notification.value.firstLog.?);
+}
+
+test "root.PubsubSubscription drops oldest notifications when queue limit is exceeded" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .subscription_queue_limit = 2,
+        .queue_overflow_policy = .drop_oldest,
+    });
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.logsSubscribe(
+        .{ .mentions = "BurstDrop111111111111111111111111111111111111" },
+        .{},
+    );
+    defer subscription.deinit();
+
+    try waitForQueuedCount(subscription, 2, 1000);
+    try std.testing.expectEqual(@as(usize, 2), subscription.queuedCount());
+    try std.testing.expectEqual(@as(usize, 2), subscription.droppedCount());
+    try std.testing.expectEqual(client.PubsubCloseReason.none, subscription.closeReason());
+
+    var first = try subscription.recvLogsNotification();
+    defer first.deinit();
+    var second = try subscription.recvLogsNotification();
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings("drop3", first.notification.value.signature);
+    try std.testing.expectEqualStrings("drop4", second.notification.value.signature);
+    try std.testing.expectEqualStrings("program log: 3", first.notification.value.logs[0]);
+    try std.testing.expectEqualStrings("program log: 4", second.notification.value.logs[0]);
+}
+
+test "root.PubsubSubscription can close on queue overflow" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .subscription_queue_limit = 1,
+        .queue_overflow_policy = .close_subscription,
+    });
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.logsSubscribe(
+        .{ .mentions = "BurstClose11111111111111111111111111111111111" },
+        .{},
+    );
+    defer subscription.deinit();
+
+    try waitForClosed(subscription, 1000);
+    try std.testing.expect(subscription.isClosed());
+    try std.testing.expectEqual(@as(usize, 1), subscription.queuedCount());
+    try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
+    try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, subscription.closeReason());
+
+    var first = try subscription.recvLogsNotification();
+    defer first.deinit();
+    try std.testing.expectEqualStrings("close1", first.notification.value.signature);
+    try std.testing.expectError(error.Closed, subscription.recv());
+}
+
+test "root.PubsubClient heartbeat sends websocket ping frames" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .heartbeat_interval_ms = 20,
+        .heartbeat_timeout_ms = 80,
+    });
+    defer pubsub.deinit();
+
+    try waitForHeartbeatPingCount(&app, 1, 1000);
+
+    app.mutex.lock();
+    const ping_count = app.heartbeat_ping_count;
+    app.mutex.unlock();
+    try std.testing.expect(ping_count >= 1);
+}
+
+test "root.PubsubClient heartbeat timeout closes subscriptions when server stops replying to ping" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{
+        .allocator = std.testing.allocator,
+        .reply_to_client_ping = false,
+    };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .heartbeat_interval_ms = 20,
+        .heartbeat_timeout_ms = 40,
+    });
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.rootSubscribe();
+    defer subscription.deinit();
+
+    try waitForHeartbeatPingCount(&app, 1, 1000);
+    try waitForClosed(subscription, 1000);
+    try std.testing.expectEqual(client.PubsubCloseReason.transport_closed, subscription.closeReason());
+}
+
+test "root.PubsubClient reconnect backoff increases delay across retries" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .auto_reconnect = true,
+        .reconnect_delay_ms = 20,
+        .reconnect_backoff_factor = 2,
+        .reconnect_max_delay_ms = 40,
+    });
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.signatureSubscribe(
+        "BackoffReconnect11111111111111111111111111111",
+        .{ .commitment = .confirmed },
+    );
+    defer subscription.deinit();
+
+    try waitForBackoffReconnectCount(&app, 3, 2000);
+
+    var notification = try subscription.recvParsedTimeout(client.SignatureNotificationValue, 2000);
+    defer notification.deinit();
+    try std.testing.expectEqual(@as(?u64, 888), notification.notification.context_slot);
+
+    const first_time_ns = reconnectBackoffTime(&app, 1);
+    const second_time_ns = reconnectBackoffTime(&app, 2);
+    const third_time_ns = reconnectBackoffTime(&app, 3);
+
+    try std.testing.expect(second_time_ns > first_time_ns);
+    try std.testing.expect(third_time_ns > second_time_ns);
+    try std.testing.expect(second_time_ns - first_time_ns >= 15 * std.time.ns_per_ms);
+    try std.testing.expect(third_time_ns - second_time_ns >= 30 * std.time.ns_per_ms);
 }
 
 test "root.PubsubClient signatureSubscribe parses receivedSignature notifications" {
@@ -1006,6 +1366,195 @@ test "root.PubsubSubscription parses block summary notifications" {
     try std.testing.expectEqual(@as(?usize, 0), notification.notification.value.block.?.rewardsCount);
 }
 
+test "root.PubsubSubscription parses block signatures notifications" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.blockSubscribe(
+        .{ .mentions_account_or_program = "11111111111111111111111111111111" },
+        .{
+            .commitment = .finalized,
+            .encoding = .json,
+            .transaction_details = .signatures,
+            .max_supported_transaction_version = 0,
+            .show_rewards = false,
+        },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvBlockSignaturesNotification();
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 75), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, 901), notification.notification.context_slot);
+    try std.testing.expectEqual(@as(u64, 900), notification.notification.value.slot);
+    try std.testing.expect(!notification.notification.value.hasError);
+    try std.testing.expect(notification.notification.value.block != null);
+    try std.testing.expectEqualStrings(
+        "Blockhash111111111111111111111111111111111111",
+        notification.notification.value.block.?.blockhash,
+    );
+    try std.testing.expectEqual(@as(usize, 1), notification.notification.value.block.?.transactions.len);
+    try std.testing.expectEqual(@as(?usize, 0), notification.notification.value.block.?.rewardsCount);
+    try std.testing.expectEqual(@as(usize, 1), notification.notification.value.block.?.transactions[0].signatures.len);
+    try std.testing.expectEqualStrings("5h6x", notification.notification.value.block.?.transactions[0].signatures[0]);
+}
+
+test "root.PubsubSubscription parses block accounts notifications" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.blockSubscribe(
+        .{ .mentions_account_or_program = "11111111111111111111111111111111" },
+        .{
+            .commitment = .finalized,
+            .encoding = .json,
+            .transaction_details = .accounts,
+            .max_supported_transaction_version = 0,
+            .show_rewards = false,
+        },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvBlockAccountsNotification();
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 77), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, 907), notification.notification.context_slot);
+    try std.testing.expectEqual(@as(u64, 906), notification.notification.value.slot);
+    try std.testing.expect(!notification.notification.value.hasError);
+    try std.testing.expect(notification.notification.value.block != null);
+    try std.testing.expectEqualStrings(
+        "AccountsBlockhash1111111111111111111111111111",
+        notification.notification.value.block.?.blockhash,
+    );
+    try std.testing.expectEqual(@as(?u64, 601), notification.notification.value.block.?.blockHeight);
+    try std.testing.expectEqual(@as(?i64, 1710000300), notification.notification.value.block.?.blockTime);
+    try std.testing.expectEqual(@as(usize, 1), notification.notification.value.block.?.transactions.len);
+    try std.testing.expectEqualStrings("accsig1", notification.notification.value.block.?.transactions[0].signatures[0]);
+    try std.testing.expectEqual(@as(usize, 2), notification.notification.value.block.?.transactions[0].accountKeys.len);
+    try std.testing.expectEqualStrings(
+        "11111111111111111111111111111111",
+        notification.notification.value.block.?.transactions[0].accountKeys[0].pubkey,
+    );
+    try std.testing.expect(notification.notification.value.block.?.transactions[0].accountKeys[0].signer);
+    try std.testing.expect(notification.notification.value.block.?.transactions[0].accountKeys[0].writable);
+    try std.testing.expectEqualStrings(
+        "transaction",
+        notification.notification.value.block.?.transactions[0].accountKeys[0].source.?,
+    );
+    try std.testing.expectEqualStrings(
+        "Lookup1111111111111111111111111111111111111",
+        notification.notification.value.block.?.transactions[0].accountKeys[1].pubkey,
+    );
+    try std.testing.expect(!notification.notification.value.block.?.transactions[0].accountKeys[1].signer);
+    try std.testing.expect(!notification.notification.value.block.?.transactions[0].accountKeys[1].writable);
+    try std.testing.expectEqualStrings(
+        "lookupTable",
+        notification.notification.value.block.?.transactions[0].accountKeys[1].source.?,
+    );
+}
+
+test "root.PubsubSubscription parses block transaction summary notifications" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    const subscription = try pubsub.blockSubscribe(
+        .{ .mentions_account_or_program = "11111111111111111111111111111111" },
+        .{
+            .commitment = .finalized,
+            .encoding = .json,
+            .transaction_details = .full,
+            .max_supported_transaction_version = 0,
+            .show_rewards = true,
+        },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvBlockTransactionSummariesNotification();
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 76), notification.notification.subscription);
+    try std.testing.expectEqual(@as(?u64, 905), notification.notification.context_slot);
+    try std.testing.expectEqual(@as(u64, 904), notification.notification.value.slot);
+    try std.testing.expect(!notification.notification.value.hasError);
+    try std.testing.expect(notification.notification.value.block != null);
+    try std.testing.expectEqualStrings(
+        "FullBlockhash11111111111111111111111111111111",
+        notification.notification.value.block.?.blockhash,
+    );
+    try std.testing.expectEqual(@as(?u64, 502), notification.notification.value.block.?.blockHeight);
+    try std.testing.expectEqual(@as(?i64, 1710000200), notification.notification.value.block.?.blockTime);
+    try std.testing.expectEqual(@as(?usize, 1), notification.notification.value.block.?.rewardsCount);
+    try std.testing.expectEqual(@as(usize, 2), notification.notification.value.block.?.transactions.len);
+    try std.testing.expectEqual(@as(u64, 904), notification.notification.value.block.?.transactions[0].slot);
+    try std.testing.expectEqual(@as(?i64, 1710000200), notification.notification.value.block.?.transactions[0].block_time);
+    try std.testing.expectEqualStrings("legacy", notification.notification.value.block.?.transactions[0].version.?);
+    try std.testing.expectEqual(@as(?usize, 2), notification.notification.value.block.?.transactions[0].signature_count);
+    try std.testing.expectEqual(@as(?usize, 3), notification.notification.value.block.?.transactions[0].account_key_count);
+    try std.testing.expectEqual(@as(?usize, 2), notification.notification.value.block.?.transactions[0].instruction_count);
+    try std.testing.expectEqual(@as(?usize, 1), notification.notification.value.block.?.transactions[0].address_table_lookup_count);
+    try std.testing.expectEqual(@as(?usize, null), notification.notification.value.block.?.transactions[0].loaded_address_count);
+    try std.testing.expectEqual(@as(?u64, 5000), notification.notification.value.block.?.transactions[0].fee);
+    try std.testing.expectEqual(@as(?usize, 2), notification.notification.value.block.?.transactions[0].log_messages_count);
+    try std.testing.expect(!notification.notification.value.block.?.transactions[0].has_error);
+    try std.testing.expectEqualStrings("0", notification.notification.value.block.?.transactions[1].version.?);
+    try std.testing.expectEqual(@as(?usize, 1), notification.notification.value.block.?.transactions[1].account_key_count);
+    try std.testing.expectEqual(@as(?usize, 1), notification.notification.value.block.?.transactions[1].instruction_count);
+    try std.testing.expectEqual(@as(?usize, 0), notification.notification.value.block.?.transactions[1].address_table_lookup_count);
+    try std.testing.expectEqual(@as(?usize, 3), notification.notification.value.block.?.transactions[1].loaded_address_count);
+    try std.testing.expect(notification.notification.value.block.?.transactions[1].has_error);
+    try std.testing.expectEqualStrings(
+        "{\"InstructionError\":[1,{\"Custom\":6001}]}",
+        notification.notification.value.block.?.transactions[1].error_json.?,
+    );
+}
+
 test "root.PubsubClient subscribeWithReceiver convenience returns handle and receiver" {
     const port = try reservePort();
     var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
@@ -1245,4 +1794,137 @@ test "root.PubsubClient blockSubscribeSummaryTyped returns typed block summary c
     try std.testing.expect(notification.notification.value.block != null);
     try std.testing.expectEqual(@as(?usize, 1), notification.notification.value.block.?.transactionsCount);
     try std.testing.expectEqual(@as(?usize, 0), notification.notification.value.block.?.rewardsCount);
+}
+
+test "root.PubsubClient blockSubscribeSignaturesTyped returns typed block signatures channel" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var subscription = try pubsub.blockSubscribeSignaturesTyped(
+        .{ .mentions_account_or_program = "11111111111111111111111111111111" },
+        .{
+            .commitment = .finalized,
+            .encoding = .json,
+            .transaction_details = .signatures,
+            .max_supported_transaction_version = 0,
+            .show_rewards = false,
+        },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvTimeout(1000);
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 75), notification.notification.subscription);
+    try std.testing.expectEqual(@as(u64, 900), notification.notification.value.slot);
+    try std.testing.expect(notification.notification.value.block != null);
+    try std.testing.expectEqual(@as(usize, 1), notification.notification.value.block.?.transactions.len);
+    try std.testing.expectEqualStrings("5h6x", notification.notification.value.block.?.transactions[0].signatures[0]);
+}
+
+test "root.PubsubClient blockSubscribeAccountsTyped returns typed accounts channel" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var subscription = try pubsub.blockSubscribeAccountsTyped(
+        .{ .mentions_account_or_program = "11111111111111111111111111111111" },
+        .{
+            .commitment = .finalized,
+            .encoding = .json,
+            .transaction_details = .accounts,
+            .max_supported_transaction_version = 0,
+            .show_rewards = false,
+        },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvTimeout(1000);
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 77), notification.notification.subscription);
+    try std.testing.expectEqual(@as(u64, 906), notification.notification.value.slot);
+    try std.testing.expect(notification.notification.value.block != null);
+    try std.testing.expectEqual(@as(usize, 1), notification.notification.value.block.?.transactions.len);
+    try std.testing.expectEqual(@as(usize, 2), notification.notification.value.block.?.transactions[0].accountKeys.len);
+    try std.testing.expectEqualStrings(
+        "lookupTable",
+        notification.notification.value.block.?.transactions[0].accountKeys[1].source.?,
+    );
+}
+
+test "root.PubsubClient blockSubscribeTransactionSummariesTyped returns typed transaction summary channel" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
+    defer pubsub.deinit();
+
+    var subscription = try pubsub.blockSubscribeTransactionSummariesTyped(
+        .{ .mentions_account_or_program = "11111111111111111111111111111111" },
+        .{
+            .commitment = .finalized,
+            .encoding = .json,
+            .transaction_details = .full,
+            .max_supported_transaction_version = 0,
+            .show_rewards = true,
+        },
+    );
+    defer subscription.deinit();
+
+    var notification = try subscription.recvTimeout(1000);
+    defer notification.deinit();
+
+    try std.testing.expectEqual(@as(u64, 76), notification.notification.subscription);
+    try std.testing.expectEqual(@as(u64, 904), notification.notification.value.slot);
+    try std.testing.expect(notification.notification.value.block != null);
+    try std.testing.expectEqual(@as(usize, 2), notification.notification.value.block.?.transactions.len);
+    try std.testing.expectEqualStrings("legacy", notification.notification.value.block.?.transactions[0].version.?);
+    try std.testing.expectEqual(@as(?usize, 3), notification.notification.value.block.?.transactions[0].account_key_count);
+    try std.testing.expectEqual(@as(?usize, 2), notification.notification.value.block.?.transactions[0].instruction_count);
+    try std.testing.expectEqual(@as(?usize, 1), notification.notification.value.block.?.transactions[0].address_table_lookup_count);
+    try std.testing.expectEqualStrings("0", notification.notification.value.block.?.transactions[1].version.?);
+    try std.testing.expectEqual(@as(?usize, 3), notification.notification.value.block.?.transactions[1].loaded_address_count);
+    try std.testing.expect(notification.notification.value.block.?.transactions[1].has_error);
 }

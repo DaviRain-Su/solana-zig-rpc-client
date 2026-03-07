@@ -7,8 +7,29 @@ pub const PubsubClientOptions = struct {
     write_timeout_ms: ?u32 = null,
     max_message_size: usize = 256 * 1024,
     buffer_size: usize = 8 * 1024,
+    heartbeat_interval_ms: ?u32 = null,
+    heartbeat_timeout_ms: ?u32 = null,
+    subscription_queue_limit: usize = 256,
+    queue_overflow_policy: PubsubQueueOverflowPolicy = .drop_oldest,
     auto_reconnect: bool = false,
     reconnect_delay_ms: u32 = 250,
+    reconnect_backoff_factor: u8 = 2,
+    reconnect_max_delay_ms: ?u32 = null,
+};
+
+pub const PubsubQueueOverflowPolicy = enum {
+    drop_oldest,
+    drop_newest,
+    close_subscription,
+};
+
+pub const PubsubCloseReason = enum {
+    none,
+    unsubscribed,
+    transport_closed,
+    client_shutdown,
+    queue_overflow,
+    deinitialized,
 };
 
 pub const SignatureSubscribeOptions = struct {
@@ -321,6 +342,304 @@ pub const BlockNotificationSummaryValue = struct {
     block: ?BlockNotificationBlockSummary = null,
 };
 
+pub const BlockNotificationTransactionSignatures = struct {
+    signatures: []const []const u8 = &.{},
+};
+
+pub const BlockNotificationParsedAccountKey = struct {
+    pubkey: []const u8 = "",
+    writable: bool = false,
+    signer: bool = false,
+    source: ?[]const u8 = null,
+};
+
+pub const BlockNotificationTransactionAccounts = struct {
+    signatures: []const []const u8 = &.{},
+    accountKeys: []const BlockNotificationParsedAccountKey = &.{},
+};
+
+pub const BlockNotificationSignaturesBlock = struct {
+    blockhash: []const u8 = "",
+    previousBlockhash: ?[]const u8 = null,
+    parentSlot: u64 = 0,
+    blockHeight: ?u64 = null,
+    blockTime: ?i64 = null,
+    transactions: []const BlockNotificationTransactionSignatures = &.{},
+    rewardsCount: ?usize = null,
+
+    pub fn jsonParseFromValue(
+        allocator: std.mem.Allocator,
+        source: json.Value,
+        options: json.ParseOptions,
+    ) !@This() {
+        const ParsedTransaction = struct {
+            transaction: struct {
+                signatures: []const []const u8 = &.{},
+            } = .{},
+        };
+        const Parsed = struct {
+            blockhash: []const u8 = "",
+            previousBlockhash: ?[]const u8 = null,
+            parentSlot: u64 = 0,
+            blockHeight: ?u64 = null,
+            blockTime: ?i64 = null,
+            transactions: ?[]json.Value = null,
+            rewards: ?[]json.Value = null,
+        };
+
+        const parsed = try json.parseFromValueLeaky(Parsed, allocator, source, options);
+        const transactions = if (parsed.transactions) |values| blk: {
+            const result = try allocator.alloc(BlockNotificationTransactionSignatures, values.len);
+            for (values, 0..) |value, index| {
+                const parsed_transaction = try json.parseFromValueLeaky(ParsedTransaction, allocator, value, options);
+                result[index] = .{
+                    .signatures = parsed_transaction.transaction.signatures,
+                };
+            }
+            break :blk result;
+        } else &.{};
+
+        return .{
+            .blockhash = parsed.blockhash,
+            .previousBlockhash = parsed.previousBlockhash,
+            .parentSlot = parsed.parentSlot,
+            .blockHeight = parsed.blockHeight,
+            .blockTime = parsed.blockTime,
+            .transactions = transactions,
+            .rewardsCount = if (parsed.rewards) |value| value.len else null,
+        };
+    }
+};
+
+pub const BlockNotificationSignaturesValue = struct {
+    slot: u64 = 0,
+    hasError: bool = false,
+    errJson: ?[]const u8 = null,
+    block: ?BlockNotificationSignaturesBlock = null,
+
+    pub fn jsonParseFromValue(
+        allocator: std.mem.Allocator,
+        source: json.Value,
+        options: json.ParseOptions,
+    ) !@This() {
+        const Parsed = struct {
+            slot: u64 = 0,
+            err: json.Value = .null,
+            block: json.Value = .null,
+        };
+
+        const parsed = try json.parseFromValueLeaky(Parsed, allocator, source, options);
+        const err_json = try summarizeErrorValue(allocator, parsed.err);
+        return .{
+            .slot = parsed.slot,
+            .hasError = err_json != null,
+            .errJson = err_json,
+            .block = if (parsed.block == .null)
+                null
+            else
+                try json.parseFromValueLeaky(BlockNotificationSignaturesBlock, allocator, parsed.block, options),
+        };
+    }
+};
+
+pub const BlockNotificationAccountsBlock = struct {
+    blockhash: []const u8 = "",
+    previousBlockhash: ?[]const u8 = null,
+    parentSlot: u64 = 0,
+    blockHeight: ?u64 = null,
+    blockTime: ?i64 = null,
+    transactions: []const BlockNotificationTransactionAccounts = &.{},
+    rewardsCount: ?usize = null,
+
+    pub fn jsonParseFromValue(
+        allocator: std.mem.Allocator,
+        source: json.Value,
+        options: json.ParseOptions,
+    ) !@This() {
+        const ParsedAccountKey = struct {
+            pubkey: []const u8 = "",
+            writable: bool = false,
+            signer: bool = false,
+            source: ?[]const u8 = null,
+        };
+        const ParsedTransaction = struct {
+            transaction: struct {
+                signatures: []const []const u8 = &.{},
+                accountKeys: []const ParsedAccountKey = &.{},
+            } = .{},
+        };
+        const Parsed = struct {
+            blockhash: []const u8 = "",
+            previousBlockhash: ?[]const u8 = null,
+            parentSlot: u64 = 0,
+            blockHeight: ?u64 = null,
+            blockTime: ?i64 = null,
+            transactions: ?[]json.Value = null,
+            rewards: ?[]json.Value = null,
+        };
+
+        const parsed = try json.parseFromValueLeaky(Parsed, allocator, source, options);
+        const transactions = if (parsed.transactions) |values| blk: {
+            const result = try allocator.alloc(BlockNotificationTransactionAccounts, values.len);
+            for (values, 0..) |value, index| {
+                const parsed_transaction = try json.parseFromValueLeaky(ParsedTransaction, allocator, value, options);
+                const account_keys = try allocator.alloc(BlockNotificationParsedAccountKey, parsed_transaction.transaction.accountKeys.len);
+                for (parsed_transaction.transaction.accountKeys, 0..) |account_key, account_index| {
+                    account_keys[account_index] = .{
+                        .pubkey = account_key.pubkey,
+                        .writable = account_key.writable,
+                        .signer = account_key.signer,
+                        .source = account_key.source,
+                    };
+                }
+                result[index] = .{
+                    .signatures = parsed_transaction.transaction.signatures,
+                    .accountKeys = account_keys,
+                };
+            }
+            break :blk result;
+        } else &.{};
+
+        return .{
+            .blockhash = parsed.blockhash,
+            .previousBlockhash = parsed.previousBlockhash,
+            .parentSlot = parsed.parentSlot,
+            .blockHeight = parsed.blockHeight,
+            .blockTime = parsed.blockTime,
+            .transactions = transactions,
+            .rewardsCount = if (parsed.rewards) |value| value.len else null,
+        };
+    }
+};
+
+pub const BlockNotificationAccountsValue = struct {
+    slot: u64 = 0,
+    hasError: bool = false,
+    errJson: ?[]const u8 = null,
+    block: ?BlockNotificationAccountsBlock = null,
+
+    pub fn jsonParseFromValue(
+        allocator: std.mem.Allocator,
+        source: json.Value,
+        options: json.ParseOptions,
+    ) !@This() {
+        const Parsed = struct {
+            slot: u64 = 0,
+            err: json.Value = .null,
+            block: json.Value = .null,
+        };
+
+        const parsed = try json.parseFromValueLeaky(Parsed, allocator, source, options);
+        const err_json = try summarizeErrorValue(allocator, parsed.err);
+        return .{
+            .slot = parsed.slot,
+            .hasError = err_json != null,
+            .errJson = err_json,
+            .block = if (parsed.block == .null)
+                null
+            else
+                try json.parseFromValueLeaky(BlockNotificationAccountsBlock, allocator, parsed.block, options),
+        };
+    }
+};
+
+pub const BlockNotificationTransactionSummary = struct {
+    slot: u64 = 0,
+    block_time: ?i64 = null,
+    version: ?[]const u8 = null,
+    signature_count: ?usize = null,
+    account_key_count: ?usize = null,
+    instruction_count: ?usize = null,
+    address_table_lookup_count: ?usize = null,
+    loaded_address_count: ?usize = null,
+    fee: ?u64 = null,
+    log_messages_count: ?usize = null,
+    has_error: bool = false,
+    error_json: ?[]const u8 = null,
+};
+
+pub const BlockNotificationTransactionSummariesBlock = struct {
+    blockhash: []const u8 = "",
+    previousBlockhash: ?[]const u8 = null,
+    parentSlot: u64 = 0,
+    blockHeight: ?u64 = null,
+    blockTime: ?i64 = null,
+    transactions: []const BlockNotificationTransactionSummary = &.{},
+    rewardsCount: ?usize = null,
+
+    pub fn parseFromValue(
+        allocator: std.mem.Allocator,
+        source: json.Value,
+        slot: u64,
+        options: json.ParseOptions,
+    ) !@This() {
+        const Parsed = struct {
+            blockhash: []const u8 = "",
+            previousBlockhash: ?[]const u8 = null,
+            parentSlot: u64 = 0,
+            blockHeight: ?u64 = null,
+            blockTime: ?i64 = null,
+            transactions: ?[]json.Value = null,
+            rewards: ?[]json.Value = null,
+        };
+
+        const parsed = try json.parseFromValueLeaky(Parsed, allocator, source, options);
+        const transactions = if (parsed.transactions) |values| blk: {
+            const result = try allocator.alloc(BlockNotificationTransactionSummary, values.len);
+            for (values, 0..) |value, index| {
+                result[index] = try summarizeTransactionValue(allocator, value, slot, parsed.blockTime, options);
+            }
+            break :blk result;
+        } else &.{};
+
+        return .{
+            .blockhash = parsed.blockhash,
+            .previousBlockhash = parsed.previousBlockhash,
+            .parentSlot = parsed.parentSlot,
+            .blockHeight = parsed.blockHeight,
+            .blockTime = parsed.blockTime,
+            .transactions = transactions,
+            .rewardsCount = if (parsed.rewards) |value| value.len else null,
+        };
+    }
+};
+
+pub const BlockNotificationTransactionSummariesValue = struct {
+    slot: u64 = 0,
+    hasError: bool = false,
+    errJson: ?[]const u8 = null,
+    block: ?BlockNotificationTransactionSummariesBlock = null,
+
+    pub fn jsonParseFromValue(
+        allocator: std.mem.Allocator,
+        source: json.Value,
+        options: json.ParseOptions,
+    ) !@This() {
+        const Parsed = struct {
+            slot: u64 = 0,
+            err: json.Value = .null,
+            block: json.Value = .null,
+        };
+
+        const parsed = try json.parseFromValueLeaky(Parsed, allocator, source, options);
+        const err_json = try summarizeErrorValue(allocator, parsed.err);
+        return .{
+            .slot = parsed.slot,
+            .hasError = err_json != null,
+            .errJson = err_json,
+            .block = if (parsed.block == .null)
+                null
+            else
+                try BlockNotificationTransactionSummariesBlock.parseFromValue(
+                    allocator,
+                    parsed.block,
+                    parsed.slot,
+                    options,
+                ),
+        };
+    }
+};
+
 pub const VoteNotificationValue = struct {
     hash: []const u8 = "",
     slots: []const u64 = &.{},
@@ -362,6 +681,84 @@ fn summarizeErrorValue(allocator: std.mem.Allocator, value: json.Value) !?[]cons
         .null => null,
         .string => |text| try allocator.dupe(u8, text),
         else => try json.Stringify.valueAlloc(allocator, value, .{}),
+    };
+}
+
+fn summarizeTransactionValue(
+    allocator: std.mem.Allocator,
+    source: json.Value,
+    slot: u64,
+    block_time: ?i64,
+    options: json.ParseOptions,
+) !BlockNotificationTransactionSummary {
+    const Parsed = struct {
+        version: ?json.Value = null,
+        meta: ?struct {
+            err: json.Value = .null,
+            fee: ?u64 = null,
+            logMessages: ?[]json.Value = null,
+            loadedAddresses: ?struct {
+                writable: ?[]json.Value = null,
+                readonly: ?[]json.Value = null,
+            } = null,
+        } = null,
+        transaction: ?struct {
+            signatures: []const []const u8 = &.{},
+            message: ?struct {
+                accountKeys: ?[]json.Value = null,
+                instructions: ?[]json.Value = null,
+                addressTableLookups: ?[]json.Value = null,
+            } = null,
+        } = null,
+    };
+
+    const parsed = try json.parseFromValueLeaky(Parsed, allocator, source, options);
+    const error_json = if (parsed.meta) |meta|
+        try summarizeErrorValue(allocator, meta.err)
+    else
+        null;
+
+    return .{
+        .slot = slot,
+        .block_time = block_time,
+        .version = if (parsed.version) |value| try summarizeErrorValue(allocator, value) else null,
+        .signature_count = if (parsed.transaction) |transaction| transaction.signatures.len else null,
+        .account_key_count = if (parsed.transaction) |transaction|
+            if (transaction.message) |message|
+                if (message.accountKeys) |account_keys| account_keys.len else null
+            else
+                null
+        else
+            null,
+        .instruction_count = if (parsed.transaction) |transaction|
+            if (transaction.message) |message|
+                if (message.instructions) |instructions| instructions.len else null
+            else
+                null
+        else
+            null,
+        .address_table_lookup_count = if (parsed.transaction) |transaction|
+            if (transaction.message) |message|
+                if (message.addressTableLookups) |lookups| lookups.len else null
+            else
+                null
+        else
+            null,
+        .loaded_address_count = if (parsed.meta) |meta|
+            if (meta.loadedAddresses) |loaded_addresses|
+                (if (loaded_addresses.writable) |writable| writable.len else 0) +
+                    (if (loaded_addresses.readonly) |readonly| readonly.len else 0)
+            else
+                null
+        else
+            null,
+        .fee = if (parsed.meta) |meta| meta.fee else null,
+        .log_messages_count = if (parsed.meta) |meta|
+            if (meta.logMessages) |logs| logs.len else null
+        else
+            null,
+        .has_error = error_json != null,
+        .error_json = error_json,
     };
 }
 

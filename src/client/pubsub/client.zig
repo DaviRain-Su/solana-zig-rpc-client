@@ -16,6 +16,7 @@ const LogsSubscribeOptions = pubsub_types.LogsSubscribeOptions;
 const ProgramSubscribeOptions = pubsub_types.ProgramSubscribeOptions;
 const BlockSubscribeFilter = pubsub_types.BlockSubscribeFilter;
 const BlockSubscribeOptions = pubsub_types.BlockSubscribeOptions;
+const PubsubCloseReason = pubsub_types.PubsubCloseReason;
 
 fn jsonValueToU64(value: json.Value) !u64 {
     return switch (value) {
@@ -109,7 +110,9 @@ pub const PubsubSubscription = struct {
     mutex: std.Thread.Mutex = .{},
     cond: std.Thread.Condition = .{},
     queue: std.ArrayListUnmanaged([]u8) = .{},
+    dropped_messages: usize = 0,
     closed: bool = false,
+    close_reason: PubsubCloseReason = .none,
 
     const Self = @This();
 
@@ -127,6 +130,18 @@ pub const PubsubSubscription = struct {
 
     pub fn receiver(self: *Self) PubsubReceiver {
         return .{ .subscription = self };
+    }
+
+    pub fn droppedCount(self: *Self) usize {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.dropped_messages;
+    }
+
+    pub fn closeReason(self: *Self) PubsubCloseReason {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.close_reason;
     }
 
     pub fn recv(self: *Self) ![]u8 {
@@ -300,6 +315,30 @@ pub const PubsubSubscription = struct {
         return self.tryRecvParsed(pubsub_types.BlockNotificationValue);
     }
 
+    pub fn recvBlockSignaturesNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationSignaturesValue) {
+        return self.recvParsed(pubsub_types.BlockNotificationSignaturesValue);
+    }
+
+    pub fn tryRecvBlockSignaturesNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationSignaturesValue) {
+        return self.tryRecvParsed(pubsub_types.BlockNotificationSignaturesValue);
+    }
+
+    pub fn recvBlockAccountsNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationAccountsValue) {
+        return self.recvParsed(pubsub_types.BlockNotificationAccountsValue);
+    }
+
+    pub fn tryRecvBlockAccountsNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationAccountsValue) {
+        return self.tryRecvParsed(pubsub_types.BlockNotificationAccountsValue);
+    }
+
+    pub fn recvBlockTransactionSummariesNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationTransactionSummariesValue) {
+        return self.recvParsed(pubsub_types.BlockNotificationTransactionSummariesValue);
+    }
+
+    pub fn tryRecvBlockTransactionSummariesNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationTransactionSummariesValue) {
+        return self.tryRecvParsed(pubsub_types.BlockNotificationTransactionSummariesValue);
+    }
+
     pub fn recvBlockSummaryNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationSummaryValue) {
         return self.recvParsed(pubsub_types.BlockNotificationSummaryValue);
     }
@@ -317,8 +356,9 @@ pub const PubsubSubscription = struct {
         self.state.detachSubscription(self);
 
         self.mutex.lock();
-        self.closed = true;
-        self.cond.broadcast();
+        if (!self.closed) {
+            self.closeLocked(.deinitialized);
+        }
         for (self.queue.items) |message| {
             self.state.allocator.free(message);
         }
@@ -335,12 +375,36 @@ pub const PubsubSubscription = struct {
         defer self.mutex.unlock();
 
         if (self.closed) return;
+
+        const queue_limit = self.state.options.subscription_queue_limit;
+        if (queue_limit != 0 and self.queue.items.len >= queue_limit) {
+            switch (self.state.options.queue_overflow_policy) {
+                .drop_oldest => {
+                    const dropped = self.queue.orderedRemove(0);
+                    allocator.free(dropped);
+                    self.dropped_messages += 1;
+                },
+                .drop_newest => {
+                    self.dropped_messages += 1;
+                    return;
+                },
+                .close_subscription => {
+                    self.dropped_messages += 1;
+                    self.closeLocked(.queue_overflow);
+                    return error.QueueOverflow;
+                },
+            }
+        }
+
         try self.queue.append(allocator, try allocator.dupe(u8, raw_message));
         self.cond.signal();
     }
 
-    fn closeLocked(self: *Self) void {
+    fn closeLocked(self: *Self, reason: PubsubCloseReason) void {
         self.closed = true;
+        if (self.close_reason == .none) {
+            self.close_reason = reason;
+        }
         self.cond.broadcast();
     }
 };
@@ -356,6 +420,14 @@ pub const PubsubReceiver = struct {
 
     pub fn queuedCount(self: *const Self) usize {
         return self.subscription.queuedCount();
+    }
+
+    pub fn droppedCount(self: *const Self) usize {
+        return self.subscription.droppedCount();
+    }
+
+    pub fn closeReason(self: *const Self) PubsubCloseReason {
+        return self.subscription.closeReason();
     }
 
     pub fn recv(self: *Self) ![]u8 {
@@ -581,6 +653,51 @@ pub const PubsubReceiver = struct {
         return self.subscription.recvParsedTimeout(pubsub_types.BlockNotificationValue, timeout_ms);
     }
 
+    pub fn recvBlockSignaturesNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationSignaturesValue) {
+        return self.subscription.recvBlockSignaturesNotification();
+    }
+
+    pub fn tryRecvBlockSignaturesNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationSignaturesValue) {
+        return self.subscription.tryRecvParsed(pubsub_types.BlockNotificationSignaturesValue);
+    }
+
+    pub fn recvBlockSignaturesNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationSignaturesValue) {
+        return self.subscription.recvParsedTimeout(pubsub_types.BlockNotificationSignaturesValue, timeout_ms);
+    }
+
+    pub fn recvBlockAccountsNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationAccountsValue) {
+        return self.subscription.recvBlockAccountsNotification();
+    }
+
+    pub fn tryRecvBlockAccountsNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationAccountsValue) {
+        return self.subscription.tryRecvParsed(pubsub_types.BlockNotificationAccountsValue);
+    }
+
+    pub fn recvBlockAccountsNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationAccountsValue) {
+        return self.subscription.recvParsedTimeout(pubsub_types.BlockNotificationAccountsValue, timeout_ms);
+    }
+
+    pub fn recvBlockTransactionSummariesNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationTransactionSummariesValue) {
+        return self.subscription.recvBlockTransactionSummariesNotification();
+    }
+
+    pub fn tryRecvBlockTransactionSummariesNotification(self: *Self) !?pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationTransactionSummariesValue) {
+        return self.subscription.tryRecvParsed(pubsub_types.BlockNotificationTransactionSummariesValue);
+    }
+
+    pub fn recvBlockTransactionSummariesNotificationTimeout(
+        self: *Self,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationTransactionSummariesValue) {
+        return self.subscription.recvParsedTimeout(pubsub_types.BlockNotificationTransactionSummariesValue, timeout_ms);
+    }
+
     pub fn recvBlockSummaryNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.BlockNotificationSummaryValue) {
         return self.subscription.recvBlockSummaryNotification();
     }
@@ -611,6 +728,14 @@ pub const PubsubSubscriptionWithReceiver = struct {
         return self.receiver.queuedCount();
     }
 
+    pub fn droppedCount(self: *const Self) usize {
+        return self.receiver.droppedCount();
+    }
+
+    pub fn closeReason(self: *const Self) PubsubCloseReason {
+        return self.receiver.closeReason();
+    }
+
     pub fn unsubscribe(self: *Self) !bool {
         return self.subscription.unsubscribe();
     }
@@ -634,6 +759,14 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
 
         pub fn queuedCount(self: *const Self) usize {
             return self.receiver.queuedCount();
+        }
+
+        pub fn droppedCount(self: *const Self) usize {
+            return self.receiver.droppedCount();
+        }
+
+        pub fn closeReason(self: *const Self) PubsubCloseReason {
+            return self.receiver.closeReason();
         }
 
         pub fn recv(self: *Self) !pubsub_types.OwnedPubsubNotification(ValueType) {
@@ -669,6 +802,7 @@ const State = struct {
     options: PubsubClientOptions,
     ws_client: websocket.Client,
     reader_thread: ?std.Thread = null,
+    heartbeat_thread: ?std.Thread = null,
     ref_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(1),
     mutex: std.Thread.Mutex = .{},
     cond: std.Thread.Condition = .{},
@@ -676,8 +810,11 @@ const State = struct {
     subscriptions: std.AutoHashMapUnmanaged(u64, *PubsubSubscription) = .{},
     pending_requests: std.AutoHashMapUnmanaged(u64, *PendingRequest) = .{},
     last_error: ?RpcErrorDetail = null,
+    last_activity_ns: std.atomic.Value(i64) = std.atomic.Value(i64).init(0),
+    last_ping_ns: std.atomic.Value(i64) = std.atomic.Value(i64).init(0),
     closed: bool = false,
     reconnecting: bool = false,
+    reconnect_attempt: u32 = 0,
     shutdown_started: bool = false,
 
     fn retain(self: *State) void {
@@ -717,14 +854,43 @@ const State = struct {
         };
     }
 
-    fn markClosedLocked(self: *State) void {
+    fn markActivityNow(self: *State) void {
+        self.last_activity_ns.store(@as(i64, @intCast(std.time.nanoTimestamp())), .monotonic);
+    }
+
+    fn resetHeartbeatState(self: *State) void {
+        self.last_ping_ns.store(0, .monotonic);
+        self.markActivityNow();
+    }
+
+    fn reconnectDelayMsLocked(self: *State) u32 {
+        const base_delay_ms = self.options.reconnect_delay_ms;
+        const factor = @max(@as(u32, self.options.reconnect_backoff_factor), 1);
+        const max_delay_ms = self.options.reconnect_max_delay_ms orelse base_delay_ms;
+
+        if (base_delay_ms == 0) return 0;
+
+        var delay_ms: u64 = base_delay_ms;
+        var remaining_attempts = self.reconnect_attempt;
+        while (remaining_attempts > 0 and delay_ms < max_delay_ms) : (remaining_attempts -= 1) {
+            delay_ms = @min(delay_ms * factor, @as(u64, max_delay_ms));
+        }
+
+        if (self.reconnect_attempt < std.math.maxInt(u32)) {
+            self.reconnect_attempt += 1;
+        }
+
+        return @intCast(delay_ms);
+    }
+
+    fn markClosedLocked(self: *State, reason: PubsubCloseReason) void {
         self.closed = true;
         self.reconnecting = false;
 
         var subscription_it = self.subscriptions.valueIterator();
         while (subscription_it.next()) |subscription| {
             subscription.*.mutex.lock();
-            subscription.*.closeLocked();
+            subscription.*.closeLocked(reason);
             subscription.*.mutex.unlock();
         }
 
@@ -754,20 +920,27 @@ const State = struct {
         }
 
         self.shutdown_started = true;
-        self.markClosedLocked();
+        self.markClosedLocked(.client_shutdown);
         const thread = self.reader_thread;
         self.reader_thread = null;
+        const heartbeat_thread = self.heartbeat_thread;
+        self.heartbeat_thread = null;
         self.failPendingRequestsLocked();
+        self.cond.broadcast();
         self.mutex.unlock();
 
         self.ws_client.close(.{}) catch {};
         if (thread) |reader_thread| {
             reader_thread.join();
         }
+        if (heartbeat_thread) |active_heartbeat_thread| {
+            active_heartbeat_thread.join();
+        }
         self.ws_client.deinit();
     }
 
     pub fn serverMessage(self: *State, data: []u8) !void {
+        self.markActivityNow();
         const parsed = try json.parseFromSlice(json.Value, self.allocator, data, .{ .ignore_unknown_fields = true });
         defer parsed.deinit();
 
@@ -781,6 +954,22 @@ const State = struct {
         }
     }
 
+    pub fn serverPing(self: *State, data: []u8) !void {
+        self.markActivityNow();
+        self.mutex.lock();
+        self.reconnect_attempt = 0;
+        self.mutex.unlock();
+        try self.ws_client.writePong(data);
+    }
+
+    pub fn serverPong(self: *State, data: []u8) !void {
+        _ = data;
+        self.markActivityNow();
+        self.mutex.lock();
+        self.reconnect_attempt = 0;
+        self.mutex.unlock();
+    }
+
     pub fn close(self: *State) void {
         self.handleReadLoopClose() catch {
             self.mutex.lock();
@@ -788,7 +977,7 @@ const State = struct {
 
             if (self.closed) return;
             self.failPendingRequestsLocked();
-            self.markClosedLocked();
+            self.markClosedLocked(.transport_closed);
         };
     }
 
@@ -797,7 +986,7 @@ const State = struct {
         if (self.shutdown_started or self.closed or !self.options.auto_reconnect) {
             if (!self.closed) {
                 self.failPendingRequestsLocked();
-                self.markClosedLocked();
+                self.markClosedLocked(if (self.shutdown_started) .client_shutdown else .transport_closed);
             }
             self.mutex.unlock();
             return;
@@ -813,32 +1002,52 @@ const State = struct {
         self.failPendingRequestsLocked();
         self.mutex.unlock();
 
-        if (self.options.reconnect_delay_ms > 0) {
-            std.Thread.sleep(@as(u64, self.options.reconnect_delay_ms) * std.time.ns_per_ms);
-        }
-
         const old_client = self.ws_client;
-
-        var new_client = try connectWebsocketClient(self.allocator, self.endpoint, self.options);
-
-        self.mutex.lock();
-        if (self.shutdown_started or self.closed) {
-            self.reconnecting = false;
-            self.cond.broadcast();
-            self.mutex.unlock();
-            new_client.deinit();
-            return error.Closed;
-        }
-
-        self.ws_client = new_client;
-        self.reader_thread = try self.ws_client.readLoopInNewThread(self);
-        try self.resubscribeAllLocked();
-        self.reconnecting = false;
-        self.cond.broadcast();
-        self.mutex.unlock();
-
         var owned_old_client = old_client;
         owned_old_client.deinit();
+
+        while (true) {
+            self.mutex.lock();
+            if (self.shutdown_started or self.closed) {
+                self.reconnecting = false;
+                self.cond.broadcast();
+                self.mutex.unlock();
+                return error.Closed;
+            }
+            const reconnect_delay_ms = self.reconnectDelayMsLocked();
+            self.mutex.unlock();
+
+            if (reconnect_delay_ms > 0) {
+                std.Thread.sleep(@as(u64, reconnect_delay_ms) * std.time.ns_per_ms);
+            }
+
+            var new_client = connectWebsocketClient(self.allocator, self.endpoint, self.options) catch |err| {
+                self.mutex.lock();
+                if (!self.closed and !self.shutdown_started) {
+                    self.setLastError(-1, @errorName(err));
+                }
+                self.mutex.unlock();
+                continue;
+            };
+
+            self.mutex.lock();
+            if (self.shutdown_started or self.closed) {
+                self.reconnecting = false;
+                self.cond.broadcast();
+                self.mutex.unlock();
+                new_client.deinit();
+                return error.Closed;
+            }
+
+            self.ws_client = new_client;
+            self.reader_thread = try self.ws_client.readLoopInNewThread(self);
+            try self.resubscribeAllLocked();
+            self.reconnecting = false;
+            self.resetHeartbeatState();
+            self.cond.broadcast();
+            self.mutex.unlock();
+            return;
+        }
     }
 
     fn resubscribeAllLocked(self: *State) !void {
@@ -921,7 +1130,7 @@ const State = struct {
                             _ = self.subscriptions.remove(subscription.id);
                         }
                         subscription.mutex.lock();
-                        subscription.closeLocked();
+                        subscription.closeLocked(.unsubscribed);
                         subscription.mutex.unlock();
                     }
                 }
@@ -941,9 +1150,15 @@ const State = struct {
 
         self.mutex.lock();
         defer self.mutex.unlock();
+        self.reconnect_attempt = 0;
 
         const subscription = self.subscriptions.get(subscription_id) orelse return;
-        try subscription.push(self.allocator, raw_message);
+        subscription.push(self.allocator, raw_message) catch |err| switch (err) {
+            error.QueueOverflow => {
+                _ = self.subscriptions.remove(subscription_id);
+            },
+            else => return err,
+        };
     }
 
     fn sendRequest(
@@ -1435,6 +1650,54 @@ const State = struct {
             }
         }
     }
+
+    fn heartbeatLoop(self: *State) void {
+        const interval_ms = self.options.heartbeat_interval_ms orelse return;
+        const timeout_ms = self.options.heartbeat_timeout_ms orelse interval_ms * 3;
+        const timeout_ns = @as(i128, @intCast(timeout_ms)) * std.time.ns_per_ms;
+
+        while (true) {
+            self.mutex.lock();
+            if (self.shutdown_started or self.closed) {
+                self.mutex.unlock();
+                return;
+            }
+
+            self.cond.timedWait(&self.mutex, @as(u64, interval_ms) * std.time.ns_per_ms) catch |err| switch (err) {
+                error.Timeout => {},
+            };
+
+            if (self.shutdown_started or self.closed) {
+                self.mutex.unlock();
+                return;
+            }
+
+            const reconnecting = self.reconnecting;
+            const last_ping_ns = self.last_ping_ns.load(.monotonic);
+            const last_activity_ns = self.last_activity_ns.load(.monotonic);
+            self.mutex.unlock();
+
+            if (reconnecting) continue;
+
+            const now_ns = @as(i64, @intCast(std.time.nanoTimestamp()));
+            if (last_ping_ns != 0 and last_activity_ns < last_ping_ns) {
+                if (@as(i128, now_ns - last_ping_ns) >= timeout_ns) {
+                    self.ws_client.close(.{}) catch {};
+                }
+                continue;
+            }
+
+            var ping_payload = [_]u8{ 'p', 'i', 'n', 'g' };
+            self.last_ping_ns.store(now_ns, .monotonic);
+            self.ws_client.writePing(ping_payload[0..]) catch {
+                self.ws_client.close(.{}) catch {};
+            };
+        }
+    }
+
+    fn heartbeatLoopThread(self: *State) void {
+        self.heartbeatLoop();
+    }
 };
 
 pub const PubsubClient = struct {
@@ -1474,7 +1737,11 @@ pub const PubsubClient = struct {
         };
         errdefer allocator.free(state.endpoint);
 
+        state.resetHeartbeatState();
         state.reader_thread = try state.ws_client.readLoopInNewThread(state);
+        if (options.heartbeat_interval_ms != null) {
+            state.heartbeat_thread = try std.Thread.spawn(.{}, State.heartbeatLoopThread, .{state});
+        }
         return .{ .state = state };
     }
 
@@ -1705,6 +1972,30 @@ pub const PubsubClient = struct {
         options: BlockSubscribeOptions,
     ) !TypedPubsubSubscription(pubsub_types.BlockNotificationValue) {
         return typedSubscription(pubsub_types.BlockNotificationValue, try self.blockSubscribe(filter, options));
+    }
+
+    pub fn blockSubscribeSignaturesTyped(
+        self: *Self,
+        filter: BlockSubscribeFilter,
+        options: BlockSubscribeOptions,
+    ) !TypedPubsubSubscription(pubsub_types.BlockNotificationSignaturesValue) {
+        return typedSubscription(pubsub_types.BlockNotificationSignaturesValue, try self.blockSubscribe(filter, options));
+    }
+
+    pub fn blockSubscribeAccountsTyped(
+        self: *Self,
+        filter: BlockSubscribeFilter,
+        options: BlockSubscribeOptions,
+    ) !TypedPubsubSubscription(pubsub_types.BlockNotificationAccountsValue) {
+        return typedSubscription(pubsub_types.BlockNotificationAccountsValue, try self.blockSubscribe(filter, options));
+    }
+
+    pub fn blockSubscribeTransactionSummariesTyped(
+        self: *Self,
+        filter: BlockSubscribeFilter,
+        options: BlockSubscribeOptions,
+    ) !TypedPubsubSubscription(pubsub_types.BlockNotificationTransactionSummariesValue) {
+        return typedSubscription(pubsub_types.BlockNotificationTransactionSummariesValue, try self.blockSubscribe(filter, options));
     }
 
     pub fn blockSubscribeSummaryTyped(
