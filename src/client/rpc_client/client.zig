@@ -457,8 +457,24 @@ pub const RpcClient = struct {
         return lifecycle_methods.initMockClient(RpcClient, allocator, responses, commitment, null, null);
     }
 
+    pub fn newMockWithTimeout(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return lifecycle_methods.initMockClient(RpcClient, allocator, responses, null, timeout_ms, null);
+    }
+
     pub fn newMockWithHandler(allocator: Allocator, handler: MockRequestHandlerType) !RpcClient {
         return lifecycle_methods.initMockClientWithHandler(RpcClient, allocator, handler, null, null, null);
+    }
+
+    pub fn newMockWithHandlerAndTimeout(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return lifecycle_methods.initMockClientWithHandler(RpcClient, allocator, handler, null, timeout_ms, null);
     }
 
     pub fn newMockWithHandlerAndCommitment(
@@ -476,6 +492,38 @@ pub const RpcClient = struct {
         commitment: ?Commitment,
     ) !RpcClient {
         return lifecycle_methods.initMockClient(RpcClient, allocator, responses, commitment, timeout_ms, null);
+    }
+
+    pub fn newMockWithTimeouts(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return lifecycle_methods.initMockClient(
+            RpcClient,
+            allocator,
+            responses,
+            null,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newMockWithHandlerTimeouts(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return lifecycle_methods.initMockClientWithHandler(
+            RpcClient,
+            allocator,
+            handler,
+            null,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
     }
 
     pub fn newMockWithHandlerAndTimeoutAndCommitment(

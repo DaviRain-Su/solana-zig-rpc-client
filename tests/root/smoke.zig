@@ -158,6 +158,83 @@ test "root.newWithCommitment applies default commitment to null params" {
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"finalized\"") != null);
 }
 
+test "root.newMockWithTimeout preserves timeout and supports null commitment" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.newMockWithTimeout(
+        allocator,
+        &.{
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":555,\"id\":1}" },
+        },
+        1234,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(@as(?u64, 1234), rpc.getRequestTimeoutMs());
+    try std.testing.expect(rpc.getDefaultCommitment() == null);
+    try std.testing.expectEqual(@as(u64, 555), try rpc.getSlot(.processed));
+}
+
+test "root.newMockWithTimeouts sets request and confirm initial timeout" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.newMockWithTimeouts(
+        allocator,
+        &.{
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":222,\"id\":1}" },
+        },
+        5000,
+        9876,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(@as(?u64, 5000), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 9876), rpc.getConfirmTransactionInitialTimeoutMs());
+    try std.testing.expect(rpc.getDefaultCommitment() == null);
+}
+
+test "root.newMockWithHandlerAndTimeout applies timeout" {
+    const allocator = std.testing.allocator;
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.newMockWithHandlerAndTimeout(
+        allocator,
+        .{
+            .context = &handler_context,
+            .callback = dynamicMockHandler,
+        },
+        4321,
+    );
+    defer rpc.deinit();
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+    try std.testing.expectEqual(@as(u64, 456), slot);
+    try std.testing.expectEqual(@as(?u64, 4321), rpc.getRequestTimeoutMs());
+    try std.testing.expect(rpc.getDefaultCommitment() == null);
+}
+
+test "root.newMockWithHandlerTimeouts sets timeout and confirm timeout" {
+    const allocator = std.testing.allocator;
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.newMockWithHandlerTimeouts(
+        allocator,
+        .{
+            .context = &handler_context,
+            .callback = dynamicMockHandler,
+        },
+        6000,
+        7000,
+    );
+    defer rpc.deinit();
+
+    const health = try rpc.getHealth();
+    defer allocator.free(health);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+    try std.testing.expectEqual(@as(?u64, 6000), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 7000), rpc.getConfirmTransactionInitialTimeoutMs());
+    try std.testing.expect(rpc.getDefaultCommitment() == null);
+}
+
 test "root.getTransportStats tracks request metrics" {
     const allocator = std.testing.allocator;
     var rpc = try client.RpcClient.newMock(allocator, &.{
