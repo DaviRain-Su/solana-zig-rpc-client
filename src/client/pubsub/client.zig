@@ -825,6 +825,14 @@ pub const PubsubSlotsUpdatesSubscriptionWithCallback = struct {
         return self.subscription.closeReason();
     }
 
+    pub fn getLastError(self: *Self) ?RpcErrorDetail {
+        return self.subscription.getLastError();
+    }
+
+    pub fn clearLastError(self: *Self) void {
+        self.subscription.clearLastError();
+    }
+
     pub fn closeResult(self: *Self) PubsubCloseResult {
         return self.subscription.closeResult();
     }
@@ -889,6 +897,14 @@ pub const PubsubRootSubscriptionWithCallback = struct {
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.subscription.closeReason();
+    }
+
+    pub fn getLastError(self: *Self) ?RpcErrorDetail {
+        return self.subscription.getLastError();
+    }
+
+    pub fn clearLastError(self: *Self) void {
+        self.subscription.clearLastError();
     }
 
     pub fn closeResult(self: *Self) PubsubCloseResult {
@@ -957,6 +973,14 @@ pub const PubsubVoteSubscriptionWithCallback = struct {
         return self.subscription.closeReason();
     }
 
+    pub fn getLastError(self: *Self) ?RpcErrorDetail {
+        return self.subscription.getLastError();
+    }
+
+    pub fn clearLastError(self: *Self) void {
+        self.subscription.clearLastError();
+    }
+
     pub fn closeResult(self: *Self) PubsubCloseResult {
         return self.subscription.closeResult();
     }
@@ -1021,6 +1045,14 @@ pub const PubsubBlockSubscriptionWithCallback = struct {
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.subscription.closeReason();
+    }
+
+    pub fn getLastError(self: *Self) ?RpcErrorDetail {
+        return self.subscription.getLastError();
+    }
+
+    pub fn clearLastError(self: *Self) void {
+        self.subscription.clearLastError();
     }
 
     pub fn closeResult(self: *Self) PubsubCloseResult {
@@ -1089,6 +1121,14 @@ pub const PubsubSignatureSubscriptionWithCallback = struct {
         return self.subscription.closeReason();
     }
 
+    pub fn getLastError(self: *Self) ?RpcErrorDetail {
+        return self.subscription.getLastError();
+    }
+
+    pub fn clearLastError(self: *Self) void {
+        self.subscription.clearLastError();
+    }
+
     pub fn closeResult(self: *Self) PubsubCloseResult {
         return self.subscription.closeResult();
     }
@@ -1153,6 +1193,14 @@ pub const PubsubAccountSubscriptionWithCallback = struct {
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.subscription.closeReason();
+    }
+
+    pub fn getLastError(self: *Self) ?RpcErrorDetail {
+        return self.subscription.getLastError();
+    }
+
+    pub fn clearLastError(self: *Self) void {
+        self.subscription.clearLastError();
     }
 
     pub fn closeResult(self: *Self) PubsubCloseResult {
@@ -1221,6 +1269,14 @@ pub const PubsubLogsSubscriptionWithCallback = struct {
         return self.subscription.closeReason();
     }
 
+    pub fn getLastError(self: *Self) ?RpcErrorDetail {
+        return self.subscription.getLastError();
+    }
+
+    pub fn clearLastError(self: *Self) void {
+        self.subscription.clearLastError();
+    }
+
     pub fn closeResult(self: *Self) PubsubCloseResult {
         return self.subscription.closeResult();
     }
@@ -1287,6 +1343,14 @@ pub const PubsubProgramSubscriptionWithCallback = struct {
         return self.subscription.closeReason();
     }
 
+    pub fn getLastError(self: *Self) ?RpcErrorDetail {
+        return self.subscription.getLastError();
+    }
+
+    pub fn clearLastError(self: *Self) void {
+        self.subscription.clearLastError();
+    }
+
     pub fn closeResult(self: *Self) PubsubCloseResult {
         return self.subscription.closeResult();
     }
@@ -1351,6 +1415,14 @@ pub const PubsubSlotSubscriptionWithCallback = struct {
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.subscription.closeReason();
+    }
+
+    pub fn getLastError(self: *Self) ?RpcErrorDetail {
+        return self.subscription.getLastError();
+    }
+
+    pub fn clearLastError(self: *Self) void {
+        self.subscription.clearLastError();
     }
 
     pub fn closeResult(self: *Self) PubsubCloseResult {
