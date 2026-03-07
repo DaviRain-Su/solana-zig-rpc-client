@@ -1565,6 +1565,34 @@ test "cli.loadDefaultSolanaCliConfig parses standard Solana config file" {
     try std.testing.expectEqual(Commitment.finalized, config.commitment orelse .processed);
 }
 
+test "cli.loadDefaultSolanaCliConfig resolves custom override path" {
+    const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const override_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/custom_config.yml",
+        .{tmp.sub_path},
+    );
+    defer allocator.free(override_path);
+
+    try writeTextFile(override_path, \\json_rpc_url: https://api.testnet.solana.com
+        \\commitment: confirmed
+    );
+
+    var config = try loadDefaultSolanaCliConfig(allocator, .{
+        .config_path_override = override_path,
+    });
+    defer config.deinit(allocator);
+
+    try std.testing.expectEqualStrings(override_path, config.path orelse "");
+    try std.testing.expectEqualStrings("https://api.testnet.solana.com", config.json_rpc_url orelse "");
+    try std.testing.expect(config.websocket_url == null);
+    try std.testing.expectEqual(Commitment.confirmed, config.commitment orelse .processed);
+}
+
 test "cli.applySolanaCliConfigDefaults applies config defaults without overriding explicit rpc" {
     const allocator = std.testing.allocator;
 
