@@ -945,6 +945,74 @@ test "root.newWithBorrowedMockSender borrows scripted mock sender state" {
     try std.testing.expectEqualStrings("getSlot", sender.capturedRequests()[0].method);
 }
 
+test "root.newWithBorrowedMockSenderAndCommitmentAndTimeout forwards commitment and timeout" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(444);
+
+    var rpc = try client.RpcClient.newWithBorrowedMockSenderAndCommitmentAndTimeout(
+        allocator,
+        &sender,
+        .confirmed,
+        5_000,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 5_000), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, null), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 444), slot);
+    try std.testing.expect(std.mem.indexOf(u8, sender.capturedRequests()[0].params_json, "\"confirmed\"") != null);
+}
+
+test "root.newWithBorrowedMockSenderAndTimeoutAndCommitment preserves order and options" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(555);
+
+    var rpc = try client.RpcClient.newWithBorrowedMockSenderAndTimeoutAndCommitment(
+        allocator,
+        &sender,
+        6_000,
+        .processed,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 6_000), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, null), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 555), slot);
+}
+
+test "root.newWithBorrowedMockSenderAndOptions applies all constructor options" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(666);
+
+    var rpc = try client.RpcClient.newWithBorrowedMockSenderAndOptions(
+        allocator,
+        &sender,
+        .{
+            .commitment = .finalized,
+            .request_timeout_ms = 8_000,
+            .confirm_transaction_initial_timeout_ms = 12_000,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.finalized, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 8_000), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 12_000), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 666), slot);
+    try std.testing.expect(std.mem.indexOf(u8, sender.capturedRequests()[0].params_json, "\"finalized\"") != null);
+}
+
 test "root.newWithOwnedMockSender transfers ownership of scripted sender state" {
     const allocator = std.testing.allocator;
 
@@ -962,6 +1030,55 @@ test "root.newWithOwnedMockSender transfers ownership of scripted sender state" 
     try std.testing.expectEqualStrings("false", health);
     try std.testing.expect(!rpc.isMock());
     try std.testing.expect(rpc.hasRequestSender());
+}
+
+test "root.newWithOwnedMockSenderAndCommitmentAndTimeouts forwards all options" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(777);
+
+    var rpc = try client.RpcClient.newWithOwnedMockSenderAndCommitmentAndTimeouts(
+        allocator,
+        sender,
+        .confirmed,
+        7_000,
+        15_000,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 7_000), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 15_000), rpc.getConfirmTransactionInitialTimeoutMs());
+    try std.testing.expect(!rpc.isMock());
+    try std.testing.expect(rpc.hasRequestSender());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 777), slot);
+}
+
+test "root.newWithOwnedMockSenderAndOptions applies all constructor options" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushHealthOk();
+
+    var rpc = try client.RpcClient.newWithOwnedMockSenderAndOptions(
+        allocator,
+        sender,
+        .{
+            .commitment = .processed,
+            .request_timeout_ms = 9_000,
+            .confirm_transaction_initial_timeout_ms = 10_000,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 9_000), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 10_000), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const health = try rpc.getHealth();
+    defer allocator.free(health);
+    try std.testing.expectEqualStrings("ok", health);
 }
 
 test "root.RequestSender.fromOwnedMockSender supports scripted sender replacement" {
