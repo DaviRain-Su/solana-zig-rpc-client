@@ -1302,6 +1302,157 @@ test "root.buildVersionedTransferTransaction with fixed blockhash returns versio
     try std.testing.expectEqual(@as(usize, 0), rpc.mockRequestCount());
 }
 
+test "root.buildVersionedMessageBase64 with fixed blockhash returns compiled v0 message" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+
+    const recent_blockhash = [_]u8{0x24} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    var rpc = try RpcClient.init(allocator, "https://example.com");
+    defer rpc.deinit();
+
+    const transfer = SystemProgram.transfer(
+        payer,
+        destination,
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    const encoded = try rpc.buildVersionedMessageBase64(
+        payer,
+        instructions[0..],
+        &.{},
+        recent_blockhash_base58,
+    );
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedMessageV0Base64(
+        allocator,
+        payer,
+        Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+    try std.testing.expectEqual(@as(usize, 0), rpc.mockRequestCount());
+}
+
+test "root.buildVersionedTransactionV0Base64WithNonceInstructions prepends nonce advance" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const payer = try Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const nonce_account = Pubkey.fromBytes(nonce_raw.public_key.toBytes());
+    const recent_blockhash = Hash.fromBytes(.{0x26} ** 32);
+
+    const transfer = SystemProgram.transfer(
+        payer.public_key,
+        destination,
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    const encoded = try client.buildVersionedTransactionV0Base64WithNonceInstructions(
+        allocator,
+        payer.public_key,
+        nonce_account,
+        payer.public_key,
+        recent_blockhash,
+        instructions[0..],
+        &.{},
+        &.{payer},
+    );
+    defer allocator.free(encoded);
+
+    var owned_instructions = try client.prependNonceAdvanceInstruction(
+        allocator,
+        nonce_account,
+        payer.public_key,
+        instructions[0..],
+    );
+    defer owned_instructions.deinit(allocator);
+
+    var expected = try client.buildSignedVersionedTransactionV0(
+        allocator,
+        payer.public_key,
+        recent_blockhash,
+        owned_instructions.instructions,
+        &.{},
+        &.{payer},
+    );
+    defer expected.deinit(allocator);
+
+    const expected_encoded = try expected.toBase64(allocator);
+    defer allocator.free(expected_encoded);
+
+    try std.testing.expectEqualStrings(expected_encoded, encoded);
+}
+
+test "root.buildVersionedNonceTransferTransactionBase64 builds nonce-aware transfer transaction" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const payer = try Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const nonce_account = Pubkey.fromBytes(nonce_raw.public_key.toBytes());
+    const recent_blockhash = Hash.fromBytes(.{0x28} ** 32);
+
+    const encoded = try client.buildVersionedNonceTransferTransactionBase64(
+        allocator,
+        payer.public_key,
+        nonce_account,
+        payer.public_key,
+        destination,
+        recent_blockhash,
+        2_000,
+        &.{},
+        &.{payer},
+    );
+    defer allocator.free(encoded);
+
+    const transfer = SystemProgram.transfer(
+        payer.public_key,
+        destination,
+        2_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    var owned_instructions = try client.prependNonceAdvanceInstruction(
+        allocator,
+        nonce_account,
+        payer.public_key,
+        instructions[0..],
+    );
+    defer owned_instructions.deinit(allocator);
+
+    var expected = try client.buildSignedVersionedTransactionV0(
+        allocator,
+        payer.public_key,
+        recent_blockhash,
+        owned_instructions.instructions,
+        &.{},
+        &.{payer},
+    );
+    defer expected.deinit(allocator);
+
+    const expected_encoded = try expected.toBase64(allocator);
+    defer allocator.free(expected_encoded);
+
+    try std.testing.expectEqualStrings(expected_encoded, encoded);
+}
+
 test "root.sendVersionedTransferWithOptions resolves latest blockhash and sends" {
     const allocator = std.testing.allocator;
 

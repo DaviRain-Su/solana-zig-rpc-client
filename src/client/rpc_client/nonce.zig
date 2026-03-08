@@ -1260,6 +1260,21 @@ pub fn buildOwnedVersionedMessageWithBlockhashQuery(
     };
 }
 
+pub fn buildOwnedVersionedMessage(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    recent_blockhash: []const u8,
+) !OwnedVersionedMessageV0 {
+    return try self.buildOwnedVersionedMessageWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        .{ .recent_blockhash = recent_blockhash },
+    );
+}
+
 pub fn buildOwnedVersionedMessageWithOptions(
     self: anytype,
     payer: Pubkey,
@@ -1344,6 +1359,21 @@ pub fn buildVersionedMessageBytesWithConfig(
     );
 }
 
+pub fn buildVersionedMessageBytes(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    recent_blockhash: []const u8,
+) ![]u8 {
+    return try self.buildVersionedMessageBytesWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        .{ .recent_blockhash = recent_blockhash },
+    );
+}
+
 pub fn buildVersionedMessageBase64WithBlockhashQuery(
     self: anytype,
     payer: Pubkey,
@@ -1394,6 +1424,21 @@ pub fn buildVersionedMessageBase64WithConfig(
         instructions,
         address_lookup_tables,
         options,
+    );
+}
+
+pub fn buildVersionedMessageBase64(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    recent_blockhash: []const u8,
+) ![]u8 {
+    return try self.buildVersionedMessageBase64WithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        .{ .recent_blockhash = recent_blockhash },
     );
 }
 
