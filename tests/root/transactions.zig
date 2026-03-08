@@ -2850,6 +2850,46 @@ test "root.buildOwnedVersionedTransferMessageWithNonce prepends nonce advance" {
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
+test "root.buildVersionedTransferMessageWithNonce reuses buildOwnedVersionedTransferMessageWithNonce" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const nonce_account = Pubkey.fromBytes(nonce_raw.public_key.toBytes());
+
+    var built = try client.buildVersionedTransferMessageWithNonce(
+        allocator,
+        payer,
+        nonce_account,
+        payer,
+        destination,
+        Hash.fromBytes(.{0x78} ** 32),
+        1_000,
+        &.{},
+    );
+    defer built.deinit(allocator);
+
+    const encoded = try built.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedTransferMessageBase64WithNonce(
+        allocator,
+        payer,
+        nonce_account,
+        payer,
+        destination,
+        Hash.fromBytes(.{0x78} ** 32),
+        1_000,
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
 test "root.sendVersionedTransferWithOptions resolves latest blockhash and sends" {
     const allocator = std.testing.allocator;
 
@@ -4136,6 +4176,47 @@ test "root.buildOwnedVersionedNonceTransferMessage builds distinct payer sender 
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
+test "root.buildVersionedNonceTransferMessage reuses buildOwnedVersionedNonceTransferMessage" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    var built = try client.buildVersionedNonceTransferMessage(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_authority_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x79} ** 32),
+        1_000,
+        &.{},
+    );
+    defer built.deinit(allocator);
+
+    const encoded = try built.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedNonceTransferMessageBase64(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_authority_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x79} ** 32),
+        1_000,
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
 test "root.buildVersionedTransferMessageBase64WithSender builds distinct payer and sender" {
     const allocator = std.testing.allocator;
 
@@ -4166,6 +4247,74 @@ test "root.buildVersionedTransferMessageBase64WithSender builds distinct payer a
         Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
         recent_blockhash,
         instructions[0..],
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildVersionedTransferMessageWithSender reuses buildOwnedVersionedTransferMessageWithSender" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    var built = try client.buildVersionedTransferMessageWithSender(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x7a} ** 32),
+        1_000,
+        &.{},
+    );
+    defer built.deinit(allocator);
+
+    const encoded = try built.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedTransferMessageBase64WithSender(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x7a} ** 32),
+        1_000,
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildVersionedTransferMessage reuses buildOwnedVersionedTransferMessage" {
+    const allocator = std.testing.allocator;
+
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const payer = Pubkey.fromBytes(sender_raw.public_key.toBytes());
+
+    var built = try client.buildVersionedTransferMessage(
+        allocator,
+        payer,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x7b} ** 32),
+        1_000,
+        &.{},
+    );
+    defer built.deinit(allocator);
+
+    const encoded = try built.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedTransferMessageBase64(
+        allocator,
+        payer,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x7b} ** 32),
+        1_000,
         &.{},
     );
     defer allocator.free(expected);

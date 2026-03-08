@@ -2456,6 +2456,24 @@ pub fn buildOwnedVersionedTransferMessage(
     );
 }
 
+pub fn buildVersionedTransferMessage(
+    allocator: Allocator,
+    payer: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedTransferMessage(
+        allocator,
+        payer,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+    );
+}
+
 pub fn buildOwnedVersionedTransferMessageWithSender(
     allocator: Allocator,
     payer: Pubkey,
@@ -2476,6 +2494,26 @@ pub fn buildOwnedVersionedTransferMessageWithSender(
     );
 }
 
+pub fn buildVersionedTransferMessageWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedTransferMessageWithSender(
+        allocator,
+        payer,
+        sender,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+    );
+}
+
 pub fn buildOwnedVersionedTransferMessageWithNonce(
     allocator: Allocator,
     payer: Pubkey,
@@ -2489,6 +2527,28 @@ pub fn buildOwnedVersionedTransferMessageWithNonce(
     return try buildOwnedVersionedNonceTransferMessage(
         allocator,
         payer,
+        payer,
+        nonce_account,
+        authority,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildVersionedTransferMessageWithNonce(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedTransferMessageWithNonce(
+        allocator,
         payer,
         nonce_account,
         authority,
@@ -2519,6 +2579,30 @@ pub fn buildOwnedVersionedNonceTransferMessage(
         authority,
         recent_blockhash,
         instructions[0..],
+        address_lookup_tables,
+    );
+}
+
+pub fn buildVersionedNonceTransferMessage(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedNonceTransferMessage(
+        allocator,
+        payer,
+        sender,
+        nonce_account,
+        authority,
+        destination,
+        recent_blockhash,
+        lamports,
         address_lookup_tables,
     );
 }
