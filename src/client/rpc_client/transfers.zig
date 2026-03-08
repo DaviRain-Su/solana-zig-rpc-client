@@ -421,6 +421,65 @@ pub fn buildVersionedTransferSignedTransactionWithConfig(
     );
 }
 
+pub fn buildOwnedVersionedTransferMessage(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedTransferMessageWithResolvedBlockhash(
+        self,
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+        null,
+    );
+}
+
+pub fn buildOwnedVersionedTransferMessageWithOptions(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) !OwnedVersionedMessageV0 {
+    const blockhash_query = resolveTransferBlockhashQuery(options);
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    return try buildOwnedVersionedTransferMessageWithResolvedBlockhash(
+        self,
+        sender_secret_key,
+        destination,
+        lamports,
+        resolved.blockhash,
+        address_lookup_tables,
+        transferNonceAccountPubkey(blockhash_query),
+    );
+}
+
+pub fn buildOwnedVersionedTransferMessageWithConfig(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) !OwnedVersionedMessageV0 {
+    return try self.buildOwnedVersionedTransferMessageWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+}
+
 pub fn buildVersionedTransferMessageBytes(
     self: anytype,
     sender_secret_key: []const u8,
@@ -656,6 +715,81 @@ pub fn getFeeForVersionedTransferMessageWithConfig(
         address_lookup_tables,
         options,
         commitment,
+    );
+}
+
+pub fn buildOwnedVersionedNonceTransferMessage(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedNonceTransferMessageWithResolvedBlockhash(
+        self,
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildOwnedVersionedNonceTransferMessageWithOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+) !OwnedVersionedMessageV0 {
+    const blockhash_query = resolveNonceTransferBlockhashQuery(nonce_account_pubkey, options);
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    return try buildOwnedVersionedNonceTransferMessageWithResolvedBlockhash(
+        self,
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        resolved.blockhash,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildOwnedVersionedNonceTransferMessageWithConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+) !OwnedVersionedMessageV0 {
+    return try self.buildOwnedVersionedNonceTransferMessageWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
     );
 }
 
