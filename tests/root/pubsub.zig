@@ -40,6 +40,25 @@ fn waitForClosed(subscription: *client.PubsubSubscription, timeout_ms: u64) !voi
     return error.Timeout;
 }
 
+fn waitForQueueCloseOrTransportClosed(
+    subscription: *client.PubsubSubscription,
+    timeout_ms: u64,
+    expected_dropped: ?usize,
+) !client.PubsubCloseReason {
+    try waitForClosed(subscription, timeout_ms);
+    const close_reason = subscription.closeReason();
+    try std.testing.expect(
+        close_reason == client.PubsubCloseReason.queue_overflow or
+            close_reason == client.PubsubCloseReason.transport_closed,
+    );
+    if (close_reason == client.PubsubCloseReason.queue_overflow) {
+        if (expected_dropped) |count| {
+            try std.testing.expectEqual(count, subscription.droppedCount());
+        }
+    }
+    return close_reason;
+}
+
 fn waitForReconnecting(pubsub: *const client.PubsubClient, timeout_ms: u64) !void {
     const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ms * std.time.ns_per_ms));
     while (std.time.nanoTimestamp() < deadline) {
@@ -2484,12 +2503,7 @@ test "root.PubsubClient blockSubscribeWithCallback closes subscription when queu
         );
         defer subscription.deinit();
 
-        try waitForClosed(subscription.rawSubscription(), 2000);
-        const close_reason = subscription.closeReason();
-        try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
-        if (close_reason == client.PubsubCloseReason.queue_overflow) {
-            try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
-        }
+        const close_reason = try waitForQueueCloseOrTransportClosed(subscription.rawSubscription(), 2000, 1);
 
         var receiver = subscription.receiver();
         try std.testing.expectEqual(subscription.subscriptionId(), receiver.subscriptionId());
@@ -2574,12 +2588,7 @@ test "root.PubsubClient signatureSubscribeWithCallback closes subscription when 
         );
         defer subscription.deinit();
 
-        try waitForClosed(subscription.rawSubscription(), 2000);
-        const close_reason = subscription.closeReason();
-        try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
-        if (close_reason == client.PubsubCloseReason.queue_overflow) {
-            try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
-        }
+        const close_reason = try waitForQueueCloseOrTransportClosed(subscription.rawSubscription(), 2000, 1);
 
         var receiver = subscription.receiver();
         try std.testing.expectEqual(subscription.subscriptionId(), receiver.subscriptionId());
@@ -2624,11 +2633,8 @@ test "root.PubsubClient signatureSubscribeWithCallback keeps first notification 
         );
         defer subscription.deinit();
 
-        try waitForClosed(subscription.rawSubscription(), 2000);
-        const close_reason = subscription.closeReason();
-        try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
+        const close_reason = try waitForQueueCloseOrTransportClosed(subscription.rawSubscription(), 2000, 1);
         if (close_reason == client.PubsubCloseReason.queue_overflow) {
-            try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
             try waitForSignatureCloseCallbackCount(&tracker, 1, 2000);
 
             tracker.mutex.lock();
@@ -2711,12 +2717,7 @@ test "root.PubsubClient accountSubscribeWithCallback closes subscription when qu
         );
         defer subscription.deinit();
 
-        try waitForClosed(subscription.rawSubscription(), 2000);
-        const close_reason = subscription.closeReason();
-        try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
-        if (close_reason == client.PubsubCloseReason.queue_overflow) {
-            try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
-        }
+        const close_reason = try waitForQueueCloseOrTransportClosed(subscription.rawSubscription(), 2000, 1);
 
         var receiver = subscription.receiver();
         try std.testing.expectEqual(subscription.subscriptionId(), receiver.subscriptionId());
@@ -2762,11 +2763,8 @@ test "root.PubsubClient accountSubscribeWithCallback keeps first notification on
         );
         defer subscription.deinit();
 
-        try waitForClosed(subscription.rawSubscription(), 2000);
-        const close_reason = subscription.closeReason();
-        try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
+        const close_reason = try waitForQueueCloseOrTransportClosed(subscription.rawSubscription(), 2000, 1);
         if (close_reason == client.PubsubCloseReason.queue_overflow) {
-            try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
             try waitForAccountCloseCallbackCount(&tracker, 1, 2000);
 
             tracker.mutex.lock();
@@ -2809,12 +2807,7 @@ test "root.PubsubClient programSubscribeWithCallback closes subscription when qu
         );
         defer subscription.deinit();
 
-        try waitForClosed(subscription.rawSubscription(), 2000);
-        const close_reason = subscription.closeReason();
-        try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
-        if (close_reason == client.PubsubCloseReason.queue_overflow) {
-            try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
-        }
+        const close_reason = try waitForQueueCloseOrTransportClosed(subscription.rawSubscription(), 2000, 1);
 
         var receiver = subscription.receiver();
         try std.testing.expectEqual(subscription.subscriptionId(), receiver.subscriptionId());
@@ -2859,12 +2852,9 @@ test "root.PubsubClient programSubscribeWithCallback keeps first notification on
         );
         defer subscription.deinit();
 
-        try waitForClosed(subscription.rawSubscription(), 2000);
+        const close_reason = try waitForQueueCloseOrTransportClosed(subscription.rawSubscription(), 2000, 1);
         std.Thread.sleep(50 * std.time.ns_per_ms);
-        const close_reason = subscription.closeReason();
-        try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
         if (close_reason == client.PubsubCloseReason.queue_overflow) {
-            try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
             try waitForProgramCloseCallbackCount(&tracker, 1, 2000);
 
             tracker.mutex.lock();
@@ -2991,11 +2981,8 @@ test "root.PubsubClient logsSubscribeWithCallback keeps first notification on cl
         );
         defer subscription.deinit();
 
-        try waitForClosed(subscription.rawSubscription(), 2000);
-        const close_reason = subscription.closeReason();
-        try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
+        const close_reason = try waitForQueueCloseOrTransportClosed(subscription.rawSubscription(), 2000, 1);
         if (close_reason == client.PubsubCloseReason.queue_overflow) {
-            try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
             try waitForLogsCloseCallbackCount(&tracker, 1, 2000);
             tracker.mutex.lock();
             defer tracker.mutex.unlock();
@@ -3039,12 +3026,7 @@ test "root.PubsubClient logsSubscribeWithCallback closes subscription when queue
         );
         defer subscription.deinit();
 
-        try waitForClosed(subscription.rawSubscription(), 2000);
-        const close_reason = subscription.closeReason();
-        try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
-        if (close_reason == client.PubsubCloseReason.queue_overflow) {
-            try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
-        }
+        const close_reason = try waitForQueueCloseOrTransportClosed(subscription.rawSubscription(), 2000, 1);
 
         var receiver = subscription.receiver();
         try std.testing.expectEqual(subscription.subscriptionId(), receiver.subscriptionId());
