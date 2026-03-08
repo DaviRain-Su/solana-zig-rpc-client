@@ -1614,3 +1614,94 @@ pub fn versionedNonceTransferWithConfig(
         options,
     );
 }
+
+pub fn versionedNonceTransferWithSpinner(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    commitment: ?Commitment,
+    options: ?SendTransactionOptions,
+) ![]const u8 {
+    return try self.versionedNonceTransferWithSpinnerAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        .{
+            .recent_blockhash = recent_blockhash,
+            .send_transaction_options = options,
+            .commitment = commitment,
+        },
+    );
+}
+
+pub fn versionedNonceTransferWithSpinnerAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferOptions,
+) ![]const u8 {
+    const build_options: ?NonceTransferBuildOptions = if (options) |value| .{
+        .recent_blockhash = value.recent_blockhash,
+        .blockhash_commitment = value.blockhash_commitment,
+        .blockhash_query = value.blockhash_query,
+    } else null;
+
+    var signed = try self.buildVersionedNonceTransferSignedTransactionWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        build_options,
+    );
+    defer signed.deinit(self.allocator);
+
+    return try self.sendAndConfirmVersionedTransactionTypedWithSpinner(
+        signed,
+        if (options) |value| value.send_transaction_options else null,
+        if (options) |value| value.commitment else null,
+        if (options) |value| value.search_transaction_history else false,
+        if (options) |value| value.timeout_ms else poll_for_signature_confirmation_timeout_ms,
+        if (options) |value| value.poll_interval_ms else signature_poll_interval_ms,
+    );
+}
+
+pub fn versionedNonceTransferWithSpinnerAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferOptions,
+) ![]const u8 {
+    return try self.versionedNonceTransferWithSpinnerAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+}
