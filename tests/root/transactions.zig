@@ -3884,6 +3884,41 @@ test "root.buildOwnedLegacyTransferMessageWithSender builds distinct payer and s
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
+test "root.buildLegacyTransferMessageWithSender reuses buildOwnedLegacyTransferMessageWithSender" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    var built = try client.buildLegacyTransferMessageWithSender(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x7c} ** 32),
+        1_000,
+    );
+    defer built.deinit(allocator);
+
+    const encoded_bytes = try built.serialize(allocator);
+    defer allocator.free(encoded_bytes);
+    const encoded = try client.encodeBase64(allocator, encoded_bytes);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyTransferMessageBase64WithSender(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x7c} ** 32),
+        1_000,
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
 test "root.buildTransferMessageBase64 builds fixed blockhash message" {
     const allocator = std.testing.allocator;
 
@@ -4210,6 +4245,47 @@ test "root.buildOwnedVersionedNonceTransferMessage builds distinct payer sender 
         Hash.fromBytes(.{0x46} ** 32),
         1_000,
         &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildLegacyNonceTransferMessage reuses buildOwnedLegacyNonceTransferMessage" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    var built = try client.buildLegacyNonceTransferMessage(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_authority_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x7d} ** 32),
+        1_000,
+    );
+    defer built.deinit(allocator);
+
+    const encoded_bytes = try built.serialize(allocator);
+    defer allocator.free(encoded_bytes);
+    const encoded = try client.encodeBase64(allocator, encoded_bytes);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyNonceTransferMessageBase64(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_authority_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x7d} ** 32),
+        1_000,
     );
     defer allocator.free(expected);
 

@@ -1366,6 +1366,24 @@ pub fn buildOwnedLegacyTransferMessageWithSender(
     );
 }
 
+pub fn buildLegacyTransferMessageWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) !OwnedLegacyMessage {
+    return try buildOwnedLegacyTransferMessageWithSender(
+        allocator,
+        payer,
+        sender,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
+}
+
 pub fn buildLegacyMessageBytes(
     allocator: Allocator,
     payer: Pubkey,
@@ -1768,6 +1786,28 @@ pub fn buildOwnedLegacyNonceTransferMessage(
         nonce_authority,
         recent_blockhash,
         instructions[0..],
+    );
+}
+
+pub fn buildLegacyNonceTransferMessage(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) !OwnedLegacyMessage {
+    return try buildOwnedLegacyNonceTransferMessage(
+        allocator,
+        payer,
+        sender,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
     );
 }
 
