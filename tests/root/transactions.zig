@@ -1605,6 +1605,55 @@ test "root.buildVersionedNonceTransferTransactionBase64 builds nonce-aware trans
     try std.testing.expectEqualStrings(expected_encoded, encoded);
 }
 
+test "root.buildVersionedTransferMessageBase64WithNonce prepends nonce advance" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const nonce_account = Pubkey.fromBytes(nonce_raw.public_key.toBytes());
+    const recent_blockhash = Hash.fromBytes(.{0x2a} ** 32);
+
+    const encoded = try client.buildVersionedTransferMessageBase64WithNonce(
+        allocator,
+        payer,
+        nonce_account,
+        payer,
+        destination,
+        recent_blockhash,
+        3_000,
+        &.{},
+    );
+    defer allocator.free(encoded);
+
+    const transfer = SystemProgram.transfer(
+        payer,
+        destination,
+        3_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    var owned_instructions = try client.prependNonceAdvanceInstruction(
+        allocator,
+        nonce_account,
+        payer,
+        instructions[0..],
+    );
+    defer owned_instructions.deinit(allocator);
+
+    const expected = try client.buildVersionedMessageV0Base64(
+        allocator,
+        payer,
+        recent_blockhash,
+        owned_instructions.instructions,
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
 test "root.sendVersionedTransferWithOptions resolves latest blockhash and sends" {
     const allocator = std.testing.allocator;
 

@@ -1738,6 +1738,50 @@ pub fn buildVersionedTransferMessageBytesWithNonce(
     );
 }
 
+pub fn buildVersionedTransferMessageBase64(
+    allocator: Allocator,
+    payer: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    const message_bytes = try buildVersionedTransferMessageBytes(
+        allocator,
+        payer,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+    );
+    defer allocator.free(message_bytes);
+    return try encodeBase64(allocator, message_bytes);
+}
+
+pub fn buildVersionedTransferMessageBase64WithNonce(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    const message_bytes = try buildVersionedTransferMessageBytesWithNonce(
+        allocator,
+        payer,
+        nonce_account,
+        authority,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+    );
+    defer allocator.free(message_bytes);
+    return try encodeBase64(allocator, message_bytes);
+}
+
 pub fn buildSignedVersionedNonceTransferTransaction(
     allocator: Allocator,
     payer: Pubkey,
