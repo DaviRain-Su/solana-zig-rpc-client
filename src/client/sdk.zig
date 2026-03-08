@@ -2210,6 +2210,24 @@ pub fn buildSignedVersionedTransactionV0(
     return try compiled.sign(allocator, signers);
 }
 
+pub fn buildVersionedTransactionV0(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) !SignedVersionedTransaction {
+    return try buildSignedVersionedTransactionV0(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+        signers,
+    );
+}
+
 pub fn buildSignedVersionedTransaction(
     allocator: Allocator,
     payer: Pubkey,
@@ -2411,6 +2429,28 @@ pub fn buildSignedVersionedTransactionV0WithNonceInstructions(
     defer compiled.deinit(allocator);
 
     return try compiled.sign(allocator, signers);
+}
+
+pub fn buildVersionedTransactionV0WithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) !SignedVersionedTransaction {
+    return try buildSignedVersionedTransactionV0WithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        authority,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+        signers,
+    );
 }
 
 pub fn buildSignedVersionedTransactionWithNonceInstructions(

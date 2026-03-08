@@ -1998,6 +1998,43 @@ test "root.buildSignedVersionedTransaction reuses v0 helper" {
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
+test "root.buildVersionedTransactionV0 reuses buildSignedVersionedTransactionV0" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try Keypair.fromSecretKeyBytes(payer_secret_key);
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer.public_key, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    var signed = try client.buildVersionedTransactionV0(
+        allocator,
+        payer.public_key,
+        Hash.fromBytes(.{0x60} ** 32),
+        instructions[0..],
+        &.{},
+        &.{payer},
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedTransactionV0Base64(
+        allocator,
+        payer.public_key,
+        Hash.fromBytes(.{0x60} ** 32),
+        instructions[0..],
+        &.{},
+        &.{payer},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
 test "root.buildVersionedTransactionBase64 reuses v0 helper" {
     const allocator = std.testing.allocator;
 
@@ -2023,6 +2060,49 @@ test "root.buildVersionedTransactionBase64 reuses v0 helper" {
         allocator,
         payer.public_key,
         Hash.fromBytes(.{0x61} ** 32),
+        instructions[0..],
+        &.{},
+        &.{payer},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildVersionedTransactionV0WithNonceInstructions reuses buildSignedVersionedTransactionV0WithNonceInstructions" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try Keypair.fromSecretKeyBytes(payer_secret_key);
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const nonce_account = Pubkey.fromBytes(nonce_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer.public_key, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    var signed = try client.buildVersionedTransactionV0WithNonceInstructions(
+        allocator,
+        payer.public_key,
+        nonce_account,
+        payer.public_key,
+        Hash.fromBytes(.{0x62} ** 32),
+        instructions[0..],
+        &.{},
+        &.{payer},
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedTransactionV0Base64WithNonceInstructions(
+        allocator,
+        payer.public_key,
+        nonce_account,
+        payer.public_key,
+        Hash.fromBytes(.{0x62} ** 32),
         instructions[0..],
         &.{},
         &.{payer},
