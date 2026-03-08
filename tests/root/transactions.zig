@@ -3706,6 +3706,145 @@ test "root.buildOwnedVersionedTransferMessageWithSenderAndOptions supports nonce
     try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
 }
 
+test "root.getFeeForVersionedTransferMessageWithSender uses distinct payer and sender message" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const fee_payer_secret_key_base58 = try encodeBase58(allocator, &fee_payer_secret_key);
+    defer allocator.free(fee_payer_secret_key_base58);
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x62} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    const expected_message = try client.buildVersionedTransferMessageBase64WithSender(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_public_key),
+        Hash.fromBytes(recent_blockhash),
+        1_000,
+        &.{},
+    );
+    defer allocator.free(expected_message);
+
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":123},\"value\":6000},\"id\":1}" },
+    });
+    defer rpc.deinit();
+
+    const fee = try rpc.getFeeForVersionedTransferMessageWithSender(
+        fee_payer_secret_key_base58,
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        recent_blockhash_base58,
+        &.{},
+        .processed,
+    );
+
+    try std.testing.expectEqual(@as(?u64, 6000), fee.value);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getFeeForMessage", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, expected_message) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"processed\"") != null);
+}
+
+test "root.getFeeForVersionedTransferMessageWithSenderAndOptions supports nonce blockhash query" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const fee_payer_secret_key_base58 = try encodeBase58(allocator, &fee_payer_secret_key);
+    defer allocator.free(fee_payer_secret_key_base58);
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+    const sender_public_key_base58 = try encodeBase58(allocator, &sender_raw.public_key.toBytes());
+    defer allocator.free(sender_public_key_base58);
+
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const nonce_account_pubkey = nonce_raw.public_key.toBytes();
+    const nonce_account_base58 = try encodeBase58(allocator, &nonce_account_pubkey);
+    defer allocator.free(nonce_account_base58);
+
+    const nonce_blockhash = [_]u8{0x63} ** 32;
+    const nonce_blockhash_base58 = try encodeBase58(allocator, &nonce_blockhash);
+    defer allocator.free(nonce_blockhash_base58);
+
+    const response_body = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":43}},\"value\":{{\"data\":{{\"program\":\"system\",\"parsed\":{{\"type\":\"initialized\",\"info\":{{\"authority\":\"{s}\",\"blockhash\":\"{s}\",\"feeCalculator\":{{\"lamportsPerSignature\":5000}}}}}},\"space\":80}},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}}},\"id\":1}}",
+        .{ sender_public_key_base58, nonce_blockhash_base58 },
+    );
+    defer allocator.free(response_body);
+
+    const expected_message = try client.buildVersionedNonceTransferMessageBase64(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_pubkey),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_public_key),
+        Hash.fromBytes(nonce_blockhash),
+        1_000,
+        &.{},
+    );
+    defer allocator.free(expected_message);
+
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockJsonResponse(response_body);
+    try rpc.pushMockJsonResponse(
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":9000},\"id\":1}",
+    );
+
+    const fee = try rpc.getFeeForVersionedTransferMessageWithSenderAndOptions(
+        fee_payer_secret_key_base58,
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        &.{},
+        .{
+            .blockhash_query = .{
+                .nonce_account = .{
+                    .pubkey = nonce_account_base58,
+                    .commitment = .finalized,
+                },
+            },
+        },
+        .processed,
+    );
+
+    try std.testing.expectEqual(@as(?u64, 9000), fee.value);
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"encoding\":\"jsonParsed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"finalized\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, nonce_account_base58) != null);
+    try std.testing.expectEqualStrings("getFeeForMessage", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].request_body, expected_message) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"commitment\":\"processed\"") != null);
+}
+
 test "root.versionedTransferWithSpinner supports fixed blockhashes" {
     const allocator = std.testing.allocator;
 
