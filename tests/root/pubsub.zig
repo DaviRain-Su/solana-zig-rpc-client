@@ -4,6 +4,9 @@ const websocket = @import("websocket");
 
 pub const std_options = struct {
     pub const log_level = std.log.Level.err;
+    pub const log_scope_levels = [_]std.log.ScopeLevel{
+        .{ .scope = .websocket, .level = .err },
+    };
 };
 
 fn reservePort() !u16 {
