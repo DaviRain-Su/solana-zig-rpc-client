@@ -2530,7 +2530,13 @@ test "root.PubsubClient signatureSubscribeWithCallback invokes callback and unsu
         );
         defer subscription.deinit();
 
-        try waitForSignatureCloseCallbackCount(&tracker, 1, 2000);
+        std.Thread.sleep(50 * std.time.ns_per_ms);
+        std.debug.print("signature queued={d} closed={}\n", .{
+            subscription.queuedCount(),
+            subscription.isClosed(),
+        });
+
+        try waitForSignatureCallbackCount(&tracker, 1, 2000);
 
         tracker.mutex.lock();
         defer tracker.mutex.unlock();
@@ -2563,7 +2569,7 @@ test "root.PubsubClient signatureSubscribeWithCallback closes subscription when 
     });
     defer pubsub.deinit();
 
-    var tracker = SignatureCallbackTracker{};
+    var tracker = SignatureCloseCallbackTracker{};
     {
         var subscription = try pubsub.signatureSubscribeWithCallback(
             "SignatureClose111111111111111111111111111111111",
@@ -2630,7 +2636,7 @@ test "root.PubsubClient signatureSubscribeWithCallback keeps first notification 
             try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
         }
 
-        try waitForSignatureCallbackCount(&tracker, 1, 2000);
+        try waitForSignatureCloseCallbackCount(&tracker, 1, 2000);
 
         tracker.mutex.lock();
         defer tracker.mutex.unlock();
@@ -2668,7 +2674,7 @@ test "root.PubsubClient accountSubscribeWithCallback invokes callback and unsubs
         );
         defer subscription.deinit();
 
-        try waitForAccountCloseCallbackCount(&tracker, 1, 2000);
+        try waitForAccountCallbackCount(&tracker, 1, 2000);
 
         tracker.mutex.lock();
         defer tracker.mutex.unlock();
@@ -2701,7 +2707,7 @@ test "root.PubsubClient accountSubscribeWithCallback closes subscription when qu
     });
     defer pubsub.deinit();
 
-    var tracker = AccountCallbackTracker{};
+    var tracker = AccountCloseCallbackTracker{};
     {
         var subscription = try pubsub.accountSubscribeWithCallback(
             "1111111111111111111111111111111111111close",
@@ -2769,7 +2775,7 @@ test "root.PubsubClient accountSubscribeWithCallback keeps first notification on
             try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
         }
 
-        try waitForAccountCallbackCount(&tracker, 1, 2000);
+        try waitForAccountCloseCallbackCount(&tracker, 1, 2000);
 
         tracker.mutex.lock();
         defer tracker.mutex.unlock();
@@ -2861,6 +2867,11 @@ test "root.PubsubClient programSubscribeWithCallback keeps first notification on
         defer subscription.deinit();
 
         try waitForClosed(subscription.rawSubscription(), 2000);
+        std.Thread.sleep(50 * std.time.ns_per_ms);
+        std.debug.print("program queued={d} closed={}\n", .{
+            subscription.queuedCount(),
+            subscription.isClosed(),
+        });
         const close_reason = subscription.closeReason();
         try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
         if (close_reason == client.PubsubCloseReason.queue_overflow) {
@@ -2905,7 +2916,7 @@ test "root.PubsubClient logsSubscribeWithCallback invokes callback and unsubscri
         );
         defer subscription.deinit();
 
-        try waitForLogsCloseCallbackCount(&tracker, 1, 2000);
+        try waitForLogsCallbackCount(&tracker, 1, 2000);
 
         tracker.mutex.lock();
         defer tracker.mutex.unlock();
@@ -2999,7 +3010,7 @@ test "root.PubsubClient logsSubscribeWithCallback keeps first notification on cl
             try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
         }
 
-        try waitForLogsCallbackCount(&tracker, 1, 2000);
+        try waitForLogsCloseCallbackCount(&tracker, 1, 2000);
         tracker.mutex.lock();
         defer tracker.mutex.unlock();
         try std.testing.expectEqual(@as(usize, 1), tracker.count);

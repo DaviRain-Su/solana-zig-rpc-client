@@ -3124,7 +3124,15 @@ const State = struct {
         defer self.mutex.unlock();
         self.reconnect_attempt = 0;
 
-        const subscription = self.subscriptions.get(subscription_id) orelse return;
+        const subscription = self.subscriptions.get(subscription_id) orelse {
+            std.debug.print("pubsub no subscription for id {d}\n", .{subscription_id});
+            return;
+        };
+
+        std.debug.print("pubsub push subscription id {d} queue_len={d}\n", .{
+            subscription_id,
+            subscription.queuedCount(),
+        });
         subscription.push(self.allocator, raw_message) catch |err| switch (err) {
             error.QueueOverflow => {
                 _ = self.subscriptions.remove(subscription_id);
