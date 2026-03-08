@@ -194,12 +194,12 @@ pub const Client = struct {
             handler.close();
         };
 
-        // block until we have data
-        try self.readTimeout(0);
-
         while (true) {
+            if (@atomicLoad(bool, &self._closed, .monotonic)) return;
+
             const message = self.read() catch |err| switch (err) {
                 error.Closed => return,
+                error.NotOpenForReading => return,
                 else => return err,
             } orelse unreachable;
 
