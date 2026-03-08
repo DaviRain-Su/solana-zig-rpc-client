@@ -1033,6 +1033,7 @@ test "root.newWithBorrowedMockSenderAndCommitment forwards default commitment" {
     const allocator = std.testing.allocator;
 
     var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
     try sender.pushSlotResult(444);
 
     var rpc = try client.RpcClient.newWithBorrowedMockSenderAndCommitment(
@@ -1052,6 +1053,7 @@ test "root.newWithBorrowedMockSenderAndTimeout forwards request timeout" {
     const allocator = std.testing.allocator;
 
     var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
     try sender.pushSlotResult(445);
 
     var rpc = try client.RpcClient.newWithBorrowedMockSenderAndTimeout(
@@ -1072,6 +1074,7 @@ test "root.newWithBorrowedMockSenderAndTimeouts forwards both timeout values" {
     const allocator = std.testing.allocator;
 
     var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
     try sender.pushSlotResult(446);
 
     var rpc = try client.RpcClient.newWithBorrowedMockSenderAndTimeouts(
@@ -1092,6 +1095,7 @@ test "root.newWithBorrowedMockSenderAndTimeouts forwards both timeout values" {
 test "root.newWithBorrowedMockSenderAndRequestSenderOptions customizes endpoint and timeouts" {
     const allocator = std.testing.allocator;
     var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
     try sender.pushSlotResult(447);
 
     var rpc = try client.RpcClient.newWithBorrowedMockSenderAndRequestSenderOptions(
@@ -1118,6 +1122,7 @@ test "root.newWithBorrowedMockSenderAndRequestSenderOptions customizes endpoint 
 test "root.newWithBorrowedMockSenderAndCommitmentAndTimeout forwards commitment and timeout" {
     const allocator = std.testing.allocator;
     var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
     try sender.pushSlotResult(444);
 
     var rpc = try client.RpcClient.newWithBorrowedMockSenderAndCommitmentAndTimeout(
@@ -1140,6 +1145,7 @@ test "root.newWithBorrowedMockSenderAndCommitmentAndTimeout forwards commitment 
 test "root.newWithBorrowedMockSenderAndTimeoutAndCommitment preserves order and options" {
     const allocator = std.testing.allocator;
     var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
     try sender.pushSlotResult(555);
 
     var rpc = try client.RpcClient.newWithBorrowedMockSenderAndTimeoutAndCommitment(
@@ -1161,6 +1167,7 @@ test "root.newWithBorrowedMockSenderAndTimeoutAndCommitment preserves order and 
 test "root.newWithBorrowedMockSenderAndOptions applies all constructor options" {
     const allocator = std.testing.allocator;
     var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
     try sender.pushSlotResult(666);
 
     var rpc = try client.RpcClient.newWithBorrowedMockSenderAndOptions(
@@ -1186,6 +1193,7 @@ test "root.newWithBorrowedMockSenderAndOptions applies all constructor options" 
 test "root.newWithBorrowedMockSenderAndCommitmentAndTimeouts applies all options regardless argument order" {
     const allocator = std.testing.allocator;
     var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
     try sender.pushSlotResult(701);
 
     var rpc = try client.RpcClient.newWithBorrowedMockSenderAndCommitmentAndTimeouts(
@@ -1208,6 +1216,7 @@ test "root.newWithBorrowedMockSenderAndCommitmentAndTimeouts applies all options
 test "root.newWithBorrowedMockSenderAndTimeoutsAndCommitment preserves timeout-first alias semantics" {
     const allocator = std.testing.allocator;
     var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
     try sender.pushSlotResult(702);
 
     var rpc = try client.RpcClient.newWithBorrowedMockSenderAndTimeoutsAndCommitment(
@@ -1257,7 +1266,7 @@ test "root.newWithOwnedMockSender transfers ownership of scripted sender state" 
     const allocator = std.testing.allocator;
 
     var sender = client.MockSender.init(allocator);
-    try sender.pushBoolResult(false);
+    try sender.pushHealthOk();
 
     var rpc = try client.RpcClient.newWithOwnedMockSender(
         allocator,
@@ -1267,7 +1276,7 @@ test "root.newWithOwnedMockSender transfers ownership of scripted sender state" 
 
     const health = try rpc.getHealth();
     defer allocator.free(health);
-    try std.testing.expectEqualStrings("false", health);
+    try std.testing.expectEqualStrings("ok", health);
     try std.testing.expect(!rpc.isMock());
     try std.testing.expect(rpc.hasRequestSender());
 }
