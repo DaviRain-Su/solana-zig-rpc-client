@@ -1573,7 +1573,7 @@ test "cli.loadDefaultSolanaCliConfig resolves custom override path" {
 
     const override_path = try std.fmt.allocPrint(
         allocator,
-        "{s}/custom_config.yml",
+        ".zig-cache/tmp/{s}/custom_config.yml",
         .{tmp.sub_path},
     );
     defer allocator.free(override_path);
