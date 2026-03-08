@@ -2331,6 +2331,80 @@ test "root.compileVersionedMessageWithNonceInstructions reuses v0 helper" {
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
+test "root.compileLegacyMessage reuses buildOwnedLegacyMessage" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    var compiled = try client.compileLegacyMessage(
+        allocator,
+        payer,
+        Hash.fromBytes(.{0x6a} ** 32),
+        instructions[0..],
+    );
+    defer compiled.deinit(allocator);
+    const encoded_bytes = try compiled.serialize(allocator);
+    defer allocator.free(encoded_bytes);
+
+    var expected_owned = try client.buildOwnedLegacyMessage(
+        allocator,
+        payer,
+        Hash.fromBytes(.{0x6a} ** 32),
+        instructions[0..],
+    );
+    defer expected_owned.deinit(allocator);
+    const expected_bytes = try expected_owned.serialize(allocator);
+    defer allocator.free(expected_bytes);
+
+    try std.testing.expectEqualSlices(u8, expected_bytes, encoded_bytes);
+}
+
+test "root.compileLegacyMessageWithNonceInstructions reuses buildOwnedLegacyMessageWithNonceInstructions" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const nonce_account = Pubkey.fromBytes(nonce_raw.public_key.toBytes());
+    const nonce_authority = Pubkey.fromBytes(nonce_authority_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    var compiled = try client.compileLegacyMessageWithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        nonce_authority,
+        Hash.fromBytes(.{0x6b} ** 32),
+        instructions[0..],
+    );
+    defer compiled.deinit(allocator);
+    const encoded_bytes = try compiled.serialize(allocator);
+    defer allocator.free(encoded_bytes);
+
+    var expected_owned = try client.buildOwnedLegacyMessageWithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        nonce_authority,
+        Hash.fromBytes(.{0x6b} ** 32),
+        instructions[0..],
+    );
+    defer expected_owned.deinit(allocator);
+    const expected_bytes = try expected_owned.serialize(allocator);
+    defer allocator.free(expected_bytes);
+
+    try std.testing.expectEqualSlices(u8, expected_bytes, encoded_bytes);
+}
+
 test "root.buildVersionedNonceTransferTransactionBase64 builds nonce-aware transfer transaction" {
     const allocator = std.testing.allocator;
 

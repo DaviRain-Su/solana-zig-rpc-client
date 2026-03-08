@@ -309,7 +309,7 @@ pub const LegacyMessage = struct {
     instructions: []const Instruction,
 
     pub fn serialize(self: LegacyMessage, allocator: Allocator) ![]u8 {
-        const compiled = try compileLegacyMessage(allocator, self);
+        const compiled = try compileLegacyMessageBytes(allocator, self);
         allocator.free(compiled.account_keys);
         return compiled.bytes;
     }
@@ -321,7 +321,7 @@ pub const LegacyMessage = struct {
     }
 
     pub fn sign(self: LegacyMessage, allocator: Allocator, signers: []const Keypair) !SignedLegacyTransaction {
-        const compiled = try compileLegacyMessage(allocator, self);
+        const compiled = try compileLegacyMessageBytes(allocator, self);
         errdefer allocator.free(compiled.bytes);
         errdefer allocator.free(compiled.account_keys);
 
@@ -960,7 +960,7 @@ fn collectOrderedAccountMetas(
     return try ordered_metas.toOwnedSlice(allocator);
 }
 
-fn compileLegacyMessage(allocator: Allocator, message: LegacyMessage) !CompiledLegacyMessage {
+fn compileLegacyMessageBytes(allocator: Allocator, message: LegacyMessage) !CompiledLegacyMessage {
     const ordered_meta_slice = try collectOrderedAccountMetas(
         allocator,
         message.payer,
@@ -1322,6 +1322,20 @@ pub fn buildOwnedLegacyMessage(
     };
 }
 
+pub fn compileLegacyMessage(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+) !OwnedLegacyMessage {
+    return try buildOwnedLegacyMessage(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+    );
+}
+
 pub fn buildOwnedLegacyTransferMessageWithSender(
     allocator: Allocator,
     payer: Pubkey,
@@ -1468,6 +1482,24 @@ pub fn buildOwnedLegacyMessageWithNonceInstructions(
         },
         .owned_instructions = owned_instructions.instructions,
     };
+}
+
+pub fn compileLegacyMessageWithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+) !OwnedLegacyMessage {
+    return try buildOwnedLegacyMessageWithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        nonce_authority,
+        recent_blockhash,
+        instructions,
+    );
 }
 
 pub fn buildLegacyMessageWithNonceInstructions(
