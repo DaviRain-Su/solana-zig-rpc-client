@@ -1207,6 +1207,42 @@ pub fn compileVersionedMessageV0(
     };
 }
 
+pub fn compileVersionedMessage(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try compileVersionedMessageV0(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+    );
+}
+
+pub fn compileVersionedMessageWithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedMessageV0WithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        authority,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+    );
+}
+
 fn signCompiledLegacyMessage(
     allocator: Allocator,
     compiled: CompiledLegacyMessage,

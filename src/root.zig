@@ -124,6 +124,8 @@ pub const buildSignedVersionedNonceTransferTransactionWithSender = sdk.buildSign
 pub const buildVersionedNonceTransferTransactionBase64 = sdk.buildVersionedNonceTransferTransactionBase64;
 pub const buildVersionedNonceTransferTransactionBase64WithSender = sdk.buildVersionedNonceTransferTransactionBase64WithSender;
 pub const compileVersionedMessageV0 = sdk.compileVersionedMessageV0;
+pub const compileVersionedMessage = sdk.compileVersionedMessage;
+pub const compileVersionedMessageWithNonceInstructions = sdk.compileVersionedMessageWithNonceInstructions;
 
 pub const TransportStats = rpc_types.TransportStats;
 pub const Commitment = rpc_types.Commitment;

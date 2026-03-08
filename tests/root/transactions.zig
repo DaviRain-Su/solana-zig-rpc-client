@@ -2257,6 +2257,80 @@ test "root.buildVersionedMessageBase64WithNonceInstructions reuses v0 helper" {
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
+test "root.compileVersionedMessage reuses v0 helper" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    var compiled = try client.compileVersionedMessage(
+        allocator,
+        payer,
+        Hash.fromBytes(.{0x68} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer compiled.deinit(allocator);
+
+    const encoded = try compiled.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedMessageV0Base64(
+        allocator,
+        payer,
+        Hash.fromBytes(.{0x68} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.compileVersionedMessageWithNonceInstructions reuses v0 helper" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const nonce_account = Pubkey.fromBytes(nonce_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    var compiled = try client.compileVersionedMessageWithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        payer,
+        Hash.fromBytes(.{0x69} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer compiled.deinit(allocator);
+
+    const encoded = try compiled.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedMessageV0Base64WithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        payer,
+        Hash.fromBytes(.{0x69} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
 test "root.buildVersionedNonceTransferTransactionBase64 builds nonce-aware transfer transaction" {
     const allocator = std.testing.allocator;
 
