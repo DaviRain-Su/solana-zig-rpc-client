@@ -1196,6 +1196,243 @@ pub fn buildVersionedTransferMessageBase64WithConfig(
     );
 }
 
+pub fn getFeeForTransferMessageResponse(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForTransferMessageResponseWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        .{ .recent_blockhash = recent_blockhash },
+        commitment,
+    );
+}
+
+pub fn getFeeForTransferMessageResponseWithOptions(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    const blockhash_query = resolveTransferBlockhashQuery(options);
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    var owned = try buildOwnedTransferMessageWithSenderAndResolvedBlockhash(
+        self,
+        sender_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        resolved.blockhash,
+        transferNonceAccountPubkey(blockhash_query),
+    );
+    defer owned.deinit(self.allocator);
+
+    return try self.getFeeForMessageResponseTyped(owned.message, commitment);
+}
+
+pub fn getFeeForTransferMessageResponseWithConfig(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForTransferMessageResponseWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+        commitment,
+    );
+}
+
+pub fn getFeeForTransferMessage(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    const response = try self.getFeeForTransferMessageResponse(
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+        commitment,
+    );
+    return FeeForMessage{ .value = response.value };
+}
+
+pub fn getFeeForTransferMessageWithOptions(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    const response = try self.getFeeForTransferMessageResponseWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+        commitment,
+    );
+    return FeeForMessage{ .value = response.value };
+}
+
+pub fn getFeeForTransferMessageWithConfig(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    return try self.getFeeForTransferMessageWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+        commitment,
+    );
+}
+
+pub fn getFeeForTransferMessageWithSenderResponse(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForTransferMessageWithSenderResponseWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        .{ .recent_blockhash = recent_blockhash },
+        commitment,
+    );
+}
+
+pub fn getFeeForTransferMessageWithSenderResponseWithOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    const blockhash_query = resolveTransferBlockhashQuery(options);
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    var owned = try buildOwnedTransferMessageWithSenderAndResolvedBlockhash(
+        self,
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        resolved.blockhash,
+        transferNonceAccountPubkey(blockhash_query),
+    );
+    defer owned.deinit(self.allocator);
+
+    return try self.getFeeForMessageResponseTyped(owned.message, commitment);
+}
+
+pub fn getFeeForTransferMessageWithSenderResponseWithConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForTransferMessageWithSenderResponseWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+        commitment,
+    );
+}
+
+pub fn getFeeForTransferMessageWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    const response = try self.getFeeForTransferMessageWithSenderResponse(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+        commitment,
+    );
+    return FeeForMessage{ .value = response.value };
+}
+
+pub fn getFeeForTransferMessageWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    const response = try self.getFeeForTransferMessageWithSenderResponseWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+        commitment,
+    );
+    return FeeForMessage{ .value = response.value };
+}
+
+pub fn getFeeForTransferMessageWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    return try self.getFeeForTransferMessageWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+        commitment,
+    );
+}
+
 pub fn getFeeForVersionedTransferMessageResponse(
     self: anytype,
     sender_secret_key: []const u8,
