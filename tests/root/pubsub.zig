@@ -155,10 +155,22 @@ const SignatureCallbackTracker = struct {
     last_signature: ?[]const u8 = null,
 };
 
+const SignatureCloseCallbackTracker = struct {
+    mutex: std.Thread.Mutex = .{},
+    count: usize = 0,
+    first_context_slot: ?u64 = null,
+};
+
 const AccountCallbackTracker = struct {
     mutex: std.Thread.Mutex = .{},
     count: usize = 0,
     last_context_slot: ?u64 = null,
+};
+
+const AccountCloseCallbackTracker = struct {
+    mutex: std.Thread.Mutex = .{},
+    count: usize = 0,
+    first_context_slot: ?u64 = null,
 };
 
 const LogsCallbackTracker = struct {
@@ -177,6 +189,12 @@ const ProgramCallbackTracker = struct {
     mutex: std.Thread.Mutex = .{},
     count: usize = 0,
     last_executable: ?bool = null,
+};
+
+const ProgramCloseCallbackTracker = struct {
+    mutex: std.Thread.Mutex = .{},
+    count: usize = 0,
+    first_context_slot: ?u64 = null,
 };
 
 const SlotCallbackTracker = struct {
@@ -251,12 +269,40 @@ fn signatureCallback(
     }
 }
 
+fn signatureCloseCallback(
+    context: ?*anyopaque,
+    notification: client.OwnedPubsubNotification(client.SignatureNotificationValue),
+) void {
+    const tracker: *SignatureCloseCallbackTracker = @ptrCast(@alignCast(context.?));
+    tracker.mutex.lock();
+    defer tracker.mutex.unlock();
+
+    tracker.count += 1;
+    if (tracker.count == 1) {
+        tracker.first_context_slot = notification.context_slot;
+    }
+}
+
 fn slowSignatureCallback(
     context: ?*anyopaque,
     notification: client.OwnedPubsubNotification(client.SignatureNotificationValue),
 ) void {
     std.Thread.sleep(20 * std.time.ns_per_ms);
     signatureCallback(context, notification);
+}
+
+fn accountCloseCallback(
+    context: ?*anyopaque,
+    notification: client.OwnedPubsubNotification(client.AccountNotificationValue),
+) void {
+    const tracker: *AccountCloseCallbackTracker = @ptrCast(@alignCast(context.?));
+    tracker.mutex.lock();
+    defer tracker.mutex.unlock();
+
+    tracker.count += 1;
+    if (tracker.count == 1) {
+        tracker.first_context_slot = notification.context_slot;
+    }
 }
 
 fn accountCallback(
@@ -331,6 +377,20 @@ fn programCallback(
 
     tracker.count += 1;
     tracker.last_executable = notification.notification.value.account.executable;
+}
+
+fn programCloseCallback(
+    context: ?*anyopaque,
+    notification: client.OwnedPubsubNotification(client.ProgramNotificationValue),
+) void {
+    const tracker: *ProgramCloseCallbackTracker = @ptrCast(@alignCast(context.?));
+    tracker.mutex.lock();
+    defer tracker.mutex.unlock();
+
+    tracker.count += 1;
+    if (tracker.count == 1) {
+        tracker.first_context_slot = notification.context_slot;
+    }
 }
 
 fn slotCallback(
@@ -2463,6 +2523,54 @@ test "root.PubsubClient signatureSubscribeWithCallback closes subscription when 
 
 }
 
+test "root.PubsubClient signatureSubscribeWithCallback keeps first notification on close-overflow" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .subscription_queue_limit = 1,
+        .queue_overflow_policy = .close_subscription,
+    });
+    defer pubsub.deinit();
+
+    var tracker = SignatureCloseCallbackTracker{};
+    {
+        var subscription = try pubsub.signatureSubscribeWithCallback(
+            "SignatureClose111111111111111111111111111111",
+            .{ .commitment = .confirmed },
+            &tracker,
+            signatureCloseCallback,
+        );
+        defer subscription.deinit();
+
+        try waitForClosed(subscription.rawSubscription(), 2000);
+        const close_reason = subscription.closeReason();
+        try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
+        if (close_reason == client.PubsubCloseReason.queue_overflow) {
+            try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
+        }
+
+        try waitForSignatureCallbackCount(&tracker, 1, 2000);
+
+        tracker.mutex.lock();
+        defer tracker.mutex.unlock();
+        try std.testing.expectEqual(@as(usize, 1), tracker.count);
+        try std.testing.expectEqual(@as(?u64, 301), tracker.first_context_slot);
+    }
+}
+
 test "root.PubsubClient accountSubscribeWithCallback invokes callback and unsubscribes" {
     const port = try reservePort();
     var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
@@ -2554,6 +2662,54 @@ test "root.PubsubClient accountSubscribeWithCallback closes subscription when qu
 
 }
 
+test "root.PubsubClient accountSubscribeWithCallback keeps first notification on close-overflow" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .subscription_queue_limit = 1,
+        .queue_overflow_policy = .close_subscription,
+    });
+    defer pubsub.deinit();
+
+    var tracker = AccountCloseCallbackTracker{};
+    {
+        var subscription = try pubsub.accountSubscribeWithCallback(
+            "1111111111111111111111111111111111111close",
+            .{ .commitment = .confirmed },
+            &tracker,
+            accountCloseCallback,
+        );
+        defer subscription.deinit();
+
+        try waitForClosed(subscription.rawSubscription(), 2000);
+        const close_reason = subscription.closeReason();
+        try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
+        if (close_reason == client.PubsubCloseReason.queue_overflow) {
+            try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
+        }
+
+        try waitForAccountCallbackCount(&tracker, 1, 2000);
+
+        tracker.mutex.lock();
+        defer tracker.mutex.unlock();
+        try std.testing.expectEqual(@as(usize, 1), tracker.count);
+        try std.testing.expectEqual(@as(?u64, 401), tracker.first_context_slot);
+    }
+}
+
 test "root.PubsubClient programSubscribeWithCallback closes subscription when queue overflows" {
     const port = try reservePort();
     var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
@@ -2602,6 +2758,54 @@ test "root.PubsubClient programSubscribeWithCallback closes subscription when qu
         try std.testing.expectEqual(close_reason, typed_receiver.closeReason());
     }
 
+}
+
+test "root.PubsubClient programSubscribeWithCallback keeps first notification on close-overflow" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .subscription_queue_limit = 1,
+        .queue_overflow_policy = .close_subscription,
+    });
+    defer pubsub.deinit();
+
+    var tracker = ProgramCloseCallbackTracker{};
+    {
+        var subscription = try pubsub.programSubscribeWithCallback(
+            "ProgramClose11111111111111111111111111111111111111",
+            .{ .commitment = .confirmed },
+            &tracker,
+            programCloseCallback,
+        );
+        defer subscription.deinit();
+
+        try waitForClosed(subscription.rawSubscription(), 2000);
+        const close_reason = subscription.closeReason();
+        try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
+        if (close_reason == client.PubsubCloseReason.queue_overflow) {
+            try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
+        }
+
+        try waitForProgramCallbackCount(&tracker, 1, 2000);
+
+        tracker.mutex.lock();
+        defer tracker.mutex.unlock();
+        try std.testing.expectEqual(@as(usize, 1), tracker.count);
+        try std.testing.expectEqual(@as(?u64, 551), tracker.first_context_slot);
+    }
 }
 
 test "root.PubsubClient logsSubscribeWithCallback invokes callback and unsubscribes" {
