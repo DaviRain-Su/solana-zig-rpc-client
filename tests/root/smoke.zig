@@ -1005,6 +1005,32 @@ test "root.newWithBorrowedMockSenderAndTimeouts forwards both timeout values" {
     try std.testing.expectEqual(@as(u64, 446), slot);
 }
 
+test "root.newWithBorrowedMockSenderAndRequestSenderOptions customizes endpoint and timeouts" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(447);
+
+    var rpc = try client.RpcClient.newWithBorrowedMockSenderAndRequestSenderOptions(
+        allocator,
+        &sender,
+        .{
+            .endpoint = "custom://borrowed-options",
+            .commitment = .confirmed,
+            .request_timeout_ms = 9_500,
+            .confirm_transaction_initial_timeout_ms = 10_500,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqualStrings("custom://borrowed-options", rpc.url());
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 9_500), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 10_500), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 447), slot);
+}
+
 test "root.newWithBorrowedMockSenderAndCommitmentAndTimeout forwards commitment and timeout" {
     const allocator = std.testing.allocator;
     var sender = client.MockSender.init(allocator);
@@ -1115,6 +1141,32 @@ test "root.newWithBorrowedMockSenderAndTimeoutsAndCommitment preserves timeout-f
 
     const slot = try rpc.getSlot(null);
     try std.testing.expectEqual(@as(u64, 702), slot);
+}
+
+test "root.newWithOwnedMockSenderAndRequestSenderOptions customizes endpoint and timeouts" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(891);
+
+    var rpc = try client.RpcClient.newWithOwnedMockSenderAndRequestSenderOptions(
+        allocator,
+        sender,
+        .{
+            .endpoint = "custom://owned-options",
+            .commitment = .processed,
+            .request_timeout_ms = 6_500,
+            .confirm_transaction_initial_timeout_ms = 7_500,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqualStrings("custom://owned-options", rpc.url());
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 6_500), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 7_500), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 891), slot);
 }
 
 test "root.newWithOwnedMockSender transfers ownership of scripted sender state" {
