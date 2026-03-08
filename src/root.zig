@@ -50,6 +50,7 @@ pub const cloneInstructions = sdk.cloneInstructions;
 pub const prependNonceAdvanceInstruction = sdk.prependNonceAdvanceInstruction;
 pub const compileLegacyMessage = sdk.compileLegacyMessage;
 pub const compileLegacyMessageWithNonceInstructions = sdk.compileLegacyMessageWithNonceInstructions;
+pub const buildLegacyMessage = sdk.buildLegacyMessage;
 pub const buildLegacyTransferMessage = sdk.buildLegacyTransferMessage;
 pub const buildOwnedLegacyMessage = sdk.buildOwnedLegacyMessage;
 pub const buildOwnedLegacyTransferMessage = sdk.buildOwnedLegacyTransferMessage;

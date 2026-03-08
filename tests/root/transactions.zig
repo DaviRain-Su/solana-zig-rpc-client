@@ -2405,6 +2405,70 @@ test "root.compileLegacyMessageWithNonceInstructions reuses buildOwnedLegacyMess
     try std.testing.expectEqualSlices(u8, expected_bytes, encoded_bytes);
 }
 
+test "root.buildLegacyMessage reuses buildLegacyMessageBytes" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const recent_blockhash = Hash.fromBytes(.{0x6c} ** 32);
+    const transfer = SystemProgram.transfer(payer, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    const message = client.buildLegacyMessage(
+        payer,
+        recent_blockhash,
+        instructions[0..],
+    );
+    const encoded_bytes = try message.serialize(allocator);
+    defer allocator.free(encoded_bytes);
+
+    const expected_bytes = try client.buildLegacyMessageBytes(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions[0..],
+    );
+    defer allocator.free(expected_bytes);
+
+    try std.testing.expectEqualSlices(u8, expected_bytes, encoded_bytes);
+}
+
+test "root.buildLegacyMessage signs through existing legacy helpers" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try Keypair.fromSecretKeyBytes(payer_secret_key);
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const recent_blockhash = Hash.fromBytes(.{0x6d} ** 32);
+    const transfer = SystemProgram.transfer(payer.public_key, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    const message = client.buildLegacyMessage(
+        payer.public_key,
+        recent_blockhash,
+        instructions[0..],
+    );
+    var signed = try message.sign(allocator, &.{payer});
+    defer signed.deinit(allocator);
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyTransactionBase64(
+        allocator,
+        payer.public_key,
+        recent_blockhash,
+        instructions[0..],
+        &.{payer},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
 test "root.buildVersionedNonceTransferTransactionBase64 builds nonce-aware transfer transaction" {
     const allocator = std.testing.allocator;
 

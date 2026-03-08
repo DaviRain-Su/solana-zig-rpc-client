@@ -1305,6 +1305,18 @@ pub fn buildLegacyTransferMessage(
     return try message.serialize(allocator);
 }
 
+pub fn buildLegacyMessage(
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+) LegacyMessage {
+    return .{
+        .payer = payer,
+        .recent_blockhash = recent_blockhash,
+        .instructions = instructions,
+    };
+}
+
 pub fn buildOwnedLegacyMessage(
     allocator: Allocator,
     payer: Pubkey,
