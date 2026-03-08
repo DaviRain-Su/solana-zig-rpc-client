@@ -1512,6 +1512,10 @@ fn handleHandshake(comptime H: type, worker: anytype, hc: *HandlerConn(H), ctx: 
     };
 }
 
+fn isConnectionClosedError(err: anytype) bool {
+    return std.mem.eql(u8, @errorName(err), "NotOpenForReading");
+}
+
 fn _handleHandshake(comptime H: type, worker: anytype, hc: *HandlerConn(H), ctx: anytype) !struct { bool, bool } {
     std.debug.assert(hc.handler == null);
 
@@ -1531,7 +1535,7 @@ fn _handleHandshake(comptime H: type, worker: anytype, hc: *HandlerConn(H), ctx:
     }
 
     const n = posix.read(hc.socket, buf[len..]) catch |err| {
-        if (std.mem.eql(u8, @errorName(err), "NotOpenForReading")) {
+        if (isConnectionClosedError(err)) {
             log.debug("({f}) handshake connection closed: {}", .{ conn.address, err });
         } else switch (err) {
             error.BrokenPipe, error.ConnectionResetByPeer => log.debug("({f}) handshake connection closed: {}", .{ conn.address, err }),
@@ -1598,7 +1602,7 @@ fn _handleHandshake(comptime H: type, worker: anytype, hc: *HandlerConn(H), ctx:
 fn handleClientData(comptime H: type, hc: *HandlerConn(H), allocator: Allocator, fba: *FixedBufferAllocator) bool {
     std.debug.assert(hc.handshake == null);
     return _handleClientData(H, hc, allocator, fba) catch |err| {
-        if (std.mem.eql(u8, @errorName(err), "NotOpenForReading")) {
+        if (isConnectionClosedError(err)) {
             log.debug("({f}) connection closed: {}", .{ hc.conn.address, err });
             return false;
         }
@@ -1619,7 +1623,7 @@ fn _handleClientData(comptime H: type, hc: *HandlerConn(H), allocator: Allocator
     var conn = &hc.conn;
     var reader = &hc.reader.?;
     reader.fill(conn.stream) catch |err| {
-        if (std.mem.eql(u8, @errorName(err), "NotOpenForReading")) {
+        if (isConnectionClosedError(err)) {
             log.debug("({f}) connection closed: {}", .{ conn.address, err });
         } else switch (err) {
             error.BrokenPipe, error.ConnectionResetByPeer => log.debug("({f}) connection closed: {}", .{ conn.address, err }),
