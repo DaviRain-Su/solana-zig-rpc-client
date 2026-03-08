@@ -4290,6 +4290,42 @@ test "root.buildVersionedTransferTransactionBase64 builds same-role payer sender
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
+test "root.buildVersionedTransferTransaction reuses buildSignedVersionedTransferTransaction" {
+    const allocator = std.testing.allocator;
+
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+
+    var signed = try client.buildVersionedTransferTransaction(
+        allocator,
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x74} ** 32),
+        1_000,
+        &.{},
+        &.{sender},
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedTransferTransactionBase64(
+        allocator,
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x74} ** 32),
+        1_000,
+        &.{},
+        &.{sender},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
 test "root.buildSignedVersionedTransferTransactionWithNonce reuses same-role nonce helper" {
     const allocator = std.testing.allocator;
 
@@ -4325,6 +4361,138 @@ test "root.buildSignedVersionedTransferTransactionWithNonce reuses same-role non
         1_000,
         &.{},
         &.{payer},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildVersionedTransferTransactionWithNonce reuses buildSignedVersionedTransferTransactionWithNonce" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try Keypair.fromSecretKeyBytes(payer_secret_key);
+
+    var signed = try client.buildVersionedTransferTransactionWithNonce(
+        allocator,
+        payer.public_key,
+        Pubkey.fromBytes(nonce_raw.public_key.toBytes()),
+        payer.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x75} ** 32),
+        1_000,
+        &.{},
+        &.{payer},
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedTransferTransactionBase64WithNonce(
+        allocator,
+        payer.public_key,
+        Pubkey.fromBytes(nonce_raw.public_key.toBytes()),
+        payer.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x75} ** 32),
+        1_000,
+        &.{},
+        &.{payer},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildVersionedNonceTransferTransaction reuses buildSignedVersionedNonceTransferTransaction" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try Keypair.fromSecretKeyBytes(payer_secret_key);
+
+    var signed = try client.buildVersionedNonceTransferTransaction(
+        allocator,
+        payer.public_key,
+        Pubkey.fromBytes(nonce_raw.public_key.toBytes()),
+        payer.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x76} ** 32),
+        1_000,
+        &.{},
+        &.{payer},
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedNonceTransferTransactionBase64(
+        allocator,
+        payer.public_key,
+        Pubkey.fromBytes(nonce_raw.public_key.toBytes()),
+        payer.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x76} ** 32),
+        1_000,
+        &.{},
+        &.{payer},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildVersionedNonceTransferTransactionWithSender reuses buildSignedVersionedNonceTransferTransactionWithSender" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const nonce_authority = try Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+
+    var signed = try client.buildVersionedNonceTransferTransactionWithSender(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        nonce_authority.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x77} ** 32),
+        1_000,
+        &.{},
+        &.{ fee_payer, sender, nonce_authority },
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedNonceTransferTransactionBase64WithSender(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        nonce_authority.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x77} ** 32),
+        1_000,
+        &.{},
+        &.{ fee_payer, sender, nonce_authority },
     );
     defer allocator.free(expected);
 
