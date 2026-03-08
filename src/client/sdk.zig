@@ -1674,6 +1674,26 @@ pub fn buildSignedLegacyTransferTransactionWithSender(
     );
 }
 
+pub fn buildLegacyTransferTransactionWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    signers: []const Keypair,
+) !SignedLegacyTransaction {
+    return try buildSignedLegacyTransferTransactionWithSender(
+        allocator,
+        payer,
+        sender,
+        destination,
+        recent_blockhash,
+        lamports,
+        signers,
+    );
+}
+
 pub fn buildLegacyTransferTransactionBase64WithSender(
     allocator: Allocator,
     payer: Pubkey,
@@ -2002,6 +2022,28 @@ pub fn buildSignedLegacyTransferTransactionWithNonce(
     );
 }
 
+pub fn buildLegacyTransferTransactionWithNonce(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    signers: []const Keypair,
+) !SignedLegacyTransaction {
+    return try buildSignedLegacyTransferTransactionWithNonce(
+        allocator,
+        payer,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
+        signers,
+    );
+}
+
 pub fn buildSignedLegacyNonceTransferTransaction(
     allocator: Allocator,
     payer: Pubkey,
@@ -2022,6 +2064,30 @@ pub fn buildSignedLegacyNonceTransferTransaction(
         nonce_authority,
         recent_blockhash,
         instructions[0..],
+        signers,
+    );
+}
+
+pub fn buildLegacyNonceTransferTransaction(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    signers: []const Keypair,
+) !SignedLegacyTransaction {
+    return try buildSignedLegacyNonceTransferTransaction(
+        allocator,
+        payer,
+        sender,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
         signers,
     );
 }

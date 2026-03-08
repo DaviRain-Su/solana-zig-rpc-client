@@ -3444,6 +3444,54 @@ test "root.buildLegacyNonceTransferMessageBase64 builds distinct payer sender an
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
+test "root.buildLegacyNonceTransferTransaction reuses buildSignedLegacyNonceTransferTransaction" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const nonce_authority = try Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+
+    var signed = try client.buildLegacyNonceTransferTransaction(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        nonce_authority.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x7d} ** 32),
+        1_000,
+        &.{ fee_payer, sender, nonce_authority },
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyNonceTransferTransactionBase64(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        nonce_authority.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x7d} ** 32),
+        1_000,
+        &.{ fee_payer, sender, nonce_authority },
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
 test "root.buildLegacyTransferMessageBase64WithNonce reuses same-role nonce helper" {
     const allocator = std.testing.allocator;
 
@@ -3757,6 +3805,46 @@ test "root.buildLegacyTransferTransactionBase64WithNonce reuses same-role nonce 
         sender.public_key,
         Pubkey.fromBytes(destination_raw.public_key.toBytes()),
         Hash.fromBytes(.{0x59} ** 32),
+        1_000,
+        &.{sender},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildLegacyTransferTransactionWithNonce reuses buildSignedLegacyTransferTransactionWithNonce" {
+    const allocator = std.testing.allocator;
+
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+
+    var signed = try client.buildLegacyTransferTransactionWithNonce(
+        allocator,
+        sender.public_key,
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x7e} ** 32),
+        1_000,
+        &.{sender},
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyTransferTransactionBase64WithNonce(
+        allocator,
+        sender.public_key,
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x7e} ** 32),
         1_000,
         &.{sender},
     );
@@ -4117,6 +4205,47 @@ test "root.buildLegacyTransferTransactionBase64WithSender builds distinct payer 
     defer allocator.free(expected_encoded);
 
     try std.testing.expectEqualStrings(expected_encoded, encoded);
+}
+
+test "root.buildLegacyTransferTransactionWithSender reuses buildSignedLegacyTransferTransactionWithSender" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = Hash.fromBytes(.{0x7f} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+
+    var signed = try client.buildLegacyTransferTransactionWithSender(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        recent_blockhash,
+        1_000,
+        &.{ fee_payer, sender },
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyTransferTransactionBase64WithSender(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        recent_blockhash,
+        1_000,
+        &.{ fee_payer, sender },
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
 }
 
 test "root.buildVersionedNonceTransferSignedTransactionWithOptions supports distinct payer sender and nonce authority" {
