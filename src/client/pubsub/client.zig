@@ -830,6 +830,10 @@ pub const PubsubSubscription = struct {
                     const dropped = self.queue.orderedRemove(0);
                     allocator.free(dropped);
                     self.dropped_messages += 1;
+                    if (self.use_callback_queue and self.callback_queue.items.len > 0) {
+                        const dropped_callback = self.callback_queue.orderedRemove(0);
+                        allocator.free(dropped_callback);
+                    }
                 },
                 .drop_newest => {
                     self.dropped_messages += 1;
