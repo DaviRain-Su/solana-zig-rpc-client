@@ -586,6 +586,34 @@ test "root.newMockWithSenderAndOptions accepts prebuilt sender and structured mo
     try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
 }
 
+test "root.newMockWithSenderAndRequestSenderOptions customizes endpoint and mock options" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(654);
+
+    var rpc = try client.RpcClient.newMockWithSenderAndRequestSenderOptions(
+        allocator,
+        sender,
+        .{
+            .endpoint = "custom://mock-sender-options",
+            .commitment = .confirmed,
+            .request_timeout_ms = 9_000,
+            .confirm_transaction_initial_timeout_ms = 11_000,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expect(rpc.isMock());
+    try std.testing.expectEqualStrings("custom://mock-sender-options", rpc.url());
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 9_000), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 11_000), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 654), slot);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"confirmed\"") != null);
+}
+
 test "root.newMockWithSenderAndCommitment applies commitment default" {
     const allocator = std.testing.allocator;
     var sender = client.MockSender.init(allocator);

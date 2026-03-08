@@ -103,10 +103,30 @@ pub fn initMockClientWithSender(
     request_timeout_ms: ?u64,
     confirm_transaction_initial_timeout_ms: ?u64,
 ) !ClientType {
+    return initMockClientWithSenderAndOptions(
+        ClientType,
+        allocator,
+        sender,
+        "mock://local",
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+}
+
+pub fn initMockClientWithSenderAndOptions(
+    comptime ClientType: type,
+    allocator: std.mem.Allocator,
+    sender: MockSender,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+) !ClientType {
     var client = try initClient(
         ClientType,
         allocator,
-        "mock://local",
+        endpoint,
         default_commitment,
         request_timeout_ms,
         confirm_transaction_initial_timeout_ms,

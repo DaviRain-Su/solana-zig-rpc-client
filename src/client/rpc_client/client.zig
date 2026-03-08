@@ -745,6 +745,22 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn newMockWithSenderAndRequestSenderOptions(
+        allocator: Allocator,
+        sender: MockSenderType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return lifecycle_methods.initMockClientWithSenderAndOptions(
+            RpcClient,
+            allocator,
+            sender,
+            options.endpoint,
+            options.commitment,
+            options.request_timeout_ms,
+            options.confirm_transaction_initial_timeout_ms,
+        );
+    }
+
     pub fn newWithRequestSender(allocator: Allocator, sender: RequestSenderType) !RpcClient {
         return RpcClient.newWithRequestSenderAndOptions(allocator, sender, .{});
     }
