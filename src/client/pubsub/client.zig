@@ -417,8 +417,20 @@ pub const PubsubSubscription = struct {
         };
     }
 
-    pub fn enableCallbackQueue(self: *Self) void {
+    pub fn enableCallbackQueue(self: *Self) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.use_callback_queue) return;
         self.use_callback_queue = true;
+
+        for (self.queue.items) |message| {
+            try self.callback_queue.append(self.state.allocator, try self.state.allocator.dupe(u8, message));
+        }
+
+        if (self.callback_queue.items.len > 0) {
+            self.cond.broadcast();
+        }
     }
 
     pub fn droppedCount(self: *Self) usize {
@@ -3125,14 +3137,8 @@ const State = struct {
         self.reconnect_attempt = 0;
 
         const subscription = self.subscriptions.get(subscription_id) orelse {
-            std.debug.print("pubsub no subscription for id {d}\n", .{subscription_id});
             return;
         };
-
-        std.debug.print("pubsub push subscription id {d} queue_len={d}\n", .{
-            subscription_id,
-            subscription.queuedCount(),
-        });
         subscription.push(self.allocator, raw_message) catch |err| switch (err) {
             error.QueueOverflow => {
                 _ = self.subscriptions.remove(subscription_id);
@@ -4156,7 +4162,7 @@ pub const PubsubClient = struct {
         callback: SignatureNotificationCallback,
     ) !PubsubSignatureSubscriptionWithCallback {
         const subscription = try self.state.subscribeSignature(signature, options);
-        subscription.enableCallbackQueue();
+        try subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(SignatureNotificationCallbackState);
@@ -4232,7 +4238,7 @@ pub const PubsubClient = struct {
         callback: AccountNotificationCallback,
     ) !PubsubAccountSubscriptionWithCallback {
         const subscription = try self.state.subscribeAccount(account, options);
-        subscription.enableCallbackQueue();
+        try subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(AccountNotificationCallbackState);
@@ -4308,7 +4314,7 @@ pub const PubsubClient = struct {
         callback: LogsNotificationCallback,
     ) !PubsubLogsSubscriptionWithCallback {
         const subscription = try self.state.subscribeLogs(filter, options);
-        subscription.enableCallbackQueue();
+        try subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(LogsNotificationCallbackState);
@@ -4384,7 +4390,7 @@ pub const PubsubClient = struct {
         callback: ProgramNotificationCallback,
     ) !PubsubProgramSubscriptionWithCallback {
         const subscription = try self.state.subscribeProgram(program_id, options);
-        subscription.enableCallbackQueue();
+        try subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(ProgramNotificationCallbackState);
@@ -4455,7 +4461,7 @@ pub const PubsubClient = struct {
         callback: SlotNotificationCallback,
     ) !PubsubSlotSubscriptionWithCallback {
         const subscription = try self.state.subscribeSlot(null);
-        subscription.enableCallbackQueue();
+        try subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(SlotNotificationCallbackState);
@@ -4481,7 +4487,7 @@ pub const PubsubClient = struct {
         callback: SlotNotificationCallback,
     ) !PubsubSlotSubscriptionWithCallback {
         const subscription = try self.state.subscribeSlot(options);
-        subscription.enableCallbackQueue();
+        try subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(SlotNotificationCallbackState);
@@ -4523,7 +4529,7 @@ pub const PubsubClient = struct {
         callback: RootNotificationCallback,
     ) !PubsubRootSubscriptionWithCallback {
         const subscription = try self.state.subscribeRoot();
-        subscription.enableCallbackQueue();
+        try subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(RootNotificationCallbackState);
@@ -4565,7 +4571,7 @@ pub const PubsubClient = struct {
         callback: SlotsUpdatesNotificationCallback,
     ) !PubsubSlotsUpdatesSubscriptionWithCallback {
         const subscription = try self.state.subscribeSlotsUpdates();
-        subscription.enableCallbackQueue();
+        try subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(SlotsUpdatesNotificationCallbackState);
@@ -4607,7 +4613,7 @@ pub const PubsubClient = struct {
         callback: VoteNotificationCallback,
     ) !PubsubVoteSubscriptionWithCallback {
         const subscription = try self.state.subscribeVote();
-        subscription.enableCallbackQueue();
+        try subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(VoteNotificationCallbackState);
@@ -4634,7 +4640,7 @@ pub const PubsubClient = struct {
         callback: BlockNotificationCallback,
     ) !PubsubBlockSubscriptionWithCallback {
         const subscription = try self.state.subscribeBlock(filter, options);
-        subscription.enableCallbackQueue();
+        try subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(BlockNotificationCallbackState);

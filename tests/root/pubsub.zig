@@ -391,8 +391,6 @@ fn programCloseCallback(
     if (tracker.count == 1) {
         tracker.first_context_slot = notification.notification.context_slot;
     }
-
-    std.debug.print("programCloseCallback ctx_slot={?}\\n", .{notification.notification.context_slot});
 }
 
 fn slotCallback(
@@ -2866,13 +2864,6 @@ test "root.PubsubClient programSubscribeWithCallback keeps first notification on
         try waitForClosed(subscription.rawSubscription(), 2000);
         std.Thread.sleep(50 * std.time.ns_per_ms);
         const close_reason = subscription.closeReason();
-        std.debug.print("close_reason={s} dropped={}\n", .{
-            @tagName(close_reason),
-            subscription.droppedCount(),
-        });
-        std.debug.print("queue len after close={}\n", .{
-            subscription.queuedCount(),
-        });
         try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
         if (close_reason == client.PubsubCloseReason.queue_overflow) {
             try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
