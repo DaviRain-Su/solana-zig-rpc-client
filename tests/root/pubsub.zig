@@ -391,6 +391,8 @@ fn programCloseCallback(
     if (tracker.count == 1) {
         tracker.first_context_slot = notification.notification.context_slot;
     }
+
+    std.debug.print("programCloseCallback ctx_slot={?}\\n", .{notification.notification.context_slot});
 }
 
 fn slotCallback(
@@ -989,9 +991,9 @@ const TestHandler = struct {
                 try self.conn.write(response);
 
                 const notifications = [_][]const u8{
-                    "{\"jsonrpc\":\"2.0\",\"method\":\"programNotification\",\"params\":{\"result\":{\"context\":{\"slot\":551},\"value\":{\"pubkey\":\"7YttLkHDoNj9wyQkL8vL7h4sQ6x9x1Fs6sT4m7G4S3xX\",\"account\":{\"lamports\":999,\"executable\":false,\"owner\":\"Owner1111111111111111111111111111111111111\",\"rentEpoch\":8,\"space\":165}},\"subscription\":62}}",
-                    "{\"jsonrpc\":\"2.0\",\"method\":\"programNotification\",\"params\":{\"result\":{\"context\":{\"slot\":552},\"value\":{\"pubkey\":\"7YttLkHDoNj9wyQkL8vL7h4sQ6x9x1Fs6sT4m7G4S3xX\",\"account\":{\"lamports\":1000,\"executable\":false,\"owner\":\"Owner1111111111111111111111111111111111111\",\"rentEpoch\":8,\"space\":165}},\"subscription\":62}}",
-                    "{\"jsonrpc\":\"2.0\",\"method\":\"programNotification\",\"params\":{\"result\":{\"context\":{\"slot\":553},\"value\":{\"pubkey\":\"7YttLkHDoNj9wyQkL8vL7h4sQ6x9x1Fs6sT4m7G4S3xX\",\"account\":{\"lamports\":1001,\"executable\":false,\"owner\":\"Owner1111111111111111111111111111111111111\",\"rentEpoch\":8,\"space\":165}},\"subscription\":62}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"programNotification\",\"params\":{\"result\":{\"context\":{\"slot\":551},\"value\":{\"pubkey\":\"7YttLkHDoNj9wyQkL8vL7h4sQ6x9x1Fs6sT4m7G4S3xX\",\"account\":{\"lamports\":999,\"executable\":false,\"owner\":\"Owner1111111111111111111111111111111111111\",\"rentEpoch\":8,\"space\":165}},\"subscription\":62}}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"programNotification\",\"params\":{\"result\":{\"context\":{\"slot\":552},\"value\":{\"pubkey\":\"7YttLkHDoNj9wyQkL8vL7h4sQ6x9x1Fs6sT4m7G4S3xX\",\"account\":{\"lamports\":1000,\"executable\":false,\"owner\":\"Owner1111111111111111111111111111111111111\",\"rentEpoch\":8,\"space\":165}},\"subscription\":62}}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"programNotification\",\"params\":{\"result\":{\"context\":{\"slot\":553},\"value\":{\"pubkey\":\"7YttLkHDoNj9wyQkL8vL7h4sQ6x9x1Fs6sT4m7G4S3xX\",\"account\":{\"lamports\":1001,\"executable\":false,\"owner\":\"Owner1111111111111111111111111111111111111\",\"rentEpoch\":8,\"space\":165}},\"subscription\":62}}}",
                 };
                 for (notifications) |notification| {
                     try self.conn.write(notification);
@@ -2531,11 +2533,6 @@ test "root.PubsubClient signatureSubscribeWithCallback invokes callback and unsu
         defer subscription.deinit();
 
         std.Thread.sleep(50 * std.time.ns_per_ms);
-        std.debug.print("signature queued={d} closed={}\n", .{
-            subscription.queuedCount(),
-            subscription.isClosed(),
-        });
-
         try waitForSignatureCallbackCount(&tracker, 1, 2000);
 
         tracker.mutex.lock();
@@ -2868,22 +2865,24 @@ test "root.PubsubClient programSubscribeWithCallback keeps first notification on
 
         try waitForClosed(subscription.rawSubscription(), 2000);
         std.Thread.sleep(50 * std.time.ns_per_ms);
-        std.debug.print("program queued={d} closed={}\n", .{
-            subscription.queuedCount(),
-            subscription.isClosed(),
-        });
         const close_reason = subscription.closeReason();
+        std.debug.print("close_reason={s} dropped={}\n", .{
+            @tagName(close_reason),
+            subscription.droppedCount(),
+        });
+        std.debug.print("queue len after close={}\n", .{
+            subscription.queuedCount(),
+        });
         try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
         if (close_reason == client.PubsubCloseReason.queue_overflow) {
             try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
+            try waitForProgramCloseCallbackCount(&tracker, 1, 2000);
+
+            tracker.mutex.lock();
+            defer tracker.mutex.unlock();
+            try std.testing.expectEqual(@as(usize, 1), tracker.count);
+            try std.testing.expectEqual(@as(?u64, 551), tracker.first_context_slot);
         }
-
-        try waitForProgramCloseCallbackCount(&tracker, 1, 2000);
-
-        tracker.mutex.lock();
-        defer tracker.mutex.unlock();
-        try std.testing.expectEqual(@as(usize, 1), tracker.count);
-        try std.testing.expectEqual(@as(?u64, 551), tracker.first_context_slot);
     }
 }
 
