@@ -59,6 +59,16 @@ fn waitForQueueCloseOrTransportClosed(
     return close_reason;
 }
 
+fn expectQueueCloseReason(
+    subscription: *client.PubsubSubscription,
+    timeout_ms: u64,
+    expected_reason: client.PubsubCloseReason,
+    expected_dropped: ?usize,
+) !void {
+    const close_reason = try waitForQueueCloseOrTransportClosed(subscription, timeout_ms, expected_dropped);
+    try std.testing.expectEqual(expected_reason, close_reason);
+}
+
 fn waitForReconnecting(pubsub: *const client.PubsubClient, timeout_ms: u64) !void {
     const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ms * std.time.ns_per_ms));
     while (std.time.nanoTimestamp() < deadline) {
@@ -1573,11 +1583,9 @@ test "root.PubsubSubscription can close on queue overflow" {
     );
     defer subscription.deinit();
 
-    try waitForClosed(subscription, 1000);
+    try expectQueueCloseReason(subscription, 1000, client.PubsubCloseReason.queue_overflow, 1);
     try std.testing.expect(subscription.isClosed());
     try std.testing.expectEqual(@as(usize, 1), subscription.queuedCount());
-    try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
-    try std.testing.expectEqual(client.PubsubCloseReason.queue_overflow, subscription.closeReason());
 
     var first = try subscription.recvLogsNotification();
     defer first.deinit();
