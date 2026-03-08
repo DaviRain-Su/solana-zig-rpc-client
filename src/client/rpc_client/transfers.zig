@@ -715,6 +715,61 @@ pub fn buildOwnedTransferMessageWithSender(
     );
 }
 
+pub fn buildOwnedTransferMessage(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+) !OwnedLegacyMessage {
+    return try buildOwnedTransferMessageWithSenderAndResolvedBlockhash(
+        self,
+        sender_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+        null,
+    );
+}
+
+pub fn buildOwnedTransferMessageWithOptions(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) !OwnedLegacyMessage {
+    const blockhash_query = resolveTransferBlockhashQuery(options);
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    return try buildOwnedTransferMessageWithSenderAndResolvedBlockhash(
+        self,
+        sender_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        resolved.blockhash,
+        transferNonceAccountPubkey(blockhash_query),
+    );
+}
+
+pub fn buildOwnedTransferMessageWithConfig(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) !OwnedLegacyMessage {
+    return try self.buildOwnedTransferMessageWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+    );
+}
+
 pub fn buildOwnedTransferMessageWithSenderAndOptions(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -898,6 +953,55 @@ pub fn buildTransferMessageBytesWithSender(
     return try owned.serialize(self.allocator);
 }
 
+pub fn buildTransferMessageBytes(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+) ![]u8 {
+    var owned = try self.buildOwnedTransferMessage(
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+    );
+    defer owned.deinit(self.allocator);
+    return try owned.serialize(self.allocator);
+}
+
+pub fn buildTransferMessageBytesWithOptions(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    var owned = try self.buildOwnedTransferMessageWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+    );
+    defer owned.deinit(self.allocator);
+    return try owned.serialize(self.allocator);
+}
+
+pub fn buildTransferMessageBytesWithConfig(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    return try self.buildTransferMessageBytesWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+    );
+}
+
 pub fn buildTransferMessageBytesWithSenderAndOptions(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -1071,6 +1175,55 @@ pub fn buildTransferMessageBase64WithSender(
     );
     defer self.allocator.free(message_bytes);
     return try sdk.encodeBase64(self.allocator, message_bytes);
+}
+
+pub fn buildTransferMessageBase64(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+) ![]u8 {
+    const message_bytes = try self.buildTransferMessageBytes(
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+    );
+    defer self.allocator.free(message_bytes);
+    return try sdk.encodeBase64(self.allocator, message_bytes);
+}
+
+pub fn buildTransferMessageBase64WithOptions(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    const message_bytes = try self.buildTransferMessageBytesWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+    );
+    defer self.allocator.free(message_bytes);
+    return try sdk.encodeBase64(self.allocator, message_bytes);
+}
+
+pub fn buildTransferMessageBase64WithConfig(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    return try self.buildTransferMessageBase64WithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+    );
 }
 
 pub fn buildTransferMessageBase64WithSenderAndOptions(
