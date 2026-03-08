@@ -2,6 +2,10 @@ const std = @import("std");
 const Ed25519 = std.crypto.sign.Ed25519;
 const client = @import("solana_client_zig");
 
+pub const std_options = struct {
+    pub const log_level = std.log.Level.err;
+};
+
 const RpcClient = client.RpcClient;
 const Keypair = client.Keypair;
 const Pubkey = client.Pubkey;

@@ -1,6 +1,10 @@
 const std = @import("std");
 const client = @import("solana_client_zig");
 
+pub const std_options = struct {
+    pub const log_level = std.log.Level.err;
+};
+
 test "root.getLatestBlockhash params serialization" {
     const allocator = std.testing.allocator;
     var rpc = try client.RpcClient.init(allocator, "https://example.com");

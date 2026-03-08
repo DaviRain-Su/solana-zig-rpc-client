@@ -1,6 +1,10 @@
 const std = @import("std");
 const client = @import("solana_client_zig");
 
+pub const std_options = struct {
+    pub const log_level = std.log.Level.err;
+};
+
 test "root.getAccount wrappers return decoded account info" {
     const allocator = std.testing.allocator;
     var rpc = try client.RpcClient.newMock(allocator, &.{
