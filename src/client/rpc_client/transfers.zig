@@ -210,6 +210,38 @@ fn buildNonceTransferSignedTransactionWithResolvedBlockhash(
     );
 }
 
+fn buildVersionedNonceTransferSignedTransactionWithResolvedBlockhash(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !SignedVersionedTransaction {
+    const fee_payer = try Keypair.fromBase58SecretKey(self.allocator, fee_payer_secret_key);
+    const sender = try Keypair.fromBase58SecretKey(self.allocator, sender_secret_key);
+    const nonce_authority = try Keypair.fromBase58SecretKey(self.allocator, nonce_authority_secret_key);
+    const nonce_account = try Pubkey.fromBase58(self.allocator, nonce_account_pubkey);
+    const destination_pubkey = try Pubkey.fromBase58(self.allocator, destination);
+    const blockhash = try Hash.fromBase58(self.allocator, recent_blockhash);
+
+    const transfer_instruction = SystemProgram.transfer(sender.public_key, destination_pubkey, lamports);
+    const instructions = [_]Instruction{transfer_instruction.instruction()};
+    return try sdk.buildSignedVersionedTransactionV0WithNonceInstructions(
+        self.allocator,
+        fee_payer.public_key,
+        nonce_account,
+        nonce_authority.public_key,
+        blockhash,
+        instructions[0..],
+        address_lookup_tables,
+        &.{ fee_payer, sender, nonce_authority },
+    );
+}
+
 pub fn buildTransferSignedTransaction(
     self: anytype,
     sender_secret_key: []const u8,
@@ -500,6 +532,81 @@ pub fn buildNonceTransferSignedTransactionWithConfig(
     );
 }
 
+pub fn buildVersionedNonceTransferSignedTransaction(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !SignedVersionedTransaction {
+    return try buildVersionedNonceTransferSignedTransactionWithResolvedBlockhash(
+        self,
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildVersionedNonceTransferSignedTransactionWithOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+) !SignedVersionedTransaction {
+    const blockhash_query = resolveNonceTransferBlockhashQuery(nonce_account_pubkey, options);
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    return try buildVersionedNonceTransferSignedTransactionWithResolvedBlockhash(
+        self,
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        resolved.blockhash,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildVersionedNonceTransferSignedTransactionWithConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+) !SignedVersionedTransaction {
+    return try self.buildVersionedNonceTransferSignedTransactionWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+}
+
 pub fn buildTransferTransaction(
     self: anytype,
     sender_secret_key: []const u8,
@@ -662,6 +769,79 @@ pub fn buildNonceTransferTransactionWithConfig(
         nonce_account_pubkey,
         destination,
         lamports,
+        options,
+    );
+}
+
+pub fn buildVersionedNonceTransferTransaction(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]const u8 {
+    var signed = try self.buildVersionedNonceTransferSignedTransaction(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+    );
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
+}
+
+pub fn buildVersionedNonceTransferTransactionWithOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+) ![]const u8 {
+    var signed = try self.buildVersionedNonceTransferSignedTransactionWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
+}
+
+pub fn buildVersionedNonceTransferTransactionWithConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+) ![]const u8 {
+    return try self.buildVersionedNonceTransferTransactionWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
         options,
     );
 }
@@ -855,6 +1035,88 @@ pub fn sendNonceTransferWithConfig(
         nonce_account_pubkey,
         destination,
         lamports,
+        options,
+    );
+}
+
+pub fn sendVersionedNonceTransfer(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]const u8 {
+    return try self.sendVersionedNonceTransferWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        .{ .recent_blockhash = recent_blockhash },
+    );
+}
+
+pub fn sendVersionedNonceTransferWithOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?SendNonceTransferOptions,
+) ![]const u8 {
+    const signed_tx_base64 = try self.buildVersionedNonceTransferTransactionWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        if (options) |value|
+            NonceTransferBuildOptions{
+                .recent_blockhash = value.recent_blockhash,
+                .blockhash_commitment = value.blockhash_commitment,
+                .blockhash_query = value.blockhash_query,
+            }
+        else
+            null,
+    );
+    defer self.allocator.free(signed_tx_base64);
+
+    return try self.sendTransaction(
+        signed_tx_base64,
+        if (options) |value| value.send_transaction_options else null,
+    );
+}
+
+pub fn sendVersionedNonceTransferWithConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?SendNonceTransferOptions,
+) ![]const u8 {
+    return try self.sendVersionedNonceTransferWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
         options,
     );
 }
@@ -1078,6 +1340,98 @@ pub fn nonceTransferWithConfig(
         nonce_account_pubkey,
         destination,
         lamports,
+        options,
+    );
+}
+
+pub fn versionedNonceTransfer(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    commitment: ?Commitment,
+    options: ?SendTransactionOptions,
+) ![]const u8 {
+    return try self.versionedNonceTransferWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        .{
+            .recent_blockhash = recent_blockhash,
+            .send_transaction_options = options,
+            .commitment = commitment,
+        },
+    );
+}
+
+pub fn versionedNonceTransferWithOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferOptions,
+) ![]const u8 {
+    const signed_tx_base64 = try self.buildVersionedNonceTransferTransactionWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        if (options) |value|
+            NonceTransferBuildOptions{
+                .recent_blockhash = value.recent_blockhash,
+                .blockhash_commitment = value.blockhash_commitment,
+                .blockhash_query = value.blockhash_query,
+            }
+        else
+            null,
+    );
+    defer self.allocator.free(signed_tx_base64);
+
+    return try self.sendTransactionAndConfirm(
+        signed_tx_base64,
+        if (options) |value| value.send_transaction_options else null,
+        if (options) |value| value.commitment else null,
+        if (options) |value| value.search_transaction_history else false,
+        if (options) |value| value.timeout_ms else poll_for_signature_confirmation_timeout_ms,
+        if (options) |value| value.poll_interval_ms else signature_poll_interval_ms,
+    );
+}
+
+pub fn versionedNonceTransferWithConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferOptions,
+) ![]const u8 {
+    return try self.versionedNonceTransferWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
         options,
     );
 }

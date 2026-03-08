@@ -2051,6 +2051,95 @@ test "root.buildNonceTransferSignedTransactionWithOptions supports distinct paye
     try std.testing.expectEqualSlices(u8, expected, encoded);
 }
 
+test "root.buildVersionedNonceTransferSignedTransactionWithOptions supports distinct payer sender and nonce authority" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const fee_payer_secret_key_base58 = try encodeBase58(allocator, &fee_payer_secret_key);
+    defer allocator.free(fee_payer_secret_key_base58);
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+    const nonce_authority_secret_key_base58 = try encodeBase58(allocator, &nonce_authority_secret_key);
+    defer allocator.free(nonce_authority_secret_key_base58);
+    const nonce_authority_public_key_base58 = try encodeBase58(allocator, &nonce_authority_raw.public_key.toBytes());
+    defer allocator.free(nonce_authority_public_key_base58);
+
+    const nonce_account_pubkey = nonce_account_raw.public_key.toBytes();
+    const nonce_account_base58 = try encodeBase58(allocator, &nonce_account_pubkey);
+    defer allocator.free(nonce_account_base58);
+
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const nonce_blockhash = [_]u8{0x53} ** 32;
+    const nonce_blockhash_base58 = try encodeBase58(allocator, &nonce_blockhash);
+    defer allocator.free(nonce_blockhash_base58);
+
+    const response_body = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":42}},\"value\":{{\"data\":{{\"program\":\"system\",\"parsed\":{{\"type\":\"initialized\",\"info\":{{\"authority\":\"{s}\",\"blockhash\":\"{s}\",\"feeCalculator\":{{\"lamportsPerSignature\":5000}}}}}},\"space\":80}},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}}},\"id\":1}}",
+        .{ nonce_authority_public_key_base58, nonce_blockhash_base58 },
+    );
+    defer allocator.free(response_body);
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockJsonResponse(response_body);
+
+    var signed = try rpc.buildVersionedNonceTransferSignedTransactionWithOptions(
+        fee_payer_secret_key_base58,
+        sender_secret_key_base58,
+        nonce_authority_secret_key_base58,
+        nonce_account_base58,
+        destination_base58,
+        1_000,
+        &.{},
+        .{ .blockhash_commitment = .confirmed },
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const nonce_authority = try Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+    const transfer = SystemProgram.transfer(
+        sender.public_key,
+        Pubkey.fromBytes(destination_public_key),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    var expected = try client.buildSignedVersionedTransactionV0WithNonceInstructions(
+        allocator,
+        fee_payer.public_key,
+        Pubkey.fromBytes(nonce_account_pubkey),
+        nonce_authority.public_key,
+        Hash.fromBytes(nonce_blockhash),
+        instructions[0..],
+        &.{},
+        &.{ fee_payer, sender, nonce_authority },
+    );
+    defer expected.deinit(allocator);
+    const expected_encoded = try expected.toBase64(allocator);
+    defer allocator.free(expected_encoded);
+
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"encoding\":\"jsonParsed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, nonce_account_base58) != null);
+    try std.testing.expectEqualStrings(expected_encoded, encoded);
+}
+
 test "root.transferWithOptions fetches latest blockhash and confirms" {
     const allocator = std.testing.allocator;
 
@@ -2296,6 +2385,217 @@ test "root.nonceTransferWithOptions supports distinct payer sender and nonce aut
 
     try std.testing.expectEqualStrings(
         "Sig777777777777777777777777777777777777777777777777777777777777777777",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 3), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, nonce_account_base58) != null);
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].request_body, expected_encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"maxRetries\":2") != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[2].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"searchTransactionHistory\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"commitment\":\"confirmed\"") != null);
+}
+
+test "root.sendVersionedNonceTransferWithOptions supports distinct payer sender and nonce authority" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const fee_payer_secret_key_base58 = try encodeBase58(allocator, &fee_payer_secret_key);
+    defer allocator.free(fee_payer_secret_key_base58);
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+    const nonce_authority_secret_key_base58 = try encodeBase58(allocator, &nonce_authority_secret_key);
+    defer allocator.free(nonce_authority_secret_key_base58);
+    const nonce_authority_public_key_base58 = try encodeBase58(allocator, &nonce_authority_raw.public_key.toBytes());
+    defer allocator.free(nonce_authority_public_key_base58);
+
+    const nonce_account_pubkey = nonce_account_raw.public_key.toBytes();
+    const nonce_account_base58 = try encodeBase58(allocator, &nonce_account_pubkey);
+    defer allocator.free(nonce_account_base58);
+
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const nonce_blockhash = [_]u8{0x35} ** 32;
+    const nonce_blockhash_base58 = try encodeBase58(allocator, &nonce_blockhash);
+    defer allocator.free(nonce_blockhash_base58);
+
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const nonce_authority = try Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+    const transfer = SystemProgram.transfer(
+        sender.public_key,
+        Pubkey.fromBytes(destination_public_key),
+        5_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    var expected = try client.buildSignedVersionedTransactionV0WithNonceInstructions(
+        allocator,
+        fee_payer.public_key,
+        Pubkey.fromBytes(nonce_account_pubkey),
+        nonce_authority.public_key,
+        Hash.fromBytes(nonce_blockhash),
+        instructions[0..],
+        &.{},
+        &.{ fee_payer, sender, nonce_authority },
+    );
+    defer expected.deinit(allocator);
+    const expected_encoded = try expected.toBase64(allocator);
+    defer allocator.free(expected_encoded);
+
+    const nonce_account_response = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":12}},\"value\":{{\"data\":{{\"program\":\"system\",\"parsed\":{{\"type\":\"initialized\",\"info\":{{\"authority\":\"{s}\",\"blockhash\":\"{s}\",\"feeCalculator\":{{\"lamportsPerSignature\":5000}}}}}},\"space\":80}},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}}},\"id\":1}}",
+        .{ nonce_authority_public_key_base58, nonce_blockhash_base58 },
+    );
+    defer allocator.free(nonce_account_response);
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockJsonResponse(nonce_account_response);
+    try rpc.pushMockJsonResponse(
+        "{\"jsonrpc\":\"2.0\",\"result\":\"SigVersionedNonce111111111111111111111111111111111111111111111111111111111\",\"id\":1}",
+    );
+
+    const signature = try rpc.sendVersionedNonceTransferWithOptions(
+        fee_payer_secret_key_base58,
+        sender_secret_key_base58,
+        nonce_authority_secret_key_base58,
+        nonce_account_base58,
+        destination_base58,
+        5_000,
+        &.{},
+        .{
+            .blockhash_commitment = .confirmed,
+            .send_transaction_options = .{ .skip_preflight = true, .max_retries = 2 },
+        },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigVersionedNonce111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, nonce_account_base58) != null);
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].request_body, expected_encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"maxRetries\":2") != null);
+}
+
+test "root.versionedNonceTransferWithOptions supports distinct payer sender and nonce authority" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const fee_payer_secret_key_base58 = try encodeBase58(allocator, &fee_payer_secret_key);
+    defer allocator.free(fee_payer_secret_key_base58);
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+    const nonce_authority_secret_key_base58 = try encodeBase58(allocator, &nonce_authority_secret_key);
+    defer allocator.free(nonce_authority_secret_key_base58);
+    const nonce_authority_public_key_base58 = try encodeBase58(allocator, &nonce_authority_raw.public_key.toBytes());
+    defer allocator.free(nonce_authority_public_key_base58);
+
+    const nonce_account_pubkey = nonce_account_raw.public_key.toBytes();
+    const nonce_account_base58 = try encodeBase58(allocator, &nonce_account_pubkey);
+    defer allocator.free(nonce_account_base58);
+
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const nonce_blockhash = [_]u8{0x36} ** 32;
+    const nonce_blockhash_base58 = try encodeBase58(allocator, &nonce_blockhash);
+    defer allocator.free(nonce_blockhash_base58);
+
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const nonce_authority = try Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+    const transfer = SystemProgram.transfer(
+        sender.public_key,
+        Pubkey.fromBytes(destination_public_key),
+        5_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    var expected = try client.buildSignedVersionedTransactionV0WithNonceInstructions(
+        allocator,
+        fee_payer.public_key,
+        Pubkey.fromBytes(nonce_account_pubkey),
+        nonce_authority.public_key,
+        Hash.fromBytes(nonce_blockhash),
+        instructions[0..],
+        &.{},
+        &.{ fee_payer, sender, nonce_authority },
+    );
+    defer expected.deinit(allocator);
+    const expected_encoded = try expected.toBase64(allocator);
+    defer allocator.free(expected_encoded);
+
+    const nonce_account_response = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":12}},\"value\":{{\"data\":{{\"program\":\"system\",\"parsed\":{{\"type\":\"initialized\",\"info\":{{\"authority\":\"{s}\",\"blockhash\":\"{s}\",\"feeCalculator\":{{\"lamportsPerSignature\":5000}}}}}},\"space\":80}},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}}},\"id\":1}}",
+        .{ nonce_authority_public_key_base58, nonce_blockhash_base58 },
+    );
+    defer allocator.free(nonce_account_response);
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockJsonResponse(nonce_account_response);
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "SigVersionedNonceConfirm11111111111111111111111111111111111111111111111111111",
+        &.{
+            .{ .context_slot = 13, .status = .{
+                .slot = 13,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+
+    const signature = try rpc.versionedNonceTransferWithOptions(
+        fee_payer_secret_key_base58,
+        sender_secret_key_base58,
+        nonce_authority_secret_key_base58,
+        nonce_account_base58,
+        destination_base58,
+        5_000,
+        &.{},
+        .{
+            .blockhash_commitment = .confirmed,
+            .send_transaction_options = .{ .skip_preflight = true, .max_retries = 2 },
+            .commitment = .confirmed,
+            .search_transaction_history = true,
+            .timeout_ms = 200,
+            .poll_interval_ms = 10,
+        },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigVersionedNonceConfirm11111111111111111111111111111111111111111111111111111",
         signature,
     );
     try std.testing.expectEqual(@as(usize, 3), rpc.mockRequestCount());
