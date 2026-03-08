@@ -764,11 +764,10 @@ pub const RpcClient = struct {
         sender: *MockSenderType,
         commitment: ?Commitment,
     ) !RpcClient {
-        return RpcClient.newWithBorrowedMockSenderAndTimeoutAndCommitment(
+        return RpcClient.newWithBorrowedMockSenderAndOptions(
             allocator,
             sender,
-            null,
-            commitment,
+            .{ .commitment = commitment },
         );
     }
 
@@ -777,11 +776,10 @@ pub const RpcClient = struct {
         sender: *MockSenderType,
         timeout_ms: u64,
     ) !RpcClient {
-        return RpcClient.newWithBorrowedMockSenderAndTimeouts(
+        return RpcClient.newWithBorrowedMockSenderAndOptions(
             allocator,
             sender,
-            timeout_ms,
-            null,
+            .{ .request_timeout_ms = timeout_ms },
         );
     }
 
@@ -892,11 +890,10 @@ pub const RpcClient = struct {
         sender: MockSenderType,
         commitment: ?Commitment,
     ) !RpcClient {
-        return RpcClient.newWithOwnedMockSenderAndTimeoutAndCommitment(
+        return RpcClient.newWithOwnedMockSenderAndOptions(
             allocator,
             sender,
-            null,
-            commitment,
+            .{ .commitment = commitment },
         );
     }
 
@@ -905,11 +902,10 @@ pub const RpcClient = struct {
         sender: MockSenderType,
         timeout_ms: u64,
     ) !RpcClient {
-        return RpcClient.newWithOwnedMockSenderAndTimeouts(
+        return RpcClient.newWithOwnedMockSenderAndOptions(
             allocator,
             sender,
-            timeout_ms,
-            null,
+            .{ .request_timeout_ms = timeout_ms },
         );
     }
 
