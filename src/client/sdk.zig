@@ -1601,6 +1601,22 @@ pub fn buildSignedLegacyTransaction(
     return try transaction.sign(allocator, signers);
 }
 
+pub fn buildLegacyTransaction(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+) !SignedLegacyTransaction {
+    return try buildSignedLegacyTransaction(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        signers,
+    );
+}
+
 pub fn buildLegacyTransactionBase64(
     allocator: Allocator,
     payer: Pubkey,
@@ -1688,6 +1704,26 @@ pub fn buildSignedLegacyTransactionWithNonceInstructions(
     };
 
     return try transaction.sign(allocator, signers);
+}
+
+pub fn buildLegacyTransactionWithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+) !SignedLegacyTransaction {
+    return try buildSignedLegacyTransactionWithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        nonce_authority,
+        recent_blockhash,
+        instructions,
+        signers,
+    );
 }
 
 pub fn buildLegacyTransactionBase64WithNonceInstructions(
@@ -2086,6 +2122,24 @@ pub fn buildSignedVersionedTransaction(
     );
 }
 
+pub fn buildVersionedTransaction(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) !SignedVersionedTransaction {
+    return try buildSignedVersionedTransaction(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+        signers,
+    );
+}
+
 pub fn buildOwnedVersionedMessage(
     allocator: Allocator,
     payer: Pubkey,
@@ -2264,6 +2318,28 @@ pub fn buildSignedVersionedTransactionWithNonceInstructions(
     signers: []const Keypair,
 ) !SignedVersionedTransaction {
     return try buildSignedVersionedTransactionV0WithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        authority,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+        signers,
+    );
+}
+
+pub fn buildVersionedTransactionWithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) !SignedVersionedTransaction {
+    return try buildSignedVersionedTransactionWithNonceInstructions(
         allocator,
         payer,
         nonce_account,
