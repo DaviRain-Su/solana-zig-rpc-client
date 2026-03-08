@@ -143,6 +143,43 @@ fn buildVersionedTransferSignedTransactionWithResolvedBlockhash(
     );
 }
 
+fn buildVersionedTransferMessageBytesWithResolvedBlockhash(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    nonce_account_pubkey: ?[]const u8,
+) ![]u8 {
+    const keypair = try Keypair.fromBase58SecretKey(self.allocator, sender_secret_key);
+    const destination_pubkey = try Pubkey.fromBase58(self.allocator, destination);
+    const blockhash = try Hash.fromBase58(self.allocator, recent_blockhash);
+
+    if (nonce_account_pubkey) |value| {
+        const nonce_pubkey = try Pubkey.fromBase58(self.allocator, value);
+        return try sdk.buildVersionedTransferMessageBytesWithNonce(
+            self.allocator,
+            keypair.public_key,
+            nonce_pubkey,
+            keypair.public_key,
+            destination_pubkey,
+            blockhash,
+            lamports,
+            address_lookup_tables,
+        );
+    }
+
+    return try sdk.buildVersionedTransferMessageBytes(
+        self.allocator,
+        keypair.public_key,
+        destination_pubkey,
+        blockhash,
+        lamports,
+        address_lookup_tables,
+    );
+}
+
 fn buildNonceTransferSignedTransactionWithResolvedBlockhash(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -241,6 +278,120 @@ pub fn buildVersionedTransferSignedTransactionWithConfig(
     options: ?TransferBuildOptions,
 ) !SignedVersionedTransaction {
     return try self.buildVersionedTransferSignedTransactionWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+}
+
+pub fn buildVersionedTransferMessageBytes(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    return try buildVersionedTransferMessageBytesWithResolvedBlockhash(
+        self,
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+        null,
+    );
+}
+
+pub fn buildVersionedTransferMessageBytesWithOptions(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    const blockhash_query = resolveTransferBlockhashQuery(options);
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    return try buildVersionedTransferMessageBytesWithResolvedBlockhash(
+        self,
+        sender_secret_key,
+        destination,
+        lamports,
+        resolved.blockhash,
+        address_lookup_tables,
+        transferNonceAccountPubkey(blockhash_query),
+    );
+}
+
+pub fn buildVersionedTransferMessageBytesWithConfig(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    return try self.buildVersionedTransferMessageBytesWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+}
+
+pub fn buildVersionedTransferMessageBase64(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    const message_bytes = try self.buildVersionedTransferMessageBytes(
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+    );
+    defer self.allocator.free(message_bytes);
+    return try sdk.encodeBase64(self.allocator, message_bytes);
+}
+
+pub fn buildVersionedTransferMessageBase64WithOptions(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    const message_bytes = try self.buildVersionedTransferMessageBytesWithOptions(
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+    defer self.allocator.free(message_bytes);
+    return try sdk.encodeBase64(self.allocator, message_bytes);
+}
+
+pub fn buildVersionedTransferMessageBase64WithConfig(
+    self: anytype,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    return try self.buildVersionedTransferMessageBase64WithOptions(
         sender_secret_key,
         destination,
         lamports,
