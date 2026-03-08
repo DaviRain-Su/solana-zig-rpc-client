@@ -70,11 +70,14 @@ pub fn build(b: *std.Build) void {
     const websocket_dep = b.dependency("websocket", .{});
     const websocket_module = websocket_dep.module("websocket");
     const test_log_options = b.addOptions();
-    const websocket_scope_levels = [_]std.log.ScopeLevel{
-        .{ .scope = .websocket, .level = .err },
-    };
     test_log_options.addOption(std.log.Level, "log_level", .err);
-    test_log_options.addOption([]const std.log.ScopeLevel, "log_scope_levels", &websocket_scope_levels);
+    test_log_options.addOption(
+        []const std.log.ScopeLevel,
+        "log_scope_levels",
+        &[_]std.log.ScopeLevel{
+            .{ .scope = .websocket, .level = .err },
+        },
+    );
     websocket_module.addOptions("std_options", test_log_options);
     // It's also possible to define more custom flags to toggle optional features
     // of this build script using `b.option()`. All defined flags (including
