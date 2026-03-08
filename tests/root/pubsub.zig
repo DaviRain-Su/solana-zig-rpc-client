@@ -2629,14 +2629,13 @@ test "root.PubsubClient signatureSubscribeWithCallback keeps first notification 
         try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
         if (close_reason == client.PubsubCloseReason.queue_overflow) {
             try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
+            try waitForSignatureCloseCallbackCount(&tracker, 1, 2000);
+
+            tracker.mutex.lock();
+            defer tracker.mutex.unlock();
+            try std.testing.expectEqual(@as(usize, 1), tracker.count);
+            try std.testing.expectEqual(@as(?u64, 301), tracker.first_context_slot);
         }
-
-        try waitForSignatureCloseCallbackCount(&tracker, 1, 2000);
-
-        tracker.mutex.lock();
-        defer tracker.mutex.unlock();
-        try std.testing.expectEqual(@as(usize, 1), tracker.count);
-        try std.testing.expectEqual(@as(?u64, 301), tracker.first_context_slot);
     }
 }
 
@@ -2768,14 +2767,13 @@ test "root.PubsubClient accountSubscribeWithCallback keeps first notification on
         try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
         if (close_reason == client.PubsubCloseReason.queue_overflow) {
             try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
+            try waitForAccountCloseCallbackCount(&tracker, 1, 2000);
+
+            tracker.mutex.lock();
+            defer tracker.mutex.unlock();
+            try std.testing.expectEqual(@as(usize, 1), tracker.count);
+            try std.testing.expectEqual(@as(?u64, 401), tracker.first_context_slot);
         }
-
-        try waitForAccountCloseCallbackCount(&tracker, 1, 2000);
-
-        tracker.mutex.lock();
-        defer tracker.mutex.unlock();
-        try std.testing.expectEqual(@as(usize, 1), tracker.count);
-        try std.testing.expectEqual(@as(?u64, 401), tracker.first_context_slot);
     }
 }
 
@@ -2998,13 +2996,12 @@ test "root.PubsubClient logsSubscribeWithCallback keeps first notification on cl
         try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
         if (close_reason == client.PubsubCloseReason.queue_overflow) {
             try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
+            try waitForLogsCloseCallbackCount(&tracker, 1, 2000);
+            tracker.mutex.lock();
+            defer tracker.mutex.unlock();
+            try std.testing.expectEqual(@as(usize, 1), tracker.count);
+            try std.testing.expectEqual(@as(?bool, true), tracker.first_is_close1);
         }
-
-        try waitForLogsCloseCallbackCount(&tracker, 1, 2000);
-        tracker.mutex.lock();
-        defer tracker.mutex.unlock();
-        try std.testing.expectEqual(@as(usize, 1), tracker.count);
-        try std.testing.expectEqual(@as(?bool, true), tracker.first_is_close1);
     }
 
     try std.testing.expect(app.logs_unsubscribe_seen);
