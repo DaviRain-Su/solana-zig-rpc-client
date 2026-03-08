@@ -2396,6 +2396,30 @@ pub fn buildSignedVersionedTransferTransaction(
     );
 }
 
+pub fn buildSignedVersionedTransferTransactionWithNonce(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) !SignedVersionedTransaction {
+    return try buildSignedVersionedNonceTransferTransaction(
+        allocator,
+        payer,
+        nonce_account,
+        authority,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+        signers,
+    );
+}
+
 pub fn buildVersionedTransferTransactionBase64WithSender(
     allocator: Allocator,
     payer: Pubkey,
@@ -2433,6 +2457,30 @@ pub fn buildVersionedTransferTransactionBase64(
         allocator,
         payer,
         payer,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+        signers,
+    );
+}
+
+pub fn buildVersionedTransferTransactionBase64WithNonce(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) ![]u8 {
+    return try buildVersionedNonceTransferTransactionBase64(
+        allocator,
+        payer,
+        nonce_account,
+        authority,
         destination,
         recent_blockhash,
         lamports,
