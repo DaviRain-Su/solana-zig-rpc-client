@@ -72,7 +72,7 @@ const SlotsUpdatesNotificationCallbackState = struct {
 
     fn run(self: *SlotsUpdatesNotificationCallbackState) void {
         while (true) {
-            var notification = self.subscription.recvParsed(pubsub_types.SlotsUpdatesNotificationValue) catch |err| {
+            var notification = self.subscription.recvCallbackParsed(pubsub_types.SlotsUpdatesNotificationValue) catch |err| {
                 switch (err) {
                     error.Closed => break,
                     error.InvalidResponse => continue,
@@ -96,7 +96,7 @@ const SignatureNotificationCallbackState = struct {
 
     fn run(self: *SignatureNotificationCallbackState) void {
         while (true) {
-            var notification = self.subscription.recvParsed(pubsub_types.SignatureNotificationValue) catch |err| {
+            var notification = self.subscription.recvCallbackParsed(pubsub_types.SignatureNotificationValue) catch |err| {
                 switch (err) {
                     error.Closed => break,
                     error.InvalidResponse => continue,
@@ -120,7 +120,7 @@ const RootNotificationCallbackState = struct {
 
     fn run(self: *RootNotificationCallbackState) void {
         while (true) {
-            var notification = self.subscription.recvParsed(pubsub_types.RootNotificationValue) catch |err| {
+            var notification = self.subscription.recvCallbackParsed(pubsub_types.RootNotificationValue) catch |err| {
                 switch (err) {
                     error.Closed => break,
                     error.InvalidResponse => continue,
@@ -144,7 +144,7 @@ const VoteNotificationCallbackState = struct {
 
     fn run(self: *VoteNotificationCallbackState) void {
         while (true) {
-            var notification = self.subscription.recvParsed(pubsub_types.VoteNotificationValue) catch |err| {
+            var notification = self.subscription.recvCallbackParsed(pubsub_types.VoteNotificationValue) catch |err| {
                 switch (err) {
                     error.Closed => break,
                     error.InvalidResponse => continue,
@@ -168,7 +168,7 @@ const AccountNotificationCallbackState = struct {
 
     fn run(self: *AccountNotificationCallbackState) void {
         while (true) {
-            var notification = self.subscription.recvParsed(pubsub_types.AccountNotificationValue) catch |err| {
+            var notification = self.subscription.recvCallbackParsed(pubsub_types.AccountNotificationValue) catch |err| {
                 switch (err) {
                     error.Closed => break,
                     error.InvalidResponse => continue,
@@ -192,7 +192,7 @@ const LogsNotificationCallbackState = struct {
 
     fn run(self: *LogsNotificationCallbackState) void {
         while (true) {
-            var notification = self.subscription.recvParsed(pubsub_types.LogsNotificationValue) catch |err| {
+            var notification = self.subscription.recvCallbackParsed(pubsub_types.LogsNotificationValue) catch |err| {
                 switch (err) {
                     error.Closed => break,
                     error.InvalidResponse => continue,
@@ -216,7 +216,7 @@ const ProgramNotificationCallbackState = struct {
 
     fn run(self: *ProgramNotificationCallbackState) void {
         while (true) {
-            var notification = self.subscription.recvParsed(pubsub_types.ProgramNotificationValue) catch |err| {
+            var notification = self.subscription.recvCallbackParsed(pubsub_types.ProgramNotificationValue) catch |err| {
                 switch (err) {
                     error.Closed => break,
                     error.InvalidResponse => continue,
@@ -240,7 +240,7 @@ const SlotNotificationCallbackState = struct {
 
     fn run(self: *SlotNotificationCallbackState) void {
         while (true) {
-            var notification = self.subscription.recvParsed(pubsub_types.SlotNotificationValue) catch |err| {
+            var notification = self.subscription.recvCallbackParsed(pubsub_types.SlotNotificationValue) catch |err| {
                 switch (err) {
                     error.Closed => break,
                     error.InvalidResponse => continue,
@@ -264,7 +264,7 @@ const BlockNotificationCallbackState = struct {
 
     fn run(self: *BlockNotificationCallbackState) void {
         while (true) {
-            var notification = self.subscription.recvParsed(pubsub_types.BlockNotificationValue) catch |err| {
+            var notification = self.subscription.recvCallbackParsed(pubsub_types.BlockNotificationValue) catch |err| {
                 switch (err) {
                     error.Closed => break,
                     error.InvalidResponse => continue,
@@ -375,6 +375,8 @@ pub const PubsubSubscription = struct {
     mutex: std.Thread.Mutex = .{},
     cond: std.Thread.Condition = .{},
     queue: std.ArrayListUnmanaged([]u8) = .{},
+    callback_queue: std.ArrayListUnmanaged([]u8) = .{},
+    use_callback_queue: bool = false,
     dropped_messages: usize = 0,
     closed: bool = false,
     close_reason: PubsubCloseReason = .none,
@@ -413,6 +415,10 @@ pub const PubsubSubscription = struct {
             .subscription = self,
             .receiver = self.typedReceiver(ValueType),
         };
+    }
+
+    pub fn enableCallbackQueue(self: *Self) void {
+        self.use_callback_queue = true;
     }
 
     pub fn droppedCount(self: *Self) usize {
@@ -522,6 +528,21 @@ pub const PubsubSubscription = struct {
         return self.queue.orderedRemove(0);
     }
 
+    fn recvCallback(self: *Self) ![]u8 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        while (self.callback_queue.items.len == 0 and !self.closed) {
+            self.cond.wait(&self.mutex);
+        }
+
+        if (self.callback_queue.items.len == 0) {
+            return error.Closed;
+        }
+
+        return self.callback_queue.orderedRemove(0);
+    }
+
     pub fn tryRecv(self: *Self) ?[]u8 {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -531,6 +552,17 @@ pub const PubsubSubscription = struct {
         }
 
         return self.queue.orderedRemove(0);
+    }
+
+    fn tryRecvCallback(self: *Self) ?[]u8 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.callback_queue.items.len == 0) {
+            return null;
+        }
+
+        return self.callback_queue.orderedRemove(0);
     }
 
     pub fn recvTimeout(self: *Self, timeout_ms: u64) error{ Closed, Timeout }![]u8 {
@@ -561,8 +593,17 @@ pub const PubsubSubscription = struct {
         return pubsub_types.parseOwnedPubsubNotification(self.state.allocator, try self.recv(), ValueType);
     }
 
+    fn recvCallbackParsed(self: *Self, comptime ValueType: type) !pubsub_types.OwnedPubsubNotification(ValueType) {
+        return pubsub_types.parseOwnedPubsubNotification(self.state.allocator, try self.recvCallback(), ValueType);
+    }
+
     pub fn tryRecvParsed(self: *Self, comptime ValueType: type) !?pubsub_types.OwnedPubsubNotification(ValueType) {
         const raw_message = self.tryRecv() orelse return null;
+        return pubsub_types.parseOwnedPubsubNotification(self.state.allocator, raw_message, ValueType);
+    }
+
+    fn tryRecvCallbackParsed(self: *Self, comptime ValueType: type) !?pubsub_types.OwnedPubsubNotification(ValueType) {
+        const raw_message = self.tryRecvCallback() orelse return null;
         return pubsub_types.parseOwnedPubsubNotification(self.state.allocator, raw_message, ValueType);
     }
 
@@ -572,6 +613,38 @@ pub const PubsubSubscription = struct {
         timeout_ms: u64,
     ) !pubsub_types.OwnedPubsubNotification(ValueType) {
         return pubsub_types.parseOwnedPubsubNotification(self.state.allocator, try self.recvTimeout(timeout_ms), ValueType);
+    }
+
+    pub fn recvCallbackTimeout(self: *Self, timeout_ms: u64) error{ Closed, Timeout }![]u8 {
+        const timeout_ns = timeout_ms * std.time.ns_per_ms;
+        const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ns));
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        while (self.callback_queue.items.len == 0 and !self.closed) {
+            const now = std.time.nanoTimestamp();
+            if (now >= deadline) return error.Timeout;
+
+            const remaining_ns = @as(u64, @intCast(deadline - now));
+            self.cond.timedWait(&self.mutex, remaining_ns) catch |err| switch (err) {
+                error.Timeout => if (self.callback_queue.items.len == 0) return error.Timeout,
+            };
+        }
+
+        if (self.callback_queue.items.len == 0) {
+            return error.Closed;
+        }
+
+        return self.callback_queue.orderedRemove(0);
+    }
+
+    fn recvCallbackParsedTimeout(
+        self: *Self,
+        comptime ValueType: type,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(ValueType) {
+        return pubsub_types.parseOwnedPubsubNotification(self.state.allocator, try self.recvCallbackTimeout(timeout_ms), ValueType);
     }
 
     pub fn recvSignatureNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.SignatureNotificationValue) {
@@ -725,8 +798,12 @@ pub const PubsubSubscription = struct {
         for (self.queue.items) |message| {
             self.state.allocator.free(message);
         }
+        for (self.callback_queue.items) |message| {
+            self.state.allocator.free(message);
+        }
         self.clearLastErrorLocked();
         self.queue.deinit(self.state.allocator);
+        self.callback_queue.deinit(self.state.allocator);
         self.mutex.unlock();
 
         self.state.allocator.free(self.subscribe_params_json);
@@ -767,7 +844,12 @@ pub const PubsubSubscription = struct {
         }
 
         try self.queue.append(allocator, try allocator.dupe(u8, raw_message));
-        self.cond.signal();
+        if (self.use_callback_queue) {
+            try self.callback_queue.append(allocator, try allocator.dupe(u8, raw_message));
+            self.cond.broadcast();
+        } else {
+            self.cond.signal();
+        }
     }
 
     fn closeLocked(self: *Self, reason: PubsubCloseReason) void {
@@ -4062,6 +4144,7 @@ pub const PubsubClient = struct {
         callback: SignatureNotificationCallback,
     ) !PubsubSignatureSubscriptionWithCallback {
         const subscription = try self.state.subscribeSignature(signature, options);
+        subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(SignatureNotificationCallbackState);
@@ -4137,6 +4220,7 @@ pub const PubsubClient = struct {
         callback: AccountNotificationCallback,
     ) !PubsubAccountSubscriptionWithCallback {
         const subscription = try self.state.subscribeAccount(account, options);
+        subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(AccountNotificationCallbackState);
@@ -4212,6 +4296,7 @@ pub const PubsubClient = struct {
         callback: LogsNotificationCallback,
     ) !PubsubLogsSubscriptionWithCallback {
         const subscription = try self.state.subscribeLogs(filter, options);
+        subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(LogsNotificationCallbackState);
@@ -4287,6 +4372,7 @@ pub const PubsubClient = struct {
         callback: ProgramNotificationCallback,
     ) !PubsubProgramSubscriptionWithCallback {
         const subscription = try self.state.subscribeProgram(program_id, options);
+        subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(ProgramNotificationCallbackState);
@@ -4357,6 +4443,7 @@ pub const PubsubClient = struct {
         callback: SlotNotificationCallback,
     ) !PubsubSlotSubscriptionWithCallback {
         const subscription = try self.state.subscribeSlot(null);
+        subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(SlotNotificationCallbackState);
@@ -4382,6 +4469,7 @@ pub const PubsubClient = struct {
         callback: SlotNotificationCallback,
     ) !PubsubSlotSubscriptionWithCallback {
         const subscription = try self.state.subscribeSlot(options);
+        subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(SlotNotificationCallbackState);
@@ -4423,6 +4511,7 @@ pub const PubsubClient = struct {
         callback: RootNotificationCallback,
     ) !PubsubRootSubscriptionWithCallback {
         const subscription = try self.state.subscribeRoot();
+        subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(RootNotificationCallbackState);
@@ -4464,6 +4553,7 @@ pub const PubsubClient = struct {
         callback: SlotsUpdatesNotificationCallback,
     ) !PubsubSlotsUpdatesSubscriptionWithCallback {
         const subscription = try self.state.subscribeSlotsUpdates();
+        subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(SlotsUpdatesNotificationCallbackState);
@@ -4505,6 +4595,7 @@ pub const PubsubClient = struct {
         callback: VoteNotificationCallback,
     ) !PubsubVoteSubscriptionWithCallback {
         const subscription = try self.state.subscribeVote();
+        subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(VoteNotificationCallbackState);
@@ -4531,6 +4622,7 @@ pub const PubsubClient = struct {
         callback: BlockNotificationCallback,
     ) !PubsubBlockSubscriptionWithCallback {
         const subscription = try self.state.subscribeBlock(filter, options);
+        subscription.enableCallbackQueue();
         errdefer subscription.deinit();
 
         const callback_state = try self.state.allocator.create(BlockNotificationCallbackState);
