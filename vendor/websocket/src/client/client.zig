@@ -279,10 +279,12 @@ pub const Client = struct {
     }
 
     pub fn writeTimeout(self: *const Client, ms: u32) !void {
+        if (@atomicLoad(bool, &self._closed, .monotonic)) return;
         return self.stream.writeTimeout(ms);
     }
 
     pub fn readTimeout(self: *const Client, ms: u32) !void {
+        if (@atomicLoad(bool, &self._closed, .monotonic)) return;
         return self.stream.readTimeout(ms);
     }
 
