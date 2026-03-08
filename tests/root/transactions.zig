@@ -4743,6 +4743,106 @@ test "root.versionedTransferWithSenderAndSpinner supports fixed blockhashes" {
     , captured);
 }
 
+test "root.transferWithSenderAndSpinner supports fixed blockhashes" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const fee_payer_secret_key_base58 = try encodeBase58(allocator, &fee_payer_secret_key);
+    defer allocator.free(fee_payer_secret_key_base58);
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x68} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const expected_encoded = try client.buildLegacyTransferTransactionBase64WithSender(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(destination_public_key),
+        Hash.fromBytes(recent_blockhash),
+        5_000,
+        &.{ fee_payer, sender },
+    );
+    defer allocator.free(expected_encoded);
+
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "SigLegacyWithSenderSpinner111111111111111111111111111111111111111111111111111",
+        &.{
+            .{ .context_slot = 420, .status = null },
+            .{ .context_slot = 421, .status = .{
+                .slot = 421,
+                .confirmations = 1,
+                .confirmation_status = "processed",
+                .has_error = false,
+            } },
+            .{ .context_slot = 422, .status = .{
+                .slot = 422,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const signature = try rpc.transferWithSenderAndSpinner(
+        fee_payer_secret_key_base58,
+        sender_secret_key_base58,
+        destination_base58,
+        5_000,
+        recent_blockhash_base58,
+        .confirmed,
+        .{ .skip_preflight = true, .max_retries = 2 },
+    );
+    defer allocator.free(signature);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try std.testing.expectEqualStrings(
+        "SigLegacyWithSenderSpinner111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 4), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, expected_encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"maxRetries\":2") != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"searchTransactionHistory\":false") != null);
+    try std.testing.expectEqualStrings(
+        \\sending transaction...
+        \\submitted transaction: SigLegacyWithSenderSpinner111111111111111111111111111111111111111111111111111
+        \\waiting for transaction to be observed: SigLegacyWithSenderSpinner111111111111111111111111111111111111111111111111111
+        \\waiting for confirmed confirmation: SigLegacyWithSenderSpinner111111111111111111111111111111111111111111111111111
+        \\transaction confirmed: SigLegacyWithSenderSpinner111111111111111111111111111111111111111111111111111
+        \\
+    , captured);
+}
+
 test "root.versionedNonceTransferWithSpinner supports distinct payer sender and nonce authority" {
     const allocator = std.testing.allocator;
 
