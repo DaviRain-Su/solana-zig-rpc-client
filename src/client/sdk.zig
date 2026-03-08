@@ -1421,6 +1421,27 @@ pub fn buildLegacyMessageWithNonceInstructions(
     return try owned_message.serialize(allocator);
 }
 
+pub fn buildLegacyMessageBase64WithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+) ![]u8 {
+    const message_bytes = try buildLegacyMessageWithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        nonce_authority,
+        recent_blockhash,
+        instructions,
+    );
+    defer allocator.free(message_bytes);
+
+    return try encodeBase64(allocator, message_bytes);
+}
+
 pub fn buildLegacyTransferTransaction(
     allocator: Allocator,
     secret_key: []const u8,
@@ -1555,6 +1576,29 @@ pub fn buildSignedLegacyTransactionWithNonceInstructions(
     return try transaction.sign(allocator, signers);
 }
 
+pub fn buildLegacyTransactionBase64WithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    signers: []const Keypair,
+) ![]u8 {
+    var signed = try buildSignedLegacyTransactionWithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        nonce_authority,
+        recent_blockhash,
+        instructions,
+        signers,
+    );
+    defer signed.deinit(allocator);
+
+    return try signed.toBase64(allocator);
+}
+
 pub fn buildOwnedLegacyNonceTransferMessage(
     allocator: Allocator,
     payer: Pubkey,
@@ -1574,6 +1618,197 @@ pub fn buildOwnedLegacyNonceTransferMessage(
         nonce_authority,
         recent_blockhash,
         instructions[0..],
+    );
+}
+
+pub fn buildLegacyTransferMessageBytesWithNonce(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) ![]u8 {
+    return try buildLegacyNonceTransferMessageBytes(
+        allocator,
+        payer,
+        payer,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
+}
+
+pub fn buildLegacyNonceTransferMessageBytes(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) ![]u8 {
+    var owned = try buildOwnedLegacyNonceTransferMessage(
+        allocator,
+        payer,
+        sender,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
+    defer owned.deinit(allocator);
+
+    return try owned.serialize(allocator);
+}
+
+pub fn buildLegacyTransferMessageBase64WithNonce(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) ![]u8 {
+    return try buildLegacyNonceTransferMessageBase64(
+        allocator,
+        payer,
+        payer,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
+}
+
+pub fn buildLegacyNonceTransferMessageBase64(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) ![]u8 {
+    const message_bytes = try buildLegacyNonceTransferMessageBytes(
+        allocator,
+        payer,
+        sender,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
+    defer allocator.free(message_bytes);
+
+    return try encodeBase64(allocator, message_bytes);
+}
+
+pub fn buildOwnedLegacyTransferMessage(
+    allocator: Allocator,
+    payer: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) !OwnedLegacyMessage {
+    return try buildOwnedLegacyTransferMessageWithSender(
+        allocator,
+        payer,
+        payer,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
+}
+
+pub fn buildSignedLegacyTransferTransaction(
+    allocator: Allocator,
+    payer: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    signers: []const Keypair,
+) !SignedLegacyTransaction {
+    return try buildSignedLegacyTransferTransactionWithSender(
+        allocator,
+        payer,
+        payer,
+        destination,
+        recent_blockhash,
+        lamports,
+        signers,
+    );
+}
+
+pub fn buildLegacyTransferTransactionBase64(
+    allocator: Allocator,
+    payer: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    signers: []const Keypair,
+) ![]u8 {
+    return try buildLegacyTransferTransactionBase64WithSender(
+        allocator,
+        payer,
+        payer,
+        destination,
+        recent_blockhash,
+        lamports,
+        signers,
+    );
+}
+
+pub fn buildOwnedLegacyTransferMessageWithNonce(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) !OwnedLegacyMessage {
+    return try buildOwnedLegacyNonceTransferMessage(
+        allocator,
+        payer,
+        payer,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
+}
+
+pub fn buildSignedLegacyTransferTransactionWithNonce(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    signers: []const Keypair,
+) !SignedLegacyTransaction {
+    return try buildSignedLegacyNonceTransferTransaction(
+        allocator,
+        payer,
+        payer,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
+        signers,
     );
 }
 
@@ -1597,6 +1832,29 @@ pub fn buildSignedLegacyNonceTransferTransaction(
         nonce_authority,
         recent_blockhash,
         instructions[0..],
+        signers,
+    );
+}
+
+pub fn buildLegacyTransferTransactionBase64WithNonce(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    signers: []const Keypair,
+) ![]u8 {
+    return try buildLegacyNonceTransferTransactionBase64(
+        allocator,
+        payer,
+        payer,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
         signers,
     );
 }
@@ -2083,6 +2341,27 @@ pub fn buildSignedVersionedTransferTransactionWithSender(
     );
 }
 
+pub fn buildSignedVersionedTransferTransaction(
+    allocator: Allocator,
+    payer: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) !SignedVersionedTransaction {
+    return try buildSignedVersionedTransferTransactionWithSender(
+        allocator,
+        payer,
+        payer,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+        signers,
+    );
+}
+
 pub fn buildVersionedTransferTransactionBase64WithSender(
     allocator: Allocator,
     payer: Pubkey,
@@ -2105,6 +2384,27 @@ pub fn buildVersionedTransferTransactionBase64WithSender(
     );
     defer signed.deinit(allocator);
     return try signed.toBase64(allocator);
+}
+
+pub fn buildVersionedTransferTransactionBase64(
+    allocator: Allocator,
+    payer: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) ![]u8 {
+    return try buildVersionedTransferTransactionBase64WithSender(
+        allocator,
+        payer,
+        payer,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+        signers,
+    );
 }
 
 pub fn buildSignedVersionedNonceTransferTransaction(

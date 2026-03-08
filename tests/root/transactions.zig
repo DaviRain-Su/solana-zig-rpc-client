@@ -2581,6 +2581,309 @@ test "root.buildNonceTransferSignedTransactionWithOptions supports distinct paye
     try std.testing.expectEqualSlices(u8, expected, encoded);
 }
 
+test "root.buildLegacyNonceTransferMessageBase64 builds distinct payer sender and nonce authority" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const encoded = try client.buildLegacyNonceTransferMessageBase64(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_authority_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x56} ** 32),
+        1_000,
+    );
+    defer allocator.free(encoded);
+
+    var expected_owned = try client.buildOwnedLegacyNonceTransferMessage(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_authority_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x56} ** 32),
+        1_000,
+    );
+    defer expected_owned.deinit(allocator);
+    const expected_bytes = try expected_owned.serialize(allocator);
+    defer allocator.free(expected_bytes);
+    const expected = try client.encodeBase64(allocator, expected_bytes);
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildLegacyTransferMessageBase64WithNonce reuses same-role nonce helper" {
+    const allocator = std.testing.allocator;
+
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const encoded = try client.buildLegacyTransferMessageBase64WithNonce(
+        allocator,
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x57} ** 32),
+        1_000,
+    );
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyNonceTransferMessageBase64(
+        allocator,
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x57} ** 32),
+        1_000,
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildOwnedLegacyTransferMessage builds same-role payer sender message" {
+    const allocator = std.testing.allocator;
+
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    var owned = try client.buildOwnedLegacyTransferMessage(
+        allocator,
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x5a} ** 32),
+        1_000,
+    );
+    defer owned.deinit(allocator);
+
+    const encoded_bytes = try owned.serialize(allocator);
+    defer allocator.free(encoded_bytes);
+    const encoded = try client.encodeBase64(allocator, encoded_bytes);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyTransferMessageBase64WithSender(
+        allocator,
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x5a} ** 32),
+        1_000,
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildLegacyTransferTransactionBase64 builds same-role payer sender transaction" {
+    const allocator = std.testing.allocator;
+
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+
+    const encoded = try client.buildLegacyTransferTransactionBase64(
+        allocator,
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x5b} ** 32),
+        1_000,
+        &.{sender},
+    );
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyTransferTransactionBase64WithSender(
+        allocator,
+        sender.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x5b} ** 32),
+        1_000,
+        &.{sender},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildLegacyMessageBase64WithNonceInstructions prepends nonce advance" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const transfer = SystemProgram.transfer(
+        Pubkey.fromBytes(payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    const encoded = try client.buildLegacyMessageBase64WithNonceInstructions(
+        allocator,
+        Pubkey.fromBytes(payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_authority_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x5e} ** 32),
+        instructions[0..],
+    );
+    defer allocator.free(encoded);
+
+    var expected_owned = try client.buildOwnedLegacyMessageWithNonceInstructions(
+        allocator,
+        Pubkey.fromBytes(payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_authority_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x5e} ** 32),
+        instructions[0..],
+    );
+    defer expected_owned.deinit(allocator);
+    const expected_bytes = try expected_owned.serialize(allocator);
+    defer allocator.free(expected_bytes);
+    const expected = try client.encodeBase64(allocator, expected_bytes);
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildLegacyTransactionBase64WithNonceInstructions signs prepended nonce advance" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const payer = try Keypair.fromSecretKeyBytes(payer_secret_key);
+    const nonce_authority = try Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+
+    const transfer = SystemProgram.transfer(
+        payer.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    const encoded = try client.buildLegacyTransactionBase64WithNonceInstructions(
+        allocator,
+        payer.public_key,
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        nonce_authority.public_key,
+        Hash.fromBytes(.{0x5f} ** 32),
+        instructions[0..],
+        &.{ payer, nonce_authority },
+    );
+    defer allocator.free(encoded);
+
+    var expected_signed = try client.buildSignedLegacyTransactionWithNonceInstructions(
+        allocator,
+        payer.public_key,
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        nonce_authority.public_key,
+        Hash.fromBytes(.{0x5f} ** 32),
+        instructions[0..],
+        &.{ payer, nonce_authority },
+    );
+    defer expected_signed.deinit(allocator);
+    const expected = try expected_signed.toBase64(allocator);
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildOwnedLegacyTransferMessageWithNonce reuses same-role nonce helper" {
+    const allocator = std.testing.allocator;
+
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    var owned = try client.buildOwnedLegacyTransferMessageWithNonce(
+        allocator,
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x58} ** 32),
+        1_000,
+    );
+    defer owned.deinit(allocator);
+
+    const encoded_bytes = try owned.serialize(allocator);
+    defer allocator.free(encoded_bytes);
+    const encoded = try client.encodeBase64(allocator, encoded_bytes);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyNonceTransferMessageBase64(
+        allocator,
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x58} ** 32),
+        1_000,
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildLegacyTransferTransactionBase64WithNonce reuses same-role nonce helper" {
+    const allocator = std.testing.allocator;
+
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+
+    const encoded = try client.buildLegacyTransferTransactionBase64WithNonce(
+        allocator,
+        sender.public_key,
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x59} ** 32),
+        1_000,
+        &.{sender},
+    );
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyNonceTransferTransactionBase64(
+        allocator,
+        sender.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x59} ** 32),
+        1_000,
+        &.{sender},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
 test "root.buildNonceTransferMessageBase64WithOptions supports distinct payer sender and nonce authority" {
     const allocator = std.testing.allocator;
 
@@ -3113,6 +3416,77 @@ test "root.buildVersionedTransferTransactionBase64WithSender builds distinct pay
     defer allocator.free(expected_encoded);
 
     try std.testing.expectEqualStrings(expected_encoded, encoded);
+}
+
+test "root.buildSignedVersionedTransferTransaction builds same-role payer sender transaction" {
+    const allocator = std.testing.allocator;
+
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+
+    var signed = try client.buildSignedVersionedTransferTransaction(
+        allocator,
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x5c} ** 32),
+        1_000,
+        &.{},
+        &.{sender},
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedTransferTransactionBase64WithSender(
+        allocator,
+        sender.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x5c} ** 32),
+        1_000,
+        &.{},
+        &.{sender},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildVersionedTransferTransactionBase64 builds same-role payer sender transaction" {
+    const allocator = std.testing.allocator;
+
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+
+    const encoded = try client.buildVersionedTransferTransactionBase64(
+        allocator,
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x5d} ** 32),
+        1_000,
+        &.{},
+        &.{sender},
+    );
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedTransferTransactionBase64WithSender(
+        allocator,
+        sender.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x5d} ** 32),
+        1_000,
+        &.{},
+        &.{sender},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
 }
 
 test "root.buildVersionedTransferSignedTransactionWithSenderAndOptions supports nonce blockhash query" {
@@ -5124,6 +5498,99 @@ test "root.transferWithSenderAndSpinner supports fixed blockhashes" {
         \\waiting for transaction to be observed: SigLegacyWithSenderSpinner111111111111111111111111111111111111111111111111111
         \\waiting for confirmed confirmation: SigLegacyWithSenderSpinner111111111111111111111111111111111111111111111111111
         \\transaction confirmed: SigLegacyWithSenderSpinner111111111111111111111111111111111111111111111111111
+        \\
+    , captured);
+}
+
+test "root.transferWithSpinner supports fixed blockhashes" {
+    const allocator = std.testing.allocator;
+
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x72} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const expected_encoded = try client.buildLegacyTransferTransactionBase64WithSender(
+        allocator,
+        sender.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(destination_public_key),
+        Hash.fromBytes(recent_blockhash),
+        5_000,
+        &.{sender},
+    );
+    defer allocator.free(expected_encoded);
+
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "SigLegacyTransferSpinner111111111111111111111111111111111111111111111111111",
+        &.{
+            .{ .context_slot = 440, .status = null },
+            .{ .context_slot = 441, .status = .{
+                .slot = 441,
+                .confirmations = 1,
+                .confirmation_status = "processed",
+                .has_error = false,
+            } },
+            .{ .context_slot = 442, .status = .{
+                .slot = 442,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const signature = try rpc.transferWithSpinner(
+        sender_secret_key_base58,
+        destination_base58,
+        5_000,
+        recent_blockhash_base58,
+        .confirmed,
+        .{ .skip_preflight = true, .max_retries = 2 },
+    );
+    defer allocator.free(signature);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try std.testing.expectEqualStrings(
+        "SigLegacyTransferSpinner111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 4), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, expected_encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"maxRetries\":2") != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"searchTransactionHistory\":false") != null);
+    try std.testing.expectEqualStrings(
+        \\sending transaction...
+        \\submitted transaction: SigLegacyTransferSpinner111111111111111111111111111111111111111111111111111
+        \\waiting for transaction to be observed: SigLegacyTransferSpinner111111111111111111111111111111111111111111111111111
+        \\waiting for confirmed confirmation: SigLegacyTransferSpinner111111111111111111111111111111111111111111111111111
+        \\transaction confirmed: SigLegacyTransferSpinner111111111111111111111111111111111111111111111111111
         \\
     , captured);
 }
