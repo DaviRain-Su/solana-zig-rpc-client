@@ -469,6 +469,22 @@ pub const RpcClient = struct {
         return lifecycle_methods.initMockClient(RpcClient, allocator, responses, commitment, null, null);
     }
 
+    pub fn newMockWithOptions(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return lifecycle_methods.initMockClientAndOptions(
+            RpcClient,
+            allocator,
+            responses,
+            options.endpoint,
+            options.commitment,
+            options.request_timeout_ms,
+            options.confirm_transaction_initial_timeout_ms,
+        );
+    }
+
     pub fn newMockWithTimeout(
         allocator: Allocator,
         responses: []const MockResponseType,
@@ -569,6 +585,22 @@ pub const RpcClient = struct {
             commitment,
             timeout_ms,
             null,
+        );
+    }
+
+    pub fn newMockWithHandlerAndOptions(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return lifecycle_methods.initMockClientWithHandlerAndOptions(
+            RpcClient,
+            allocator,
+            handler,
+            options.endpoint,
+            options.commitment,
+            options.request_timeout_ms,
+            options.confirm_transaction_initial_timeout_ms,
         );
     }
 

@@ -69,6 +69,38 @@ pub fn initMockClient(
     return client;
 }
 
+pub fn initMockClientAndOptions(
+    comptime ClientType: type,
+    allocator: std.mem.Allocator,
+    responses: []const MockResponse,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+) !ClientType {
+    var client = try initClient(
+        ClientType,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    errdefer client.deinit();
+
+    const sender_value = try MockSender.initSequence(allocator, responses);
+    errdefer {
+        var owned = sender_value;
+        owned.deinit();
+    }
+    const sender_ptr = try allocator.create(MockSender);
+    errdefer allocator.destroy(sender_ptr);
+    sender_ptr.* = sender_value;
+    client.mock_sender = sender_ptr;
+    client.request_sender = makeMockRequestSender(sender_ptr);
+    return client;
+}
+
 pub fn initMockClientWithHandler(
     comptime ClientType: type,
     allocator: std.mem.Allocator,
@@ -81,6 +113,33 @@ pub fn initMockClientWithHandler(
         ClientType,
         allocator,
         "mock://local",
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    errdefer client.deinit();
+
+    const sender_ptr = try allocator.create(MockSender);
+    errdefer allocator.destroy(sender_ptr);
+    sender_ptr.* = MockSender.initWithHandler(allocator, handler);
+    client.mock_sender = sender_ptr;
+    client.request_sender = makeMockRequestSender(sender_ptr);
+    return client;
+}
+
+pub fn initMockClientWithHandlerAndOptions(
+    comptime ClientType: type,
+    allocator: std.mem.Allocator,
+    handler: MockRequestHandler,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+) !ClientType {
+    var client = try initClient(
+        ClientType,
+        allocator,
+        endpoint,
         default_commitment,
         request_timeout_ms,
         confirm_transaction_initial_timeout_ms,
