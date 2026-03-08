@@ -69,6 +69,12 @@ pub fn build(b: *std.Build) void {
 
     const websocket_dep = b.dependency("websocket", .{});
     const websocket_module = websocket_dep.module("websocket");
+    const websocket_test_options = b.addOptions();
+    websocket_test_options.addOption(std.log.Level, "log_level", .err);
+    websocket_test_options.addOption([]const std.log.ScopeLevel, "log_scope_levels", &[_]std.log.ScopeLevel{
+        .{ .scope = .websocket, .level = .err },
+    });
+    websocket_module.addOptions("std_options", websocket_test_options);
     // It's also possible to define more custom flags to toggle optional features
     // of this build script using `b.option()`. All defined flags (including
     // target and optimize options) will be listed when running `zig build --help`
