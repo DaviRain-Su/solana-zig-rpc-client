@@ -3,6 +3,10 @@ const client = @import("solana_client_zig");
 const mock_sender_assertions = @import("mock_sender_assertions");
 const request_sender_test_support = @import("request_sender_test_support");
 
+pub const std_options = struct {
+    pub const log_level = std.log.Level.err;
+};
+
 const MockHandlerContext = request_sender_test_support.MockHandlerContext;
 const RequestSenderContext = request_sender_test_support.RequestSenderContext;
 const dynamicMockHandler = request_sender_test_support.dynamicMockHandler;

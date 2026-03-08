@@ -2,6 +2,10 @@ const std = @import("std");
 const client = @import("solana_client_zig");
 const websocket = @import("websocket");
 
+pub const std_options = struct {
+    pub const log_level = std.log.Level.err;
+};
+
 fn reservePort() !u16 {
     const listener = std.net.Address.parseIp("127.0.0.1", 0) catch |err| {
         return err;
