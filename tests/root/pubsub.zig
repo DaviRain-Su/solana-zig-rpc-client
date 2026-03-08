@@ -3,9 +3,16 @@ const client = @import("solana_client_zig");
 const websocket = @import("websocket");
 
 fn reservePort() !u16 {
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
-    defer listener.deinit();
-    return listener.listen_address.getPort();
+    const listener = std.net.Address.parseIp("127.0.0.1", 0) catch |err| {
+        return err;
+    };
+    var server_listener = listener.listen(.{}) catch |err| switch (err) {
+        error.AccessDenied => return error.SkipZigTest,
+        else => return err,
+    };
+    var listener_handle = server_listener;
+    defer listener_handle.deinit();
+    return listener_handle.listen_address.getPort();
 }
 
 fn waitForQueuedCount(subscription: *client.PubsubSubscription, expected: usize, timeout_ms: u64) !void {
