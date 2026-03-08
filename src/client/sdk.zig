@@ -1988,6 +1988,24 @@ pub fn buildSignedVersionedTransactionV0(
     return try compiled.sign(allocator, signers);
 }
 
+pub fn buildSignedVersionedTransaction(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) !SignedVersionedTransaction {
+    return try buildSignedVersionedTransactionV0(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+        signers,
+    );
+}
+
 pub fn buildOwnedVersionedMessageV0WithNonceInstructions(
     allocator: Allocator,
     payer: Pubkey,
@@ -2083,6 +2101,28 @@ pub fn buildSignedVersionedTransactionV0WithNonceInstructions(
     return try compiled.sign(allocator, signers);
 }
 
+pub fn buildSignedVersionedTransactionWithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) !SignedVersionedTransaction {
+    return try buildSignedVersionedTransactionV0WithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        authority,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+        signers,
+    );
+}
+
 pub fn buildVersionedTransactionV0Base64WithNonceInstructions(
     allocator: Allocator,
     payer: Pubkey,
@@ -2105,6 +2145,28 @@ pub fn buildVersionedTransactionV0Base64WithNonceInstructions(
     );
     defer signed.deinit(allocator);
     return try signed.toBase64(allocator);
+}
+
+pub fn buildVersionedTransactionBase64WithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) ![]u8 {
+    return try buildVersionedTransactionV0Base64WithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        authority,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+        signers,
+    );
 }
 
 pub fn buildOwnedVersionedTransferMessage(
@@ -2650,6 +2712,24 @@ pub fn buildVersionedTransactionV0Base64(
     defer signed.deinit(allocator);
 
     return try signed.toBase64(allocator);
+}
+
+pub fn buildVersionedTransactionBase64(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) ![]u8 {
+    return try buildVersionedTransactionV0Base64(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+        signers,
+    );
 }
 
 pub fn buildVersionedTransferMessageBytes(
