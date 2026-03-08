@@ -588,6 +588,71 @@ pub fn buildOwnedVersionedTransferMessageWithConfig(
     );
 }
 
+pub fn buildOwnedVersionedTransferMessageWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedTransferMessageWithSenderAndResolvedBlockhash(
+        self,
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+        null,
+    );
+}
+
+pub fn buildOwnedVersionedTransferMessageWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) !OwnedVersionedMessageV0 {
+    const blockhash_query = resolveTransferBlockhashQuery(options);
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    return try buildOwnedVersionedTransferMessageWithSenderAndResolvedBlockhash(
+        self,
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        resolved.blockhash,
+        address_lookup_tables,
+        transferNonceAccountPubkey(blockhash_query),
+    );
+}
+
+pub fn buildOwnedVersionedTransferMessageWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) !OwnedVersionedMessageV0 {
+    return try self.buildOwnedVersionedTransferMessageWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+}
+
 pub fn buildVersionedTransferMessageBytes(
     self: anytype,
     sender_secret_key: []const u8,
@@ -647,6 +712,67 @@ pub fn buildVersionedTransferMessageBytesWithConfig(
     );
 }
 
+pub fn buildVersionedTransferMessageBytesWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    var owned = try self.buildOwnedVersionedTransferMessageWithSender(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+    );
+    defer owned.deinit(self.allocator);
+    return try owned.serialize(self.allocator);
+}
+
+pub fn buildVersionedTransferMessageBytesWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    var owned = try self.buildOwnedVersionedTransferMessageWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+    defer owned.deinit(self.allocator);
+    return try owned.serialize(self.allocator);
+}
+
+pub fn buildVersionedTransferMessageBytesWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    return try self.buildVersionedTransferMessageBytesWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+}
+
 pub fn buildVersionedTransferMessageBase64(
     self: anytype,
     sender_secret_key: []const u8,
@@ -683,6 +809,67 @@ pub fn buildVersionedTransferMessageBase64WithOptions(
     );
     defer self.allocator.free(message_bytes);
     return try sdk.encodeBase64(self.allocator, message_bytes);
+}
+
+pub fn buildVersionedTransferMessageBase64WithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    const message_bytes = try self.buildVersionedTransferMessageBytesWithSender(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+    );
+    defer self.allocator.free(message_bytes);
+    return try sdk.encodeBase64(self.allocator, message_bytes);
+}
+
+pub fn buildVersionedTransferMessageBase64WithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    const message_bytes = try self.buildVersionedTransferMessageBytesWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+    defer self.allocator.free(message_bytes);
+    return try sdk.encodeBase64(self.allocator, message_bytes);
+}
+
+pub fn buildVersionedTransferMessageBase64WithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    return try self.buildVersionedTransferMessageBase64WithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
 }
 
 pub fn buildVersionedTransferMessageBase64WithConfig(
