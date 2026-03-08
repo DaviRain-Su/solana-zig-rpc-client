@@ -6,7 +6,7 @@ fn reservePort() !u16 {
     const listener = std.net.Address.parseIp("127.0.0.1", 0) catch |err| {
         return err;
     };
-    var server_listener = listener.listen(.{}) catch |err| switch (err) {
+    const server_listener = listener.listen(.{}) catch |err| switch (err) {
         error.AccessDenied => return error.SkipZigTest,
         else => return err,
     };

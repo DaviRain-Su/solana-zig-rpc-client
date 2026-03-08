@@ -32,6 +32,17 @@ fn runDelayedRootServer(listener: *std.net.Server, allocator: std.mem.Allocator,
     request.respond(response_body, .{}) catch return;
 }
 
+fn createListener() !std.net.Server {
+    const endpoint = std.net.Address.parseIp("127.0.0.1", 0) catch |err| {
+        return err;
+    };
+    const server_listener = endpoint.listen(.{}) catch |err| switch (err) {
+        error.AccessDenied => return error.SkipZigTest,
+        else => return err,
+    };
+    return server_listener;
+}
+
 test "root.new constructors initialize endpoint" {
     const allocator = std.testing.allocator;
     const endpoint = "http://127.0.0.1:8899";
@@ -309,7 +320,7 @@ test "root.getTransportStats tracks request metrics" {
 
 test "root.newWithTimeout applies real transport timeout" {
     const allocator = std.testing.allocator;
-    var listener = try (try std.net.Address.parseIp("127.0.0.1", 0)).listen(.{});
+    var listener = try createListener();
     defer listener.deinit();
     const port = listener.listen_address.getPort();
 
