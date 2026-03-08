@@ -3692,10 +3692,9 @@ const State = struct {
 
         while (true) {
             const message = (try self.ws_client.read()) orelse continue;
-            const message_type = message.type;
             defer self.ws_client.done(message);
 
-            switch (message_type) {
+            switch (message.type) {
                 .text, .binary => try self.serverMessage(message.data),
                 .ping => try self.serverPing(message.data),
                 .close => {
