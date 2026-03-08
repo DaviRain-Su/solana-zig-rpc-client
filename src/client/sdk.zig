@@ -1715,6 +1715,72 @@ pub fn buildVersionedTransactionV0Base64WithNonceInstructions(
     return try signed.toBase64(allocator);
 }
 
+pub fn buildOwnedVersionedTransferMessage(
+    allocator: Allocator,
+    payer: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    const transfer = SystemProgram.transfer(payer, destination, lamports);
+    const instructions = [_]Instruction{transfer.instruction()};
+    return try compileVersionedMessageV0(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions[0..],
+        address_lookup_tables,
+    );
+}
+
+pub fn buildOwnedVersionedTransferMessageWithNonce(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedNonceTransferMessage(
+        allocator,
+        payer,
+        payer,
+        nonce_account,
+        authority,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildOwnedVersionedNonceTransferMessage(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    const transfer = SystemProgram.transfer(sender, destination, lamports);
+    const instructions = [_]Instruction{transfer.instruction()};
+    return try buildOwnedVersionedMessageV0WithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        authority,
+        recent_blockhash,
+        instructions[0..],
+        address_lookup_tables,
+    );
+}
+
 pub fn buildVersionedTransferMessageBytesWithNonce(
     allocator: Allocator,
     payer: Pubkey,

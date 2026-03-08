@@ -2064,6 +2064,49 @@ test "root.buildVersionedTransferMessageBase64WithNonce prepends nonce advance" 
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
+test "root.buildOwnedVersionedTransferMessageWithNonce prepends nonce advance" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const nonce_account = Pubkey.fromBytes(nonce_raw.public_key.toBytes());
+    const recent_blockhash = Hash.fromBytes(.{0x45} ** 32);
+
+    var owned = try client.buildOwnedVersionedTransferMessageWithNonce(
+        allocator,
+        payer,
+        nonce_account,
+        payer,
+        destination,
+        recent_blockhash,
+        1_000,
+        &.{},
+    );
+    defer owned.deinit(allocator);
+
+    const encoded_bytes = try owned.serialize(allocator);
+    defer allocator.free(encoded_bytes);
+    const encoded = try client.encodeBase64(allocator, encoded_bytes);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedTransferMessageBase64WithNonce(
+        allocator,
+        payer,
+        nonce_account,
+        payer,
+        destination,
+        recent_blockhash,
+        1_000,
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
 test "root.sendVersionedTransferWithOptions resolves latest blockhash and sends" {
     const allocator = std.testing.allocator;
 
@@ -2625,6 +2668,49 @@ test "root.buildVersionedNonceTransferSignedTransactionWithOptions supports dist
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, nonce_account_base58) != null);
     try std.testing.expectEqualStrings(expected_encoded, encoded);
+}
+
+test "root.buildOwnedVersionedNonceTransferMessage builds distinct payer sender and nonce authority" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    var owned = try client.buildOwnedVersionedNonceTransferMessage(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_authority_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x46} ** 32),
+        1_000,
+        &.{},
+    );
+    defer owned.deinit(allocator);
+
+    const encoded_bytes = try owned.serialize(allocator);
+    defer allocator.free(encoded_bytes);
+    const encoded = try client.encodeBase64(allocator, encoded_bytes);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedNonceTransferMessageBase64(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_authority_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x46} ** 32),
+        1_000,
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
 }
 
 test "root.getFeeForVersionedNonceTransferMessageWithOptions supports fixed blockhash with distinct payer sender and nonce authority" {
