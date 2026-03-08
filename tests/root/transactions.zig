@@ -2331,6 +2331,80 @@ test "root.compileVersionedMessageWithNonceInstructions reuses v0 helper" {
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
+test "root.buildVersionedMessage reuses buildOwnedVersionedMessage" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    var built = try client.buildVersionedMessage(
+        allocator,
+        payer,
+        Hash.fromBytes(.{0x6e} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer built.deinit(allocator);
+
+    const encoded = try built.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedMessageBase64(
+        allocator,
+        payer,
+        Hash.fromBytes(.{0x6e} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildVersionedMessageWithNonceInstructions reuses buildOwnedVersionedMessageWithNonceInstructions" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const nonce_account = Pubkey.fromBytes(nonce_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    var built = try client.buildVersionedMessageWithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        payer,
+        Hash.fromBytes(.{0x6f} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer built.deinit(allocator);
+
+    const encoded = try built.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedMessageBase64WithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        payer,
+        Hash.fromBytes(.{0x6f} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
 test "root.compileLegacyMessage reuses buildOwnedLegacyMessage" {
     const allocator = std.testing.allocator;
 
