@@ -1013,6 +1013,50 @@ test "root.newWithBorrowedMockSenderAndOptions applies all constructor options" 
     try std.testing.expect(std.mem.indexOf(u8, sender.capturedRequests()[0].params_json, "\"finalized\"") != null);
 }
 
+test "root.newWithBorrowedMockSenderAndCommitmentAndTimeouts applies all options regardless argument order" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(701);
+
+    var rpc = try client.RpcClient.newWithBorrowedMockSenderAndCommitmentAndTimeouts(
+        allocator,
+        &sender,
+        .confirmed,
+        7_000,
+        12_000,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 7_000), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 12_000), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 701), slot);
+}
+
+test "root.newWithBorrowedMockSenderAndTimeoutsAndCommitment preserves timeout-first alias semantics" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(702);
+
+    var rpc = try client.RpcClient.newWithBorrowedMockSenderAndTimeoutsAndCommitment(
+        allocator,
+        &sender,
+        8_000,
+        13_000,
+        .processed,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 8_000), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 13_000), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 702), slot);
+}
+
 test "root.newWithOwnedMockSender transfers ownership of scripted sender state" {
     const allocator = std.testing.allocator;
 
@@ -1054,6 +1098,28 @@ test "root.newWithOwnedMockSenderAndCommitmentAndTimeouts forwards all options" 
 
     const slot = try rpc.getSlot(null);
     try std.testing.expectEqual(@as(u64, 777), slot);
+}
+
+test "root.newWithOwnedMockSenderAndTimeoutsAndCommitment preserves timeout-first alias semantics" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(888);
+
+    var rpc = try client.RpcClient.newWithOwnedMockSenderAndTimeoutsAndCommitment(
+        allocator,
+        sender,
+        4_500,
+        6_500,
+        .confirmed,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 4_500), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 6_500), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 888), slot);
 }
 
 test "root.newWithOwnedMockSenderAndOptions applies all constructor options" {
