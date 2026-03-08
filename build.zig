@@ -69,9 +69,9 @@ pub fn build(b: *std.Build) void {
 
     const websocket_dep = b.dependency("websocket", .{});
     const websocket_module = websocket_dep.module("websocket");
-    const websocket_test_options = b.addOptions();
-    websocket_test_options.addOption(std.log.Level, "log_level", .err);
-    websocket_module.addOptions("std_options", websocket_test_options);
+    const test_log_options = b.addOptions();
+    test_log_options.addOption(std.log.Level, "log_level", .err);
+    websocket_module.addOptions("std_options", test_log_options);
     // It's also possible to define more custom flags to toggle optional features
     // of this build script using `b.option()`. All defined flags (including
     // target and optimize options) will be listed when running `zig build --help`
@@ -99,6 +99,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "websocket", .module = websocket_module },
         },
     });
+    mod.addOptions("std_options", test_log_options);
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
@@ -179,6 +180,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    root_test_support_module.addOptions("std_options", test_log_options);
 
     const request_sender_test_support_module = b.createModule(.{
         .root_source_file = b.path("tests/support/request_sender_helpers.zig"),
@@ -188,6 +190,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "solana_client_zig", .module = mod },
         },
     });
+    request_sender_test_support_module.addOptions("std_options", test_log_options);
 
     const mock_sender_assertions_module = b.createModule(.{
         .root_source_file = b.path("tests/support/mock_sender_assertions.zig"),
@@ -197,6 +200,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "solana_client_zig", .module = mod },
         },
     });
+    mock_sender_assertions_module.addOptions("std_options", test_log_options);
 
     const root_test_sources = [_][]const u8{
         "tests/root/sdk.zig",
@@ -222,6 +226,7 @@ pub fn build(b: *std.Build) void {
             mock_sender_assertions_module,
             websocket_module,
         );
+        module.addOptions("std_options", test_log_options);
         run_root_tests[index] = addRunTestForModule(b, module);
     }
 
@@ -238,6 +243,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    cli_tests_module.addOptions("std_options", test_log_options);
 
     const cli_tests = b.addTest(.{
         .root_module = cli_tests_module,
@@ -254,6 +260,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "solana_client_zig", .module = mod },
         },
     });
+    command_test_support_module.addOptions("std_options", test_log_options);
 
     const commands_tests_module = b.createModule(.{
         .root_source_file = b.path("src/commands.zig"),
@@ -265,6 +272,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "mock_sender_assertions", .module = mock_sender_assertions_module },
         },
     });
+    commands_tests_module.addOptions("std_options", test_log_options);
 
     const run_commands_tests = addRunTestForModule(b, commands_tests_module);
 
