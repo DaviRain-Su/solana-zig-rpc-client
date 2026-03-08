@@ -1207,6 +1207,22 @@ pub fn compileVersionedMessageV0(
     };
 }
 
+pub fn buildVersionedMessageV0(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try compileVersionedMessageV0(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+    );
+}
+
 pub fn compileVersionedMessage(
     allocator: Allocator,
     payer: Pubkey,
@@ -2318,6 +2334,26 @@ pub fn buildOwnedVersionedMessageV0WithNonceInstructions(
         payer,
         recent_blockhash,
         owned_instructions.instructions,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildVersionedMessageV0WithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedMessageV0WithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        authority,
+        recent_blockhash,
+        instructions,
         address_lookup_tables,
     );
 }
