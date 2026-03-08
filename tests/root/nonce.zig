@@ -949,6 +949,101 @@ test "root.sendAndConfirmLegacyInstructionsWithBlockhashQueryWithSpinner support
     , captured);
 }
 
+test "root.sendAndConfirmVersionedInstructionsWithBlockhashQueryWithSpinner supports fixed blockhashes" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{19} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{20} ** 32);
+    const recent_blockhash = [_]u8{0x59} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    const payer = try Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer.public_key, destination, 654);
+    const instructions = [_]client.Instruction{transfer.instruction()};
+
+    var expected_signed = try client.buildSignedVersionedTransactionV0(
+        allocator,
+        payer.public_key,
+        Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+        &.{},
+        &.{payer},
+    );
+    defer expected_signed.deinit(allocator);
+    const expected_encoded = try expected_signed.toBase64(allocator);
+    defer allocator.free(expected_encoded);
+
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "SigVersionedSpinner111111111111111111111111111111111111111111111111111111",
+        &.{
+            .{ .context_slot = 110, .status = null },
+            .{ .context_slot = 111, .status = .{
+                .slot = 111,
+                .confirmations = 1,
+                .confirmation_status = "processed",
+                .has_error = false,
+            } },
+            .{ .context_slot = 112, .status = .{
+                .slot = 112,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const signature = try rpc.sendAndConfirmVersionedInstructionsWithBlockhashQueryWithSpinner(
+        payer.public_key,
+        instructions[0..],
+        &.{},
+        &.{payer},
+        .{ .fixed = recent_blockhash_base58 },
+        null,
+        .{ .skip_preflight = true, .max_retries = 1 },
+        .confirmed,
+        true,
+        200,
+        0,
+    );
+    defer allocator.free(signature);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try std.testing.expectEqualStrings(
+        "SigVersionedSpinner111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 4), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, expected_encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"maxRetries\":1") != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"searchTransactionHistory\":true") != null);
+    try std.testing.expectEqualStrings(
+        \\sending transaction...
+        \\submitted transaction: SigVersionedSpinner111111111111111111111111111111111111111111111111111111
+        \\waiting for transaction to be observed: SigVersionedSpinner111111111111111111111111111111111111111111111111111111
+        \\waiting for confirmed confirmation: SigVersionedSpinner111111111111111111111111111111111111111111111111111111
+        \\transaction confirmed: SigVersionedSpinner111111111111111111111111111111111111111111111111111111
+        \\
+    , captured);
+}
+
 test "root.buildInitializeNonceAccountSignedTransactionWithOptions fetches latest blockhash" {
     const allocator = std.testing.allocator;
 

@@ -2001,6 +2001,103 @@ pub fn sendAndConfirmVersionedInstructions(
     );
 }
 
+pub fn sendAndConfirmVersionedInstructionsWithBlockhashQueryWithSpinner(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+    options: ?SendTransactionOptions,
+    commitment: ?Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) ![]const u8 {
+    var signed = try self.buildSignedVersionedTransactionWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer signed.deinit(self.allocator);
+
+    return try self.sendAndConfirmVersionedTransactionTypedWithSpinner(
+        signed,
+        options,
+        commitment,
+        search_transaction_history,
+        timeout_ms,
+        poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmVersionedInstructionsWithSpinnerAndOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    options: ?VersionedInstructionsOptions,
+) ![]const u8 {
+    return try self.sendAndConfirmVersionedInstructionsWithBlockhashQueryWithSpinner(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        resolveVersionedInstructionsBuildQuery(versionedInstructionsBuildOptionsFromOptions(options)),
+        if (options) |value| value.nonce_authority else null,
+        if (options) |value| value.send_transaction_options else null,
+        if (options) |value| value.commitment else null,
+        if (options) |value| value.search_transaction_history else false,
+        if (options) |value| value.timeout_ms else poll_for_signature_confirmation_timeout_ms,
+        if (options) |value| value.poll_interval_ms else signature_poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmVersionedInstructionsWithSpinnerAndConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    options: ?VersionedInstructionsOptions,
+) ![]const u8 {
+    return try self.sendAndConfirmVersionedInstructionsWithSpinnerAndOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        options,
+    );
+}
+
+pub fn sendAndConfirmVersionedInstructionsWithSpinner(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    recent_blockhash: []const u8,
+    commitment: ?Commitment,
+    options: ?SendTransactionOptions,
+) ![]const u8 {
+    return try self.sendAndConfirmVersionedInstructionsWithSpinnerAndOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        .{
+            .recent_blockhash = recent_blockhash,
+            .send_transaction_options = options,
+            .commitment = commitment,
+        },
+    );
+}
+
 pub fn buildInitializeNonceAccountSignedTransactionWithOptions(
     self: anytype,
     fee_payer_secret_key: []const u8,
