@@ -2713,6 +2713,89 @@ test "root.buildOwnedVersionedNonceTransferMessage builds distinct payer sender 
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
+test "root.buildVersionedTransferMessageBase64WithSender builds distinct payer and sender" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = Hash.fromBytes(.{0x47} ** 32);
+
+    const encoded = try client.buildVersionedTransferMessageBase64WithSender(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        recent_blockhash,
+        1_000,
+        &.{},
+    );
+    defer allocator.free(encoded);
+
+    const transfer = SystemProgram.transfer(
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    const expected = try client.buildVersionedMessageV0Base64(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        recent_blockhash,
+        instructions[0..],
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildVersionedTransferTransactionBase64WithSender builds distinct payer and sender" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = Hash.fromBytes(.{0x48} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+
+    const encoded = try client.buildVersionedTransferTransactionBase64WithSender(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        recent_blockhash,
+        1_000,
+        &.{},
+        &.{ fee_payer, sender },
+    );
+    defer allocator.free(encoded);
+
+    const transfer = SystemProgram.transfer(
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    var expected = try client.buildSignedVersionedTransactionV0(
+        allocator,
+        fee_payer.public_key,
+        recent_blockhash,
+        instructions[0..],
+        &.{},
+        &.{ fee_payer, sender },
+    );
+    defer expected.deinit(allocator);
+    const expected_encoded = try expected.toBase64(allocator);
+    defer allocator.free(expected_encoded);
+
+    try std.testing.expectEqualStrings(expected_encoded, encoded);
+}
+
 test "root.getFeeForVersionedNonceTransferMessageWithOptions supports fixed blockhash with distinct payer sender and nonce authority" {
     const allocator = std.testing.allocator;
 

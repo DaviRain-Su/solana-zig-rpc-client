@@ -1723,7 +1723,27 @@ pub fn buildOwnedVersionedTransferMessage(
     lamports: u64,
     address_lookup_tables: []const AddressLookupTableAccount,
 ) !OwnedVersionedMessageV0 {
-    const transfer = SystemProgram.transfer(payer, destination, lamports);
+    return try buildOwnedVersionedTransferMessageWithSender(
+        allocator,
+        payer,
+        payer,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildOwnedVersionedTransferMessageWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    const transfer = SystemProgram.transfer(sender, destination, lamports);
     const instructions = [_]Instruction{transfer.instruction()};
     return try compileVersionedMessageV0(
         allocator,
@@ -1804,6 +1824,28 @@ pub fn buildVersionedTransferMessageBytesWithNonce(
     );
 }
 
+pub fn buildVersionedTransferMessageBytesWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    var owned = try buildOwnedVersionedTransferMessageWithSender(
+        allocator,
+        payer,
+        sender,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+    );
+    defer owned.deinit(allocator);
+    return try owned.serialize(allocator);
+}
+
 pub fn buildVersionedNonceTransferMessageBytes(
     allocator: Allocator,
     payer: Pubkey,
@@ -1839,6 +1881,28 @@ pub fn buildVersionedTransferMessageBase64(
     const message_bytes = try buildVersionedTransferMessageBytes(
         allocator,
         payer,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+    );
+    defer allocator.free(message_bytes);
+    return try encodeBase64(allocator, message_bytes);
+}
+
+pub fn buildVersionedTransferMessageBase64WithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    const message_bytes = try buildVersionedTransferMessageBytesWithSender(
+        allocator,
+        payer,
+        sender,
         destination,
         recent_blockhash,
         lamports,
@@ -1895,6 +1959,52 @@ pub fn buildVersionedNonceTransferMessageBase64(
     );
     defer allocator.free(message_bytes);
     return try encodeBase64(allocator, message_bytes);
+}
+
+pub fn buildSignedVersionedTransferTransactionWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) !SignedVersionedTransaction {
+    const transfer = SystemProgram.transfer(sender, destination, lamports);
+    const instructions = [_]Instruction{transfer.instruction()};
+    return try buildSignedVersionedTransactionV0(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions[0..],
+        address_lookup_tables,
+        signers,
+    );
+}
+
+pub fn buildVersionedTransferTransactionBase64WithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) ![]u8 {
+    var signed = try buildSignedVersionedTransferTransactionWithSender(
+        allocator,
+        payer,
+        sender,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+        signers,
+    );
+    defer signed.deinit(allocator);
+    return try signed.toBase64(allocator);
 }
 
 pub fn buildSignedVersionedNonceTransferTransaction(
