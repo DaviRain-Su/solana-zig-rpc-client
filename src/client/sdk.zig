@@ -1286,6 +1286,24 @@ pub fn buildOwnedLegacyMessage(
     };
 }
 
+pub fn buildOwnedLegacyTransferMessageWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) !OwnedLegacyMessage {
+    const transfer = SystemProgram.transfer(sender, destination, lamports);
+    const instructions = [_]Instruction{transfer.instruction()};
+    return try buildOwnedLegacyMessage(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions[0..],
+    );
+}
+
 pub fn buildLegacyMessageBytes(
     allocator: Allocator,
     payer: Pubkey,
@@ -1299,6 +1317,26 @@ pub fn buildLegacyMessageBytes(
     };
 
     return try message.serialize(allocator);
+}
+
+pub fn buildLegacyTransferMessageBytesWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) ![]u8 {
+    var owned = try buildOwnedLegacyTransferMessageWithSender(
+        allocator,
+        payer,
+        sender,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
+    defer owned.deinit(allocator);
+    return try owned.serialize(allocator);
 }
 
 pub fn buildLegacyMessageBase64(
@@ -1315,6 +1353,26 @@ pub fn buildLegacyMessageBase64(
     );
     defer allocator.free(message_bytes);
 
+    return try encodeBase64(allocator, message_bytes);
+}
+
+pub fn buildLegacyTransferMessageBase64WithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) ![]u8 {
+    const message_bytes = try buildLegacyTransferMessageBytesWithSender(
+        allocator,
+        payer,
+        sender,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
+    defer allocator.free(message_bytes);
     return try encodeBase64(allocator, message_bytes);
 }
 
@@ -1424,6 +1482,48 @@ pub fn buildLegacyTransactionBase64(
     );
     defer signed.deinit(allocator);
 
+    return try signed.toBase64(allocator);
+}
+
+pub fn buildSignedLegacyTransferTransactionWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    signers: []const Keypair,
+) !SignedLegacyTransaction {
+    const transfer = SystemProgram.transfer(sender, destination, lamports);
+    const instructions = [_]Instruction{transfer.instruction()};
+    return try buildSignedLegacyTransaction(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions[0..],
+        signers,
+    );
+}
+
+pub fn buildLegacyTransferTransactionBase64WithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    signers: []const Keypair,
+) ![]u8 {
+    var signed = try buildSignedLegacyTransferTransactionWithSender(
+        allocator,
+        payer,
+        sender,
+        destination,
+        recent_blockhash,
+        lamports,
+        signers,
+    );
+    defer signed.deinit(allocator);
     return try signed.toBase64(allocator);
 }
 

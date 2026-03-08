@@ -2581,6 +2581,125 @@ test "root.buildNonceTransferSignedTransactionWithOptions supports distinct paye
     try std.testing.expectEqualSlices(u8, expected, encoded);
 }
 
+test "root.buildOwnedLegacyTransferMessageWithSender builds distinct payer and sender" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = Hash.fromBytes(.{0x45} ** 32);
+
+    var owned = try client.buildOwnedLegacyTransferMessageWithSender(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        recent_blockhash,
+        1_000,
+    );
+    defer owned.deinit(allocator);
+
+    const encoded_bytes = try owned.serialize(allocator);
+    defer allocator.free(encoded_bytes);
+    const encoded = try client.encodeBase64(allocator, encoded_bytes);
+    defer allocator.free(encoded);
+
+    const transfer = SystemProgram.transfer(
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    const expected = try client.buildLegacyMessageBase64(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        recent_blockhash,
+        instructions[0..],
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildLegacyTransferMessageBase64WithSender builds distinct payer and sender" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = Hash.fromBytes(.{0x46} ** 32);
+
+    const encoded = try client.buildLegacyTransferMessageBase64WithSender(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        recent_blockhash,
+        1_000,
+    );
+    defer allocator.free(encoded);
+
+    const transfer = SystemProgram.transfer(
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    const expected = try client.buildLegacyMessageBase64(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        recent_blockhash,
+        instructions[0..],
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildLegacyTransferTransactionBase64WithSender builds distinct payer and sender" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const recent_blockhash = Hash.fromBytes(.{0x47} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+
+    const encoded = try client.buildLegacyTransferTransactionBase64WithSender(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        recent_blockhash,
+        1_000,
+        &.{ fee_payer, sender },
+    );
+    defer allocator.free(encoded);
+
+    const transfer = SystemProgram.transfer(
+        sender.public_key,
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        1_000,
+    );
+    const instructions = [_]Instruction{transfer.instruction()};
+    var expected = try client.buildSignedLegacyTransaction(
+        allocator,
+        fee_payer.public_key,
+        recent_blockhash,
+        instructions[0..],
+        &.{ fee_payer, sender },
+    );
+    defer expected.deinit(allocator);
+    const expected_encoded = try expected.toBase64(allocator);
+    defer allocator.free(expected_encoded);
+
+    try std.testing.expectEqualStrings(expected_encoded, encoded);
+}
+
 test "root.buildVersionedNonceTransferSignedTransactionWithOptions supports distinct payer sender and nonce authority" {
     const allocator = std.testing.allocator;
 
@@ -2877,6 +2996,363 @@ test "root.buildVersionedTransferSignedTransactionWithSenderAndOptions supports 
     try std.testing.expectEqualStrings(expected_encoded, encoded);
     try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
     try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+}
+
+test "root.buildTransferSignedTransactionWithSenderAndOptions supports nonce blockhash query" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const fee_payer_secret_key_base58 = try encodeBase58(allocator, &fee_payer_secret_key);
+    defer allocator.free(fee_payer_secret_key_base58);
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+    const sender_public_key_base58 = try encodeBase58(allocator, &sender_raw.public_key.toBytes());
+    defer allocator.free(sender_public_key_base58);
+
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const nonce_account_pubkey = nonce_raw.public_key.toBytes();
+    const nonce_account_base58 = try encodeBase58(allocator, &nonce_account_pubkey);
+    defer allocator.free(nonce_account_base58);
+
+    const nonce_blockhash = [_]u8{0x60} ** 32;
+    const nonce_blockhash_base58 = try encodeBase58(allocator, &nonce_blockhash);
+    defer allocator.free(nonce_blockhash_base58);
+
+    const response_body = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":42}},\"value\":{{\"data\":{{\"program\":\"system\",\"parsed\":{{\"type\":\"initialized\",\"info\":{{\"authority\":\"{s}\",\"blockhash\":\"{s}\",\"feeCalculator\":{{\"lamportsPerSignature\":5000}}}}}},\"space\":80}},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}}},\"id\":1}}",
+        .{ sender_public_key_base58, nonce_blockhash_base58 },
+    );
+    defer allocator.free(response_body);
+
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockJsonResponse(response_body);
+
+    var signed = try rpc.buildTransferSignedTransactionWithSenderAndOptions(
+        fee_payer_secret_key_base58,
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        .{
+            .blockhash_query = .{
+                .nonce_account = .{
+                    .pubkey = nonce_account_base58,
+                    .commitment = .confirmed,
+                },
+            },
+        },
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const expected = try client.buildLegacyNonceTransferTransactionBase64(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(nonce_account_pubkey),
+        sender.public_key,
+        Pubkey.fromBytes(destination_public_key),
+        Hash.fromBytes(nonce_blockhash),
+        1_000,
+        &.{ fee_payer, sender },
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+}
+
+test "root.buildTransferMessageBase64WithSenderAndOptions supports nonce blockhash query" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const fee_payer_secret_key_base58 = try encodeBase58(allocator, &fee_payer_secret_key);
+    defer allocator.free(fee_payer_secret_key_base58);
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+    const sender_public_key_base58 = try encodeBase58(allocator, &sender_raw.public_key.toBytes());
+    defer allocator.free(sender_public_key_base58);
+
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const nonce_account_pubkey = nonce_raw.public_key.toBytes();
+    const nonce_account_base58 = try encodeBase58(allocator, &nonce_account_pubkey);
+    defer allocator.free(nonce_account_base58);
+
+    const nonce_blockhash = [_]u8{0x63} ** 32;
+    const nonce_blockhash_base58 = try encodeBase58(allocator, &nonce_blockhash);
+    defer allocator.free(nonce_blockhash_base58);
+
+    const response_body = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":42}},\"value\":{{\"data\":{{\"program\":\"system\",\"parsed\":{{\"type\":\"initialized\",\"info\":{{\"authority\":\"{s}\",\"blockhash\":\"{s}\",\"feeCalculator\":{{\"lamportsPerSignature\":5000}}}}}},\"space\":80}},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}}},\"id\":1}}",
+        .{ sender_public_key_base58, nonce_blockhash_base58 },
+    );
+    defer allocator.free(response_body);
+
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockJsonResponse(response_body);
+
+    const encoded = try rpc.buildTransferMessageBase64WithSenderAndOptions(
+        fee_payer_secret_key_base58,
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        .{
+            .blockhash_query = .{
+                .nonce_account = .{
+                    .pubkey = nonce_account_base58,
+                    .commitment = .confirmed,
+                },
+            },
+        },
+    );
+    defer allocator.free(encoded);
+
+    var expected_owned = try client.buildOwnedLegacyNonceTransferMessage(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_pubkey),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_public_key),
+        Hash.fromBytes(nonce_blockhash),
+        1_000,
+    );
+    defer expected_owned.deinit(allocator);
+    const expected_bytes = try expected_owned.serialize(allocator);
+    defer allocator.free(expected_bytes);
+    const expected = try client.encodeBase64(allocator, expected_bytes);
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+}
+
+test "root.buildTransferMessageBase64WithSender builds distinct payer and sender" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const fee_payer_secret_key_base58 = try encodeBase58(allocator, &fee_payer_secret_key);
+    defer allocator.free(fee_payer_secret_key_base58);
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x64} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+
+    const encoded = try rpc.buildTransferMessageBase64WithSender(
+        fee_payer_secret_key_base58,
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        recent_blockhash_base58,
+    );
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyTransferMessageBase64WithSender(
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_public_key),
+        Hash.fromBytes(recent_blockhash),
+        1_000,
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.sendTransferWithSenderAndOptions resolves latest blockhash and sends" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const fee_payer_secret_key_base58 = try encodeBase58(allocator, &fee_payer_secret_key);
+    defer allocator.free(fee_payer_secret_key_base58);
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x61} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const expected_encoded = try client.buildLegacyTransferTransactionBase64WithSender(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(destination_public_key),
+        Hash.fromBytes(recent_blockhash),
+        1_000,
+        &.{ fee_payer, sender },
+    );
+    defer allocator.free(expected_encoded);
+
+    const latest_blockhash_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":11}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":42}}}},\"id\":1}}",
+        .{recent_blockhash_base58},
+    );
+    defer allocator.free(latest_blockhash_json);
+    var rpc = try RpcClient.newMock(allocator, &.{
+        .{ .json = latest_blockhash_json },
+        .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":\"SigLegacyWithSender1111111111111111111111111111111111111111111111111111111111\",\"id\":1}" },
+    });
+    defer rpc.deinit();
+
+    const signature = try rpc.sendTransferWithSenderAndOptions(
+        fee_payer_secret_key_base58,
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        .{
+            .blockhash_commitment = .confirmed,
+            .send_transaction_options = .{ .skip_preflight = true, .max_retries = 2 },
+        },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigLegacyWithSender1111111111111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].request_body, expected_encoded) != null);
+}
+
+test "root.transferWithSenderAndOptions fetches latest blockhash and confirms" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const fee_payer_secret_key_base58 = try encodeBase58(allocator, &fee_payer_secret_key);
+    defer allocator.free(fee_payer_secret_key_base58);
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const recent_blockhash = [_]u8{0x62} ** 32;
+    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const expected_encoded = try client.buildLegacyTransferTransactionBase64WithSender(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        Pubkey.fromBytes(destination_public_key),
+        Hash.fromBytes(recent_blockhash),
+        1_000,
+        &.{ fee_payer, sender },
+    );
+    defer allocator.free(expected_encoded);
+
+    const latest_blockhash_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":11}},\"value\":{{\"blockhash\":\"{s}\",\"lastValidBlockHeight\":42}}}},\"id\":1}}",
+        .{recent_blockhash_base58},
+    );
+    defer allocator.free(latest_blockhash_json);
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockJsonResponse(latest_blockhash_json);
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "SigLegacyWithSenderConfirm1111111111111111111111111111111111111111111111111",
+        &.{
+            .{ .context_slot = 13, .status = .{
+                .slot = 13,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+
+    const signature = try rpc.transferWithSenderAndOptions(
+        fee_payer_secret_key_base58,
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        .{
+            .blockhash_commitment = .confirmed,
+            .send_transaction_options = .{ .skip_preflight = true, .max_retries = 2 },
+            .commitment = .confirmed,
+            .search_transaction_history = true,
+            .timeout_ms = 200,
+            .poll_interval_ms = 10,
+        },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigLegacyWithSenderConfirm1111111111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 3), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].request_body, expected_encoded) != null);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[2].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"searchTransactionHistory\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"commitment\":\"confirmed\"") != null);
 }
 
 test "root.sendVersionedTransferWithSenderAndOptions resolves latest blockhash and sends" {

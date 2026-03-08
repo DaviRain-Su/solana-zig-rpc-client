@@ -17,6 +17,7 @@ const Hash = sdk.Hash;
 const Instruction = sdk.Instruction;
 const Keypair = sdk.Keypair;
 const LegacyTransaction = sdk.LegacyTransaction;
+const OwnedLegacyMessage = sdk.OwnedLegacyMessage;
 const OwnedVersionedMessageV0 = sdk.OwnedVersionedMessageV0;
 const SignedVersionedTransaction = sdk.SignedVersionedTransaction;
 const Pubkey = sdk.Pubkey;
@@ -105,6 +106,84 @@ fn buildTransferSignedTransactionWithResolvedBlockhash(
     };
 
     return try transaction.sign(self.allocator, &.{keypair});
+}
+
+fn buildTransferSignedTransactionWithSenderAndResolvedBlockhash(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    nonce_account_pubkey: ?[]const u8,
+) !SignedLegacyTransaction {
+    const fee_payer = try Keypair.fromBase58SecretKey(self.allocator, fee_payer_secret_key);
+    const sender = try Keypair.fromBase58SecretKey(self.allocator, sender_secret_key);
+    const destination_pubkey = try Pubkey.fromBase58(self.allocator, destination);
+    const blockhash = try Hash.fromBase58(self.allocator, recent_blockhash);
+
+    if (nonce_account_pubkey) |value| {
+        const nonce_pubkey = try Pubkey.fromBase58(self.allocator, value);
+        return try sdk.buildSignedLegacyNonceTransferTransaction(
+            self.allocator,
+            fee_payer.public_key,
+            sender.public_key,
+            nonce_pubkey,
+            sender.public_key,
+            destination_pubkey,
+            blockhash,
+            lamports,
+            &.{ fee_payer, sender },
+        );
+    }
+
+    return try sdk.buildSignedLegacyTransferTransactionWithSender(
+        self.allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        destination_pubkey,
+        blockhash,
+        lamports,
+        &.{ fee_payer, sender },
+    );
+}
+
+fn buildOwnedTransferMessageWithSenderAndResolvedBlockhash(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    nonce_account_pubkey: ?[]const u8,
+) !OwnedLegacyMessage {
+    const fee_payer = try Keypair.fromBase58SecretKey(self.allocator, fee_payer_secret_key);
+    const sender = try Keypair.fromBase58SecretKey(self.allocator, sender_secret_key);
+    const destination_pubkey = try Pubkey.fromBase58(self.allocator, destination);
+    const blockhash = try Hash.fromBase58(self.allocator, recent_blockhash);
+
+    if (nonce_account_pubkey) |value| {
+        const nonce_pubkey = try Pubkey.fromBase58(self.allocator, value);
+        return try sdk.buildOwnedLegacyNonceTransferMessage(
+            self.allocator,
+            fee_payer.public_key,
+            sender.public_key,
+            nonce_pubkey,
+            sender.public_key,
+            destination_pubkey,
+            blockhash,
+            lamports,
+        );
+    }
+
+    return try sdk.buildOwnedLegacyTransferMessageWithSender(
+        self.allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        destination_pubkey,
+        blockhash,
+        lamports,
+    );
 }
 
 fn buildVersionedTransferSignedTransactionWithResolvedBlockhash(
@@ -405,6 +484,25 @@ pub fn buildTransferSignedTransaction(
     );
 }
 
+pub fn buildTransferSignedTransactionWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+) !SignedLegacyTransaction {
+    return try buildTransferSignedTransactionWithSenderAndResolvedBlockhash(
+        self,
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+        null,
+    );
+}
+
 pub fn buildVersionedTransferSignedTransaction(
     self: anytype,
     sender_secret_key: []const u8,
@@ -442,6 +540,46 @@ pub fn buildVersionedTransferSignedTransactionWithSender(
         recent_blockhash,
         address_lookup_tables,
         null,
+    );
+}
+
+pub fn buildTransferSignedTransactionWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) !SignedLegacyTransaction {
+    const blockhash_query = resolveTransferBlockhashQuery(options);
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    return try buildTransferSignedTransactionWithSenderAndResolvedBlockhash(
+        self,
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        resolved.blockhash,
+        transferNonceAccountPubkey(blockhash_query),
+    );
+}
+
+pub fn buildTransferSignedTransactionWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) !SignedLegacyTransaction {
+    return try self.buildTransferSignedTransactionWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
     );
 }
 
@@ -525,6 +663,65 @@ pub fn buildVersionedTransferSignedTransactionWithConfig(
         destination,
         lamports,
         address_lookup_tables,
+        options,
+    );
+}
+
+pub fn buildOwnedTransferMessageWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+) !OwnedLegacyMessage {
+    return try buildOwnedTransferMessageWithSenderAndResolvedBlockhash(
+        self,
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+        null,
+    );
+}
+
+pub fn buildOwnedTransferMessageWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) !OwnedLegacyMessage {
+    const blockhash_query = resolveTransferBlockhashQuery(options);
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    return try buildOwnedTransferMessageWithSenderAndResolvedBlockhash(
+        self,
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        resolved.blockhash,
+        transferNonceAccountPubkey(blockhash_query),
+    );
+}
+
+pub fn buildOwnedTransferMessageWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) !OwnedLegacyMessage {
+    return try self.buildOwnedTransferMessageWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
         options,
     );
 }
@@ -653,6 +850,61 @@ pub fn buildOwnedVersionedTransferMessageWithSenderAndConfig(
     );
 }
 
+pub fn buildTransferMessageBytesWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+) ![]u8 {
+    var owned = try self.buildOwnedTransferMessageWithSender(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+    );
+    defer owned.deinit(self.allocator);
+    return try owned.serialize(self.allocator);
+}
+
+pub fn buildTransferMessageBytesWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    var owned = try self.buildOwnedTransferMessageWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+    );
+    defer owned.deinit(self.allocator);
+    return try owned.serialize(self.allocator);
+}
+
+pub fn buildTransferMessageBytesWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    return try self.buildTransferMessageBytesWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+    );
+}
+
 pub fn buildVersionedTransferMessageBytes(
     self: anytype,
     sender_secret_key: []const u8,
@@ -769,6 +1021,61 @@ pub fn buildVersionedTransferMessageBytesWithSenderAndConfig(
         destination,
         lamports,
         address_lookup_tables,
+        options,
+    );
+}
+
+pub fn buildTransferMessageBase64WithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+) ![]u8 {
+    const message_bytes = try self.buildTransferMessageBytesWithSender(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+    );
+    defer self.allocator.free(message_bytes);
+    return try sdk.encodeBase64(self.allocator, message_bytes);
+}
+
+pub fn buildTransferMessageBase64WithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    const message_bytes = try self.buildTransferMessageBytesWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+    );
+    defer self.allocator.free(message_bytes);
+    return try sdk.encodeBase64(self.allocator, message_bytes);
+}
+
+pub fn buildTransferMessageBase64WithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) ![]u8 {
+    return try self.buildTransferMessageBase64WithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
         options,
     );
 }
@@ -1879,6 +2186,61 @@ pub fn buildTransferTransactionWithOptions(
     return try signed.toBase64(self.allocator);
 }
 
+pub fn buildTransferTransactionWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+) ![]const u8 {
+    var signed = try self.buildTransferSignedTransactionWithSender(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        recent_blockhash,
+    );
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
+}
+
+pub fn buildTransferTransactionWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) ![]const u8 {
+    var signed = try self.buildTransferSignedTransactionWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+    );
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
+}
+
+pub fn buildTransferTransactionWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferBuildOptions,
+) ![]const u8 {
+    return try self.buildTransferTransactionWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
+    );
+}
+
 pub fn buildTransferTransactionWithConfig(
     self: anytype,
     sender_secret_key: []const u8,
@@ -2021,6 +2383,27 @@ pub fn sendTransfer(
     );
 }
 
+pub fn sendTransferWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    options: ?SendTransactionOptions,
+) ![]const u8 {
+    return try self.sendTransferWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        .{
+            .recent_blockhash = recent_blockhash,
+            .send_transaction_options = options,
+        },
+    );
+}
+
 pub fn sendVersionedTransfer(
     self: anytype,
     sender_secret_key: []const u8,
@@ -2063,6 +2446,52 @@ pub fn sendTransferWithOptions(
     return try self.sendTransaction(
         signed_tx_base64,
         if (options) |value| value.send_transaction_options else null,
+    );
+}
+
+pub fn sendTransferWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?SendTransferOptions,
+) ![]const u8 {
+    const build_options: ?TransferBuildOptions = if (options) |value| .{
+        .recent_blockhash = value.recent_blockhash,
+        .blockhash_commitment = value.blockhash_commitment,
+        .blockhash_query = value.blockhash_query,
+    } else null;
+
+    const signed_tx_base64 = try self.buildTransferTransactionWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        build_options,
+    );
+    defer self.allocator.free(signed_tx_base64);
+
+    return try self.sendTransaction(
+        signed_tx_base64,
+        if (options) |value| value.send_transaction_options else null,
+    );
+}
+
+pub fn sendTransferWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?SendTransferOptions,
+) ![]const u8 {
+    return try self.sendTransferWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
     );
 }
 
@@ -2375,6 +2804,29 @@ pub fn transfer(
     );
 }
 
+pub fn transferWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    commitment: ?Commitment,
+    options: ?SendTransactionOptions,
+) ![]const u8 {
+    return try self.transferWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        .{
+            .recent_blockhash = recent_blockhash,
+            .send_transaction_options = options,
+            .commitment = commitment,
+        },
+    );
+}
+
 pub fn transferWithOptions(
     self: anytype,
     sender_secret_key: []const u8,
@@ -2404,6 +2856,56 @@ pub fn transferWithOptions(
         if (options) |value| value.search_transaction_history else false,
         if (options) |value| value.timeout_ms else poll_for_signature_confirmation_timeout_ms,
         if (options) |value| value.poll_interval_ms else signature_poll_interval_ms,
+    );
+}
+
+pub fn transferWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferOptions,
+) ![]const u8 {
+    const build_options: ?TransferBuildOptions = if (options) |value| .{
+        .recent_blockhash = value.recent_blockhash,
+        .blockhash_commitment = value.blockhash_commitment,
+        .blockhash_query = value.blockhash_query,
+    } else null;
+
+    const signed_tx_base64 = try self.buildTransferTransactionWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        build_options,
+    );
+    defer self.allocator.free(signed_tx_base64);
+
+    return try self.sendTransactionAndConfirm(
+        signed_tx_base64,
+        if (options) |value| value.send_transaction_options else null,
+        if (options) |value| value.commitment else null,
+        if (options) |value| value.search_transaction_history else false,
+        if (options) |value| value.timeout_ms else poll_for_signature_confirmation_timeout_ms,
+        if (options) |value| value.poll_interval_ms else signature_poll_interval_ms,
+    );
+}
+
+pub fn transferWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?TransferOptions,
+) ![]const u8 {
+    return try self.transferWithSenderAndOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        destination,
+        lamports,
+        options,
     );
 }
 
