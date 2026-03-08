@@ -2006,6 +2006,22 @@ pub fn buildSignedVersionedTransaction(
     );
 }
 
+pub fn buildOwnedVersionedMessage(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try compileVersionedMessageV0(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+    );
+}
+
 pub fn buildOwnedVersionedMessageV0WithNonceInstructions(
     allocator: Allocator,
     payer: Pubkey,
@@ -2055,6 +2071,26 @@ pub fn buildVersionedMessageV0BytesWithNonceInstructions(
     return try compiled.serialize(allocator);
 }
 
+pub fn buildVersionedMessageBytesWithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    return try buildVersionedMessageV0BytesWithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        authority,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+    );
+}
+
 pub fn buildVersionedMessageV0Base64WithNonceInstructions(
     allocator: Allocator,
     payer: Pubkey,
@@ -2075,6 +2111,26 @@ pub fn buildVersionedMessageV0Base64WithNonceInstructions(
     );
     defer allocator.free(message_bytes);
     return try encodeBase64(allocator, message_bytes);
+}
+
+pub fn buildVersionedMessageBase64WithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    return try buildVersionedMessageV0Base64WithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        authority,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+    );
 }
 
 pub fn buildSignedVersionedTransactionV0WithNonceInstructions(
@@ -2120,6 +2176,26 @@ pub fn buildSignedVersionedTransactionWithNonceInstructions(
         instructions,
         address_lookup_tables,
         signers,
+    );
+}
+
+pub fn buildOwnedVersionedMessageWithNonceInstructions(
+    allocator: Allocator,
+    payer: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedMessageV0WithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        authority,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
     );
 }
 
@@ -2653,6 +2729,38 @@ pub fn buildVersionedNonceTransferTransactionBase64WithSender(
     );
     defer signed.deinit(allocator);
     return try signed.toBase64(allocator);
+}
+
+pub fn buildVersionedMessageBytes(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    return try buildVersionedMessageV0Bytes(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildVersionedMessageBase64(
+    allocator: Allocator,
+    payer: Pubkey,
+    recent_blockhash: Hash,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    return try buildVersionedMessageV0Base64(
+        allocator,
+        payer,
+        recent_blockhash,
+        instructions,
+        address_lookup_tables,
+    );
 }
 
 pub fn buildVersionedMessageV0Bytes(

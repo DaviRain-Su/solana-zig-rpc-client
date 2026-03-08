@@ -2115,6 +2115,148 @@ test "root.buildVersionedTransactionBase64WithNonceInstructions reuses v0 helper
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
+test "root.buildOwnedVersionedMessage reuses v0 helper" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    var owned = try client.buildOwnedVersionedMessage(
+        allocator,
+        payer,
+        Hash.fromBytes(.{0x64} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer owned.deinit(allocator);
+
+    const encoded = try owned.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedMessageV0Base64(
+        allocator,
+        payer,
+        Hash.fromBytes(.{0x64} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildVersionedMessageBase64 reuses v0 helper" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    const encoded = try client.buildVersionedMessageBase64(
+        allocator,
+        payer,
+        Hash.fromBytes(.{0x65} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedMessageV0Base64(
+        allocator,
+        payer,
+        Hash.fromBytes(.{0x65} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildOwnedVersionedMessageWithNonceInstructions reuses v0 helper" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const nonce_account = Pubkey.fromBytes(nonce_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    var owned = try client.buildOwnedVersionedMessageWithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        payer,
+        Hash.fromBytes(.{0x66} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer owned.deinit(allocator);
+
+    const encoded = try owned.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedMessageV0Base64WithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        payer,
+        Hash.fromBytes(.{0x66} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildVersionedMessageBase64WithNonceInstructions reuses v0 helper" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const nonce_account = Pubkey.fromBytes(nonce_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+    const transfer = SystemProgram.transfer(payer, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+
+    const encoded = try client.buildVersionedMessageBase64WithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        payer,
+        Hash.fromBytes(.{0x67} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer allocator.free(encoded);
+
+    const expected = try client.buildVersionedMessageV0Base64WithNonceInstructions(
+        allocator,
+        payer,
+        nonce_account,
+        payer,
+        Hash.fromBytes(.{0x67} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
 test "root.buildVersionedNonceTransferTransactionBase64 builds nonce-aware transfer transaction" {
     const allocator = std.testing.allocator;
 
