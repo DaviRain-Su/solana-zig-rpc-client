@@ -1309,6 +1309,48 @@ test "root.mock route helpers expose match counts and pending scripted dispatche
     try std.testing.expect(std.mem.indexOf(u8, script_summary, "remaining_routes:") != null);
 }
 
+test "root.MockRouteBuilder can be pushed directly as a mock route" {
+    const allocator = std.testing.allocator;
+
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+
+    try rpc.pushMockRouteBuilder(
+        client.MockRouteBuilder.init()
+            .label("finalized-slot")
+            .matchGetSlot(.finalized)
+            .resultJson("111")
+            .once(),
+    );
+
+    try rpc.pushMockRouteBuilders(&.{
+        client.MockRouteBuilder.init()
+            .label("processed-slot")
+            .matchGetSlot(.processed)
+            .resultJson("222")
+            .once(),
+        client.MockRouteBuilder.init()
+            .label("health")
+            .matchGetHealth()
+            .resultJson("\"ok\"")
+            .once(),
+    });
+
+    const finalized_slot = try rpc.getSlot(.finalized);
+    const processed_slot = try rpc.getSlot(.processed);
+    const health = try rpc.getHealth();
+    defer allocator.free(health);
+
+    try std.testing.expectEqual(@as(u64, 111), finalized_slot);
+    try std.testing.expectEqual(@as(u64, 222), processed_slot);
+    try std.testing.expectEqualStrings("ok", health);
+
+    try mock_sender_assertions.expectMockRpcRouteMatchCount(&rpc, "finalized-slot", 1);
+    try mock_sender_assertions.expectMockRpcRouteMatchCount(&rpc, "processed-slot", 1);
+    try mock_sender_assertions.expectMockRpcRouteMatchCount(&rpc, "health", 1);
+    try mock_sender_assertions.expectMockRpcPendingScriptedDispatchCount(&rpc, 0);
+}
+
 test "root.mock routes can be reused and cleared explicitly" {
     const allocator = std.testing.allocator;
 

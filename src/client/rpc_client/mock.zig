@@ -1149,6 +1149,16 @@ pub const MockSender = struct {
         try self.routes.append(self.allocator, try route.dupe(self.allocator));
     }
 
+    pub fn pushRouteBuilder(self: *MockSender, builder: MockRouteBuilder) !void {
+        try self.pushRoute(try builder.build());
+    }
+
+    pub fn pushRouteBuilders(self: *MockSender, builders: []const MockRouteBuilder) !void {
+        for (builders) |builder| {
+            try self.pushRouteBuilder(builder);
+        }
+    }
+
     pub fn pushOnceRoute(self: *MockSender, matcher: MockRequestMatcher, response: MockResponse) !void {
         try self.pushRoute(.once(matcher, response));
     }

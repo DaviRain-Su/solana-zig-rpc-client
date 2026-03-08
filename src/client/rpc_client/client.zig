@@ -1484,6 +1484,24 @@ pub const RpcClient = struct {
         return error.NotMockClient;
     }
 
+    pub fn pushMockRouteBuilder(self: *RpcClient, builder: MockRouteBuilder) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushRouteBuilder(builder);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
+    pub fn pushMockRouteBuilders(self: *RpcClient, builders: []const MockRouteBuilder) !void {
+        if (self.mock_sender) |sender| {
+            try sender.pushRouteBuilders(builders);
+            return;
+        }
+
+        return error.NotMockClient;
+    }
+
     pub fn pushMockOnceRoute(
         self: *RpcClient,
         matcher: MockRequestMatcherType,
