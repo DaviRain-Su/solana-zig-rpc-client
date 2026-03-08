@@ -279,7 +279,7 @@ fn signatureCloseCallback(
 
     tracker.count += 1;
     if (tracker.count == 1) {
-        tracker.first_context_slot = notification.context_slot;
+        tracker.first_context_slot = notification.notification.context_slot;
     }
 }
 
@@ -301,7 +301,7 @@ fn accountCloseCallback(
 
     tracker.count += 1;
     if (tracker.count == 1) {
-        tracker.first_context_slot = notification.context_slot;
+        tracker.first_context_slot = notification.notification.context_slot;
     }
 }
 
@@ -389,7 +389,7 @@ fn programCloseCallback(
 
     tracker.count += 1;
     if (tracker.count == 1) {
-        tracker.first_context_slot = notification.context_slot;
+        tracker.first_context_slot = notification.notification.context_slot;
     }
 }
 
@@ -551,6 +551,23 @@ fn waitForAccountCloseCallbackCount(
 
 fn waitForLogsCallbackCount(
     tracker: *LogsCallbackTracker,
+    expected: usize,
+    timeout_ms: u64,
+) !void {
+    const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ms * std.time.ns_per_ms));
+    while (std.time.nanoTimestamp() < deadline) {
+        tracker.mutex.lock();
+        const count = tracker.count;
+        tracker.mutex.unlock();
+
+        if (count >= expected) return;
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
+    return error.Timeout;
+}
+
+fn waitForLogsCloseCallbackCount(
+    tracker: *LogsCloseCallbackTracker,
     expected: usize,
     timeout_ms: u64,
 ) !void {
@@ -2513,7 +2530,7 @@ test "root.PubsubClient signatureSubscribeWithCallback invokes callback and unsu
         );
         defer subscription.deinit();
 
-        try waitForSignatureCallbackCount(&tracker, 1, 2000);
+        try waitForSignatureCloseCallbackCount(&tracker, 1, 2000);
 
         tracker.mutex.lock();
         defer tracker.mutex.unlock();
@@ -2651,7 +2668,7 @@ test "root.PubsubClient accountSubscribeWithCallback invokes callback and unsubs
         );
         defer subscription.deinit();
 
-        try waitForAccountCallbackCount(&tracker, 1, 2000);
+        try waitForAccountCloseCallbackCount(&tracker, 1, 2000);
 
         tracker.mutex.lock();
         defer tracker.mutex.unlock();
@@ -2888,7 +2905,7 @@ test "root.PubsubClient logsSubscribeWithCallback invokes callback and unsubscri
         );
         defer subscription.deinit();
 
-        try waitForLogsCallbackCount(&tracker, 1, 2000);
+        try waitForLogsCloseCallbackCount(&tracker, 1, 2000);
 
         tracker.mutex.lock();
         defer tracker.mutex.unlock();
