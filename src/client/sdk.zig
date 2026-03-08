@@ -1339,6 +1339,23 @@ pub fn buildLegacyTransferMessageBytesWithSender(
     return try owned.serialize(allocator);
 }
 
+pub fn buildLegacyTransferMessageBytes(
+    allocator: Allocator,
+    payer: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) ![]u8 {
+    return try buildLegacyTransferMessageBytesWithSender(
+        allocator,
+        payer,
+        payer,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
+}
+
 pub fn buildLegacyMessageBase64(
     allocator: Allocator,
     payer: Pubkey,
@@ -1374,6 +1391,23 @@ pub fn buildLegacyTransferMessageBase64WithSender(
     );
     defer allocator.free(message_bytes);
     return try encodeBase64(allocator, message_bytes);
+}
+
+pub fn buildLegacyTransferMessageBase64(
+    allocator: Allocator,
+    payer: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) ![]u8 {
+    return try buildLegacyTransferMessageBase64WithSender(
+        allocator,
+        payer,
+        payer,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
 }
 
 pub fn buildOwnedLegacyMessageWithNonceInstructions(

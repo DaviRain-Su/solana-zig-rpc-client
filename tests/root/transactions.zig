@@ -2687,6 +2687,36 @@ test "root.buildOwnedLegacyTransferMessage builds same-role payer sender message
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
+test "root.buildLegacyTransferMessageBytes builds same-role payer sender message" {
+    const allocator = std.testing.allocator;
+
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const message_bytes = try client.buildLegacyTransferMessageBytes(
+        allocator,
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x5c} ** 32),
+        1_000,
+    );
+    defer allocator.free(message_bytes);
+    const encoded = try client.encodeBase64(allocator, message_bytes);
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyTransferMessageBase64WithSender(
+        allocator,
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x5c} ** 32),
+        1_000,
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
 test "root.buildLegacyTransferTransactionBase64 builds same-role payer sender transaction" {
     const allocator = std.testing.allocator;
 
@@ -2803,6 +2833,34 @@ test "root.buildLegacyTransactionBase64WithNonceInstructions signs prepended non
     );
     defer expected_signed.deinit(allocator);
     const expected = try expected_signed.toBase64(allocator);
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildLegacyTransferMessageBase64 builds same-role payer sender message" {
+    const allocator = std.testing.allocator;
+
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const encoded = try client.buildLegacyTransferMessageBase64(
+        allocator,
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x5d} ** 32),
+        1_000,
+    );
+    defer allocator.free(encoded);
+
+    const expected = try client.buildLegacyTransferMessageBase64WithSender(
+        allocator,
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
+        Hash.fromBytes(.{0x5d} ** 32),
+        1_000,
+    );
     defer allocator.free(expected);
 
     try std.testing.expectEqualStrings(expected, encoded);
