@@ -1260,6 +1260,83 @@ test "root.buildVersionedTransferSignedTransactionWithOptions fetches latest blo
     try std.testing.expect(std.mem.eql(u8, message[recent_blockhash_offset .. recent_blockhash_offset + 32], &recent_blockhash));
 }
 
+test "root.buildVersionedTransferSignedTransactionWithOptions supports nonce blockhash query" {
+    const allocator = std.testing.allocator;
+
+    const sender_seed = [_]u8{7} ** 32;
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(sender_seed);
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
+    defer allocator.free(sender_secret_key_base58);
+    const sender_public_key_base58 = try encodeBase58(allocator, &sender_raw.public_key.toBytes());
+    defer allocator.free(sender_public_key_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination_public_key = destination_raw.public_key.toBytes();
+    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
+    defer allocator.free(destination_base58);
+
+    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const nonce_account_pubkey = nonce_raw.public_key.toBytes();
+    const nonce_account_base58 = try encodeBase58(allocator, &nonce_account_pubkey);
+    defer allocator.free(nonce_account_base58);
+
+    const nonce_blockhash = [_]u8{0x44} ** 32;
+    const nonce_blockhash_base58 = try encodeBase58(allocator, &nonce_blockhash);
+    defer allocator.free(nonce_blockhash_base58);
+
+    const response_body = try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"result\":{{\"context\":{{\"slot\":42}},\"value\":{{\"data\":{{\"program\":\"system\",\"parsed\":{{\"type\":\"initialized\",\"info\":{{\"authority\":\"{s}\",\"blockhash\":\"{s}\",\"feeCalculator\":{{\"lamportsPerSignature\":5000}}}}}},\"space\":80}},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}}},\"id\":1}}",
+        .{ sender_public_key_base58, nonce_blockhash_base58 },
+    );
+    defer allocator.free(response_body);
+
+    var rpc = try RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockJsonResponse(response_body);
+
+    var signed = try rpc.buildVersionedTransferSignedTransactionWithOptions(
+        sender_secret_key_base58,
+        destination_base58,
+        1_000,
+        &.{},
+        .{
+            .blockhash_query = .{
+                .nonce_account = .{
+                    .pubkey = nonce_account_base58,
+                    .commitment = .finalized,
+                },
+            },
+        },
+    );
+    defer signed.deinit(allocator);
+
+    const encoded = try signed.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const expected = try client.buildVersionedNonceTransferTransactionBase64(
+        allocator,
+        sender.public_key,
+        Pubkey.fromBytes(nonce_account_pubkey),
+        sender.public_key,
+        Pubkey.fromBytes(destination_public_key),
+        Hash.fromBytes(nonce_blockhash),
+        1_000,
+        &.{},
+        &.{sender},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"encoding\":\"jsonParsed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"finalized\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, nonce_account_base58) != null);
+}
+
 test "root.buildVersionedTransferTransaction with fixed blockhash returns versioned payload" {
     const allocator = std.testing.allocator;
 

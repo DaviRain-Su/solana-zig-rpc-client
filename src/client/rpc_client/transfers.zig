@@ -111,11 +111,27 @@ fn buildVersionedTransferSignedTransactionWithResolvedBlockhash(
     lamports: u64,
     recent_blockhash: []const u8,
     address_lookup_tables: []const AddressLookupTableAccount,
+    nonce_account_pubkey: ?[]const u8,
 ) !SignedVersionedTransaction {
     const keypair = try Keypair.fromBase58SecretKey(self.allocator, sender_secret_key);
     const destination_pubkey = try Pubkey.fromBase58(self.allocator, destination);
     const blockhash = try Hash.fromBase58(self.allocator, recent_blockhash);
     const transfer_instruction = SystemProgram.transfer(keypair.public_key, destination_pubkey, lamports);
+
+    if (nonce_account_pubkey) |value| {
+        const nonce_pubkey = try Pubkey.fromBase58(self.allocator, value);
+        return try sdk.buildSignedVersionedNonceTransferTransaction(
+            self.allocator,
+            keypair.public_key,
+            nonce_pubkey,
+            keypair.public_key,
+            destination_pubkey,
+            blockhash,
+            lamports,
+            address_lookup_tables,
+            &.{keypair},
+        );
+    }
 
     return try sdk.buildSignedVersionedTransactionV0(
         self.allocator,
@@ -189,6 +205,7 @@ pub fn buildVersionedTransferSignedTransaction(
         lamports,
         recent_blockhash,
         address_lookup_tables,
+        null,
     );
 }
 
@@ -211,6 +228,7 @@ pub fn buildVersionedTransferSignedTransactionWithOptions(
         lamports,
         resolved.blockhash,
         address_lookup_tables,
+        transferNonceAccountPubkey(blockhash_query),
     );
 }
 
