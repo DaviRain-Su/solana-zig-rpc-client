@@ -498,8 +498,42 @@ fn waitForSignatureCallbackCount(
     return error.Timeout;
 }
 
+fn waitForSignatureCloseCallbackCount(
+    tracker: *SignatureCloseCallbackTracker,
+    expected: usize,
+    timeout_ms: u64,
+) !void {
+    const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ms * std.time.ns_per_ms));
+    while (std.time.nanoTimestamp() < deadline) {
+        tracker.mutex.lock();
+        const count = tracker.count;
+        tracker.mutex.unlock();
+
+        if (count >= expected) return;
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
+    return error.Timeout;
+}
+
 fn waitForAccountCallbackCount(
     tracker: *AccountCallbackTracker,
+    expected: usize,
+    timeout_ms: u64,
+) !void {
+    const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ms * std.time.ns_per_ms));
+    while (std.time.nanoTimestamp() < deadline) {
+        tracker.mutex.lock();
+        const count = tracker.count;
+        tracker.mutex.unlock();
+
+        if (count >= expected) return;
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
+    return error.Timeout;
+}
+
+fn waitForAccountCloseCallbackCount(
+    tracker: *AccountCloseCallbackTracker,
     expected: usize,
     timeout_ms: u64,
 ) !void {
@@ -534,6 +568,23 @@ fn waitForLogsCallbackCount(
 
 fn waitForProgramCallbackCount(
     tracker: *ProgramCallbackTracker,
+    expected: usize,
+    timeout_ms: u64,
+) !void {
+    const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(timeout_ms * std.time.ns_per_ms));
+    while (std.time.nanoTimestamp() < deadline) {
+        tracker.mutex.lock();
+        const count = tracker.count;
+        tracker.mutex.unlock();
+
+        if (count >= expected) return;
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
+    return error.Timeout;
+}
+
+fn waitForProgramCloseCallbackCount(
+    tracker: *ProgramCloseCallbackTracker,
     expected: usize,
     timeout_ms: u64,
 ) !void {
@@ -2799,7 +2850,7 @@ test "root.PubsubClient programSubscribeWithCallback keeps first notification on
             try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
         }
 
-        try waitForProgramCallbackCount(&tracker, 1, 2000);
+        try waitForProgramCloseCallbackCount(&tracker, 1, 2000);
 
         tracker.mutex.lock();
         defer tracker.mutex.unlock();
