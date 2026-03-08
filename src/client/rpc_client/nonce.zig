@@ -15,23 +15,31 @@ const NonceAccountResponse = rpc_types.NonceAccountResponse;
 const ResolvedBlockhash = rpc_types.ResolvedBlockhash;
 const SendLegacyInstructionsOptions = rpc_types.SendLegacyInstructionsOptions;
 const SendNonceAccountOptions = rpc_types.SendNonceAccountOptions;
+const SendVersionedInstructionsOptions = rpc_types.SendVersionedInstructionsOptions;
 const SendTransactionOptions = rpc_types.SendTransactionOptions;
 const SimulateTransactionOptions = rpc_types.SimulateTransactionOptions;
 const SimulatedTransaction = rpc_types.SimulatedTransaction;
 const UiAccountQueryOptions = rpc_types.UiAccountQueryOptions;
+const VersionedInstructionsBuildOptions = rpc_types.VersionedInstructionsBuildOptions;
+const VersionedInstructionsOptions = rpc_types.VersionedInstructionsOptions;
+const AddressLookupTableAccount = @import("../sdk.zig").AddressLookupTableAccount;
 const Hash = @import("../sdk.zig").Hash;
 const Instruction = @import("../sdk.zig").Instruction;
 const Keypair = @import("../sdk.zig").Keypair;
 const LegacyTransaction = @import("../sdk.zig").LegacyTransaction;
 const OwnedLegacyMessage = @import("../sdk.zig").OwnedLegacyMessage;
+const OwnedVersionedMessageV0 = @import("../sdk.zig").OwnedVersionedMessageV0;
 const Pubkey = @import("../sdk.zig").Pubkey;
 const SignedLegacyTransaction = @import("../sdk.zig").SignedLegacyTransaction;
+const SignedVersionedTransaction = @import("../sdk.zig").SignedVersionedTransaction;
 const SystemProgram = @import("../sdk.zig").SystemProgram;
 const buildLegacyTransactionBase64 = @import("../sdk.zig").buildLegacyTransactionBase64;
+const compileVersionedMessageV0 = @import("../sdk.zig").compileVersionedMessageV0;
 const sdkBuildOwnedLegacyMessage = @import("../sdk.zig").buildOwnedLegacyMessage;
 const buildOwnedLegacyMessageWithNonceInstructions = @import("../sdk.zig").buildOwnedLegacyMessageWithNonceInstructions;
 const buildSignedLegacyTransaction = @import("../sdk.zig").buildSignedLegacyTransaction;
 const buildSignedLegacyTransactionWithNonceInstructions = @import("../sdk.zig").buildSignedLegacyTransactionWithNonceInstructions;
+const prependNonceAdvanceInstruction = @import("../sdk.zig").prependNonceAdvanceInstruction;
 const poll_for_signature_confirmation_timeout_ms = @import("../sdk.zig").poll_for_signature_confirmation_timeout_ms;
 const signature_poll_interval_ms = @import("../sdk.zig").signature_poll_interval_ms;
 
@@ -80,9 +88,32 @@ fn resolveLegacyInstructionsBuildQuery(options: ?LegacyInstructionsBuildOptions)
     return .{ .cluster = .{} };
 }
 
+fn resolveVersionedInstructionsBuildQuery(options: ?VersionedInstructionsBuildOptions) BlockhashQuery {
+    if (options) |value| {
+        if (value.blockhash_query) |query| return query;
+        if (value.recent_blockhash) |blockhash| return .{ .fixed = blockhash };
+        return .{ .cluster = .{ .commitment = value.blockhash_commitment } };
+    }
+
+    return .{ .cluster = .{} };
+}
+
 fn legacyInstructionsBuildOptionsFromSendOptions(options: ?SendLegacyInstructionsOptions) ?LegacyInstructionsBuildOptions {
     if (options) |value| {
         return LegacyInstructionsBuildOptions{
+            .recent_blockhash = value.recent_blockhash,
+            .blockhash_commitment = value.blockhash_commitment,
+            .blockhash_query = value.blockhash_query,
+            .nonce_authority = value.nonce_authority,
+        };
+    }
+
+    return null;
+}
+
+fn versionedInstructionsBuildOptionsFromSendOptions(options: ?SendVersionedInstructionsOptions) ?VersionedInstructionsBuildOptions {
+    if (options) |value| {
+        return VersionedInstructionsBuildOptions{
             .recent_blockhash = value.recent_blockhash,
             .blockhash_commitment = value.blockhash_commitment,
             .blockhash_query = value.blockhash_query,
@@ -106,12 +137,40 @@ fn legacyInstructionsBuildOptionsFromOptions(options: ?LegacyInstructionsOptions
     return null;
 }
 
+fn versionedInstructionsBuildOptionsFromOptions(options: ?VersionedInstructionsOptions) ?VersionedInstructionsBuildOptions {
+    if (options) |value| {
+        return VersionedInstructionsBuildOptions{
+            .recent_blockhash = value.recent_blockhash,
+            .blockhash_commitment = value.blockhash_commitment,
+            .blockhash_query = value.blockhash_query,
+            .nonce_authority = value.nonce_authority,
+        };
+    }
+
+    return null;
+}
+
 fn confirmNonceAccountTransaction(
     self: anytype,
     signed: SignedLegacyTransaction,
     options: ?NonceAccountOptions,
 ) ![]const u8 {
     return try self.sendTransactionAndConfirmTyped(
+        signed,
+        if (options) |value| value.send_transaction_options else null,
+        if (options) |value| value.commitment else null,
+        if (options) |value| value.search_transaction_history else false,
+        if (options) |value| value.timeout_ms else poll_for_signature_confirmation_timeout_ms,
+        if (options) |value| value.poll_interval_ms else signature_poll_interval_ms,
+    );
+}
+
+fn confirmVersionedInstructionsTransaction(
+    self: anytype,
+    signed: SignedVersionedTransaction,
+    options: ?VersionedInstructionsOptions,
+) ![]const u8 {
+    return try self.sendAndConfirmVersionedTransactionTyped(
         signed,
         if (options) |value| value.send_transaction_options else null,
         if (options) |value| value.commitment else null,
@@ -1151,6 +1210,788 @@ pub fn sendAndConfirmLegacyInstructionsWithSpinner(
     return try self.sendAndConfirmLegacyInstructionsWithSpinnerAndOptions(
         payer,
         instructions,
+        signers,
+        .{
+            .recent_blockhash = recent_blockhash,
+            .send_transaction_options = options,
+            .commitment = commitment,
+        },
+    );
+}
+
+pub fn buildOwnedVersionedMessageWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+) !OwnedVersionedMessageV0 {
+    const resolved = try self.resolveBlockhashQuery(blockhash_query);
+    defer self.freeOwnedResolvedBlockhash(resolved);
+
+    const recent_blockhash = try Hash.fromBase58(self.allocator, resolved.blockhash);
+    return switch (blockhash_query) {
+        .nonce_account => |nonce_query| {
+            const authority = nonce_authority orelse return error.MissingNonceAuthority;
+            const nonce_account = try Pubkey.fromBase58(self.allocator, nonce_query.pubkey);
+            var owned_instructions = try prependNonceAdvanceInstruction(
+                self.allocator,
+                nonce_account,
+                authority,
+                instructions,
+            );
+            defer owned_instructions.deinit(self.allocator);
+            return try compileVersionedMessageV0(
+                self.allocator,
+                payer,
+                recent_blockhash,
+                owned_instructions.instructions,
+                address_lookup_tables,
+            );
+        },
+        else => try compileVersionedMessageV0(
+            self.allocator,
+            payer,
+            recent_blockhash,
+            instructions,
+            address_lookup_tables,
+        ),
+    };
+}
+
+pub fn buildOwnedVersionedMessageWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?VersionedInstructionsBuildOptions,
+) !OwnedVersionedMessageV0 {
+    return try self.buildOwnedVersionedMessageWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        resolveVersionedInstructionsBuildQuery(options),
+        if (options) |value| value.nonce_authority else null,
+    );
+}
+
+pub fn buildOwnedVersionedMessageWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?VersionedInstructionsBuildOptions,
+) !OwnedVersionedMessageV0 {
+    return try self.buildOwnedVersionedMessageWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        options,
+    );
+}
+
+pub fn buildVersionedMessageBytesWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+) ![]u8 {
+    var owned = try self.buildOwnedVersionedMessageWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer owned.deinit(self.allocator);
+
+    return try owned.serialize(self.allocator);
+}
+
+pub fn buildVersionedMessageBytesWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?VersionedInstructionsBuildOptions,
+) ![]u8 {
+    var owned = try self.buildOwnedVersionedMessageWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        options,
+    );
+    defer owned.deinit(self.allocator);
+
+    return try owned.serialize(self.allocator);
+}
+
+pub fn buildVersionedMessageBytesWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?VersionedInstructionsBuildOptions,
+) ![]u8 {
+    return try self.buildVersionedMessageBytesWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        options,
+    );
+}
+
+pub fn buildVersionedMessageBase64WithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+) ![]u8 {
+    var owned = try self.buildOwnedVersionedMessageWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer owned.deinit(self.allocator);
+
+    return try owned.toBase64(self.allocator);
+}
+
+pub fn buildVersionedMessageBase64WithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?VersionedInstructionsBuildOptions,
+) ![]u8 {
+    var owned = try self.buildOwnedVersionedMessageWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        options,
+    );
+    defer owned.deinit(self.allocator);
+
+    return try owned.toBase64(self.allocator);
+}
+
+pub fn buildVersionedMessageBase64WithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?VersionedInstructionsBuildOptions,
+) ![]u8 {
+    return try self.buildVersionedMessageBase64WithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        options,
+    );
+}
+
+pub fn buildSignedVersionedTransactionWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+) !SignedVersionedTransaction {
+    var owned = try self.buildOwnedVersionedMessageWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer owned.deinit(self.allocator);
+
+    return try owned.sign(self.allocator, signers);
+}
+
+pub fn buildSignedVersionedTransactionWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    options: ?VersionedInstructionsBuildOptions,
+) !SignedVersionedTransaction {
+    return try self.buildSignedVersionedTransactionWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        resolveVersionedInstructionsBuildQuery(options),
+        if (options) |value| value.nonce_authority else null,
+    );
+}
+
+pub fn buildSignedVersionedTransactionWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    options: ?VersionedInstructionsBuildOptions,
+) !SignedVersionedTransaction {
+    return try self.buildSignedVersionedTransactionWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        options,
+    );
+}
+
+pub fn buildVersionedInstructionsSignedTransaction(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    recent_blockhash: []const u8,
+) !SignedVersionedTransaction {
+    return try self.buildSignedVersionedTransactionWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        .{ .recent_blockhash = recent_blockhash },
+    );
+}
+
+pub fn buildVersionedInstructionsSignedTransactionWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    options: ?VersionedInstructionsBuildOptions,
+) !SignedVersionedTransaction {
+    return try self.buildSignedVersionedTransactionWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        options,
+    );
+}
+
+pub fn buildVersionedInstructionsSignedTransactionWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    options: ?VersionedInstructionsBuildOptions,
+) !SignedVersionedTransaction {
+    return try self.buildVersionedInstructionsSignedTransactionWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        options,
+    );
+}
+
+pub fn buildVersionedTransactionBase64WithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+) ![]u8 {
+    var signed = try self.buildSignedVersionedTransactionWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
+}
+
+pub fn buildVersionedTransactionBase64WithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    options: ?VersionedInstructionsBuildOptions,
+) ![]u8 {
+    var signed = try self.buildSignedVersionedTransactionWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        options,
+    );
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
+}
+
+pub fn buildVersionedTransactionBase64WithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    options: ?VersionedInstructionsBuildOptions,
+) ![]u8 {
+    return try self.buildVersionedTransactionBase64WithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        options,
+    );
+}
+
+pub fn buildVersionedInstructionsTransaction(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    recent_blockhash: []const u8,
+) ![]u8 {
+    return try self.buildVersionedTransactionBase64WithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        .{ .recent_blockhash = recent_blockhash },
+    );
+}
+
+pub fn buildVersionedInstructionsTransactionWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    options: ?VersionedInstructionsBuildOptions,
+) ![]u8 {
+    return try self.buildVersionedTransactionBase64WithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        options,
+    );
+}
+
+pub fn buildVersionedInstructionsTransactionWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    options: ?VersionedInstructionsBuildOptions,
+) ![]u8 {
+    return try self.buildVersionedInstructionsTransactionWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        options,
+    );
+}
+
+pub fn getFeeForVersionedInstructionsResponseWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    var owned = try self.buildOwnedVersionedMessageWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer owned.deinit(self.allocator);
+
+    return try self.getFeeForVersionedMessageResponseTyped(owned.message, commitment);
+}
+
+pub fn getFeeForVersionedInstructionsResponseWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?VersionedInstructionsBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForVersionedInstructionsResponseWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        resolveVersionedInstructionsBuildQuery(options),
+        if (options) |value| value.nonce_authority else null,
+        commitment,
+    );
+}
+
+pub fn getFeeForVersionedInstructionsResponseWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?VersionedInstructionsBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForVersionedInstructionsResponseWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        options,
+        commitment,
+    );
+}
+
+pub fn getFeeForVersionedInstructionsResponse(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    recent_blockhash: []const u8,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForVersionedInstructionsResponseWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        .{ .recent_blockhash = recent_blockhash },
+        commitment,
+    );
+}
+
+pub fn getFeeForVersionedInstructionsWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    const response = try self.getFeeForVersionedInstructionsResponseWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        blockhash_query,
+        nonce_authority,
+        commitment,
+    );
+    return FeeForMessage{ .value = response.value };
+}
+
+pub fn getFeeForVersionedInstructionsWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?VersionedInstructionsBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    return try self.getFeeForVersionedInstructionsWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        resolveVersionedInstructionsBuildQuery(options),
+        if (options) |value| value.nonce_authority else null,
+        commitment,
+    );
+}
+
+pub fn getFeeForVersionedInstructionsWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?VersionedInstructionsBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    return try self.getFeeForVersionedInstructionsWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        options,
+        commitment,
+    );
+}
+
+pub fn getFeeForVersionedInstructions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    recent_blockhash: []const u8,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    return try self.getFeeForVersionedInstructionsWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        .{ .recent_blockhash = recent_blockhash },
+        commitment,
+    );
+}
+
+pub fn simulateVersionedInstructionsWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+    options: ?SimulateTransactionOptions,
+) !SimulatedTransaction {
+    var signed = try self.buildSignedVersionedTransactionWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer signed.deinit(self.allocator);
+    return try self.simulateVersionedTransactionTyped(signed, options);
+}
+
+pub fn simulateVersionedInstructionsWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    build_options: ?VersionedInstructionsBuildOptions,
+    simulate_options: ?SimulateTransactionOptions,
+) !SimulatedTransaction {
+    return try self.simulateVersionedInstructionsWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        resolveVersionedInstructionsBuildQuery(build_options),
+        if (build_options) |value| value.nonce_authority else null,
+        simulate_options,
+    );
+}
+
+pub fn simulateVersionedInstructionsWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    build_options: ?VersionedInstructionsBuildOptions,
+    simulate_options: ?SimulateTransactionOptions,
+) !SimulatedTransaction {
+    return try self.simulateVersionedInstructionsWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        build_options,
+        simulate_options,
+    );
+}
+
+pub fn simulateVersionedInstructions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    recent_blockhash: []const u8,
+    options: ?SimulateTransactionOptions,
+) !SimulatedTransaction {
+    return try self.simulateVersionedInstructionsWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        .{ .recent_blockhash = recent_blockhash },
+        options,
+    );
+}
+
+pub fn sendVersionedInstructionsWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+    options: ?SendVersionedInstructionsOptions,
+) ![]const u8 {
+    const signed_tx_base64 = try self.buildVersionedTransactionBase64WithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer self.allocator.free(signed_tx_base64);
+
+    return try self.sendTransaction(
+        signed_tx_base64,
+        if (options) |value| value.send_transaction_options else null,
+    );
+}
+
+pub fn sendVersionedInstructionsWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    options: ?SendVersionedInstructionsOptions,
+) ![]const u8 {
+    return try self.sendVersionedInstructionsWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        resolveVersionedInstructionsBuildQuery(versionedInstructionsBuildOptionsFromSendOptions(options)),
+        if (options) |value| value.nonce_authority else null,
+        options,
+    );
+}
+
+pub fn sendVersionedInstructionsWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    options: ?SendVersionedInstructionsOptions,
+) ![]const u8 {
+    return try self.sendVersionedInstructionsWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        options,
+    );
+}
+
+pub fn sendVersionedInstructions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    recent_blockhash: []const u8,
+    options: ?SendTransactionOptions,
+) ![]const u8 {
+    return try self.sendVersionedInstructionsWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        .{
+            .recent_blockhash = recent_blockhash,
+            .send_transaction_options = options,
+        },
+    );
+}
+
+pub fn sendAndConfirmVersionedInstructionsWithBlockhashQuery(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    blockhash_query: BlockhashQuery,
+    nonce_authority: ?Pubkey,
+    options: ?VersionedInstructionsOptions,
+) ![]const u8 {
+    var signed = try self.buildSignedVersionedTransactionWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        blockhash_query,
+        nonce_authority,
+    );
+    defer signed.deinit(self.allocator);
+    return try confirmVersionedInstructionsTransaction(self, signed, options);
+}
+
+pub fn sendAndConfirmVersionedInstructionsWithOptions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    options: ?VersionedInstructionsOptions,
+) ![]const u8 {
+    return try self.sendAndConfirmVersionedInstructionsWithBlockhashQuery(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        resolveVersionedInstructionsBuildQuery(versionedInstructionsBuildOptionsFromOptions(options)),
+        if (options) |value| value.nonce_authority else null,
+        options,
+    );
+}
+
+pub fn sendAndConfirmVersionedInstructionsWithConfig(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    options: ?VersionedInstructionsOptions,
+) ![]const u8 {
+    return try self.sendAndConfirmVersionedInstructionsWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
+        signers,
+        options,
+    );
+}
+
+pub fn sendAndConfirmVersionedInstructions(
+    self: anytype,
+    payer: Pubkey,
+    instructions: []const Instruction,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+    recent_blockhash: []const u8,
+    commitment: ?Commitment,
+    options: ?SendTransactionOptions,
+) ![]const u8 {
+    return try self.sendAndConfirmVersionedInstructionsWithOptions(
+        payer,
+        instructions,
+        address_lookup_tables,
         signers,
         .{
             .recent_blockhash = recent_blockhash,

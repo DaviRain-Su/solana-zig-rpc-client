@@ -347,6 +347,12 @@ pub fn getFeeForVersionedMessageTyped(self: anytype, message: VersionedMessageV0
     return try self.getFeeForMessage(encoded_message, commitment);
 }
 
+pub fn getFeeForVersionedMessageResponseTyped(self: anytype, message: VersionedMessageV0, commitment: ?Commitment) !FeeForMessageResponse {
+    const encoded_message = try message.toBase64(self.allocator);
+    defer self.allocator.free(encoded_message);
+    return try self.getFeeForMessageResponse(encoded_message, commitment);
+}
+
 pub fn getFeeForMessageResponseTyped(self: anytype, message: LegacyMessage, commitment: ?Commitment) !FeeForMessageResponse {
     const encoded_message = try message.toBase64(self.allocator);
     defer self.allocator.free(encoded_message);
