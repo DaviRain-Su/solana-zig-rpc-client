@@ -749,6 +749,26 @@ pub const RpcClient = struct {
         return RpcClient.newWithRequestSenderAndOptions(allocator, sender, .{});
     }
 
+    pub fn newWithBorrowedMockSender(
+        allocator: Allocator,
+        sender: *MockSenderType,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSender(
+            allocator,
+            RequestSender.fromMockSender(sender),
+        );
+    }
+
+    pub fn newWithOwnedMockSender(
+        allocator: Allocator,
+        sender: MockSenderType,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSender(
+            allocator,
+            try RequestSender.fromOwnedMockSender(allocator, sender),
+        );
+    }
+
     pub fn newWithRequestSenderAndCommitment(
         allocator: Allocator,
         sender: RequestSenderType,

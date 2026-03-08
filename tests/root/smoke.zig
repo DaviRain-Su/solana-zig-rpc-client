@@ -924,6 +924,46 @@ test "root.RequestSender.fromMockSender borrows scripted mock sender state" {
     try std.testing.expectEqual(@as(usize, 2), sender.requestCount());
 }
 
+test "root.newWithBorrowedMockSender borrows scripted mock sender state" {
+    const allocator = std.testing.allocator;
+
+    var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
+    try sender.pushSlotResult(333);
+
+    var rpc = try client.RpcClient.newWithBorrowedMockSender(
+        allocator,
+        &sender,
+    );
+    defer rpc.deinit();
+
+    const slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 333), slot);
+    try std.testing.expect(!rpc.isMock());
+    try std.testing.expect(rpc.hasRequestSender());
+    try std.testing.expectEqual(@as(usize, 1), sender.requestCount());
+    try std.testing.expectEqualStrings("getSlot", sender.capturedRequests()[0].method);
+}
+
+test "root.newWithOwnedMockSender transfers ownership of scripted sender state" {
+    const allocator = std.testing.allocator;
+
+    var sender = client.MockSender.init(allocator);
+    try sender.pushBoolResult(false);
+
+    var rpc = try client.RpcClient.newWithOwnedMockSender(
+        allocator,
+        sender,
+    );
+    defer rpc.deinit();
+
+    const health = try rpc.getHealth();
+    defer allocator.free(health);
+    try std.testing.expectEqualStrings("false", health);
+    try std.testing.expect(!rpc.isMock());
+    try std.testing.expect(rpc.hasRequestSender());
+}
+
 test "root.RequestSender.fromOwnedMockSender supports scripted sender replacement" {
     const allocator = std.testing.allocator;
     var replacement_context = RequestSenderContext{ .base_slot = 800 };
