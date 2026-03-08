@@ -167,6 +167,12 @@ const LogsCallbackTracker = struct {
     last_signature: ?[]const u8 = null,
 };
 
+const LogsCloseCallbackTracker = struct {
+    mutex: std.Thread.Mutex = .{},
+    count: usize = 0,
+    first_is_close1: ?bool = null,
+};
+
 const ProgramCallbackTracker = struct {
     mutex: std.Thread.Mutex = .{},
     count: usize = 0,
@@ -275,6 +281,20 @@ fn logsCallback(
 
     tracker.count += 1;
     tracker.last_signature = notification.notification.value.signature;
+}
+
+fn logsCloseCallback(
+    context: ?*anyopaque,
+    notification: client.OwnedPubsubNotification(client.LogsNotificationValue),
+) void {
+    const tracker: *LogsCloseCallbackTracker = @ptrCast(@alignCast(context.?));
+    tracker.mutex.lock();
+    defer tracker.mutex.unlock();
+
+    tracker.count += 1;
+    if (tracker.count == 1) {
+        tracker.first_is_close1 = std.mem.eql(u8, notification.notification.value.signature, "close1");
+    }
 }
 
 fn slowLogsCallback(
@@ -2663,6 +2683,55 @@ test "root.PubsubClient logsSubscribeWithCallback reports droppedCount when queu
         }
 
         try std.testing.expect(subscription.droppedCount() > 0);
+    }
+
+    try std.testing.expect(app.logs_unsubscribe_seen);
+}
+
+test "root.PubsubClient logsSubscribeWithCallback keeps first notification on close-overflow" {
+    const port = try reservePort();
+    var server = try websocket.Server(TestHandler).init(std.testing.allocator, .{
+        .port = port,
+        .address = "127.0.0.1",
+    });
+    defer server.deinit();
+
+    var app = TestApp{ .allocator = std.testing.allocator };
+    const server_thread = try server.listenInNewThread(&app);
+    defer server_thread.join();
+    defer server.stop();
+
+    const endpoint = try std.fmt.allocPrint(std.testing.allocator, "ws://127.0.0.1:{d}/", .{port});
+    defer std.testing.allocator.free(endpoint);
+
+    var pubsub = try client.PubsubClient.initWithOptions(std.testing.allocator, endpoint, .{
+        .subscription_queue_limit = 1,
+        .queue_overflow_policy = .close_subscription,
+    });
+    defer pubsub.deinit();
+
+    var tracker = LogsCloseCallbackTracker{};
+    {
+        var subscription = try pubsub.logsSubscribeWithCallback(
+            .{ .mentions = "BurstClose11111111111111111111111111111111111" },
+            .{ .commitment = .confirmed },
+            &tracker,
+            logsCloseCallback,
+        );
+        defer subscription.deinit();
+
+        try waitForClosed(subscription.rawSubscription(), 2000);
+        const close_reason = subscription.closeReason();
+        try std.testing.expect(close_reason == client.PubsubCloseReason.queue_overflow or close_reason == client.PubsubCloseReason.transport_closed);
+        if (close_reason == client.PubsubCloseReason.queue_overflow) {
+            try std.testing.expectEqual(@as(usize, 1), subscription.droppedCount());
+        }
+
+        try waitForLogsCallbackCount(&tracker, 1, 2000);
+        tracker.mutex.lock();
+        defer tracker.mutex.unlock();
+        try std.testing.expectEqual(@as(usize, 1), tracker.count);
+        try std.testing.expectEqual(@as(?bool, true), tracker.first_is_close1);
     }
 
     try std.testing.expect(app.logs_unsubscribe_seen);
