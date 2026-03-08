@@ -1725,7 +1725,31 @@ pub fn buildVersionedTransferMessageBytesWithNonce(
     lamports: u64,
     address_lookup_tables: []const AddressLookupTableAccount,
 ) ![]u8 {
-    const transfer = SystemProgram.transfer(payer, destination, lamports);
+    return try buildVersionedNonceTransferMessageBytes(
+        allocator,
+        payer,
+        payer,
+        nonce_account,
+        authority,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildVersionedNonceTransferMessageBytes(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    const transfer = SystemProgram.transfer(sender, destination, lamports);
     const instructions = [_]Instruction{transfer.instruction()};
     return try buildVersionedMessageV0BytesWithNonceInstructions(
         allocator,
@@ -1768,9 +1792,34 @@ pub fn buildVersionedTransferMessageBase64WithNonce(
     lamports: u64,
     address_lookup_tables: []const AddressLookupTableAccount,
 ) ![]u8 {
-    const message_bytes = try buildVersionedTransferMessageBytesWithNonce(
+    return try buildVersionedNonceTransferMessageBase64(
         allocator,
         payer,
+        payer,
+        nonce_account,
+        authority,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildVersionedNonceTransferMessageBase64(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    const message_bytes = try buildVersionedNonceTransferMessageBytes(
+        allocator,
+        payer,
+        sender,
         nonce_account,
         authority,
         destination,
@@ -1793,7 +1842,33 @@ pub fn buildSignedVersionedNonceTransferTransaction(
     address_lookup_tables: []const AddressLookupTableAccount,
     signers: []const Keypair,
 ) !SignedVersionedTransaction {
-    const transfer = SystemProgram.transfer(payer, destination, lamports);
+    return try buildSignedVersionedNonceTransferTransactionWithSender(
+        allocator,
+        payer,
+        payer,
+        nonce_account,
+        authority,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+        signers,
+    );
+}
+
+pub fn buildSignedVersionedNonceTransferTransactionWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) !SignedVersionedTransaction {
+    const transfer = SystemProgram.transfer(sender, destination, lamports);
     const instructions = [_]Instruction{transfer.instruction()};
     return try buildSignedVersionedTransactionV0WithNonceInstructions(
         allocator,
@@ -1818,9 +1893,36 @@ pub fn buildVersionedNonceTransferTransactionBase64(
     address_lookup_tables: []const AddressLookupTableAccount,
     signers: []const Keypair,
 ) ![]u8 {
-    var signed = try buildSignedVersionedNonceTransferTransaction(
+    return try buildVersionedNonceTransferTransactionBase64WithSender(
         allocator,
         payer,
+        payer,
+        nonce_account,
+        authority,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+        signers,
+    );
+}
+
+pub fn buildVersionedNonceTransferTransactionBase64WithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    signers: []const Keypair,
+) ![]u8 {
+    var signed = try buildSignedVersionedNonceTransferTransactionWithSender(
+        allocator,
+        payer,
+        sender,
         nonce_account,
         authority,
         destination,

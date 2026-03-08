@@ -1569,6 +1569,107 @@ test "root.buildVersionedNonceTransferMessageBase64WithOptions supports distinct
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, nonce_account_base58) != null);
 }
 
+test "root.buildVersionedNonceTransferMessageBase64 builds distinct payer sender and nonce authority" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const recent_blockhash = [_]u8{0x56} ** 32;
+
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_raw.secret_key.toBytes());
+    const sender = try Keypair.fromSecretKeyBytes(sender_raw.secret_key.toBytes());
+    const nonce_authority = try Keypair.fromSecretKeyBytes(nonce_authority_raw.secret_key.toBytes());
+    const nonce_account = Pubkey.fromBytes(nonce_account_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+
+    const encoded = try client.buildVersionedNonceTransferMessageBase64(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        nonce_account,
+        nonce_authority.public_key,
+        destination,
+        Hash.fromBytes(recent_blockhash),
+        1_000,
+        &.{},
+    );
+    defer allocator.free(encoded);
+
+    const transfer = SystemProgram.transfer(sender.public_key, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+    const expected_bytes = try client.buildVersionedMessageV0BytesWithNonceInstructions(
+        allocator,
+        fee_payer.public_key,
+        nonce_account,
+        nonce_authority.public_key,
+        Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+        &.{},
+    );
+    defer allocator.free(expected_bytes);
+    const expected = try client.encodeBase64(allocator, expected_bytes);
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "root.buildVersionedNonceTransferTransactionBase64WithSender builds distinct payer sender and nonce authority" {
+    const allocator = std.testing.allocator;
+
+    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+
+    const recent_blockhash = [_]u8{0x57} ** 32;
+
+    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
+    const sender_secret_key = sender_raw.secret_key.toBytes();
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const fee_payer = try Keypair.fromSecretKeyBytes(fee_payer_secret_key);
+    const sender = try Keypair.fromSecretKeyBytes(sender_secret_key);
+    const nonce_authority = try Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+    const nonce_account = Pubkey.fromBytes(nonce_account_raw.public_key.toBytes());
+    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
+
+    const encoded = try client.buildVersionedNonceTransferTransactionBase64WithSender(
+        allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        nonce_account,
+        nonce_authority.public_key,
+        destination,
+        Hash.fromBytes(recent_blockhash),
+        1_000,
+        &.{},
+        &.{ fee_payer, sender, nonce_authority },
+    );
+    defer allocator.free(encoded);
+
+    const transfer = SystemProgram.transfer(sender.public_key, destination, 1_000);
+    const instructions = [_]Instruction{transfer.instruction()};
+    var expected = try client.buildSignedVersionedTransactionV0WithNonceInstructions(
+        allocator,
+        fee_payer.public_key,
+        nonce_account,
+        nonce_authority.public_key,
+        Hash.fromBytes(recent_blockhash),
+        instructions[0..],
+        &.{},
+        &.{ fee_payer, sender, nonce_authority },
+    );
+    defer expected.deinit(allocator);
+    const expected_encoded = try expected.toBase64(allocator);
+    defer allocator.free(expected_encoded);
+
+    try std.testing.expectEqualStrings(expected_encoded, encoded);
+}
+
 test "root.buildVersionedTransferTransaction with fixed blockhash returns versioned payload" {
     const allocator = std.testing.allocator;
 
