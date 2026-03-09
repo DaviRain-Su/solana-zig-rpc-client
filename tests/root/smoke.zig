@@ -1541,6 +1541,38 @@ test "root.RequestSender kind helpers distinguish callback borrowed and owned mo
     try std.testing.expect(owned_sender.isOwnedMockSender());
 }
 
+test "root.RequestSender constructor aliases preserve callback and mock kinds" {
+    const allocator = std.testing.allocator;
+    var callback_context = RequestSenderContext{ .base_slot = 3410 };
+    var callback_deinit_context = RequestSenderContext{ .base_slot = 3420 };
+    var borrowed_mock = client.MockSender.init(allocator);
+    defer borrowed_mock.deinit();
+    var owned_mock = client.MockSender.init(allocator);
+    try owned_mock.pushSlotResult(1);
+
+    const callback_sender = client.RequestSender.initCallback(
+        &callback_context,
+        customRequestSender,
+    );
+    try std.testing.expectEqual(client.RequestSender.Kind.callback, callback_sender.kind());
+
+    var callback_deinit_sender = client.RequestSender.initCallbackWithDeinit(
+        &callback_deinit_context,
+        customRequestSender,
+        customRequestSenderDeinit,
+    );
+    try std.testing.expectEqual(client.RequestSender.Kind.callback, callback_deinit_sender.kind());
+    callback_deinit_sender.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), callback_deinit_context.deinit_count);
+
+    const borrowed_sender = client.RequestSender.initBorrowedMockSender(&borrowed_mock);
+    try std.testing.expectEqual(client.RequestSender.Kind.borrowed_mock, borrowed_sender.kind());
+
+    var owned_sender = try client.RequestSender.initOwnedMockSender(allocator, owned_mock);
+    defer owned_sender.deinit(allocator);
+    try std.testing.expectEqual(client.RequestSender.Kind.owned_mock, owned_sender.kind());
+}
+
 test "root.RequestSender.initMock creates owned mock-backed sender" {
     const allocator = std.testing.allocator;
 

@@ -65,6 +65,21 @@ pub const RequestSender = struct {
         };
     }
 
+    pub fn initCallback(
+        context: ?*anyopaque,
+        callback: Callback,
+    ) RequestSender {
+        return RequestSender.init(context, callback);
+    }
+
+    pub fn initCallbackWithDeinit(
+        context: ?*anyopaque,
+        callback: Callback,
+        deinit_callback: DeinitCallback,
+    ) RequestSender {
+        return RequestSender.initWithDeinit(context, callback, deinit_callback);
+    }
+
     pub fn initMock(allocator: Allocator, responses: []const MockResponse) !RequestSender {
         return try RequestSender.fromOwnedMockSender(
             allocator,
@@ -80,6 +95,14 @@ pub const RequestSender = struct {
     }
 
     pub fn initMockWithSender(allocator: Allocator, sender: MockSender) !RequestSender {
+        return try RequestSender.fromOwnedMockSender(allocator, sender);
+    }
+
+    pub fn initBorrowedMockSender(sender: *MockSender) RequestSender {
+        return RequestSender.fromMockSender(sender);
+    }
+
+    pub fn initOwnedMockSender(allocator: Allocator, sender: MockSender) !RequestSender {
         return try RequestSender.fromOwnedMockSender(allocator, sender);
     }
 
