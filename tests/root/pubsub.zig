@@ -1908,6 +1908,8 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expect(!pubsub.isReconnectUnlimited());
     try std.testing.expectEqual(@as(?u32, 7), pubsub.getReconnectMaxAttempts());
     try std.testing.expectEqual(@as(?u32, 7), pubsub.getRemainingReconnectAttempts());
+    try std.testing.expect(pubsub.hasRemainingReconnectAttempts());
+    try std.testing.expect(!pubsub.isReconnectExhausted());
     try std.testing.expectEqual(@as(usize, 5), pubsub.getSubscriptionQueueLimit());
     try std.testing.expectEqual(client.PubsubQueueOverflowPolicy.close_subscription, pubsub.getQueueOverflowPolicy());
     try std.testing.expectEqual(@as(u32, 150), pubsub.getHandshakeTimeoutMs());
@@ -1918,6 +1920,7 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expectEqual(@as(usize, 2048), pubsub.getBufferSize());
     try std.testing.expectEqual(@as(u32, 0), pubsub.getReconnectAttemptCount());
     try std.testing.expect(!pubsub.getReconnectLimitReached());
+    try std.testing.expect(!pubsub.isReconnectLimitReached());
 }
 
 test "root.PubsubClient mutable policy setters update runtime values" {
@@ -1946,6 +1949,9 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.isReconnectAttemptLimited());
     try std.testing.expect(pubsub.isReconnectUnlimited());
     try std.testing.expectEqual(@as(?u32, null), pubsub.getRemainingReconnectAttempts());
+    try std.testing.expect(pubsub.hasRemainingReconnectAttempts());
+    try std.testing.expect(!pubsub.isReconnectExhausted());
+    try std.testing.expect(!pubsub.isReconnectLimitReached());
     try std.testing.expect(!pubsub.isWriteTimeoutEnabled());
 
     pubsub.setAutoReconnectEnabled(false);
@@ -1977,6 +1983,8 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.isReconnectUnlimited());
     try std.testing.expectEqual(@as(?u32, 9), pubsub.getReconnectMaxAttempts());
     try std.testing.expectEqual(@as(?u32, 9), pubsub.getRemainingReconnectAttempts());
+    try std.testing.expect(pubsub.hasRemainingReconnectAttempts());
+    try std.testing.expect(!pubsub.isReconnectExhausted());
     try std.testing.expectEqual(@as(usize, 13), pubsub.getSubscriptionQueueLimit());
     try std.testing.expectEqual(client.PubsubQueueOverflowPolicy.drop_newest, pubsub.getQueueOverflowPolicy());
     try std.testing.expectEqual(@as(u32, 8_765), pubsub.getHandshakeTimeoutMs());

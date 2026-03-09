@@ -4484,6 +4484,15 @@ pub const PubsubClient = struct {
         return max_attempts -| self.state.total_reconnect_attempts;
     }
 
+    pub fn hasRemainingReconnectAttempts(self: *const Self) bool {
+        const remaining_attempts = self.getRemainingReconnectAttempts() orelse return true;
+        return remaining_attempts > 0;
+    }
+
+    pub fn isReconnectExhausted(self: *const Self) bool {
+        return !self.hasRemainingReconnectAttempts();
+    }
+
     pub fn getSubscriptionQueueLimit(self: *const Self) usize {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
@@ -4620,6 +4629,10 @@ pub const PubsubClient = struct {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
         return self.state.reconnect_limit_reached;
+    }
+
+    pub fn isReconnectLimitReached(self: *const Self) bool {
+        return self.getReconnectLimitReached();
     }
 
     pub fn subscribeRaw(
