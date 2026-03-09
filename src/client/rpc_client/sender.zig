@@ -80,6 +80,14 @@ pub const RequestSender = struct {
         return RequestSender.initWithDeinit(context, callback, deinit_callback);
     }
 
+    pub fn initCallbackDeinit(
+        context: ?*anyopaque,
+        callback: Callback,
+        deinit_callback: DeinitCallback,
+    ) RequestSender {
+        return RequestSender.initCallbackWithDeinit(context, callback, deinit_callback);
+    }
+
     pub fn initMock(allocator: Allocator, responses: []const MockResponse) !RequestSender {
         return try RequestSender.fromOwnedMockSender(
             allocator,
@@ -94,6 +102,10 @@ pub const RequestSender = struct {
         );
     }
 
+    pub fn initMockHandler(allocator: Allocator, handler: MockRequestHandler) !RequestSender {
+        return try RequestSender.initMockWithHandler(allocator, handler);
+    }
+
     pub fn initMockWithSender(allocator: Allocator, sender: MockSender) !RequestSender {
         return try RequestSender.fromOwnedMockSender(allocator, sender);
     }
@@ -102,8 +114,16 @@ pub const RequestSender = struct {
         return RequestSender.fromMockSender(sender);
     }
 
+    pub fn initBorrowedMock(sender: *MockSender) RequestSender {
+        return RequestSender.initBorrowedMockSender(sender);
+    }
+
     pub fn initOwnedMockSender(allocator: Allocator, sender: MockSender) !RequestSender {
         return try RequestSender.fromOwnedMockSender(allocator, sender);
+    }
+
+    pub fn initOwnedMock(allocator: Allocator, sender: MockSender) !RequestSender {
+        return try RequestSender.initOwnedMockSender(allocator, sender);
     }
 
     pub fn initMockSender(allocator: Allocator, sender: MockSender) !RequestSender {
