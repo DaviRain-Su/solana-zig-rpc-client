@@ -4556,6 +4556,18 @@ pub const PubsubClient = struct {
         return self.state.options.queue_overflow_policy;
     }
 
+    pub fn isQueueOverflowDropOldest(self: *const Self) bool {
+        return self.getQueueOverflowPolicy() == .drop_oldest;
+    }
+
+    pub fn isQueueOverflowDropNewest(self: *const Self) bool {
+        return self.getQueueOverflowPolicy() == .drop_newest;
+    }
+
+    pub fn isQueueOverflowCloseSubscription(self: *const Self) bool {
+        return self.getQueueOverflowPolicy() == .close_subscription;
+    }
+
     pub fn getHandshakeTimeoutMs(self: *const Self) u32 {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
