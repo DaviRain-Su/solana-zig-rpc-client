@@ -1931,6 +1931,8 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expect(!pubsub.isQueueOverflowDropOldest());
     try std.testing.expect(!pubsub.isQueueOverflowDropNewest());
     try std.testing.expect(pubsub.isQueueOverflowCloseSubscription());
+    try std.testing.expect(!pubsub.isQueueOverflowDropping());
+    try std.testing.expect(pubsub.isQueueOverflowClosing());
     try std.testing.expectEqual(@as(u32, 150), pubsub.getHandshakeTimeoutMs());
     try std.testing.expect(pubsub.hasWriteTimeout());
     try std.testing.expect(pubsub.isWriteTimeoutEnabled());
@@ -1984,6 +1986,8 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(pubsub.isQueueOverflowDropOldest());
     try std.testing.expect(!pubsub.isQueueOverflowDropNewest());
     try std.testing.expect(!pubsub.isQueueOverflowCloseSubscription());
+    try std.testing.expect(pubsub.isQueueOverflowDropping());
+    try std.testing.expect(!pubsub.isQueueOverflowClosing());
 
     pubsub.setAutoReconnectEnabled(false);
     pubsub.setHeartbeatTimeoutMs(12_345);
@@ -2028,6 +2032,8 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.isQueueOverflowDropOldest());
     try std.testing.expect(pubsub.isQueueOverflowDropNewest());
     try std.testing.expect(!pubsub.isQueueOverflowCloseSubscription());
+    try std.testing.expect(pubsub.isQueueOverflowDropping());
+    try std.testing.expect(!pubsub.isQueueOverflowClosing());
     try std.testing.expectEqual(@as(u32, 8_765), pubsub.getHandshakeTimeoutMs());
     try std.testing.expect(pubsub.hasWriteTimeout());
     try std.testing.expect(pubsub.isWriteTimeoutEnabled());
