@@ -2968,6 +2968,31 @@ test "root.RequestSender.replaceWithOwnedMockSender installs owned mock sender" 
     try std.testing.expectEqualStrings("ok", health);
 }
 
+test "root.RequestSender.replaceWithMockSender aliases owned mock sender replacement" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 3310 };
+    var owned_mock_sender = client.MockSender.init(allocator);
+    try owned_mock_sender.pushSlotResult(3311);
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.init(
+            &context,
+            customRequestSender,
+        ),
+    );
+    defer rpc.deinit();
+
+    const sender = try rpc.requestSender();
+    try sender.replaceWithMockSender(allocator, owned_mock_sender);
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 3311), slot);
+}
+
 test "root.RequestSender.replaceWithCallback mutates RpcClient backend to callback sender" {
     const allocator = std.testing.allocator;
     var mock_sender = client.MockSender.init(allocator);

@@ -148,6 +148,14 @@ pub const RequestSender = struct {
         self.replace(allocator, replacement);
     }
 
+    pub fn replaceWithMockSender(
+        self: *RequestSender,
+        allocator: Allocator,
+        sender: MockSender,
+    ) !void {
+        try self.replaceWithOwnedMockSender(allocator, sender);
+    }
+
     pub fn replaceWithMock(self: *RequestSender, allocator: Allocator, responses: []const MockResponse) !void {
         try self.replaceWithOwnedMockSender(
             allocator,
