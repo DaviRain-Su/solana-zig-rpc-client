@@ -4342,6 +4342,7 @@ test "root.RequestSender boolean mock helpers reflect mock state" {
     try std.testing.expect(request_sender.isMockScriptSatisfied());
     try mock_sender_assertions.expectMockRequestSenderScriptMissCount(&request_sender, 0);
     try mock_sender_assertions.expectMockRequestSenderMatchedRouteCount(&request_sender, 0);
+    try mock_sender_assertions.expectMockRequestSenderPersistentRouteCount(&request_sender, 0);
 
     try request_sender.pushMockSlotResult(2702);
     try request_sender.pushMockResultRoute(.{
@@ -4357,6 +4358,7 @@ test "root.RequestSender boolean mock helpers reflect mock state" {
     try std.testing.expect(!request_sender.isMockScriptSatisfied());
     try mock_sender_assertions.expectMockRequestSenderScriptMissCount(&request_sender, 0);
     try mock_sender_assertions.expectMockRequestSenderMatchedRouteCount(&request_sender, 0);
+    try mock_sender_assertions.expectMockRequestSenderPersistentRouteCount(&request_sender, 0);
 
     var rpc = try client.RpcClient.newWithRequestSender(allocator, request_sender);
     defer rpc.deinit();
@@ -4366,6 +4368,7 @@ test "root.RequestSender boolean mock helpers reflect mock state" {
     try std.testing.expect(request_sender.hasCapturedMockRequests());
     try std.testing.expect(!request_sender.isMockScriptSatisfied());
     try mock_sender_assertions.expectMockRequestSenderMatchedRouteCount(&request_sender, 0);
+    try mock_sender_assertions.expectMockRequestSenderPersistentRouteCount(&request_sender, 0);
 
     const health = try rpc.getHealth();
     defer allocator.free(health);
@@ -4373,6 +4376,7 @@ test "root.RequestSender boolean mock helpers reflect mock state" {
     try std.testing.expect(request_sender.isMockScriptExhausted());
     try std.testing.expect(request_sender.isMockScriptSatisfied());
     try mock_sender_assertions.expectMockRequestSenderMatchedRouteCount(&request_sender, 1);
+    try mock_sender_assertions.expectMockRequestSenderPersistentRouteCount(&request_sender, 0);
 }
 
 test "root.RequestSender mock helpers reject callback request sender" {
@@ -5062,6 +5066,7 @@ test "root.MockSender boolean helpers reflect mock state" {
     try std.testing.expect(mock_sender.isScriptSatisfied());
     try mock_sender_assertions.expectMockSenderScriptMissCount(&mock_sender, 0);
     try mock_sender_assertions.expectMockSenderMatchedRouteCount(&mock_sender, 0);
+    try mock_sender_assertions.expectMockSenderPersistentRouteCount(&mock_sender, 0);
 
     try mock_sender.pushSlotResult(3399);
     try mock_sender.pushRoute(try client.MockRouteBuilder.init()
@@ -5099,6 +5104,7 @@ test "root.MockSender boolean helpers reflect mock state" {
     try std.testing.expect(mock_sender.hasRoutes());
     try std.testing.expect(!mock_sender.hasMatchedRoutes());
     try mock_sender_assertions.expectMockSenderMatchedRouteCount(&mock_sender, 0);
+    try mock_sender_assertions.expectMockSenderPersistentRouteCount(&mock_sender, 0);
     try std.testing.expect(!mock_sender.hasRouteMatch("health"));
     try std.testing.expect(mock_sender.hasPendingScriptedDispatches());
     try std.testing.expect(!mock_sender.isScriptSatisfied());
@@ -5109,6 +5115,7 @@ test "root.MockSender boolean helpers reflect mock state" {
     try std.testing.expect(!mock_sender.hasRoutes());
     try std.testing.expect(mock_sender.hasMatchedRoutes());
     try mock_sender_assertions.expectMockSenderMatchedRouteCount(&mock_sender, 1);
+    try mock_sender_assertions.expectMockSenderPersistentRouteCount(&mock_sender, 0);
     try std.testing.expect(mock_sender.hasRouteMatch("health"));
     try std.testing.expect(!mock_sender.hasPendingScriptedDispatches());
     try std.testing.expect(mock_sender.isScriptExhausted());
@@ -6502,6 +6509,7 @@ test "root.RpcClient boolean mock helpers reflect mock state" {
     try std.testing.expect(rpc.isMockScriptExhausted());
     try std.testing.expect(rpc.isMockScriptSatisfied());
     try mock_sender_assertions.expectMockRpcMatchedRouteCount(&rpc, 0);
+    try mock_sender_assertions.expectMockRpcPersistentRouteCount(&rpc, 0);
 
     try rpc.pushMockResultRoute(.{
         .method = "getSlot",
@@ -6517,6 +6525,7 @@ test "root.RpcClient boolean mock helpers reflect mock state" {
     try std.testing.expect(!rpc.isMockScriptExhausted());
     try std.testing.expect(!rpc.isMockScriptSatisfied());
     try mock_sender_assertions.expectMockRpcMatchedRouteCount(&rpc, 0);
+    try mock_sender_assertions.expectMockRpcPersistentRouteCount(&rpc, 0);
 
     _ = try rpc.getSlot(.processed);
     try std.testing.expect(rpc.hasCapturedMockRequests());
@@ -6527,6 +6536,7 @@ test "root.RpcClient boolean mock helpers reflect mock state" {
     try std.testing.expect(!rpc.isMockScriptExhausted());
     try std.testing.expect(!rpc.isMockScriptSatisfied());
     try mock_sender_assertions.expectMockRpcMatchedRouteCount(&rpc, 0);
+    try mock_sender_assertions.expectMockRpcPersistentRouteCount(&rpc, 0);
 
     _ = try rpc.getSlot(.processed);
     try std.testing.expect(!rpc.hasMockRoutes());
