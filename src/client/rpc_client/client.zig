@@ -1641,6 +1641,127 @@ pub const RpcClient = struct {
         return RpcClient.newWithMockRequestSenderWithHandlerAndOptions(allocator, handler, options);
     }
 
+    pub fn newMockRequestHandler(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+    ) !RpcClient {
+        return RpcClient.newWithMockRequestSenderWithHandler(allocator, handler);
+    }
+
+    pub fn newMockRequestHandlerAndOptions(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithMockRequestSenderWithHandlerAndOptions(allocator, handler, options);
+    }
+
+    pub fn newMockRequestHandlerAndRequestSenderOptions(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithMockRequestSenderWithHandlerAndRequestSenderOptions(
+            allocator,
+            handler,
+            options,
+        );
+    }
+
+    pub fn newMockRequestHandlerAndCommitment(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithMockRequestSenderWithHandlerAndCommitment(
+            allocator,
+            handler,
+            commitment,
+        );
+    }
+
+    pub fn newMockRequestHandlerAndTimeout(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithMockRequestSenderWithHandlerAndTimeout(allocator, handler, timeout_ms);
+    }
+
+    pub fn newMockRequestHandlerAndTimeouts(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithMockRequestSenderWithHandlerAndTimeouts(
+            allocator,
+            handler,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newMockRequestHandlerAndCommitmentAndTimeout(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithMockRequestSenderWithHandlerAndCommitmentAndTimeout(
+            allocator,
+            handler,
+            commitment,
+            timeout_ms,
+        );
+    }
+
+    pub fn newMockRequestHandlerAndTimeoutAndCommitment(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithMockRequestSenderWithHandlerAndTimeoutAndCommitment(
+            allocator,
+            handler,
+            timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn newMockRequestHandlerAndCommitmentAndTimeouts(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithMockRequestSenderWithHandlerAndCommitmentAndTimeouts(
+            allocator,
+            handler,
+            commitment,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newMockRequestHandlerAndTimeoutsAndCommitment(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithMockRequestSenderWithHandlerAndTimeoutsAndCommitment(
+            allocator,
+            handler,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
     pub fn newWithMockRequestSenderWithHandlerAndCommitment(
         allocator: Allocator,
         handler: MockRequestHandlerType,
