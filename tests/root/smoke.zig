@@ -255,6 +255,86 @@ test "root.newMockAndRequestSenderOptions aliases newMockWithOptions" {
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"processed\"") != null);
 }
 
+test "root.newMockResponses aliases newMock" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.newMockResponses(
+        allocator,
+        &.{
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":557,\"id\":1}" },
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expect(rpc.isDirectMockClient());
+    try std.testing.expect(rpc.isMock());
+    try std.testing.expectEqual(@as(u64, 557), try rpc.getSlot(null));
+}
+
+test "root.newMockResponsesAndRequestSenderOptions aliases newMockAndRequestSenderOptions" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.newMockResponsesAndRequestSenderOptions(
+        allocator,
+        &.{
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":558,\"id\":1}" },
+        },
+        .{
+            .endpoint = "custom://mock-responses-request-sender-options",
+            .commitment = .confirmed,
+            .request_timeout_ms = 1_020,
+            .confirm_transaction_initial_timeout_ms = 2_020,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqualStrings("custom://mock-responses-request-sender-options", rpc.url());
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 1_020), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 2_020), rpc.getConfirmTransactionInitialTimeoutMs());
+    try std.testing.expectEqual(@as(u64, 558), try rpc.getSlot(.confirmed));
+}
+
+test "root.newMockResponsesAndCommitmentAndTimeouts preserves queued-response alias semantics" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.newMockResponsesAndCommitmentAndTimeouts(
+        allocator,
+        &.{
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":559,\"id\":1}" },
+        },
+        .processed,
+        1_030,
+        2_030,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 1_030), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 2_030), rpc.getConfirmTransactionInitialTimeoutMs());
+    try std.testing.expectEqual(@as(u64, 559), try rpc.getSlot(.processed));
+}
+
+test "root.newMockResponsesAndOptions aliases newMockWithOptions" {
+    const allocator = std.testing.allocator;
+    var rpc = try client.RpcClient.newMockResponsesAndOptions(
+        allocator,
+        &.{
+            .{ .json = "{\"jsonrpc\":\"2.0\",\"result\":560,\"id\":1}" },
+        },
+        .{
+            .endpoint = "custom://mock-responses-options",
+            .commitment = .finalized,
+            .request_timeout_ms = 1_040,
+            .confirm_transaction_initial_timeout_ms = 2_040,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqualStrings("custom://mock-responses-options", rpc.url());
+    try std.testing.expectEqual(client.Commitment.finalized, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 1_040), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 2_040), rpc.getConfirmTransactionInitialTimeoutMs());
+    try std.testing.expectEqual(@as(u64, 560), try rpc.getSlot(.finalized));
+}
+
 test "root.newMockWithTimeouts sets request and confirm initial timeout" {
     const allocator = std.testing.allocator;
     var rpc = try client.RpcClient.newMockWithTimeouts(
