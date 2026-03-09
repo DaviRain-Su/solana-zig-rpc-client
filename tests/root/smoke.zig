@@ -914,6 +914,62 @@ test "root.newWithRequestSenderAndOptions injects generic request sender" {
     try std.testing.expectEqual(@as(usize, 1), context.deinit_count);
 }
 
+test "root.newWithMockRequestSender creates request-sender-backed mock client from responses" {
+    const allocator = std.testing.allocator;
+
+    var rpc = try client.RpcClient.newWithMockRequestSender(allocator, &.{});
+    defer rpc.deinit();
+
+    try rpc.pushMockSlotResult(1125);
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 1125), slot);
+}
+
+test "root.newWithMockRequestSenderAndOptions customizes endpoint and mock request sender options" {
+    const allocator = std.testing.allocator;
+
+    var rpc = try client.RpcClient.newWithMockRequestSenderAndOptions(
+        allocator,
+        &.{},
+        .{
+            .endpoint = "custom://mock-request-sender",
+            .commitment = .confirmed,
+            .request_timeout_ms = 4_250,
+            .confirm_transaction_initial_timeout_ms = 7_250,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqualStrings("custom://mock-request-sender", rpc.url());
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 4_250), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 7_250), rpc.getConfirmTransactionInitialTimeoutMs());
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+}
+
+test "root.newWithMockRequestSenderWithHandler installs request-sender-backed mock handler" {
+    const allocator = std.testing.allocator;
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.newWithMockRequestSenderWithHandler(allocator, .{
+        .context = &handler_context,
+        .callback = dynamicMockHandler,
+    });
+    defer rpc.deinit();
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+    try std.testing.expect(rpc.hasMockHandler());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 789), slot);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+}
+
 test "root.newWithRequestSenderAndCommitment applies commitment default" {
     const allocator = std.testing.allocator;
     var context = RequestSenderContext{

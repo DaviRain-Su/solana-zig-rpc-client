@@ -1026,6 +1026,72 @@ pub const RpcClient = struct {
         return RpcClient.newWithRequestSenderAndOptions(allocator, sender, .{});
     }
 
+    pub fn newWithMockRequestSender(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSender(
+            allocator,
+            try RequestSender.initMock(allocator, responses),
+        );
+    }
+
+    pub fn newWithMockRequestSenderAndOptions(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndOptions(
+            allocator,
+            try RequestSender.initMock(allocator, responses),
+            options,
+        );
+    }
+
+    pub fn newWithMockRequestSenderWithHandler(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSender(
+            allocator,
+            try RequestSender.initMockWithHandler(allocator, handler),
+        );
+    }
+
+    pub fn newWithMockRequestSenderWithHandlerAndOptions(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndOptions(
+            allocator,
+            try RequestSender.initMockWithHandler(allocator, handler),
+            options,
+        );
+    }
+
+    pub fn newWithMockRequestSenderWithSender(
+        allocator: Allocator,
+        sender: MockSenderType,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSender(
+            allocator,
+            try RequestSender.initMockWithSender(allocator, sender),
+        );
+    }
+
+    pub fn newWithMockRequestSenderWithSenderAndOptions(
+        allocator: Allocator,
+        sender: MockSenderType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndOptions(
+            allocator,
+            try RequestSender.initMockWithSender(allocator, sender),
+            options,
+        );
+    }
+
     pub fn newWithRequestCallback(
         allocator: Allocator,
         context: ?*anyopaque,
