@@ -4176,6 +4176,10 @@ pub const RpcClient = struct {
         return if (self.resolvedMockSenderConst()) |sender| sender.lastScriptMissRequest() else null;
     }
 
+    pub fn lastMockScriptMissMethod(self: *const RpcClient) ?[]const u8 {
+        return if (self.lastMockScriptMissRequest()) |request| request.method else null;
+    }
+
     pub fn mockScriptSummaryAlloc(self: *const RpcClient, allocator: Allocator) ![]u8 {
         return if (self.resolvedMockSenderConst()) |sender| sender.scriptSummaryAlloc(allocator) else allocator.dupe(u8, "not a mock client\n");
     }

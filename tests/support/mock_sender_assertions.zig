@@ -120,8 +120,8 @@ pub fn expectMockRequestSenderLastScriptMissMethod(
     sender: *const client.RequestSender,
     expected_method: []const u8,
 ) !void {
-    const request = sender.lastMockScriptMissRequest() orelse return error.TestExpectedError;
-    try std.testing.expectEqualStrings(expected_method, request.method);
+    const method = sender.lastMockScriptMissMethod() orelse return error.TestExpectedError;
+    try std.testing.expectEqualStrings(expected_method, method);
 }
 
 pub fn expectMockRequestSenderScriptSatisfied(sender: *const client.RequestSender) !void {
@@ -175,8 +175,8 @@ pub fn expectMockRpcLastScriptMissMethod(
     rpc: *const client.RpcClient,
     expected_method: []const u8,
 ) !void {
-    const request = rpc.lastMockScriptMissRequest() orelse return error.TestExpectedError;
-    try std.testing.expectEqualStrings(expected_method, request.method);
+    const method = rpc.lastMockScriptMissMethod() orelse return error.TestExpectedError;
+    try std.testing.expectEqualStrings(expected_method, method);
 }
 
 pub fn expectMockRpcScriptSatisfied(rpc: *const client.RpcClient) !void {

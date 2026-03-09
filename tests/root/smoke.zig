@@ -5031,6 +5031,7 @@ test "root.RequestSender mock script helpers expose pending counts and summary" 
     try std.testing.expectEqual(@as(usize, 2), request_sender.mockPendingScriptedDispatchCount());
     try std.testing.expectEqual(@as(usize, 0), request_sender.mockScriptMissCount());
     try std.testing.expect(request_sender.lastMockScriptMissRequest() == null);
+    try std.testing.expect(request_sender.lastMockScriptMissMethod() == null);
 
     const summary = try request_sender.mockScriptSummaryAlloc(allocator);
     defer allocator.free(summary);
@@ -5061,6 +5062,7 @@ test "root.RequestSender mock script helpers return inert values for callback se
     try std.testing.expectEqual(@as(usize, 0), request_sender.mockPendingScriptedDispatchCount());
     try std.testing.expectEqual(@as(usize, 0), request_sender.mockScriptMissCount());
     try std.testing.expect(request_sender.lastMockScriptMissRequest() == null);
+    try std.testing.expect(request_sender.lastMockScriptMissMethod() == null);
 
     const summary = try request_sender.mockScriptSummaryAlloc(allocator);
     defer allocator.free(summary);
@@ -6283,6 +6285,7 @@ test "root.mock transport prefers queue then route then handler" {
     try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
     try std.testing.expectEqual(@as(usize, 1), rpc.mockScriptMissCount());
     try mock_sender_assertions.expectMockRpcLastScriptMissMethod(&rpc, "getSlot");
+    try std.testing.expectEqualStrings("getSlot", rpc.lastMockScriptMissMethod().?);
 }
 
 test "root.RpcClient boolean mock helpers reflect mock state" {

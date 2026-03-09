@@ -418,6 +418,10 @@ pub const RequestSender = struct {
         return if (self.mockSenderConst() catch null) |sender| sender.lastScriptMissRequest() else null;
     }
 
+    pub fn lastMockScriptMissMethod(self: *const RequestSender) ?[]const u8 {
+        return if (self.lastMockScriptMissRequest()) |request| request.method else null;
+    }
+
     pub fn mockScriptSummaryAlloc(self: *const RequestSender, allocator: Allocator) ![]u8 {
         return if (self.mockSenderConst() catch null) |sender| sender.scriptSummaryAlloc(allocator) else allocator.dupe(u8, "not a mock sender\n");
     }
