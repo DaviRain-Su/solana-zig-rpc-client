@@ -461,6 +461,14 @@ pub const PubsubSubscription = struct {
         return self.closeReason() == .unsubscribed;
     }
 
+    pub fn hasCloseReason(self: *Self) bool {
+        return self.closeReason() != .none;
+    }
+
+    pub fn isClientShutdownClosed(self: *Self) bool {
+        return self.closeReason() == .client_shutdown;
+    }
+
     pub fn isTransportClosed(self: *Self) bool {
         return self.closeReason() == .transport_closed;
     }
@@ -995,6 +1003,14 @@ pub const PubsubSlotsUpdatesSubscriptionWithCallback = struct {
         return self.closeReason() == .unsubscribed;
     }
 
+    pub fn hasCloseReason(self: *const Self) bool {
+        return self.closeReason() != .none;
+    }
+
+    pub fn isClientShutdownClosed(self: *const Self) bool {
+        return self.closeReason() == .client_shutdown;
+    }
+
     pub fn isTransportClosed(self: *const Self) bool {
         return self.closeReason() == .transport_closed;
     }
@@ -1103,6 +1119,14 @@ pub const PubsubRootSubscriptionWithCallback = struct {
 
     pub fn isUnsubscribed(self: *const Self) bool {
         return self.closeReason() == .unsubscribed;
+    }
+
+    pub fn hasCloseReason(self: *const Self) bool {
+        return self.closeReason() != .none;
+    }
+
+    pub fn isClientShutdownClosed(self: *const Self) bool {
+        return self.closeReason() == .client_shutdown;
     }
 
     pub fn isTransportClosed(self: *const Self) bool {
@@ -2305,6 +2329,14 @@ pub fn TypedPubsubReceiver(comptime ValueType: type) type {
             return self.closeReason() == .unsubscribed;
         }
 
+        pub fn hasCloseReason(self: *const Self) bool {
+            return self.closeReason() != .none;
+        }
+
+        pub fn isClientShutdownClosed(self: *const Self) bool {
+            return self.closeReason() == .client_shutdown;
+        }
+
         pub fn isTransportClosed(self: *const Self) bool {
             return self.closeReason() == .transport_closed;
         }
@@ -2423,6 +2455,14 @@ pub const PubsubSubscriptionWithReceiver = struct {
 
     pub fn isUnsubscribed(self: *const Self) bool {
         return self.closeReason() == .unsubscribed;
+    }
+
+    pub fn hasCloseReason(self: *const Self) bool {
+        return self.closeReason() != .none;
+    }
+
+    pub fn isClientShutdownClosed(self: *const Self) bool {
+        return self.closeReason() == .client_shutdown;
     }
 
     pub fn isTransportClosed(self: *const Self) bool {
@@ -2848,6 +2888,14 @@ pub fn TypedPubsubSubscriptionWithReceiver(comptime ValueType: type) type {
             return self.closeReason() == .unsubscribed;
         }
 
+        pub fn hasCloseReason(self: *const Self) bool {
+            return self.closeReason() != .none;
+        }
+
+        pub fn isClientShutdownClosed(self: *const Self) bool {
+            return self.closeReason() == .client_shutdown;
+        }
+
         pub fn isTransportClosed(self: *const Self) bool {
             return self.closeReason() == .transport_closed;
         }
@@ -2968,6 +3016,14 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
 
         pub fn isUnsubscribed(self: *const Self) bool {
             return self.closeReason() == .unsubscribed;
+        }
+
+        pub fn hasCloseReason(self: *const Self) bool {
+            return self.closeReason() != .none;
+        }
+
+        pub fn isClientShutdownClosed(self: *const Self) bool {
+            return self.closeReason() == .client_shutdown;
         }
 
         pub fn isTransportClosed(self: *const Self) bool {
