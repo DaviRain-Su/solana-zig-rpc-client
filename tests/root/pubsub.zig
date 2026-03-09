@@ -1817,6 +1817,8 @@ test "root.PubsubClient auto_reconnect setter can enable reconnect at runtime" {
     defer second_notification.deinit();
     try std.testing.expectEqual(@as(?u64, 777), second_notification.notification.context_slot);
     try std.testing.expectEqual(@as(usize, 2), app.reconnect_signature_subscribe_count);
+    try std.testing.expect(pubsub.hasReconnectAttempts());
+    try std.testing.expect(pubsub.hasEverReconnected());
 }
 
 test "root.PubsubClient reconnect respects configured maximum attempts" {
@@ -1854,7 +1856,10 @@ test "root.PubsubClient reconnect respects configured maximum attempts" {
     try std.testing.expectEqual(@as(usize, 2), app.reconnect_max_attempt_subscribe_count);
     try std.testing.expectEqual(client.PubsubCloseReason.transport_closed, subscription.closeReason());
     try std.testing.expect(pubsub.getReconnectLimitReached());
+    try std.testing.expect(pubsub.isReconnectLimitReached());
     try std.testing.expectEqual(@as(u32, 2), pubsub.getReconnectAttemptCount());
+    try std.testing.expect(pubsub.hasReconnectAttempts());
+    try std.testing.expect(pubsub.hasEverReconnected());
 }
 
 test "root.PubsubClient exposes reconnect and policy configuration through getters" {
@@ -1919,6 +1924,8 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expectEqual(@as(usize, 128 * 1024), pubsub.getMaxMessageSize());
     try std.testing.expectEqual(@as(usize, 2048), pubsub.getBufferSize());
     try std.testing.expectEqual(@as(u32, 0), pubsub.getReconnectAttemptCount());
+    try std.testing.expect(!pubsub.hasReconnectAttempts());
+    try std.testing.expect(!pubsub.hasEverReconnected());
     try std.testing.expect(!pubsub.getReconnectLimitReached());
     try std.testing.expect(!pubsub.isReconnectLimitReached());
 }
@@ -1949,6 +1956,8 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.isReconnectAttemptLimited());
     try std.testing.expect(pubsub.isReconnectUnlimited());
     try std.testing.expectEqual(@as(?u32, null), pubsub.getRemainingReconnectAttempts());
+    try std.testing.expect(!pubsub.hasReconnectAttempts());
+    try std.testing.expect(!pubsub.hasEverReconnected());
     try std.testing.expect(pubsub.hasRemainingReconnectAttempts());
     try std.testing.expect(!pubsub.isReconnectExhausted());
     try std.testing.expect(!pubsub.isReconnectLimitReached());

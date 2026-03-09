@@ -4390,6 +4390,14 @@ pub const PubsubClient = struct {
         return self.state.total_reconnect_attempts;
     }
 
+    pub fn hasReconnectAttempts(self: *const Self) bool {
+        return self.getReconnectAttemptCount() > 0;
+    }
+
+    pub fn hasEverReconnected(self: *const Self) bool {
+        return self.hasReconnectAttempts();
+    }
+
     pub fn isAutoReconnectEnabled(self: *const Self) bool {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
