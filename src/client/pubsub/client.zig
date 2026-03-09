@@ -4628,6 +4628,14 @@ pub const PubsubClient = struct {
         return !self.canReconnect();
     }
 
+    pub fn willReconnect(self: *const Self) bool {
+        return self.canReconnect();
+    }
+
+    pub fn willNotReconnect(self: *const Self) bool {
+        return !self.willReconnect();
+    }
+
     pub fn getSubscriptionQueueLimit(self: *const Self) usize {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
