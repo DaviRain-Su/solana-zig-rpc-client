@@ -4449,6 +4449,10 @@ pub const PubsubClient = struct {
         return !self.hasHeartbeatTimeout();
     }
 
+    pub fn usesDefaultHeartbeatConfig(self: *const Self) bool {
+        return self.usesDefaultHeartbeatInterval() and self.usesDefaultHeartbeatTimeout();
+    }
+
     pub fn getEffectiveHeartbeatTimeoutMs(self: *const Self) ?u32 {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
@@ -4548,6 +4552,14 @@ pub const PubsubClient = struct {
         return !self.hasReconnectMaxAttempts();
     }
 
+    pub fn usesDefaultReconnectConfig(self: *const Self) bool {
+        return self.usesDefaultAutoReconnect() and
+            self.usesDefaultReconnectDelay() and
+            self.usesDefaultReconnectBackoffFactor() and
+            self.usesDefaultReconnectMaxDelay() and
+            self.usesDefaultReconnectMaxAttempts();
+    }
+
     pub fn isReconnectAttemptLimited(self: *const Self) bool {
         return self.hasReconnectMaxAttempts();
     }
@@ -4590,6 +4602,10 @@ pub const PubsubClient = struct {
 
     pub fn usesDefaultQueueOverflowPolicy(self: *const Self) bool {
         return self.isQueueOverflowDropOldest();
+    }
+
+    pub fn usesDefaultQueueConfig(self: *const Self) bool {
+        return self.usesDefaultSubscriptionQueueLimit() and self.usesDefaultQueueOverflowPolicy();
     }
 
     pub fn isQueueOverflowDropOldest(self: *const Self) bool {
@@ -4658,6 +4674,13 @@ pub const PubsubClient = struct {
 
     pub fn usesDefaultBufferSize(self: *const Self) bool {
         return self.getBufferSize() == (pubsub_types.PubsubClientOptions{}).buffer_size;
+    }
+
+    pub fn usesDefaultTransportConfig(self: *const Self) bool {
+        return self.usesDefaultHandshakeTimeout() and
+            self.usesDefaultWriteTimeout() and
+            self.usesDefaultMaxMessageSize() and
+            self.usesDefaultBufferSize();
     }
 
     pub fn setAutoReconnectEnabled(self: *Self, enabled: bool) void {
