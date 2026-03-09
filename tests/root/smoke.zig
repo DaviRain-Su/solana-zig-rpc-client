@@ -1781,6 +1781,39 @@ test "root.replaceWithMock converts request sender client to owned mock-backed s
     try std.testing.expectEqual(@as(u64, 1811), slot);
 }
 
+test "root.replaceWithMockAndRequestSenderOptions updates runtime options" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 1815 };
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.init(
+            &context,
+            customRequestSender,
+        ),
+    );
+    defer rpc.deinit();
+
+    try rpc.replaceWithMockAndRequestSenderOptions(
+        &.{ .{ .result_json = "1812" } },
+        .{
+            .endpoint = "custom://replace-mock",
+            .commitment = .confirmed,
+            .request_timeout_ms = 53,
+            .confirm_transaction_initial_timeout_ms = 73,
+        },
+    );
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expectEqualStrings("custom://replace-mock", rpc.url());
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 53), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 73), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 1812), slot);
+}
+
 test "root.replaceWithMockHandler installs owned handler-backed sender" {
     const allocator = std.testing.allocator;
     var context = RequestSenderContext{ .base_slot = 1820 };
@@ -1802,6 +1835,45 @@ test "root.replaceWithMockHandler installs owned handler-backed sender" {
 
     try std.testing.expect(rpc.isRequestSenderBackedMockClient());
     try std.testing.expect(rpc.isMock());
+    try std.testing.expect(rpc.hasMockHandler());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 789), slot);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+}
+
+test "root.replaceWithMockHandlerAndRequestSenderOptions updates runtime options" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 1825 };
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.init(
+            &context,
+            customRequestSender,
+        ),
+    );
+    defer rpc.deinit();
+
+    try rpc.replaceWithMockHandlerAndRequestSenderOptions(
+        .{
+            .context = &handler_context,
+            .callback = dynamicMockHandler,
+        },
+        .{
+            .endpoint = "custom://replace-mock-handler",
+            .commitment = .finalized,
+            .request_timeout_ms = 54,
+            .confirm_transaction_initial_timeout_ms = 74,
+        },
+    );
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expectEqualStrings("custom://replace-mock-handler", rpc.url());
+    try std.testing.expectEqual(client.Commitment.finalized, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 54), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 74), rpc.getConfirmTransactionInitialTimeoutMs());
     try std.testing.expect(rpc.hasMockHandler());
 
     const slot = try rpc.getSlot(.finalized);

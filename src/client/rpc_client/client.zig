@@ -2781,8 +2781,30 @@ pub const RpcClient = struct {
         try self.replaceWithOwnedMockSender(try MockSenderType.initSequence(self.allocator, responses));
     }
 
+    pub fn replaceWithMockAndRequestSenderOptions(
+        self: *RpcClient,
+        responses: []const MockResponseType,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.replaceWithOwnedMockSenderAndRequestSenderOptions(
+            try MockSenderType.initSequence(self.allocator, responses),
+            options,
+        );
+    }
+
     pub fn replaceWithMockHandler(self: *RpcClient, handler: MockRequestHandlerType) !void {
         try self.replaceWithOwnedMockSender(MockSenderType.initWithHandler(self.allocator, handler));
+    }
+
+    pub fn replaceWithMockHandlerAndRequestSenderOptions(
+        self: *RpcClient,
+        handler: MockRequestHandlerType,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.replaceWithOwnedMockSenderAndRequestSenderOptions(
+            MockSenderType.initWithHandler(self.allocator, handler),
+            options,
+        );
     }
 
     pub fn setMockHandler(self: *RpcClient, handler: MockRequestHandlerType) !void {
