@@ -1588,6 +1588,9 @@ test "root.PubsubSubscription can close on queue overflow" {
 
     try expectQueueCloseReason(subscription, 1000, client.PubsubCloseReason.queue_overflow, 1);
     try std.testing.expect(subscription.isClosed());
+    try std.testing.expect(subscription.isQueueOverflowClosed());
+    try std.testing.expect(!subscription.isTransportClosed());
+    try std.testing.expect(!subscription.isUnsubscribed());
     try std.testing.expectEqual(@as(usize, 1), subscription.queuedCount());
 
     var first = try subscription.recvLogsNotification();
@@ -1657,6 +1660,9 @@ test "root.PubsubClient heartbeat timeout closes subscriptions when server stops
     try waitForHeartbeatPingCount(&app, 1, 1000);
     try waitForClosed(subscription, 1000);
     try std.testing.expectEqual(client.PubsubCloseReason.transport_closed, subscription.closeReason());
+    try std.testing.expect(subscription.isTransportClosed());
+    try std.testing.expect(!subscription.isQueueOverflowClosed());
+    try std.testing.expect(!subscription.isUnsubscribed());
 }
 
 test "root.PubsubClient heartbeat interval can be changed at runtime" {
@@ -3703,6 +3709,9 @@ test "root.PubsubSubscription typedReceiver provides typed receive and lifecycle
     try std.testing.expect(try receiver.unsubscribe());
     try std.testing.expect(subscription.isClosed());
     try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, receiver.closeReason());
+    try std.testing.expect(receiver.isUnsubscribed());
+    try std.testing.expect(!receiver.isTransportClosed());
+    try std.testing.expect(!receiver.isQueueOverflowClosed());
     try std.testing.expect(app.signature_unsubscribe_seen);
 }
 
@@ -3747,6 +3756,9 @@ test "root.PubsubSubscriptionWithReceiver typedReceiver shares receiver lifecycl
     try std.testing.expect(try typed_receiver.unsubscribe());
     try std.testing.expect(subscribed.isClosed());
     try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, subscribed.closeReason());
+    try std.testing.expect(subscribed.isUnsubscribed());
+    try std.testing.expect(!subscribed.isTransportClosed());
+    try std.testing.expect(!subscribed.isQueueOverflowClosed());
     try std.testing.expect(app.logs_unsubscribe_seen);
 }
 
@@ -3824,6 +3836,9 @@ test "root.PubsubClient signatureSubscribeWithTypedReceiver returns typed handle
     try std.testing.expect(try subscribed.unsubscribe());
     try std.testing.expect(subscribed.isClosed());
     try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, subscribed.closeReason());
+    try std.testing.expect(subscribed.isUnsubscribed());
+    try std.testing.expect(!subscribed.isTransportClosed());
+    try std.testing.expect(!subscribed.isQueueOverflowClosed());
     try std.testing.expect(app.signature_unsubscribe_seen);
 }
 
@@ -3981,6 +3996,9 @@ test "root.PubsubSubscription unsubscribe during reconnect closes locally withou
     try std.testing.expect(try subscription.unsubscribe());
     try std.testing.expect(subscription.isClosed());
     try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, subscription.closeReason());
+    try std.testing.expect(subscription.isUnsubscribed());
+    try std.testing.expect(!subscription.isTransportClosed());
+    try std.testing.expect(!subscription.isQueueOverflowClosed());
 
     std.Thread.sleep(100 * std.time.ns_per_ms);
     try std.testing.expect(!app.signature_unsubscribe_seen);

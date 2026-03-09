@@ -457,6 +457,18 @@ pub const PubsubSubscription = struct {
         return self.close_reason;
     }
 
+    pub fn isUnsubscribed(self: *Self) bool {
+        return self.closeReason() == .unsubscribed;
+    }
+
+    pub fn isTransportClosed(self: *Self) bool {
+        return self.closeReason() == .transport_closed;
+    }
+
+    pub fn isQueueOverflowClosed(self: *Self) bool {
+        return self.closeReason() == .queue_overflow;
+    }
+
     pub fn closeResult(self: *Self) PubsubCloseResult {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -979,6 +991,18 @@ pub const PubsubSlotsUpdatesSubscriptionWithCallback = struct {
         return self.subscription.closeReason();
     }
 
+    pub fn isUnsubscribed(self: *const Self) bool {
+        return self.closeReason() == .unsubscribed;
+    }
+
+    pub fn isTransportClosed(self: *const Self) bool {
+        return self.closeReason() == .transport_closed;
+    }
+
+    pub fn isQueueOverflowClosed(self: *const Self) bool {
+        return self.closeReason() == .queue_overflow;
+    }
+
     pub fn receiver(self: *Self) PubsubReceiver {
         return self.subscription.receiver();
     }
@@ -1075,6 +1099,18 @@ pub const PubsubRootSubscriptionWithCallback = struct {
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.subscription.closeReason();
+    }
+
+    pub fn isUnsubscribed(self: *const Self) bool {
+        return self.closeReason() == .unsubscribed;
+    }
+
+    pub fn isTransportClosed(self: *const Self) bool {
+        return self.closeReason() == .transport_closed;
+    }
+
+    pub fn isQueueOverflowClosed(self: *const Self) bool {
+        return self.closeReason() == .queue_overflow;
     }
 
     pub fn receiver(self: *Self) PubsubReceiver {
@@ -2265,6 +2301,18 @@ pub fn TypedPubsubReceiver(comptime ValueType: type) type {
             return self.receiver.closeReason();
         }
 
+        pub fn isUnsubscribed(self: *const Self) bool {
+            return self.closeReason() == .unsubscribed;
+        }
+
+        pub fn isTransportClosed(self: *const Self) bool {
+            return self.closeReason() == .transport_closed;
+        }
+
+        pub fn isQueueOverflowClosed(self: *const Self) bool {
+            return self.closeReason() == .queue_overflow;
+        }
+
         pub fn closeResult(self: *Self) PubsubCloseResult {
             return self.receiver.closeResult();
         }
@@ -2371,6 +2419,18 @@ pub const PubsubSubscriptionWithReceiver = struct {
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.receiver.closeReason();
+    }
+
+    pub fn isUnsubscribed(self: *const Self) bool {
+        return self.closeReason() == .unsubscribed;
+    }
+
+    pub fn isTransportClosed(self: *const Self) bool {
+        return self.closeReason() == .transport_closed;
+    }
+
+    pub fn isQueueOverflowClosed(self: *const Self) bool {
+        return self.closeReason() == .queue_overflow;
     }
 
     pub fn hasLastError(self: *Self) bool {
@@ -2784,6 +2844,18 @@ pub fn TypedPubsubSubscriptionWithReceiver(comptime ValueType: type) type {
             return self.receiver.closeReason();
         }
 
+        pub fn isUnsubscribed(self: *const Self) bool {
+            return self.closeReason() == .unsubscribed;
+        }
+
+        pub fn isTransportClosed(self: *const Self) bool {
+            return self.closeReason() == .transport_closed;
+        }
+
+        pub fn isQueueOverflowClosed(self: *const Self) bool {
+            return self.closeReason() == .queue_overflow;
+        }
+
         pub fn closeResult(self: *Self) PubsubCloseResult {
             return self.receiver.closeResult();
         }
@@ -2892,6 +2964,18 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
 
         pub fn closeReason(self: *const Self) PubsubCloseReason {
             return self.receiver.closeReason();
+        }
+
+        pub fn isUnsubscribed(self: *const Self) bool {
+            return self.closeReason() == .unsubscribed;
+        }
+
+        pub fn isTransportClosed(self: *const Self) bool {
+            return self.closeReason() == .transport_closed;
+        }
+
+        pub fn isQueueOverflowClosed(self: *const Self) bool {
+            return self.closeReason() == .queue_overflow;
         }
 
         pub fn closeResult(self: *Self) PubsubCloseResult {
