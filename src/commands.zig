@@ -4201,6 +4201,7 @@ test "runCommand block not found prints message" {
     defer allocator.free(captured);
 
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getBlock");
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 789, null);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings("block 789: not found\n", captured);
