@@ -4203,6 +4203,7 @@ test "root.RequestSender.fromMockSender exposes mock surface through RpcClient" 
 
     try std.testing.expect(rpc.isMock());
     try std.testing.expect(rpc.hasRequestSender());
+    try mock_sender_assertions.expectMockRpcResponseCount(&rpc, 1);
     try std.testing.expectEqual(@as(usize, 1), rpc.mockResponseCount());
     try std.testing.expectEqual(@as(usize, 0), rpc.mockRequestCount());
     try std.testing.expectEqual(@intFromPtr(&sender), @intFromPtr(try rpc.mockSender()));
@@ -5060,6 +5061,7 @@ test "root.MockSender boolean helpers reflect mock state" {
         .once()
         .build());
 
+    try mock_sender_assertions.expectMockSenderResponseCount(&mock_sender, 1);
     try std.testing.expect(mock_sender.hasResponses());
     try std.testing.expect(mock_sender.hasRoutes());
     try std.testing.expect(!mock_sender.hasMatchedRoutes());
@@ -5112,6 +5114,7 @@ test "root.RequestSender mock script helpers expose pending counts and summary" 
     try request_sender.pushMockSlotResult(2901);
     try request_sender.pushMockHealthOk();
 
+    try mock_sender_assertions.expectMockRequestSenderResponseCount(&request_sender, 2);
     try std.testing.expectEqual(@as(usize, 2), request_sender.mockResponseCount());
     try std.testing.expectEqual(@as(usize, 2), request_sender.mockPendingScriptedDispatchCount());
     try std.testing.expectEqual(@as(usize, 0), request_sender.mockScriptMissCount());
