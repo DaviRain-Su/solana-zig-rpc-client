@@ -4340,6 +4340,7 @@ test "root.RequestSender boolean mock helpers reflect mock state" {
     try std.testing.expect(!request_sender.hasMockScriptMisses());
     try std.testing.expect(request_sender.isMockScriptExhausted());
     try std.testing.expect(request_sender.isMockScriptSatisfied());
+    try mock_sender_assertions.expectMockRequestSenderScriptMissCount(&request_sender, 0);
 
     try request_sender.pushMockSlotResult(2702);
     try request_sender.pushMockResultRoute(.{
@@ -4353,6 +4354,7 @@ test "root.RequestSender boolean mock helpers reflect mock state" {
     try std.testing.expect(!request_sender.hasMockScriptMisses());
     try std.testing.expect(!request_sender.isMockScriptExhausted());
     try std.testing.expect(!request_sender.isMockScriptSatisfied());
+    try mock_sender_assertions.expectMockRequestSenderScriptMissCount(&request_sender, 0);
 
     var rpc = try client.RpcClient.newWithRequestSender(allocator, request_sender);
     defer rpc.deinit();
@@ -5054,6 +5056,7 @@ test "root.MockSender boolean helpers reflect mock state" {
     try std.testing.expect(!mock_sender.hasCapturedRequests());
     try std.testing.expect(mock_sender.isScriptExhausted());
     try std.testing.expect(mock_sender.isScriptSatisfied());
+    try mock_sender_assertions.expectMockSenderScriptMissCount(&mock_sender, 0);
 
     try mock_sender.pushSlotResult(3399);
     try mock_sender.pushRoute(try client.MockRouteBuilder.init()
@@ -5105,6 +5108,7 @@ test "root.MockSender boolean helpers reflect mock state" {
 
     try std.testing.expectError(error.MockResponseExhausted, rpc.getSlot(.processed));
     try std.testing.expect(mock_sender.hasScriptMisses());
+    try mock_sender_assertions.expectMockSenderScriptMissCount(&mock_sender, 1);
     try std.testing.expect(mock_sender.isScriptExhausted());
     try std.testing.expect(!mock_sender.isScriptSatisfied());
 }
@@ -6452,17 +6456,19 @@ test "root.mock transport prefers queue then route then handler" {
     try std.testing.expectEqual(@as(usize, 1), rpc.mockRouteCount());
     try std.testing.expectEqual(@as(usize, 0), handler_context.call_count);
     try mock_sender_assertions.expectMockRpcNoScriptMisses(&rpc);
+    try mock_sender_assertions.expectMockRpcScriptMissCount(&rpc, 0);
 
     const routed_slot = try rpc.getSlot(.processed);
     try std.testing.expectEqual(@as(u64, 333), routed_slot);
     try std.testing.expectEqual(@as(usize, 0), rpc.mockRouteCount());
     try std.testing.expectEqual(@as(usize, 0), handler_context.call_count);
     try mock_sender_assertions.expectMockRpcNoScriptMisses(&rpc);
+    try mock_sender_assertions.expectMockRpcScriptMissCount(&rpc, 0);
 
     const handled_slot = try rpc.getSlot(.processed);
     try std.testing.expectEqual(@as(u64, 456), handled_slot);
     try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
-    try std.testing.expectEqual(@as(usize, 1), rpc.mockScriptMissCount());
+    try mock_sender_assertions.expectMockRpcScriptMissCount(&rpc, 1);
     try mock_sender_assertions.expectMockRpcLastScriptMissMethod(&rpc, "getSlot");
     try std.testing.expectEqualStrings("getSlot", rpc.lastMockScriptMissMethod().?);
 }

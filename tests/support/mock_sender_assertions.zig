@@ -101,6 +101,16 @@ pub fn expectMockSenderNoScriptMisses(sender: *const client.MockSender) !void {
     try std.testing.expectEqual(@as(usize, 0), sender.scriptMissCount());
 }
 
+pub fn expectMockSenderScriptMissCount(
+    sender: *const client.MockSender,
+    expected: usize,
+) !void {
+    if (sender.scriptMissCount() != expected) {
+        try printMockSenderSummary(sender);
+    }
+    try std.testing.expectEqual(expected, sender.scriptMissCount());
+}
+
 pub fn expectMockSenderLastScriptMissMethod(
     sender: *const client.MockSender,
     expected_method: []const u8,
@@ -260,6 +270,16 @@ pub fn expectMockRequestSenderNoScriptMisses(sender: *const client.RequestSender
     try std.testing.expectEqual(@as(usize, 0), sender.mockScriptMissCount());
 }
 
+pub fn expectMockRequestSenderScriptMissCount(
+    sender: *const client.RequestSender,
+    expected: usize,
+) !void {
+    if (sender.mockScriptMissCount() != expected) {
+        try printMockRequestSenderSummary(sender);
+    }
+    try std.testing.expectEqual(expected, sender.mockScriptMissCount());
+}
+
 pub fn expectMockRequestSenderLastScriptMissMethod(
     sender: *const client.RequestSender,
     expected_method: []const u8,
@@ -417,6 +437,16 @@ pub fn expectMockRpcNoScriptMisses(rpc: *const client.RpcClient) !void {
         try printMockRpcSummary(rpc);
     }
     try std.testing.expectEqual(@as(usize, 0), rpc.mockScriptMissCount());
+}
+
+pub fn expectMockRpcScriptMissCount(
+    rpc: *const client.RpcClient,
+    expected: usize,
+) !void {
+    if (rpc.mockScriptMissCount() != expected) {
+        try printMockRpcSummary(rpc);
+    }
+    try std.testing.expectEqual(expected, rpc.mockScriptMissCount());
 }
 
 pub fn expectMockRpcLastScriptMissMethod(
