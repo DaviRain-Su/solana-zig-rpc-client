@@ -5184,6 +5184,8 @@ test "root.RequestSender.fromMockSender borrows scripted mock sender state" {
         try std.testing.expectEqual(@as(u64, 321), slot);
         try std.testing.expectEqual(@as(usize, 1), sender.requestCount());
         try std.testing.expectEqualStrings("getSlot", sender.capturedRequests()[0].method);
+        try std.testing.expectEqualStrings("getSlot", sender.lastCapturedRequestMethod().?);
+        try std.testing.expectEqualStrings("getSlot", rpc.lastCapturedMockRequestMethod().?);
         try std.testing.expect(std.mem.indexOf(u8, sender.capturedRequests()[0].params_json, "\"processed\"") != null);
     }
 
@@ -5198,6 +5200,10 @@ test "root.RequestSender.fromMockSender borrows scripted mock sender state" {
     const second_slot = try second_rpc.getSlot(.processed);
     try std.testing.expectEqual(@as(u64, 654), second_slot);
     try std.testing.expectEqual(@as(usize, 2), sender.requestCount());
+    try std.testing.expectEqualStrings("getSlot", sender.lastCapturedRequestMethod().?);
+    try std.testing.expectEqualStrings("getSlot", second_rpc.lastCapturedMockRequestMethod().?);
+    const last_request_sender = try second_rpc.requestSender();
+    try std.testing.expectEqualStrings("getSlot", last_request_sender.lastCapturedMockRequestMethod().?);
 }
 
 test "root.newWithBorrowedMockSender borrows scripted mock sender state" {
