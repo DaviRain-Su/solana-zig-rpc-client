@@ -396,6 +396,10 @@ pub const PubsubSubscription = struct {
         return self.queue.items.len;
     }
 
+    pub fn isQueueEmpty(self: *Self) bool {
+        return self.queuedCount() == 0;
+    }
+
     pub fn hasQueued(self: *Self) bool {
         return self.queuedCount() > 0;
     }
@@ -1843,6 +1847,10 @@ pub const PubsubReceiver = struct {
         return self.subscription.queuedCount();
     }
 
+    pub fn isQueueEmpty(self: *const Self) bool {
+        return self.queuedCount() == 0;
+    }
+
     pub fn subscriptionId(self: *const Self) u64 {
         return self.subscription.subscriptionId();
     }
@@ -2233,6 +2241,10 @@ pub fn TypedPubsubReceiver(comptime ValueType: type) type {
             return self.receiver.queuedCount();
         }
 
+        pub fn isQueueEmpty(self: *const Self) bool {
+            return self.queuedCount() == 0;
+        }
+
         pub fn hasQueued(self: *const Self) bool {
             return self.queuedCount() > 0;
         }
@@ -2335,6 +2347,10 @@ pub const PubsubSubscriptionWithReceiver = struct {
 
     pub fn queuedCount(self: *const Self) usize {
         return self.receiver.queuedCount();
+    }
+
+    pub fn isQueueEmpty(self: *const Self) bool {
+        return self.queuedCount() == 0;
     }
 
     pub fn hasQueued(self: *const Self) bool {
@@ -2752,6 +2768,10 @@ pub fn TypedPubsubSubscriptionWithReceiver(comptime ValueType: type) type {
             return self.receiver.queuedCount();
         }
 
+        pub fn isQueueEmpty(self: *const Self) bool {
+            return self.queuedCount() == 0;
+        }
+
         pub fn subscriptionId(self: *const Self) u64 {
             return self.receiver.subscriptionId();
         }
@@ -2856,6 +2876,10 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
 
         pub fn queuedCount(self: *const Self) usize {
             return self.receiver.queuedCount();
+        }
+
+        pub fn isQueueEmpty(self: *const Self) bool {
+            return self.queuedCount() == 0;
         }
 
         pub fn subscriptionId(self: *const Self) u64 {

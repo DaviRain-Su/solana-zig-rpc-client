@@ -4202,12 +4202,14 @@ test "root.PubsubSubscription hasQueued and hasDropped reflect queue state" {
 
     try waitForQueuedCount(subscription, 1, 1000);
     try std.testing.expect(subscription.hasQueued());
+    try std.testing.expect(!subscription.isQueueEmpty());
     try std.testing.expect(!subscription.hasDropped());
 
     const raw_message = try subscription.recv();
     defer std.testing.allocator.free(raw_message);
 
     try std.testing.expect(!subscription.hasQueued());
+    try std.testing.expect(subscription.isQueueEmpty());
     try std.testing.expect(!subscription.hasDropped());
 
     try std.testing.expect(try subscription.unsubscribe());
@@ -4241,12 +4243,14 @@ test "root.TypedPubsubReceiver hasQueued and hasDropped reflect queue state" {
     var receiver = subscription.typedReceiver(client.SignatureNotificationValue);
     try waitForQueuedCount(subscription, 1, 1000);
     try std.testing.expect(receiver.hasQueued());
+    try std.testing.expect(!receiver.isQueueEmpty());
     try std.testing.expect(!receiver.hasDropped());
 
     var notification = try receiver.recv();
     defer notification.deinit();
 
     try std.testing.expect(!receiver.hasQueued());
+    try std.testing.expect(receiver.isQueueEmpty());
     try std.testing.expect(!receiver.hasDropped());
 
     try std.testing.expect(try receiver.unsubscribe());
