@@ -2366,6 +2366,29 @@ test "root.replaceWithMock converts request sender client to owned mock-backed s
     try std.testing.expectEqual(@as(u64, 1811), slot);
 }
 
+test "root.replaceWithMockResponses aliases replaceWithMock" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 1813 };
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.init(
+            &context,
+            customRequestSender,
+        ),
+    );
+    defer rpc.deinit();
+
+    try rpc.replaceWithMockResponses(&.{});
+    try rpc.pushMockSlotResult(1814);
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 1814), slot);
+}
+
 test "root.replaceWithMockAndRequestSenderOptions updates runtime options" {
     const allocator = std.testing.allocator;
     var context = RequestSenderContext{ .base_slot = 1815 };
@@ -2397,6 +2420,39 @@ test "root.replaceWithMockAndRequestSenderOptions updates runtime options" {
 
     const slot = try rpc.getSlot(null);
     try std.testing.expectEqual(@as(u64, 1812), slot);
+}
+
+test "root.replaceWithMockResponsesAndRequestSenderOptions aliases replaceWithMockAndRequestSenderOptions" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 1817 };
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.init(
+            &context,
+            customRequestSender,
+        ),
+    );
+    defer rpc.deinit();
+
+    try rpc.replaceWithMockResponsesAndRequestSenderOptions(
+        &.{ .{ .result_json = "1815" } },
+        .{
+            .endpoint = "custom://replace-mock-responses",
+            .commitment = .finalized,
+            .request_timeout_ms = 54,
+            .confirm_transaction_initial_timeout_ms = 74,
+        },
+    );
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expectEqualStrings("custom://replace-mock-responses", rpc.url());
+    try std.testing.expectEqual(client.Commitment.finalized, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 54), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 74), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 1815), slot);
 }
 
 test "root.replaceWithMockSender converts request sender client to direct mock client" {
@@ -2800,6 +2856,22 @@ test "root.setMock converts plain client to direct mock client from response que
     try std.testing.expectEqual(@as(u64, 2151), slot);
 }
 
+test "root.setMockResponses aliases setMock" {
+    const allocator = std.testing.allocator;
+
+    var rpc = try client.RpcClient.new(allocator, "http://127.0.0.1:8899");
+    defer rpc.deinit();
+
+    try rpc.setMockResponses(&.{});
+    try rpc.pushMockSlotResult(2153);
+
+    try std.testing.expect(rpc.isDirectMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 2153), slot);
+}
+
 test "root.setMockAndRequestSenderOptions converts plain client to direct mock client and updates runtime options" {
     const allocator = std.testing.allocator;
 
@@ -2824,6 +2896,32 @@ test "root.setMockAndRequestSenderOptions converts plain client to direct mock c
 
     const slot = try rpc.getSlot(null);
     try std.testing.expectEqual(@as(u64, 2152), slot);
+}
+
+test "root.setMockResponsesAndRequestSenderOptions aliases setMockAndRequestSenderOptions" {
+    const allocator = std.testing.allocator;
+
+    var rpc = try client.RpcClient.new(allocator, "http://127.0.0.1:8899");
+    defer rpc.deinit();
+
+    try rpc.setMockResponsesAndRequestSenderOptions(
+        &.{ .{ .result_json = "2154" } },
+        .{
+            .endpoint = "custom://set-mock-responses",
+            .commitment = .confirmed,
+            .request_timeout_ms = 54,
+            .confirm_transaction_initial_timeout_ms = 74,
+        },
+    );
+
+    try std.testing.expect(rpc.isDirectMockClient());
+    try std.testing.expectEqualStrings("custom://set-mock-responses", rpc.url());
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 54), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 74), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(.confirmed);
+    try std.testing.expectEqual(@as(u64, 2154), slot);
 }
 
 test "root.setMockWithHandler converts plain client to direct handler-backed mock client" {
