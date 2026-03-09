@@ -382,12 +382,20 @@ pub const RequestSender = struct {
         return self.mockPendingScriptedDispatchCount() > 0;
     }
 
+    pub fn isMockScriptExhausted(self: *const RequestSender) bool {
+        return self.mockPendingScriptedDispatchCount() == 0;
+    }
+
     pub fn mockScriptMissCount(self: *const RequestSender) usize {
         return if (self.mockSenderConst() catch null) |sender| sender.scriptMissCount() else 0;
     }
 
     pub fn hasMockScriptMisses(self: *const RequestSender) bool {
         return self.mockScriptMissCount() > 0;
+    }
+
+    pub fn isMockScriptSatisfied(self: *const RequestSender) bool {
+        return self.isMockScriptExhausted() and !self.hasMockScriptMisses();
     }
 
     pub fn capturedMockRequests(self: *const RequestSender) []const MockRequest {

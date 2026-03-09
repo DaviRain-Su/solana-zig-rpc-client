@@ -4092,12 +4092,20 @@ pub const RpcClient = struct {
         return self.mockPendingScriptedDispatchCount() > 0;
     }
 
+    pub fn isMockScriptExhausted(self: *const RpcClient) bool {
+        return self.mockPendingScriptedDispatchCount() == 0;
+    }
+
     pub fn mockScriptMissCount(self: *const RpcClient) usize {
         return if (self.resolvedMockSenderConst()) |sender| sender.scriptMissCount() else 0;
     }
 
     pub fn hasMockScriptMisses(self: *const RpcClient) bool {
         return self.mockScriptMissCount() > 0;
+    }
+
+    pub fn isMockScriptSatisfied(self: *const RpcClient) bool {
+        return self.isMockScriptExhausted() and !self.hasMockScriptMisses();
     }
 
     pub fn mockRequestCount(self: *const RpcClient) usize {

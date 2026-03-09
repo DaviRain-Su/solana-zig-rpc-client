@@ -4337,6 +4337,8 @@ test "root.RequestSender boolean mock helpers reflect mock state" {
     try std.testing.expect(!request_sender.hasMockRoutes());
     try std.testing.expect(!request_sender.hasPendingMockScriptedDispatches());
     try std.testing.expect(!request_sender.hasMockScriptMisses());
+    try std.testing.expect(request_sender.isMockScriptExhausted());
+    try std.testing.expect(request_sender.isMockScriptSatisfied());
 
     try request_sender.pushMockSlotResult(2702);
     try request_sender.pushMockResultRoute(.{
@@ -4348,6 +4350,8 @@ test "root.RequestSender boolean mock helpers reflect mock state" {
     try std.testing.expect(request_sender.hasPendingMockScriptedDispatches());
     try std.testing.expect(!request_sender.hasCapturedMockRequests());
     try std.testing.expect(!request_sender.hasMockScriptMisses());
+    try std.testing.expect(!request_sender.isMockScriptExhausted());
+    try std.testing.expect(!request_sender.isMockScriptSatisfied());
 
     var rpc = try client.RpcClient.newWithRequestSender(allocator, request_sender);
     defer rpc.deinit();
@@ -4355,6 +4359,13 @@ test "root.RequestSender boolean mock helpers reflect mock state" {
     const slot = try rpc.getSlot(.processed);
     try std.testing.expectEqual(@as(u64, 2702), slot);
     try std.testing.expect(request_sender.hasCapturedMockRequests());
+    try std.testing.expect(!request_sender.isMockScriptSatisfied());
+
+    const health = try rpc.getHealth();
+    defer allocator.free(health);
+    try std.testing.expectEqualStrings("ok", health);
+    try std.testing.expect(request_sender.isMockScriptExhausted());
+    try std.testing.expect(request_sender.isMockScriptSatisfied());
 }
 
 test "root.RequestSender mock helpers reject callback request sender" {
@@ -6271,6 +6282,8 @@ test "root.RpcClient boolean mock helpers reflect mock state" {
     try std.testing.expect(!rpc.hasMockRoutes());
     try std.testing.expect(!rpc.hasPendingMockScriptedDispatches());
     try std.testing.expect(!rpc.hasMockScriptMisses());
+    try std.testing.expect(rpc.isMockScriptExhausted());
+    try std.testing.expect(rpc.isMockScriptSatisfied());
 
     try rpc.pushMockResultRoute(.{
         .method = "getSlot",
@@ -6283,6 +6296,8 @@ test "root.RpcClient boolean mock helpers reflect mock state" {
     try std.testing.expect(rpc.hasPendingMockScriptedDispatches());
     try std.testing.expect(!rpc.hasCapturedMockRequests());
     try std.testing.expect(!rpc.hasMockScriptMisses());
+    try std.testing.expect(!rpc.isMockScriptExhausted());
+    try std.testing.expect(!rpc.isMockScriptSatisfied());
 
     _ = try rpc.getSlot(.processed);
     try std.testing.expect(rpc.hasCapturedMockRequests());
@@ -6290,12 +6305,18 @@ test "root.RpcClient boolean mock helpers reflect mock state" {
     try std.testing.expect(rpc.hasMockRoutes());
     try std.testing.expect(rpc.hasPendingMockScriptedDispatches());
     try std.testing.expect(!rpc.hasMockScriptMisses());
+    try std.testing.expect(!rpc.isMockScriptExhausted());
+    try std.testing.expect(!rpc.isMockScriptSatisfied());
 
     _ = try rpc.getSlot(.processed);
     try std.testing.expect(!rpc.hasMockRoutes());
     try std.testing.expect(!rpc.hasPendingMockScriptedDispatches());
     try std.testing.expect(!rpc.hasMockScriptMisses());
+    try std.testing.expect(rpc.isMockScriptExhausted());
+    try std.testing.expect(rpc.isMockScriptSatisfied());
 
     _ = try rpc.getSlot(.processed);
     try std.testing.expect(rpc.hasMockScriptMisses());
+    try std.testing.expect(rpc.isMockScriptExhausted());
+    try std.testing.expect(!rpc.isMockScriptSatisfied());
 }
