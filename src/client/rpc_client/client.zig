@@ -3341,6 +3341,47 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn replaceCallback(
+        self: *RpcClient,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+    ) !void {
+        try self.replaceRequestCallback(context, callback);
+    }
+
+    pub fn replaceCallbackAndDeinit(
+        self: *RpcClient,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+    ) !void {
+        try self.replaceRequestCallbackAndDeinit(context, callback, deinit_callback);
+    }
+
+    pub fn replaceCallbackAndRequestSenderOptions(
+        self: *RpcClient,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.replaceRequestCallbackAndRequestSenderOptions(context, callback, options);
+    }
+
+    pub fn replaceCallbackAndDeinitAndRequestSenderOptions(
+        self: *RpcClient,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.replaceRequestCallbackAndDeinitAndRequestSenderOptions(
+            context,
+            callback,
+            deinit_callback,
+            options,
+        );
+    }
+
     pub fn setRequestSender(self: *RpcClient, sender: RequestSenderType) void {
         if (self.mock_sender) |existing| {
             existing.deinit();
@@ -3399,6 +3440,47 @@ pub const RpcClient = struct {
     ) void {
         self.setRequestSenderAndRequestSenderOptions(
             RequestSender.initWithDeinit(context, callback, deinit_callback),
+            options,
+        );
+    }
+
+    pub fn setCallback(
+        self: *RpcClient,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+    ) void {
+        self.setRequestCallback(context, callback);
+    }
+
+    pub fn setCallbackAndDeinit(
+        self: *RpcClient,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+    ) void {
+        self.setRequestCallbackAndDeinit(context, callback, deinit_callback);
+    }
+
+    pub fn setCallbackAndRequestSenderOptions(
+        self: *RpcClient,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        options: RequestSenderOptions,
+    ) void {
+        self.setRequestCallbackAndRequestSenderOptions(context, callback, options);
+    }
+
+    pub fn setCallbackAndDeinitAndRequestSenderOptions(
+        self: *RpcClient,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        options: RequestSenderOptions,
+    ) void {
+        self.setRequestCallbackAndDeinitAndRequestSenderOptions(
+            context,
+            callback,
+            deinit_callback,
             options,
         );
     }
