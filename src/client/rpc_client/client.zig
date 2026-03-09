@@ -2619,8 +2619,27 @@ pub const RpcClient = struct {
         self.setRequestSender(RequestSender.fromMockSender(sender));
     }
 
+    pub fn setBorrowedMockSenderAndRequestSenderOptions(
+        self: *RpcClient,
+        sender: *MockSenderType,
+        options: RequestSenderOptions,
+    ) void {
+        self.setRequestSenderAndRequestSenderOptions(RequestSender.fromMockSender(sender), options);
+    }
+
     pub fn setOwnedMockSender(self: *RpcClient, sender: MockSenderType) !void {
         self.setRequestSender(try RequestSender.fromOwnedMockSender(self.allocator, sender));
+    }
+
+    pub fn setOwnedMockSenderAndRequestSenderOptions(
+        self: *RpcClient,
+        sender: MockSenderType,
+        options: RequestSenderOptions,
+    ) !void {
+        self.setRequestSenderAndRequestSenderOptions(
+            try RequestSender.fromOwnedMockSender(self.allocator, sender),
+            options,
+        );
     }
 
     pub fn setMock(self: *RpcClient, responses: []const MockResponseType) !void {
@@ -2656,8 +2675,30 @@ pub const RpcClient = struct {
         try self.replaceRequestSender(RequestSender.fromMockSender(sender));
     }
 
+    pub fn replaceWithBorrowedMockSenderAndRequestSenderOptions(
+        self: *RpcClient,
+        sender: *MockSenderType,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.replaceRequestSenderAndRequestSenderOptions(
+            RequestSender.fromMockSender(sender),
+            options,
+        );
+    }
+
     pub fn replaceWithOwnedMockSender(self: *RpcClient, sender: MockSenderType) !void {
         try self.replaceRequestSender(try RequestSender.fromOwnedMockSender(self.allocator, sender));
+    }
+
+    pub fn replaceWithOwnedMockSenderAndRequestSenderOptions(
+        self: *RpcClient,
+        sender: MockSenderType,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.replaceRequestSenderAndRequestSenderOptions(
+            try RequestSender.fromOwnedMockSender(self.allocator, sender),
+            options,
+        );
     }
 
     pub fn replaceWithMockRequestSender(self: *RpcClient, responses: []const MockResponseType) !void {
