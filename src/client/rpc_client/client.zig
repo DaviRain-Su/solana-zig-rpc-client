@@ -1048,6 +1048,14 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn newWithMockRequestSenderAndRequestSenderOptions(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithMockRequestSenderAndOptions(allocator, responses, options);
+    }
+
     pub fn newWithMockRequestSenderAndCommitment(
         allocator: Allocator,
         responses: []const MockResponseType,
@@ -1176,6 +1184,14 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn newWithMockRequestSenderWithHandlerAndRequestSenderOptions(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithMockRequestSenderWithHandlerAndOptions(allocator, handler, options);
+    }
+
     pub fn newWithMockRequestSenderWithHandlerAndCommitment(
         allocator: Allocator,
         handler: MockRequestHandlerType,
@@ -1302,6 +1318,14 @@ pub const RpcClient = struct {
             try RequestSender.initMockWithSender(allocator, sender),
             options,
         );
+    }
+
+    pub fn newWithMockRequestSenderWithSenderAndRequestSenderOptions(
+        allocator: Allocator,
+        sender: MockSenderType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithMockRequestSenderWithSenderAndOptions(allocator, sender, options);
     }
 
     pub fn newWithMockRequestSenderWithSenderAndCommitment(
