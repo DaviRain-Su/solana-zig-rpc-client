@@ -3675,6 +3675,7 @@ test "runCommand balance with context prints slot and value" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectGetBalanceRequest(allocator, commandCapturedRequest(&sender_context), "Address11111111111111111111111111111111", "confirmed");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
@@ -3721,6 +3722,7 @@ test "runCommand poll-balance prints value" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectGetBalanceRequest(allocator, commandCapturedRequest(&sender_context), "Address11111111111111111111111111111111", null);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
@@ -3767,6 +3769,7 @@ test "runCommand latest-blockhash with context prints slot and value" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectGetLatestBlockhashRequest(allocator, commandCapturedRequest(&sender_context), "confirmed");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
@@ -3861,6 +3864,7 @@ test "runCommand fee-for-message with context prints slot and value" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectGetFeeForMessageRequest(allocator, commandCapturedRequest(&sender_context), "AQAB", "finalized");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
@@ -3909,6 +3913,7 @@ test "runCommand token-account-balance with context prints slot and value" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectGetTokenAccountBalanceRequest(allocator, commandCapturedRequest(&sender_context), "TokenAcct1111111111111111111111111111111", "confirmed");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
@@ -3958,6 +3963,7 @@ test "runCommand token-supply with context prints slot and value" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectGetTokenSupplyRequest(allocator, commandCapturedRequest(&sender_context), "Mint111111111111111111111111111111111111", "finalized");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
