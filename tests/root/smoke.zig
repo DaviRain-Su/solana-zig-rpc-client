@@ -2985,6 +2985,41 @@ test "root.replaceWithMockRequestSenderWithHandlerAndRequestSenderOptions update
     try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
 }
 
+test "root.replaceMockRequestHandlerAndRequestSenderOptions aliases replaceWithMockRequestSenderWithHandlerAndRequestSenderOptions" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 1846 };
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.initWithDeinit(&context, customRequestSender, customRequestSenderDeinit),
+    );
+    defer rpc.deinit();
+
+    try rpc.replaceMockRequestHandlerAndRequestSenderOptions(
+        .{
+            .context = &handler_context,
+            .callback = dynamicMockHandler,
+        },
+        .{
+            .endpoint = "custom://replace-short-mock-request-handler",
+            .commitment = .processed,
+            .request_timeout_ms = 45,
+            .confirm_transaction_initial_timeout_ms = 65,
+        },
+    );
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expectEqualStrings("custom://replace-short-mock-request-handler", rpc.url());
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 45), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 65), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 789), slot);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+}
+
 test "root.replaceWithMockRequestSenderWithHandler installs request-sender-backed mock handler" {
     const allocator = std.testing.allocator;
     var context = RequestSenderContext{ .base_slot = 1840 };
@@ -3000,6 +3035,35 @@ test "root.replaceWithMockRequestSenderWithHandler installs request-sender-backe
     defer rpc.deinit();
 
     try rpc.replaceWithMockRequestSenderWithHandler(.{
+        .context = &handler_context,
+        .callback = dynamicMockHandler,
+    });
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+    try std.testing.expect(rpc.hasRequestSender());
+    try std.testing.expect(rpc.hasMockHandler());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 789), slot);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+}
+
+test "root.replaceMockRequestHandler aliases replaceWithMockRequestSenderWithHandler" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 1841 };
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.init(
+            &context,
+            customRequestSender,
+        ),
+    );
+    defer rpc.deinit();
+
+    try rpc.replaceMockRequestHandler(.{
         .context = &handler_context,
         .callback = dynamicMockHandler,
     });
