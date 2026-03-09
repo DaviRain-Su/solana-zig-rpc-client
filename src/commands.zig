@@ -4072,6 +4072,7 @@ test "runCommand executes block command and sends getBlock request" {
 
     try runCommand(allocator, &rpc, &parsed);
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getBlock");
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 123, null);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
 }
@@ -4098,6 +4099,7 @@ test "runCommand executes block command with commitment and sends getBlock reque
 
     try runCommand(allocator, &rpc, &parsed);
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getBlock");
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 456, "confirmed");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
 }
@@ -4122,6 +4124,7 @@ test "runCommand handles block not found" {
 
     try runCommand(allocator, &rpc, &parsed);
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getBlock");
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 789, null);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
 }
@@ -4161,6 +4164,7 @@ test "runCommand sends increasing request ids for block calls" {
         try expectGetBlockRequestWithId(allocator, commandCapturedRequestAt(&sender_context, 1), 2, 222, null);
     }
     try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getBlock");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
 }
 
