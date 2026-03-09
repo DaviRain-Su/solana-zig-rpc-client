@@ -4473,6 +4473,17 @@ pub const PubsubClient = struct {
         return self.hasReconnectMaxAttempts();
     }
 
+    pub fn isReconnectUnlimited(self: *const Self) bool {
+        return !self.hasReconnectMaxAttempts();
+    }
+
+    pub fn getRemainingReconnectAttempts(self: *const Self) ?u32 {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        const max_attempts = self.state.options.reconnect_max_attempts orelse return null;
+        return max_attempts -| self.state.total_reconnect_attempts;
+    }
+
     pub fn getSubscriptionQueueLimit(self: *const Self) usize {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();

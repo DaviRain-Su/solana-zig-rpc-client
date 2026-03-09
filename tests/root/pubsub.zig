@@ -1905,7 +1905,9 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expectEqual(@as(u32, 250), pubsub.getEffectiveReconnectMaxDelayMs());
     try std.testing.expect(pubsub.hasReconnectMaxAttempts());
     try std.testing.expect(pubsub.isReconnectAttemptLimited());
+    try std.testing.expect(!pubsub.isReconnectUnlimited());
     try std.testing.expectEqual(@as(?u32, 7), pubsub.getReconnectMaxAttempts());
+    try std.testing.expectEqual(@as(?u32, 7), pubsub.getRemainingReconnectAttempts());
     try std.testing.expectEqual(@as(usize, 5), pubsub.getSubscriptionQueueLimit());
     try std.testing.expectEqual(client.PubsubQueueOverflowPolicy.close_subscription, pubsub.getQueueOverflowPolicy());
     try std.testing.expectEqual(@as(u32, 150), pubsub.getHandshakeTimeoutMs());
@@ -1942,6 +1944,8 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.isHeartbeatEnabled());
     try std.testing.expect(!pubsub.isReconnectDelayCapped());
     try std.testing.expect(!pubsub.isReconnectAttemptLimited());
+    try std.testing.expect(pubsub.isReconnectUnlimited());
+    try std.testing.expectEqual(@as(?u32, null), pubsub.getRemainingReconnectAttempts());
     try std.testing.expect(!pubsub.isWriteTimeoutEnabled());
 
     pubsub.setAutoReconnectEnabled(false);
@@ -1970,7 +1974,9 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expectEqual(@as(u32, 4_321), pubsub.getEffectiveReconnectMaxDelayMs());
     try std.testing.expect(pubsub.hasReconnectMaxAttempts());
     try std.testing.expect(pubsub.isReconnectAttemptLimited());
+    try std.testing.expect(!pubsub.isReconnectUnlimited());
     try std.testing.expectEqual(@as(?u32, 9), pubsub.getReconnectMaxAttempts());
+    try std.testing.expectEqual(@as(?u32, 9), pubsub.getRemainingReconnectAttempts());
     try std.testing.expectEqual(@as(usize, 13), pubsub.getSubscriptionQueueLimit());
     try std.testing.expectEqual(client.PubsubQueueOverflowPolicy.drop_newest, pubsub.getQueueOverflowPolicy());
     try std.testing.expectEqual(@as(u32, 8_765), pubsub.getHandshakeTimeoutMs());
