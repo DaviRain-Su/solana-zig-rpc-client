@@ -2993,6 +2993,24 @@ test "root.RequestSender.replaceWithMockSender aliases owned mock sender replace
     try std.testing.expectEqual(@as(u64, 3311), slot);
 }
 
+test "root.RequestSender.initMockSender aliases owned mock sender constructor" {
+    const allocator = std.testing.allocator;
+    var owned_mock_sender = client.MockSender.init(allocator);
+    try owned_mock_sender.pushSlotResult(3312);
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        try client.RequestSender.initMockSender(allocator, owned_mock_sender),
+    );
+    defer rpc.deinit();
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 3312), slot);
+}
+
 test "root.RequestSender.replaceWithCallback mutates RpcClient backend to callback sender" {
     const allocator = std.testing.allocator;
     var mock_sender = client.MockSender.init(allocator);

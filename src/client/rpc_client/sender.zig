@@ -106,6 +106,10 @@ pub const RequestSender = struct {
         return try RequestSender.fromOwnedMockSender(allocator, sender);
     }
 
+    pub fn initMockSender(allocator: Allocator, sender: MockSender) !RequestSender {
+        return try RequestSender.initOwnedMockSender(allocator, sender);
+    }
+
     pub fn fromMockSender(sender: *MockSender) RequestSender {
         return .{
             .context = sender,
