@@ -3921,6 +3921,7 @@ test "runCommand token-account-balance with context prints slot and value" {
     defer allocator.free(captured);
 
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getTokenAccountBalance");
     try expectGetTokenAccountBalanceRequest(allocator, commandCapturedRequest(&sender_context), "TokenAcct1111111111111111111111111111111", "confirmed");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
@@ -3971,6 +3972,7 @@ test "runCommand token-supply with context prints slot and value" {
     defer allocator.free(captured);
 
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getTokenSupply");
     try expectGetTokenSupplyRequest(allocator, commandCapturedRequest(&sender_context), "Mint111111111111111111111111111111111111", "finalized");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
@@ -4035,6 +4037,7 @@ test "runCommand token-largest-accounts with context prints slot and entries" {
     defer allocator.free(captured);
 
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getTokenLargestAccounts");
     try expectGetTokenLargestAccountsRequest(allocator, commandCapturedRequest(&sender_context), "Mint111111111111111111111111111111111111", "confirmed");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "token largest accounts context slot: 99\n") != null);
@@ -4232,6 +4235,7 @@ test "runCommand block prints summary and raw json" {
     defer allocator.free(captured);
 
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getBlock");
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 100, null);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "block 100: parent_slot=99 block_height=100 block_time=1700000400 transactions=2 rewards=1") != null);
@@ -4276,6 +4280,7 @@ test "runCommand transaction prints summary and raw json" {
     defer allocator.free(captured);
 
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getTransaction");
     try expectGetTransactionRequest(allocator, commandCapturedRequest(&sender_context), signature_value, null);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "transaction 5h6xSignature111111111111111111111111111111111111: slot=55 block_time=1700000500 version=legacy signatures=2 fee=7000 log_messages=2 has_error=true") != null);
