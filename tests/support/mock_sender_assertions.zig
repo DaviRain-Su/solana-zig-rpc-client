@@ -77,6 +77,14 @@ pub fn expectMockSenderLastCapturedRequestMethod(
     try std.testing.expectEqualStrings(expected_method, method);
 }
 
+pub fn expectMockSenderLastCapturedRequestId(
+    sender: *const client.MockSender,
+    expected_id: u64,
+) !void {
+    const id = sender.lastCapturedRequestId() orelse return error.TestExpectedError;
+    try std.testing.expectEqual(expected_id, id);
+}
+
 pub fn expectMockSenderScriptSatisfied(sender: *const client.MockSender) !void {
     try expectMockSenderScriptExhausted(sender);
     try expectMockSenderNoScriptMisses(sender);
@@ -140,6 +148,14 @@ pub fn expectMockRequestSenderLastCapturedRequestMethod(
     try std.testing.expectEqualStrings(expected_method, method);
 }
 
+pub fn expectMockRequestSenderLastCapturedRequestId(
+    sender: *const client.RequestSender,
+    expected_id: u64,
+) !void {
+    const id = sender.lastCapturedMockRequestId() orelse return error.TestExpectedError;
+    try std.testing.expectEqual(expected_id, id);
+}
+
 pub fn expectMockRequestSenderScriptSatisfied(sender: *const client.RequestSender) !void {
     try expectMockRequestSenderScriptExhausted(sender);
     try expectMockRequestSenderNoScriptMisses(sender);
@@ -201,6 +217,14 @@ pub fn expectMockRpcLastCapturedRequestMethod(
 ) !void {
     const method = rpc.lastCapturedMockRequestMethod() orelse return error.TestExpectedError;
     try std.testing.expectEqualStrings(expected_method, method);
+}
+
+pub fn expectMockRpcLastCapturedRequestId(
+    rpc: *const client.RpcClient,
+    expected_id: u64,
+) !void {
+    const id = rpc.lastCapturedMockRequestId() orelse return error.TestExpectedError;
+    try std.testing.expectEqual(expected_id, id);
 }
 
 pub fn expectMockRpcScriptSatisfied(rpc: *const client.RpcClient) !void {
