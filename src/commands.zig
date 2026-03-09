@@ -19,6 +19,10 @@ const command_test_support = if (builtin.is_test) @import("command_test_support"
 
 };
 const mock_sender_assertions = if (builtin.is_test) @import("mock_sender_assertions") else struct {
+    pub fn expectMockSenderLastCapturedRequestMethod(_: *const client.MockSender, _: []const u8) !void {
+        unreachable;
+    }
+
     pub fn expectMockSenderRequestCount(_: *const client.MockSender, _: usize) !void {
         unreachable;
     }
@@ -30,6 +34,7 @@ const mock_sender_assertions = if (builtin.is_test) @import("mock_sender_asserti
 const CommandTestSender = if (builtin.is_test) command_test_support.CommandTestSender else command_test_support.SenderType;
 const commandCapturedRequest = command_test_support.commandCapturedRequest;
 const commandCapturedRequestAt = command_test_support.commandCapturedRequestAt;
+const expectMockSenderLastCapturedRequestMethod = mock_sender_assertions.expectMockSenderLastCapturedRequestMethod;
 const expectMockSenderRequestCount = mock_sender_assertions.expectMockSenderRequestCount;
 const expectMockSenderScriptSatisfied = mock_sender_assertions.expectMockSenderScriptSatisfied;
 
@@ -3676,6 +3681,7 @@ test "runCommand balance with context prints slot and value" {
     defer allocator.free(captured);
 
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getBalance");
     try expectGetBalanceRequest(allocator, commandCapturedRequest(&sender_context), "Address11111111111111111111111111111111", "confirmed");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
@@ -3770,6 +3776,7 @@ test "runCommand latest-blockhash with context prints slot and value" {
     defer allocator.free(captured);
 
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getLatestBlockhash");
     try expectGetLatestBlockhashRequest(allocator, commandCapturedRequest(&sender_context), "confirmed");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
@@ -4390,6 +4397,7 @@ test "runCommand confirm-transaction respects commitment" {
         "confirmed",
     );
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "requestAirdrop");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings("signature Sig111111111111111111111111111111111111 confirmed: false\n", captured);
 }
@@ -4441,6 +4449,7 @@ test "runCommand signature-status prints status" {
         "confirmed",
     );
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getAccountInfo");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature status: has_error=false slot=55 confirmations=7 confirmation=confirmed\n",
