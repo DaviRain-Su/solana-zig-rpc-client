@@ -85,6 +85,38 @@ pub fn expectMockSenderLastCapturedRequestId(
     try std.testing.expectEqual(expected_id, id);
 }
 
+pub fn expectMockSenderFirstCapturedRequestMethod(
+    sender: *const client.MockSender,
+    expected_method: []const u8,
+) !void {
+    const method = sender.firstCapturedRequestMethod() orelse return error.TestExpectedError;
+    try std.testing.expectEqualStrings(expected_method, method);
+}
+
+pub fn expectMockSenderFirstCapturedRequestId(
+    sender: *const client.MockSender,
+    expected_id: u64,
+) !void {
+    const id = sender.firstCapturedRequestId() orelse return error.TestExpectedError;
+    try std.testing.expectEqual(expected_id, id);
+}
+
+pub fn expectMockSenderFirstCapturedRequestParamsJsonContains(
+    sender: *const client.MockSender,
+    expected_fragment: []const u8,
+) !void {
+    const params_json = sender.firstCapturedRequestParamsJson() orelse return error.TestExpectedError;
+    try std.testing.expect(std.mem.indexOf(u8, params_json, expected_fragment) != null);
+}
+
+pub fn expectMockSenderFirstCapturedRequestBodyContains(
+    sender: *const client.MockSender,
+    expected_fragment: []const u8,
+) !void {
+    const request_body = sender.firstCapturedRequestBody() orelse return error.TestExpectedError;
+    try std.testing.expect(std.mem.indexOf(u8, request_body, expected_fragment) != null);
+}
+
 pub fn expectMockSenderLastCapturedRequestParamsJsonContains(
     sender: *const client.MockSender,
     expected_fragment: []const u8,
@@ -172,6 +204,38 @@ pub fn expectMockRequestSenderLastCapturedRequestId(
     try std.testing.expectEqual(expected_id, id);
 }
 
+pub fn expectMockRequestSenderFirstCapturedRequestMethod(
+    sender: *const client.RequestSender,
+    expected_method: []const u8,
+) !void {
+    const method = sender.firstCapturedMockRequestMethod() orelse return error.TestExpectedError;
+    try std.testing.expectEqualStrings(expected_method, method);
+}
+
+pub fn expectMockRequestSenderFirstCapturedRequestId(
+    sender: *const client.RequestSender,
+    expected_id: u64,
+) !void {
+    const id = sender.firstCapturedMockRequestId() orelse return error.TestExpectedError;
+    try std.testing.expectEqual(expected_id, id);
+}
+
+pub fn expectMockRequestSenderFirstCapturedRequestParamsJsonContains(
+    sender: *const client.RequestSender,
+    expected_fragment: []const u8,
+) !void {
+    const params_json = sender.firstCapturedMockRequestParamsJson() orelse return error.TestExpectedError;
+    try std.testing.expect(std.mem.indexOf(u8, params_json, expected_fragment) != null);
+}
+
+pub fn expectMockRequestSenderFirstCapturedRequestBodyContains(
+    sender: *const client.RequestSender,
+    expected_fragment: []const u8,
+) !void {
+    const request_body = sender.firstCapturedMockRequestBody() orelse return error.TestExpectedError;
+    try std.testing.expect(std.mem.indexOf(u8, request_body, expected_fragment) != null);
+}
+
 pub fn expectMockRequestSenderLastCapturedRequestParamsJsonContains(
     sender: *const client.RequestSender,
     expected_fragment: []const u8,
@@ -257,6 +321,38 @@ pub fn expectMockRpcLastCapturedRequestId(
 ) !void {
     const id = rpc.lastCapturedMockRequestId() orelse return error.TestExpectedError;
     try std.testing.expectEqual(expected_id, id);
+}
+
+pub fn expectMockRpcFirstCapturedRequestMethod(
+    rpc: *const client.RpcClient,
+    expected_method: []const u8,
+) !void {
+    const method = rpc.firstCapturedMockRequestMethod() orelse return error.TestExpectedError;
+    try std.testing.expectEqualStrings(expected_method, method);
+}
+
+pub fn expectMockRpcFirstCapturedRequestId(
+    rpc: *const client.RpcClient,
+    expected_id: u64,
+) !void {
+    const id = rpc.firstCapturedMockRequestId() orelse return error.TestExpectedError;
+    try std.testing.expectEqual(expected_id, id);
+}
+
+pub fn expectMockRpcFirstCapturedRequestParamsJsonContains(
+    rpc: *const client.RpcClient,
+    expected_fragment: []const u8,
+) !void {
+    const params_json = rpc.firstCapturedMockRequestParamsJson() orelse return error.TestExpectedError;
+    try std.testing.expect(std.mem.indexOf(u8, params_json, expected_fragment) != null);
+}
+
+pub fn expectMockRpcFirstCapturedRequestBodyContains(
+    rpc: *const client.RpcClient,
+    expected_fragment: []const u8,
+) !void {
+    const request_body = rpc.firstCapturedMockRequestBody() orelse return error.TestExpectedError;
+    try std.testing.expect(std.mem.indexOf(u8, request_body, expected_fragment) != null);
 }
 
 pub fn expectMockRpcLastCapturedRequestParamsJsonContains(
