@@ -4027,6 +4027,7 @@ test "runCommand token-largest-accounts with context prints slot and entries" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectGetTokenLargestAccountsRequest(allocator, commandCapturedRequest(&sender_context), "Mint111111111111111111111111111111111111", "confirmed");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "token largest accounts context slot: 99\n") != null);
@@ -4058,6 +4059,7 @@ test "runCommand executes block command and sends getBlock request" {
     defer parsed.deinit(allocator);
 
     try runCommand(allocator, &rpc, &parsed);
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 123, null);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
 }
@@ -4083,6 +4085,7 @@ test "runCommand executes block command with commitment and sends getBlock reque
     defer parsed.deinit(allocator);
 
     try runCommand(allocator, &rpc, &parsed);
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 456, "confirmed");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
 }
@@ -4106,6 +4109,7 @@ test "runCommand handles block not found" {
     defer parsed.deinit(allocator);
 
     try runCommand(allocator, &rpc, &parsed);
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 789, null);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
 }
@@ -4179,6 +4183,7 @@ test "runCommand block not found prints message" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 789, null);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings("block 789: not found\n", captured);
@@ -4218,6 +4223,7 @@ test "runCommand block prints summary and raw json" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
     defer allocator.free(captured);
 
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectGetBlockRequest(allocator, commandCapturedRequest(&sender_context), 100, null);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "block 100: parent_slot=99 block_height=100 block_time=1700000400 transactions=2 rewards=1") != null);
@@ -4261,6 +4267,7 @@ test "runCommand transaction prints summary and raw json" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
     defer allocator.free(captured);
 
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectGetTransactionRequest(allocator, commandCapturedRequest(&sender_context), signature_value, null);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "transaction 5h6xSignature111111111111111111111111111111111111: slot=55 block_time=1700000500 version=legacy signatures=2 fee=7000 log_messages=2 has_error=true") != null);
@@ -4381,6 +4388,7 @@ test "runCommand confirm-transaction respects commitment" {
         true,
         "confirmed",
     );
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings("signature Sig111111111111111111111111111111111111 confirmed: false\n", captured);
 }
@@ -4431,6 +4439,7 @@ test "runCommand signature-status prints status" {
         false,
         "confirmed",
     );
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature status: has_error=false slot=55 confirmations=7 confirmation=confirmed\n",
@@ -4494,6 +4503,7 @@ test "runCommand signature-statuses prints per-signature output" {
         true,
         null,
     );
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "signature statuses: 3\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  [0] SigA111111111111111111111111111111111111: not found\n") != null);
