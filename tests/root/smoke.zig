@@ -4422,6 +4422,7 @@ test "root.RequestSender route helpers expose scripted route surface" {
     });
 
     try mock_sender_assertions.expectMockRequestSenderRouteCount(&request_sender, 3);
+    try mock_sender_assertions.expectMockRequestSenderPersistentRouteCount(&request_sender, 0);
     try std.testing.expectEqual(@as(usize, 3), request_sender.mockRouteCount());
     try std.testing.expectEqual(@as(usize, 0), request_sender.mockMatchedRouteCount());
     try std.testing.expectEqual(@as(usize, 3), request_sender.mockPendingScriptedDispatchCount());
@@ -5064,6 +5065,7 @@ test "root.MockSender boolean helpers reflect mock state" {
 
     try mock_sender_assertions.expectMockSenderResponseCount(&mock_sender, 1);
     try mock_sender_assertions.expectMockSenderRouteCount(&mock_sender, 1);
+    try mock_sender_assertions.expectMockSenderPersistentRouteCount(&mock_sender, 0);
     try std.testing.expect(mock_sender.hasResponses());
     try std.testing.expect(mock_sender.hasRoutes());
     try std.testing.expect(!mock_sender.hasMatchedRoutes());
@@ -6301,7 +6303,7 @@ test "root.mock route helpers expose match counts and pending scripted dispatche
         .build());
 
     try std.testing.expectEqual(@as(usize, 3), rpc.mockRouteCount());
-    try std.testing.expectEqual(@as(usize, 1), rpc.mockPersistentRouteCount());
+    try mock_sender_assertions.expectMockRpcPersistentRouteCount(&rpc, 1);
     try mock_sender_assertions.expectMockRpcPendingScriptedDispatchCount(&rpc, 3);
     try mock_sender_assertions.expectMockRpcMatchedRouteCount(&rpc, 0);
     try std.testing.expect(rpc.hasMockRoutes());
@@ -6337,7 +6339,7 @@ test "root.mock route helpers expose match counts and pending scripted dispatche
     try std.testing.expectEqual(@as(i64, -32012), last_error.code);
     try std.testing.expectEqualStrings("health unavailable", last_error.message);
     try std.testing.expectEqual(@as(usize, 1), rpc.mockRouteCount());
-    try std.testing.expectEqual(@as(usize, 1), rpc.mockPersistentRouteCount());
+    try mock_sender_assertions.expectMockRpcPersistentRouteCount(&rpc, 1);
     try mock_sender_assertions.expectMockRpcRouteMatchCount(&rpc, "health-error", 1);
     try mock_sender_assertions.expectMockRpcMatchedRouteCount(&rpc, 4);
     try mock_sender_assertions.expectMockRpcScriptExhausted(&rpc);
