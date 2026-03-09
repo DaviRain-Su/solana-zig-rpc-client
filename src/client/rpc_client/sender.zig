@@ -143,6 +143,14 @@ pub const RequestSender = struct {
         self.replace(allocator, RequestSender.fromMockSender(sender));
     }
 
+    pub fn replaceBorrowedMockSender(
+        self: *RequestSender,
+        allocator: Allocator,
+        sender: *MockSender,
+    ) void {
+        self.replaceWithBorrowedMockSender(allocator, sender);
+    }
+
     pub fn replaceWithOwnedMockSender(
         self: *RequestSender,
         allocator: Allocator,
@@ -150,6 +158,14 @@ pub const RequestSender = struct {
     ) !void {
         const replacement = try RequestSender.fromOwnedMockSender(allocator, sender);
         self.replace(allocator, replacement);
+    }
+
+    pub fn replaceOwnedMockSender(
+        self: *RequestSender,
+        allocator: Allocator,
+        sender: MockSender,
+    ) !void {
+        try self.replaceWithOwnedMockSender(allocator, sender);
     }
 
     pub fn replaceWithMockSender(
@@ -160,11 +176,23 @@ pub const RequestSender = struct {
         try self.replaceWithOwnedMockSender(allocator, sender);
     }
 
+    pub fn replaceMockSender(
+        self: *RequestSender,
+        allocator: Allocator,
+        sender: MockSender,
+    ) !void {
+        try self.replaceWithMockSender(allocator, sender);
+    }
+
     pub fn replaceWithMock(self: *RequestSender, allocator: Allocator, responses: []const MockResponse) !void {
         try self.replaceWithOwnedMockSender(
             allocator,
             try MockSender.initSequence(allocator, responses),
         );
+    }
+
+    pub fn replaceMock(self: *RequestSender, allocator: Allocator, responses: []const MockResponse) !void {
+        try self.replaceWithMock(allocator, responses);
     }
 
     pub fn replaceWithMockHandler(
@@ -178,6 +206,14 @@ pub const RequestSender = struct {
         );
     }
 
+    pub fn replaceMockHandler(
+        self: *RequestSender,
+        allocator: Allocator,
+        handler: MockRequestHandler,
+    ) !void {
+        try self.replaceWithMockHandler(allocator, handler);
+    }
+
     pub fn replaceWithCallback(
         self: *RequestSender,
         allocator: Allocator,
@@ -185,6 +221,15 @@ pub const RequestSender = struct {
         callback: Callback,
     ) void {
         self.replace(allocator, RequestSender.init(context, callback));
+    }
+
+    pub fn replaceCallback(
+        self: *RequestSender,
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: Callback,
+    ) void {
+        self.replaceWithCallback(allocator, context, callback);
     }
 
     pub fn replaceWithCallbackAndDeinit(
@@ -195,6 +240,16 @@ pub const RequestSender = struct {
         deinit_callback: DeinitCallback,
     ) void {
         self.replace(allocator, RequestSender.initWithDeinit(context, callback, deinit_callback));
+    }
+
+    pub fn replaceCallbackAndDeinit(
+        self: *RequestSender,
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: Callback,
+        deinit_callback: DeinitCallback,
+    ) void {
+        self.replaceWithCallbackAndDeinit(allocator, context, callback, deinit_callback);
     }
 
     pub fn kind(self: RequestSender) Kind {
