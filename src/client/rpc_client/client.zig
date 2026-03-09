@@ -3299,6 +3299,18 @@ pub const RpcClient = struct {
         self.applyRequestSenderOptions(options);
     }
 
+    pub fn replaceSender(self: *RpcClient, sender: RequestSenderType) !void {
+        try self.replaceRequestSender(sender);
+    }
+
+    pub fn replaceSenderAndRequestSenderOptions(
+        self: *RpcClient,
+        sender: RequestSenderType,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.replaceRequestSenderAndRequestSenderOptions(sender, options);
+    }
+
     pub fn replaceRequestCallback(
         self: *RpcClient,
         context: ?*anyopaque,
@@ -3403,6 +3415,18 @@ pub const RpcClient = struct {
     ) void {
         self.setRequestSender(sender);
         self.applyRequestSenderOptions(options);
+    }
+
+    pub fn setSender(self: *RpcClient, sender: RequestSenderType) void {
+        self.setRequestSender(sender);
+    }
+
+    pub fn setSenderAndRequestSenderOptions(
+        self: *RpcClient,
+        sender: RequestSenderType,
+        options: RequestSenderOptions,
+    ) void {
+        self.setRequestSenderAndRequestSenderOptions(sender, options);
     }
 
     pub fn setRequestCallback(

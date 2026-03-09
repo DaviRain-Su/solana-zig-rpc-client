@@ -1957,6 +1957,71 @@ test "root.replaceRequestSenderAndRequestSenderOptions updates sender and runtim
     try std.testing.expect(second_context.saw_confirmed_commitment);
 }
 
+test "root.replaceSender aliases replaceRequestSender" {
+    const allocator = std.testing.allocator;
+    var first_context = RequestSenderContext{ .base_slot = 930 };
+    var second_context = RequestSenderContext{ .base_slot = 940 };
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.initWithDeinit(&first_context, customRequestSender, customRequestSenderDeinit),
+    );
+    defer rpc.deinit();
+
+    _ = try rpc.getSlot(.processed);
+
+    try rpc.replaceSender(
+        client.RequestSender.initWithDeinit(&second_context, customRequestSender, customRequestSenderDeinit),
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), first_context.deinit_count);
+
+    const slot = try rpc.getSlot(.confirmed);
+    try std.testing.expectEqual(@as(u64, 941), slot);
+    try std.testing.expectEqual(@as(usize, 1), rpc.getTransportStats().request_count);
+    try std.testing.expect(second_context.saw_confirmed_commitment);
+}
+
+test "root.replaceSenderAndRequestSenderOptions aliases replaceRequestSenderAndRequestSenderOptions" {
+    const allocator = std.testing.allocator;
+    var first_context = RequestSenderContext{ .base_slot = 950 };
+    var second_context = RequestSenderContext{ .base_slot = 960 };
+
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.initWithDeinit(&first_context, customRequestSender, customRequestSenderDeinit),
+        .{
+            .endpoint = "custom://replace-sender-first",
+            .commitment = .processed,
+            .request_timeout_ms = 71,
+            .confirm_transaction_initial_timeout_ms = 81,
+        },
+    );
+    defer rpc.deinit();
+
+    _ = try rpc.getSlot(null);
+
+    try rpc.replaceSenderAndRequestSenderOptions(
+        client.RequestSender.initWithDeinit(&second_context, customRequestSender, customRequestSenderDeinit),
+        .{
+            .endpoint = "custom://replace-sender-second",
+            .commitment = .finalized,
+            .request_timeout_ms = 72,
+            .confirm_transaction_initial_timeout_ms = 82,
+        },
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), first_context.deinit_count);
+    try std.testing.expectEqualStrings("custom://replace-sender-second", rpc.url());
+    try std.testing.expectEqual(client.Commitment.finalized, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 72), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 82), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 961), slot);
+    try std.testing.expect(second_context.saw_finalized_commitment);
+}
+
 test "root.setRequestCallback converts plain client to callback request sender" {
     const allocator = std.testing.allocator;
     var context = RequestSenderContext{ .base_slot = 1450 };
@@ -2547,6 +2612,53 @@ test "root.setRequestSender converts plain client to request sender client" {
 
     const slot = try rpc.getSlot(.processed);
     try std.testing.expectEqual(@as(u64, 2001), slot);
+}
+
+test "root.setSender aliases setRequestSender" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 2002 };
+
+    var rpc = try client.RpcClient.new(allocator, "http://127.0.0.1:8899");
+    defer rpc.deinit();
+
+    rpc.setSender(client.RequestSender.init(
+        &context,
+        customRequestSender,
+    ));
+
+    try std.testing.expect(rpc.hasRequestSender());
+    try std.testing.expect(!rpc.isMock());
+
+    const slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 2003), slot);
+}
+
+test "root.setSenderAndRequestSenderOptions aliases setRequestSenderAndRequestSenderOptions" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 2004 };
+
+    var rpc = try client.RpcClient.new(allocator, "http://127.0.0.1:8899");
+    defer rpc.deinit();
+
+    rpc.setSenderAndRequestSenderOptions(
+        client.RequestSender.init(&context, customRequestSender),
+        .{
+            .endpoint = "custom://set-sender-short-alias",
+            .commitment = .confirmed,
+            .request_timeout_ms = 73,
+            .confirm_transaction_initial_timeout_ms = 83,
+        },
+    );
+
+    try std.testing.expect(rpc.hasRequestSender());
+    try std.testing.expectEqualStrings("custom://set-sender-short-alias", rpc.url());
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 73), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 83), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 2005), slot);
+    try std.testing.expect(context.saw_confirmed_commitment);
 }
 
 test "root.setBorrowedMockSender converts plain client to mock-backed request sender" {
