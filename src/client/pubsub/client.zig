@@ -4423,6 +4423,10 @@ pub const PubsubClient = struct {
         return self.getHeartbeatIntervalMs() != null;
     }
 
+    pub fn usesDefaultHeartbeatInterval(self: *const Self) bool {
+        return !self.hasHeartbeatInterval();
+    }
+
     pub fn isHeartbeatEnabled(self: *const Self) bool {
         return self.hasHeartbeatInterval();
     }
@@ -4452,6 +4456,10 @@ pub const PubsubClient = struct {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
         return self.state.options.reconnect_delay_ms;
+    }
+
+    pub fn usesDefaultReconnectDelay(self: *const Self) bool {
+        return self.getReconnectDelayMs() == (pubsub_types.PubsubClientOptions{}).reconnect_delay_ms;
     }
 
     pub fn getReconnectDelayForAttempt(self: *const Self, attempt: u32) u32 {
@@ -4484,6 +4492,10 @@ pub const PubsubClient = struct {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
         return self.state.options.reconnect_backoff_factor;
+    }
+
+    pub fn usesDefaultReconnectBackoffFactor(self: *const Self) bool {
+        return self.getReconnectBackoffFactor() == (pubsub_types.PubsubClientOptions{}).reconnect_backoff_factor;
     }
 
     pub fn isReconnectBackoffEnabled(self: *const Self) bool {

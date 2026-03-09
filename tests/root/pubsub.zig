@@ -1901,6 +1901,7 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
 
     try std.testing.expect(pubsub.isAutoReconnectEnabled());
     try std.testing.expect(pubsub.hasHeartbeatInterval());
+    try std.testing.expect(!pubsub.usesDefaultHeartbeatInterval());
     try std.testing.expect(pubsub.isHeartbeatEnabled());
     try std.testing.expectEqual(@as(?u32, 25), pubsub.getHeartbeatIntervalMs());
     try std.testing.expect(pubsub.hasHeartbeatTimeout());
@@ -1908,6 +1909,7 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expectEqual(@as(?u32, 75), pubsub.getHeartbeatTimeoutMs());
     try std.testing.expectEqual(@as(?u32, 75), pubsub.getEffectiveHeartbeatTimeoutMs());
     try std.testing.expectEqual(@as(u32, 80), pubsub.getReconnectDelayMs());
+    try std.testing.expect(!pubsub.usesDefaultReconnectDelay());
     try std.testing.expect(pubsub.isReconnectBackoffEnabled());
     try std.testing.expect(!pubsub.isReconnectFixedDelay());
     try std.testing.expectEqual(@as(u32, 80), pubsub.getNextReconnectDelayMs());
@@ -1916,6 +1918,7 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expectEqual(@as(u32, 240), pubsub.getReconnectDelayForAttempt(1));
     try std.testing.expectEqual(@as(u32, 250), pubsub.getReconnectDelayForAttempt(2));
     try std.testing.expectEqual(@as(u8, 3), pubsub.getReconnectBackoffFactor());
+    try std.testing.expect(!pubsub.usesDefaultReconnectBackoffFactor());
     try std.testing.expect(pubsub.hasReconnectMaxDelay());
     try std.testing.expect(!pubsub.usesDefaultReconnectMaxDelay());
     try std.testing.expect(pubsub.isReconnectDelayCapped());
@@ -1976,7 +1979,10 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.isReconnectImmediate());
     try std.testing.expect(pubsub.isReconnectBackoffEnabled());
     try std.testing.expect(!pubsub.isReconnectFixedDelay());
+    try std.testing.expect(pubsub.usesDefaultHeartbeatInterval());
     try std.testing.expect(!pubsub.isHeartbeatEnabled());
+    try std.testing.expect(pubsub.usesDefaultReconnectDelay());
+    try std.testing.expect(pubsub.usesDefaultReconnectBackoffFactor());
     try std.testing.expect(pubsub.usesDefaultHeartbeatTimeout());
     try std.testing.expect(!pubsub.isReconnectDelayCapped());
     try std.testing.expect(pubsub.usesDefaultReconnectMaxDelay());
@@ -2014,11 +2020,13 @@ test "root.PubsubClient mutable policy setters update runtime values" {
 
     try std.testing.expect(!pubsub.isAutoReconnectEnabled());
     try std.testing.expect(pubsub.hasHeartbeatTimeout());
+    try std.testing.expect(pubsub.usesDefaultHeartbeatInterval());
     try std.testing.expect(!pubsub.usesDefaultHeartbeatTimeout());
     try std.testing.expect(!pubsub.isHeartbeatEnabled());
     try std.testing.expectEqual(@as(?u32, 12_345), pubsub.getHeartbeatTimeoutMs());
     try std.testing.expectEqual(@as(?u32, null), pubsub.getEffectiveHeartbeatTimeoutMs());
     try std.testing.expectEqual(@as(u32, 555), pubsub.getReconnectDelayMs());
+    try std.testing.expect(!pubsub.usesDefaultReconnectDelay());
     try std.testing.expect(pubsub.isReconnectBackoffEnabled());
     try std.testing.expect(!pubsub.isReconnectFixedDelay());
     try std.testing.expectEqual(@as(u32, 555), pubsub.getNextReconnectDelayMs());
@@ -2027,6 +2035,7 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expectEqual(@as(u32, 2_220), pubsub.getReconnectDelayForAttempt(1));
     try std.testing.expectEqual(@as(u32, 4_321), pubsub.getReconnectDelayForAttempt(2));
     try std.testing.expectEqual(@as(u8, 4), pubsub.getReconnectBackoffFactor());
+    try std.testing.expect(!pubsub.usesDefaultReconnectBackoffFactor());
     try std.testing.expect(pubsub.hasReconnectMaxDelay());
     try std.testing.expect(!pubsub.usesDefaultReconnectMaxDelay());
     try std.testing.expect(pubsub.isReconnectDelayCapped());
