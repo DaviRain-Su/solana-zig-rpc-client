@@ -1991,6 +1991,12 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expectEqual(@as(usize, 2048), options.buffer_size);
     const config = pubsub.getConfig();
     try std.testing.expectEqual(options.buffer_size, config.buffer_size);
+    const default_options = client.PubsubClient.defaultOptions();
+    try std.testing.expect(!default_options.auto_reconnect);
+    try std.testing.expectEqual(@as(?u32, null), default_options.heartbeat_interval_ms);
+    try std.testing.expectEqual(@as(u32, 250), default_options.reconnect_delay_ms);
+    const default_config = client.PubsubClient.defaultConfig();
+    try std.testing.expectEqual(default_options.subscription_queue_limit, default_config.subscription_queue_limit);
     try std.testing.expectEqual(@as(u32, 0), pubsub.getReconnectAttemptCount());
     try std.testing.expect(!pubsub.hasReconnectAttempts());
     try std.testing.expect(!pubsub.hasEverReconnected());
@@ -2177,6 +2183,11 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expectEqual(@as(usize, 2048), updated_options.buffer_size);
     const updated_config = pubsub.getConfig();
     try std.testing.expectEqual(updated_options.max_message_size, updated_config.max_message_size);
+    const default_options = client.PubsubClient.defaultOptions();
+    try std.testing.expectEqual(@as(u32, 250), default_options.reconnect_delay_ms);
+    try std.testing.expect(updated_options.reconnect_delay_ms != default_options.reconnect_delay_ms);
+    const default_config = client.PubsubClient.defaultConfig();
+    try std.testing.expectEqual(default_options.buffer_size, default_config.buffer_size);
 }
 
 test "root.PubsubClient signatureSubscribe parses receivedSignature notifications" {

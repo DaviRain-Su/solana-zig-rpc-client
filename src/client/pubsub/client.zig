@@ -4742,6 +4742,14 @@ pub const PubsubClient = struct {
         return self.getOptions();
     }
 
+    pub fn defaultOptions() pubsub_types.PubsubClientOptions {
+        return .{};
+    }
+
+    pub fn defaultConfig() pubsub_types.PubsubClientOptions {
+        return defaultOptions();
+    }
+
     pub fn usesDefaultBufferSize(self: *const Self) bool {
         return self.getBufferSize() == (pubsub_types.PubsubClientOptions{}).buffer_size;
     }
