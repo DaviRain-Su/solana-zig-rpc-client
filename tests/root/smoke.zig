@@ -4423,6 +4423,10 @@ test "root.RequestSender route helpers expose scripted route surface" {
     try std.testing.expectEqual(@as(usize, 3), request_sender.mockRouteCount());
     try std.testing.expectEqual(@as(usize, 0), request_sender.mockMatchedRouteCount());
     try std.testing.expectEqual(@as(usize, 3), request_sender.mockPendingScriptedDispatchCount());
+    try std.testing.expect(request_sender.hasMockRoutes());
+    try std.testing.expect(!request_sender.hasMatchedMockRoutes());
+    try std.testing.expect(!request_sender.hasPersistentMockRoutes());
+    try std.testing.expect(!request_sender.hasMockRouteMatch("finalized-slot"));
 
     var rpc = try client.RpcClient.newWithRequestSender(allocator, request_sender);
     defer rpc.deinit();
@@ -4442,6 +4446,11 @@ test "root.RequestSender route helpers expose scripted route surface" {
     try std.testing.expectEqual(@as(usize, 1), request_sender.mockRouteMatchCount("processed-slot"));
     try std.testing.expectEqual(@as(usize, 1), request_sender.mockRouteMatchCount("health"));
     try std.testing.expectEqual(@as(usize, 0), request_sender.mockPendingScriptedDispatchCount());
+    try std.testing.expect(!request_sender.hasMockRoutes());
+    try std.testing.expect(request_sender.hasMatchedMockRoutes());
+    try std.testing.expect(request_sender.hasMockRouteMatch("finalized-slot"));
+    try std.testing.expect(request_sender.hasMockRouteMatch("processed-slot"));
+    try std.testing.expect(request_sender.hasMockRouteMatch("health"));
 }
 
 test "root.mock_sender_assertions supports RequestSender" {
@@ -6116,6 +6125,10 @@ test "root.mock route helpers expose match counts and pending scripted dispatche
     try std.testing.expectEqual(@as(usize, 1), rpc.mockPersistentRouteCount());
     try mock_sender_assertions.expectMockRpcPendingScriptedDispatchCount(&rpc, 3);
     try mock_sender_assertions.expectMockRpcMatchedRouteCount(&rpc, 0);
+    try std.testing.expect(rpc.hasMockRoutes());
+    try std.testing.expect(!rpc.hasMatchedMockRoutes());
+    try std.testing.expect(rpc.hasPersistentMockRoutes());
+    try std.testing.expect(!rpc.hasMockRouteMatch("finalized-slot"));
 
     const finalized_slot = try rpc.getSlot(.finalized);
     try std.testing.expectEqual(@as(u64, 111), finalized_slot);
@@ -6123,6 +6136,10 @@ test "root.mock route helpers expose match counts and pending scripted dispatche
     try mock_sender_assertions.expectMockRpcRouteMatchCount(&rpc, "finalized-slot", 1);
     try mock_sender_assertions.expectMockRpcMatchedRouteCount(&rpc, 1);
     try mock_sender_assertions.expectMockRpcPendingScriptedDispatchCount(&rpc, 2);
+    try std.testing.expect(rpc.hasMockRoutes());
+    try std.testing.expect(rpc.hasMatchedMockRoutes());
+    try std.testing.expect(rpc.hasPersistentMockRoutes());
+    try std.testing.expect(rpc.hasMockRouteMatch("finalized-slot"));
 
     try std.testing.expectError(error.Timeout, rpc.getSlot(.processed));
     try std.testing.expectEqual(@as(usize, 2), rpc.mockRouteCount());
@@ -6145,6 +6162,10 @@ test "root.mock route helpers expose match counts and pending scripted dispatche
     try mock_sender_assertions.expectMockRpcRouteMatchCount(&rpc, "health-error", 1);
     try mock_sender_assertions.expectMockRpcMatchedRouteCount(&rpc, 4);
     try mock_sender_assertions.expectMockRpcScriptExhausted(&rpc);
+    try std.testing.expect(rpc.hasMockRoutes());
+    try std.testing.expect(rpc.hasMatchedMockRoutes());
+    try std.testing.expect(rpc.hasPersistentMockRoutes());
+    try std.testing.expect(rpc.hasMockRouteMatch("health-error"));
 
     const script_summary = try rpc.mockScriptSummaryAlloc(allocator);
     defer allocator.free(script_summary);

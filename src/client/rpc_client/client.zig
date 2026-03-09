@@ -4076,12 +4076,24 @@ pub const RpcClient = struct {
         return if (self.resolvedMockSenderConst()) |sender| sender.matchedRouteCount() else 0;
     }
 
+    pub fn hasMatchedMockRoutes(self: *const RpcClient) bool {
+        return self.mockMatchedRouteCount() > 0;
+    }
+
     pub fn mockRouteMatchCount(self: *const RpcClient, label: []const u8) usize {
         return if (self.resolvedMockSenderConst()) |sender| sender.routeMatchCountForLabel(label) else 0;
     }
 
+    pub fn hasMockRouteMatch(self: *const RpcClient, label: []const u8) bool {
+        return self.mockRouteMatchCount(label) > 0;
+    }
+
     pub fn mockPersistentRouteCount(self: *const RpcClient) usize {
         return if (self.resolvedMockSenderConst()) |sender| sender.persistentRouteCount() else 0;
+    }
+
+    pub fn hasPersistentMockRoutes(self: *const RpcClient) bool {
+        return self.mockPersistentRouteCount() > 0;
     }
 
     pub fn mockPendingScriptedDispatchCount(self: *const RpcClient) usize {

@@ -366,12 +366,24 @@ pub const RequestSender = struct {
         return if (self.mockSenderConst() catch null) |sender| sender.matchedRouteCount() else 0;
     }
 
+    pub fn hasMatchedMockRoutes(self: *const RequestSender) bool {
+        return self.mockMatchedRouteCount() > 0;
+    }
+
     pub fn mockRouteMatchCount(self: *const RequestSender, label: []const u8) usize {
         return if (self.mockSenderConst() catch null) |sender| sender.routeMatchCountForLabel(label) else 0;
     }
 
+    pub fn hasMockRouteMatch(self: *const RequestSender, label: []const u8) bool {
+        return self.mockRouteMatchCount(label) > 0;
+    }
+
     pub fn mockPersistentRouteCount(self: *const RequestSender) usize {
         return if (self.mockSenderConst() catch null) |sender| sender.persistentRouteCount() else 0;
+    }
+
+    pub fn hasPersistentMockRoutes(self: *const RequestSender) bool {
+        return self.mockPersistentRouteCount() > 0;
     }
 
     pub fn mockPendingScriptedDispatchCount(self: *const RequestSender) usize {
