@@ -2000,10 +2000,14 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expectEqual(default_options.auto_reconnect, client.PubsubClient.defaultAutoReconnectEnabled());
     try std.testing.expectEqual(default_options.heartbeat_interval_ms, client.PubsubClient.defaultHeartbeatIntervalMs());
     try std.testing.expectEqual(default_options.heartbeat_timeout_ms, client.PubsubClient.defaultHeartbeatTimeoutMs());
+    try std.testing.expectEqual(@as(?u32, null), client.PubsubClient.defaultEffectiveHeartbeatTimeoutMs());
     try std.testing.expectEqual(default_options.reconnect_delay_ms, client.PubsubClient.defaultReconnectDelayMs());
     try std.testing.expectEqual(default_options.reconnect_backoff_factor, client.PubsubClient.defaultReconnectBackoffFactor());
     try std.testing.expectEqual(default_options.reconnect_max_delay_ms, client.PubsubClient.defaultReconnectMaxDelayMs());
     try std.testing.expectEqual(default_options.reconnect_max_attempts, client.PubsubClient.defaultReconnectMaxAttempts());
+    try std.testing.expectEqual(@as(u32, 250), client.PubsubClient.defaultEffectiveReconnectMaxDelayMs());
+    try std.testing.expectEqual(@as(u32, 250), client.PubsubClient.defaultReconnectDelayForAttempt(0));
+    try std.testing.expectEqual(@as(u32, 500), client.PubsubClient.defaultReconnectDelayForAttempt(1));
     try std.testing.expectEqual(default_options.subscription_queue_limit, client.PubsubClient.defaultSubscriptionQueueLimit());
     try std.testing.expectEqual(default_options.queue_overflow_policy, client.PubsubClient.defaultQueueOverflowPolicy());
     try std.testing.expectEqual(default_options.handshake_timeout_ms, client.PubsubClient.defaultHandshakeTimeoutMs());
@@ -2202,6 +2206,7 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     const default_config = client.PubsubClient.defaultConfig();
     try std.testing.expectEqual(default_options.buffer_size, default_config.buffer_size);
     try std.testing.expectEqual(default_options.reconnect_delay_ms, client.PubsubClient.defaultReconnectDelayMs());
+    try std.testing.expectEqual(@as(u32, 250), client.PubsubClient.defaultEffectiveReconnectMaxDelayMs());
     try std.testing.expectEqual(default_options.queue_overflow_policy, client.PubsubClient.defaultQueueOverflowPolicy());
     try std.testing.expectEqual(default_options.buffer_size, client.PubsubClient.defaultBufferSize());
 }

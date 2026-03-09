@@ -4762,6 +4762,11 @@ pub const PubsubClient = struct {
         return defaultOptions().heartbeat_timeout_ms;
     }
 
+    pub fn defaultEffectiveHeartbeatTimeoutMs() ?u32 {
+        const interval_ms = defaultHeartbeatIntervalMs() orelse return null;
+        return defaultHeartbeatTimeoutMs() orelse interval_ms * 3;
+    }
+
     pub fn defaultReconnectDelayMs() u32 {
         return defaultOptions().reconnect_delay_ms;
     }
@@ -4776,6 +4781,19 @@ pub const PubsubClient = struct {
 
     pub fn defaultReconnectMaxAttempts() ?u32 {
         return defaultOptions().reconnect_max_attempts;
+    }
+
+    pub fn defaultReconnectDelayForAttempt(attempt: u32) u32 {
+        return State.computeReconnectDelayMs(
+            defaultReconnectDelayMs(),
+            defaultReconnectBackoffFactor(),
+            defaultReconnectMaxDelayMs(),
+            attempt,
+        );
+    }
+
+    pub fn defaultEffectiveReconnectMaxDelayMs() u32 {
+        return defaultReconnectMaxDelayMs() orelse defaultReconnectDelayMs();
     }
 
     pub fn defaultSubscriptionQueueLimit() usize {
