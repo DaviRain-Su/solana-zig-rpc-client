@@ -1316,6 +1316,10 @@ pub const MockSender = struct {
         };
     }
 
+    pub fn lastScriptMissMethod(self: *const MockSender) ?[]const u8 {
+        return if (self.lastScriptMissRequest()) |request| request.method else null;
+    }
+
     pub fn requestCount(self: *const MockSender) usize {
         return self.requests.items.len;
     }

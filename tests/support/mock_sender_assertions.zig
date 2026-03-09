@@ -65,8 +65,8 @@ pub fn expectMockSenderLastScriptMissMethod(
     sender: *const client.MockSender,
     expected_method: []const u8,
 ) !void {
-    const request = sender.lastScriptMissRequest() orelse return error.TestExpectedError;
-    try std.testing.expectEqualStrings(expected_method, request.method);
+    const method = sender.lastScriptMissMethod() orelse return error.TestExpectedError;
+    try std.testing.expectEqualStrings(expected_method, method);
 }
 
 pub fn expectMockSenderScriptSatisfied(sender: *const client.MockSender) !void {

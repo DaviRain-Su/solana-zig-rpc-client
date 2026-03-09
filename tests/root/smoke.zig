@@ -5018,6 +5018,24 @@ test "root.RequestSender.initOwnedMock aliases initOwnedMockSender" {
     try std.testing.expectEqual(@as(u64, 3397), slot);
 }
 
+test "root.MockSender lastScriptMissMethod exposes last miss method" {
+    const allocator = std.testing.allocator;
+    var mock_sender = client.MockSender.init(allocator);
+    defer mock_sender.deinit();
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.fromMockSender(&mock_sender),
+    );
+    defer rpc.deinit();
+
+    try std.testing.expect(mock_sender.lastScriptMissRequest() == null);
+    try std.testing.expect(mock_sender.lastScriptMissMethod() == null);
+
+    try std.testing.expectError(error.MockResponseExhausted, rpc.getSlot(.processed));
+    try std.testing.expectEqualStrings("getSlot", mock_sender.lastScriptMissMethod().?);
+}
+
 test "root.RequestSender mock script helpers expose pending counts and summary" {
     const allocator = std.testing.allocator;
     var mock_sender = client.MockSender.init(allocator);
