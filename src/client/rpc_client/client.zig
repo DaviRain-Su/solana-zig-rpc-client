@@ -2808,6 +2808,18 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn replaceWithMockSender(self: *RpcClient, sender: MockSenderType) !void {
+        try self.setMockSender(sender);
+    }
+
+    pub fn replaceWithMockSenderAndRequestSenderOptions(
+        self: *RpcClient,
+        sender: MockSenderType,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.setMockSenderAndRequestSenderOptions(sender, options);
+    }
+
     pub fn replaceWithMockHandler(self: *RpcClient, handler: MockRequestHandlerType) !void {
         try self.replaceWithOwnedMockSender(MockSenderType.initWithHandler(self.allocator, handler));
     }
