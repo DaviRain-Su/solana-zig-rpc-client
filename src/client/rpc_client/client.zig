@@ -2617,6 +2617,108 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn newRequestSender(allocator: Allocator, sender: RequestSenderType) !RpcClient {
+        return RpcClient.newWithRequestSender(allocator, sender);
+    }
+
+    pub fn newRequestSenderAndRequestSenderOptions(
+        allocator: Allocator,
+        sender: RequestSenderType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndRequestSenderOptions(allocator, sender, options);
+    }
+
+    pub fn newRequestSenderAndCommitment(
+        allocator: Allocator,
+        sender: RequestSenderType,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndCommitment(allocator, sender, commitment);
+    }
+
+    pub fn newRequestSenderAndTimeout(
+        allocator: Allocator,
+        sender: RequestSenderType,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndTimeout(allocator, sender, timeout_ms);
+    }
+
+    pub fn newRequestSenderAndTimeouts(
+        allocator: Allocator,
+        sender: RequestSenderType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndTimeouts(
+            allocator,
+            sender,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newRequestSenderAndCommitmentAndTimeout(
+        allocator: Allocator,
+        sender: RequestSenderType,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndCommitmentAndTimeout(
+            allocator,
+            sender,
+            commitment,
+            timeout_ms,
+        );
+    }
+
+    pub fn newRequestSenderAndTimeoutAndCommitment(
+        allocator: Allocator,
+        sender: RequestSenderType,
+        timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndTimeoutAndCommitment(
+            allocator,
+            sender,
+            timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn newRequestSenderAndCommitmentAndTimeouts(
+        allocator: Allocator,
+        sender: RequestSenderType,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndCommitmentAndTimeouts(
+            allocator,
+            sender,
+            commitment,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newRequestSenderAndTimeoutsAndCommitment(
+        allocator: Allocator,
+        sender: RequestSenderType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndTimeoutsAndCommitment(
+            allocator,
+            sender,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
     pub fn newWithRequestSenderAndOptions(
         allocator: Allocator,
         sender: RequestSenderType,
