@@ -3729,6 +3729,7 @@ test "runCommand poll-balance prints value" {
     defer allocator.free(captured);
 
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getBalance");
     try expectGetBalanceRequest(allocator, commandCapturedRequest(&sender_context), "Address11111111111111111111111111111111", null);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
@@ -3872,6 +3873,7 @@ test "runCommand fee-for-message with context prints slot and value" {
     defer allocator.free(captured);
 
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getFeeForMessage");
     try expectGetFeeForMessageRequest(allocator, commandCapturedRequest(&sender_context), "AQAB", "finalized");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
@@ -4519,6 +4521,7 @@ test "runCommand signature-statuses prints per-signature output" {
         null,
     );
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "requestAirdrop");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "signature statuses: 3\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  [0] SigA111111111111111111111111111111111111: not found\n") != null);
@@ -4648,6 +4651,7 @@ test "runCommand blocks-since-signature-confirmation prints confirmations" {
         "confirmed",
     );
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature Sig111111111111111111111111111111111111 confirmed blocks: 9\n",
@@ -4997,6 +5001,7 @@ test "runCommand request-airdrop uses default params" {
         null,
     );
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "airdrop signature: Sig111111111111111111111111111111111111111111111111111111111111111111\n",
@@ -5052,6 +5057,7 @@ test "runCommand request-airdrop with commitment and recent blockhash passes bot
         "RecentBlockhash11111111111111111111111111",
     );
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "airdrop signature: Sig111111111111111111111111111111111111111111111111111111111111111111\n",
@@ -5113,6 +5119,7 @@ test "runCommand account-data decodes base64 and prints hex" {
         "base64",
     );
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "account data for Address11111111111111111111111111111111: 3 bytes\n010203\n",
@@ -5172,6 +5179,7 @@ test "runCommand ui-account prints parsed account details" {
         99,
     );
     try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getAccountInfo");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "ui account context slot: 77\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "ui account for Address11111111111111111111111111111111: lamports=111 executable=false owner=Owner1111111111111111111111111111111111 rent_epoch=3 space=64\n") != null);
