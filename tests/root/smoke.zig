@@ -1260,6 +1260,57 @@ test "root.replaceWithOwnedMockSender swaps in owned mock sender" {
     try std.testing.expectEqual(@as(usize, 1), first_context.deinit_count);
 }
 
+test "root.replaceWithMock converts request sender client to owned mock-backed sender" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 1810 };
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.init(
+            &context,
+            customRequestSender,
+        ),
+    );
+    defer rpc.deinit();
+
+    try rpc.replaceWithMock(&.{});
+    try rpc.pushMockSlotResult(1811);
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 1811), slot);
+}
+
+test "root.replaceWithMockHandler installs owned handler-backed sender" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 1820 };
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.init(
+            &context,
+            customRequestSender,
+        ),
+    );
+    defer rpc.deinit();
+
+    try rpc.replaceWithMockHandler(.{
+        .context = &handler_context,
+        .callback = dynamicMockHandler,
+    });
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+    try std.testing.expect(rpc.hasMockHandler());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 789), slot);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+}
+
 test "root.setRequestSender converts plain client to request sender client" {
     const allocator = std.testing.allocator;
     var context = RequestSenderContext{ .base_slot = 2000 };
@@ -1297,6 +1348,43 @@ test "root.setBorrowedMockSender converts plain client to mock-backed request se
 
     const slot = try rpc.getSlot(null);
     try std.testing.expectEqual(@as(u64, 2101), slot);
+}
+
+test "root.setMock converts plain client to direct mock client from response queue" {
+    const allocator = std.testing.allocator;
+
+    var rpc = try client.RpcClient.new(allocator, "http://127.0.0.1:8899");
+    defer rpc.deinit();
+
+    try rpc.setMock(&.{});
+    try rpc.pushMockSlotResult(2151);
+
+    try std.testing.expect(rpc.isDirectMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 2151), slot);
+}
+
+test "root.setMockWithHandler converts plain client to direct handler-backed mock client" {
+    const allocator = std.testing.allocator;
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.new(allocator, "http://127.0.0.1:8899");
+    defer rpc.deinit();
+
+    try rpc.setMockWithHandler(.{
+        .context = &handler_context,
+        .callback = dynamicMockHandler,
+    });
+
+    try std.testing.expect(rpc.isDirectMockClient());
+    try std.testing.expect(rpc.isMock());
+    try std.testing.expect(rpc.hasMockHandler());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 789), slot);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
 }
 
 test "root.setRequestSender converts direct mock client to generic request sender" {
