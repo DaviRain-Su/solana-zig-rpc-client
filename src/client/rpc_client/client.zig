@@ -1505,6 +1505,119 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn newMockRequestResponses(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+    ) !RpcClient {
+        return RpcClient.newMockRequestSender(allocator, responses);
+    }
+
+    pub fn newMockRequestResponsesAndOptions(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newMockRequestSenderAndOptions(allocator, responses, options);
+    }
+
+    pub fn newMockRequestResponsesAndRequestSenderOptions(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newMockRequestSenderAndRequestSenderOptions(allocator, responses, options);
+    }
+
+    pub fn newMockRequestResponsesAndCommitment(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newMockRequestSenderAndCommitment(allocator, responses, commitment);
+    }
+
+    pub fn newMockRequestResponsesAndTimeout(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newMockRequestSenderAndTimeout(allocator, responses, timeout_ms);
+    }
+
+    pub fn newMockRequestResponsesAndTimeouts(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newMockRequestSenderAndTimeouts(
+            allocator,
+            responses,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newMockRequestResponsesAndCommitmentAndTimeout(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newMockRequestSenderAndCommitmentAndTimeout(
+            allocator,
+            responses,
+            commitment,
+            timeout_ms,
+        );
+    }
+
+    pub fn newMockRequestResponsesAndTimeoutAndCommitment(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newMockRequestSenderAndTimeoutAndCommitment(
+            allocator,
+            responses,
+            timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn newMockRequestResponsesAndCommitmentAndTimeouts(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newMockRequestSenderAndCommitmentAndTimeouts(
+            allocator,
+            responses,
+            commitment,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newMockRequestResponsesAndTimeoutsAndCommitment(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newMockRequestSenderAndTimeoutsAndCommitment(
+            allocator,
+            responses,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
     pub fn newWithMockRequestSenderAndCommitment(
         allocator: Allocator,
         responses: []const MockResponseType,
@@ -3947,8 +4060,16 @@ pub const RpcClient = struct {
         return if (self.resolvedMockSenderConst()) |sender| sender.responseCount() else 0;
     }
 
+    pub fn hasMockResponses(self: *const RpcClient) bool {
+        return self.mockResponseCount() > 0;
+    }
+
     pub fn mockRouteCount(self: *const RpcClient) usize {
         return if (self.resolvedMockSenderConst()) |sender| sender.routeCount() else 0;
+    }
+
+    pub fn hasMockRoutes(self: *const RpcClient) bool {
+        return self.mockRouteCount() > 0;
     }
 
     pub fn mockMatchedRouteCount(self: *const RpcClient) usize {
@@ -3967,8 +4088,16 @@ pub const RpcClient = struct {
         return if (self.resolvedMockSenderConst()) |sender| sender.pendingScriptedDispatchCount() else 0;
     }
 
+    pub fn hasPendingMockScriptedDispatches(self: *const RpcClient) bool {
+        return self.mockPendingScriptedDispatchCount() > 0;
+    }
+
     pub fn mockScriptMissCount(self: *const RpcClient) usize {
         return if (self.resolvedMockSenderConst()) |sender| sender.scriptMissCount() else 0;
+    }
+
+    pub fn hasMockScriptMisses(self: *const RpcClient) bool {
+        return self.mockScriptMissCount() > 0;
     }
 
     pub fn mockRequestCount(self: *const RpcClient) usize {
@@ -4017,6 +4146,10 @@ pub const RpcClient = struct {
 
     pub fn capturedMockRequests(self: *const RpcClient) []const MockRequestType {
         return if (self.resolvedMockSenderConst()) |sender| sender.capturedRequests() else &.{};
+    }
+
+    pub fn hasCapturedMockRequests(self: *const RpcClient) bool {
+        return self.capturedMockRequests().len > 0;
     }
 
     pub fn lastMockScriptMissRequest(self: *const RpcClient) ?MockRequestViewType {

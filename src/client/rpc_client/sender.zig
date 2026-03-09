@@ -342,12 +342,24 @@ pub const RequestSender = struct {
         return if (self.mockSenderConst() catch null) |sender| sender.responseCount() else 0;
     }
 
+    pub fn hasMockResponses(self: *const RequestSender) bool {
+        return self.mockResponseCount() > 0;
+    }
+
     pub fn mockRequestCount(self: *const RequestSender) usize {
         return if (self.mockSenderConst() catch null) |sender| sender.requestCount() else 0;
     }
 
+    pub fn hasCapturedMockRequests(self: *const RequestSender) bool {
+        return self.capturedMockRequests().len > 0;
+    }
+
     pub fn mockRouteCount(self: *const RequestSender) usize {
         return if (self.mockSenderConst() catch null) |sender| sender.routeCount() else 0;
+    }
+
+    pub fn hasMockRoutes(self: *const RequestSender) bool {
+        return self.mockRouteCount() > 0;
     }
 
     pub fn mockMatchedRouteCount(self: *const RequestSender) usize {
@@ -366,8 +378,16 @@ pub const RequestSender = struct {
         return if (self.mockSenderConst() catch null) |sender| sender.pendingScriptedDispatchCount() else 0;
     }
 
+    pub fn hasPendingMockScriptedDispatches(self: *const RequestSender) bool {
+        return self.mockPendingScriptedDispatchCount() > 0;
+    }
+
     pub fn mockScriptMissCount(self: *const RequestSender) usize {
         return if (self.mockSenderConst() catch null) |sender| sender.scriptMissCount() else 0;
+    }
+
+    pub fn hasMockScriptMisses(self: *const RequestSender) bool {
+        return self.mockScriptMissCount() > 0;
     }
 
     pub fn capturedMockRequests(self: *const RequestSender) []const MockRequest {
