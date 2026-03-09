@@ -477,6 +477,10 @@ pub const PubsubSubscription = struct {
         return self.closeReason() == .client_shutdown;
     }
 
+    pub fn isDeinitialized(self: *Self) bool {
+        return self.closeReason() == .deinitialized;
+    }
+
     pub fn isTransportClosed(self: *Self) bool {
         return self.closeReason() == .transport_closed;
     }
@@ -1027,6 +1031,10 @@ pub const PubsubSlotsUpdatesSubscriptionWithCallback = struct {
         return self.closeReason() == .client_shutdown;
     }
 
+    pub fn isDeinitialized(self: *const Self) bool {
+        return self.closeReason() == .deinitialized;
+    }
+
     pub fn isTransportClosed(self: *const Self) bool {
         return self.closeReason() == .transport_closed;
     }
@@ -1151,6 +1159,10 @@ pub const PubsubRootSubscriptionWithCallback = struct {
 
     pub fn isClientShutdownClosed(self: *const Self) bool {
         return self.closeReason() == .client_shutdown;
+    }
+
+    pub fn isDeinitialized(self: *const Self) bool {
+        return self.closeReason() == .deinitialized;
     }
 
     pub fn isTransportClosed(self: *const Self) bool {
@@ -2401,6 +2413,10 @@ pub fn TypedPubsubReceiver(comptime ValueType: type) type {
             return self.closeReason() == .client_shutdown;
         }
 
+        pub fn isDeinitialized(self: *const Self) bool {
+            return self.closeReason() == .deinitialized;
+        }
+
         pub fn isTransportClosed(self: *const Self) bool {
             return self.closeReason() == .transport_closed;
         }
@@ -2535,6 +2551,10 @@ pub const PubsubSubscriptionWithReceiver = struct {
 
     pub fn isClientShutdownClosed(self: *const Self) bool {
         return self.closeReason() == .client_shutdown;
+    }
+
+    pub fn isDeinitialized(self: *const Self) bool {
+        return self.closeReason() == .deinitialized;
     }
 
     pub fn isTransportClosed(self: *const Self) bool {
@@ -2976,6 +2996,10 @@ pub fn TypedPubsubSubscriptionWithReceiver(comptime ValueType: type) type {
             return self.closeReason() == .client_shutdown;
         }
 
+        pub fn isDeinitialized(self: *const Self) bool {
+            return self.closeReason() == .deinitialized;
+        }
+
         pub fn isTransportClosed(self: *const Self) bool {
             return self.closeReason() == .transport_closed;
         }
@@ -3112,6 +3136,10 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
 
         pub fn isClientShutdownClosed(self: *const Self) bool {
             return self.closeReason() == .client_shutdown;
+        }
+
+        pub fn isDeinitialized(self: *const Self) bool {
+            return self.closeReason() == .deinitialized;
         }
 
         pub fn isTransportClosed(self: *const Self) bool {

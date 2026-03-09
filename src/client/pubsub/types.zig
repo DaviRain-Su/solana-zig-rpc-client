@@ -54,6 +54,10 @@ pub const PubsubCloseResult = struct {
         return self.reason == .client_shutdown;
     }
 
+    pub fn isDeinitialized(self: *const @This()) bool {
+        return self.reason == .deinitialized;
+    }
+
     pub fn isTransportClosed(self: *const @This()) bool {
         return self.reason == .transport_closed;
     }

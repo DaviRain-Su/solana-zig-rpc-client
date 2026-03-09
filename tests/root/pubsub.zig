@@ -1383,6 +1383,7 @@ test "root.PubsubSubscription unsubscribe surfaces RPC errors and leaves subscri
     try std.testing.expect(subscription.isCloseReason(.none));
     try std.testing.expect(!subscription.hasCloseReason());
     try std.testing.expect(!subscription.isClientShutdownClosed());
+    try std.testing.expect(!subscription.isDeinitialized());
     try std.testing.expect(subscription.hasLastError());
 
     const subscription_error = subscription.getLastError() orelse return error.TestExpectedError;
@@ -1400,6 +1401,7 @@ test "root.PubsubSubscription unsubscribe surfaces RPC errors and leaves subscri
     try std.testing.expect(close_result.isCloseReason(.none));
     try std.testing.expect(!close_result.isUnsubscribed());
     try std.testing.expect(!close_result.isClientShutdownClosed());
+    try std.testing.expect(!close_result.isDeinitialized());
     try std.testing.expect(!close_result.isTransportClosed());
     try std.testing.expect(!close_result.isQueueOverflowClosed());
     try std.testing.expectEqual(@as(usize, 0), close_result.dropped_messages);
@@ -1679,6 +1681,7 @@ test "root.PubsubClient heartbeat timeout closes subscriptions when server stops
     try std.testing.expect(subscription.isTransportClosed());
     try std.testing.expect(!subscription.isOpen());
     try std.testing.expect(!subscription.isClientShutdownClosed());
+    try std.testing.expect(!subscription.isDeinitialized());
     try std.testing.expect(!subscription.isQueueOverflowClosed());
     try std.testing.expect(!subscription.isUnsubscribed());
 }
@@ -3732,6 +3735,7 @@ test "root.PubsubSubscription typedReceiver provides typed receive and lifecycle
     try std.testing.expect(receiver.isUnsubscribed());
     try std.testing.expect(!receiver.isOpen());
     try std.testing.expect(!receiver.isClientShutdownClosed());
+    try std.testing.expect(!receiver.isDeinitialized());
     try std.testing.expect(!receiver.isTransportClosed());
     try std.testing.expect(!receiver.isQueueOverflowClosed());
     try std.testing.expect(app.signature_unsubscribe_seen);
@@ -3818,12 +3822,14 @@ test "root.PubsubSubscription waitClosedTimeout reports unsubscribe close reason
     try std.testing.expect(close_result.isCloseReason(.unsubscribed));
     try std.testing.expect(close_result.isUnsubscribed());
     try std.testing.expect(!close_result.isClientShutdownClosed());
+    try std.testing.expect(!close_result.isDeinitialized());
     try std.testing.expect(!close_result.isTransportClosed());
     try std.testing.expect(!close_result.isQueueOverflowClosed());
     try std.testing.expect(subscription.isCloseReason(.unsubscribed));
     try std.testing.expect(subscription.hasCloseReason());
     try std.testing.expect(subscription.isUnsubscribed());
     try std.testing.expect(!subscription.isClientShutdownClosed());
+    try std.testing.expect(!subscription.isDeinitialized());
     try std.testing.expectEqual(@as(usize, 0), close_result.dropped_messages);
     try std.testing.expect(!close_result.hasDroppedMessages());
     try std.testing.expect(close_result.last_error == null);
@@ -4034,6 +4040,7 @@ test "root.PubsubSubscription unsubscribe during reconnect closes locally withou
     try std.testing.expect(subscription.hasCloseReason());
     try std.testing.expect(subscription.isUnsubscribed());
     try std.testing.expect(!subscription.isClientShutdownClosed());
+    try std.testing.expect(!subscription.isDeinitialized());
     try std.testing.expect(!subscription.isTransportClosed());
     try std.testing.expect(!subscription.isQueueOverflowClosed());
 
