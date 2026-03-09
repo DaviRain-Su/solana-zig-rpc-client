@@ -4434,7 +4434,7 @@ test "root.RequestSender route helpers expose scripted route surface" {
     try mock_sender_assertions.expectMockRequestSenderRouteCount(&request_sender, 3);
     try mock_sender_assertions.expectMockRequestSenderPersistentRouteCount(&request_sender, 0);
     try std.testing.expectEqual(@as(usize, 3), request_sender.mockRouteCount());
-    try std.testing.expectEqual(@as(usize, 0), request_sender.mockMatchedRouteCount());
+    try mock_sender_assertions.expectMockRequestSenderMatchedRouteCount(&request_sender, 0);
     try std.testing.expectEqual(@as(usize, 3), request_sender.mockPendingScriptedDispatchCount());
     try std.testing.expect(request_sender.hasMockRoutes());
     try std.testing.expect(!request_sender.hasMatchedMockRoutes());
@@ -4454,7 +4454,7 @@ test "root.RequestSender route helpers expose scripted route surface" {
     try std.testing.expectEqualStrings("ok", health);
 
     try std.testing.expectEqual(@as(usize, 0), request_sender.mockRouteCount());
-    try std.testing.expectEqual(@as(usize, 3), request_sender.mockMatchedRouteCount());
+    try mock_sender_assertions.expectMockRequestSenderMatchedRouteCount(&request_sender, 3);
     try std.testing.expectEqual(@as(usize, 1), request_sender.mockRouteMatchCount("finalized-slot"));
     try std.testing.expectEqual(@as(usize, 1), request_sender.mockRouteMatchCount("processed-slot"));
     try std.testing.expectEqual(@as(usize, 1), request_sender.mockRouteMatchCount("health"));
@@ -5154,7 +5154,7 @@ test "root.RequestSender mock script helpers expose pending counts and summary" 
 
     try request_sender.clearMockRoutes();
     try std.testing.expectEqual(@as(usize, 0), request_sender.mockRouteCount());
-    try std.testing.expectEqual(@as(usize, 0), request_sender.mockMatchedRouteCount());
+    try mock_sender_assertions.expectMockRequestSenderMatchedRouteCount(&request_sender, 0);
     try mock_sender_assertions.expectMockRequestSenderPersistentRouteCount(&request_sender, 0);
 }
 
@@ -5167,7 +5167,7 @@ test "root.RequestSender mock script helpers return inert values for callback se
     );
 
     try std.testing.expectEqual(@as(usize, 0), request_sender.mockRouteCount());
-    try std.testing.expectEqual(@as(usize, 0), request_sender.mockMatchedRouteCount());
+    try mock_sender_assertions.expectMockRequestSenderMatchedRouteCount(&request_sender, 0);
     try std.testing.expectEqual(@as(usize, 0), request_sender.mockRouteMatchCount("missing"));
     try mock_sender_assertions.expectMockRequestSenderPersistentRouteCount(&request_sender, 0);
     try std.testing.expectEqual(@as(usize, 0), request_sender.mockPendingScriptedDispatchCount());
