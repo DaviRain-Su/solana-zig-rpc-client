@@ -1058,6 +1058,54 @@ test "root.newWithMockRequestSenderWithHandlerAndTimeoutsAndCommitment preserves
     try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
 }
 
+test "root.newWithMockRequestSenderWithSenderAndCommitmentAndTimeouts preserves commitment-first alias semantics" {
+    const allocator = std.testing.allocator;
+
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(801);
+
+    var rpc = try client.RpcClient.newWithMockRequestSenderWithSenderAndCommitmentAndTimeouts(
+        allocator,
+        sender,
+        .confirmed,
+        5_000,
+        8_000,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 5_000), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 8_000), rpc.getConfirmTransactionInitialTimeoutMs());
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 801), slot);
+}
+
+test "root.newWithMockRequestSenderWithSenderAndTimeoutsAndCommitment preserves timeout-first alias semantics" {
+    const allocator = std.testing.allocator;
+
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(802);
+
+    var rpc = try client.RpcClient.newWithMockRequestSenderWithSenderAndTimeoutsAndCommitment(
+        allocator,
+        sender,
+        5_100,
+        8_100,
+        .processed,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 5_100), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 8_100), rpc.getConfirmTransactionInitialTimeoutMs());
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 802), slot);
+}
+
 test "root.newWithRequestSenderAndCommitment applies commitment default" {
     const allocator = std.testing.allocator;
     var context = RequestSenderContext{
