@@ -3299,24 +3299,33 @@ const State = struct {
         self.markActivityNow();
     }
 
-    fn reconnectDelayMsLocked(self: *State) u32 {
-        const base_delay_ms = self.options.reconnect_delay_ms;
-        const factor = @max(@as(u32, self.options.reconnect_backoff_factor), 1);
-        const max_delay_ms = self.options.reconnect_max_delay_ms orelse base_delay_ms;
-
+    fn computeReconnectDelayMs(base_delay_ms: u32, factor_raw: u8, max_delay_ms_opt: ?u32, attempt: u32) u32 {
+        const factor = @max(@as(u32, factor_raw), 1);
+        const max_delay_ms = max_delay_ms_opt orelse base_delay_ms;
         if (base_delay_ms == 0) return 0;
 
         var delay_ms: u64 = base_delay_ms;
-        var remaining_attempts = self.reconnect_attempt;
+        var remaining_attempts = attempt;
         while (remaining_attempts > 0 and delay_ms < max_delay_ms) : (remaining_attempts -= 1) {
             delay_ms = @min(delay_ms * factor, @as(u64, max_delay_ms));
         }
+
+        return @intCast(delay_ms);
+    }
+
+    fn reconnectDelayMsLocked(self: *State) u32 {
+        const delay_ms = computeReconnectDelayMs(
+            self.options.reconnect_delay_ms,
+            self.options.reconnect_backoff_factor,
+            self.options.reconnect_max_delay_ms,
+            self.reconnect_attempt,
+        );
 
         if (self.reconnect_attempt < std.math.maxInt(u32)) {
             self.reconnect_attempt += 1;
         }
 
-        return @intCast(delay_ms);
+        return delay_ms;
     }
 
     fn markClosedLocked(self: *State, reason: PubsubCloseReason) void {
@@ -4439,6 +4448,17 @@ pub const PubsubClient = struct {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
         return self.state.options.reconnect_delay_ms;
+    }
+
+    pub fn getReconnectDelayForAttempt(self: *const Self, attempt: u32) u32 {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        return State.computeReconnectDelayMs(
+            self.state.options.reconnect_delay_ms,
+            self.state.options.reconnect_backoff_factor,
+            self.state.options.reconnect_max_delay_ms,
+            attempt,
+        );
     }
 
     pub fn getReconnectBackoffFactor(self: *const Self) u8 {
