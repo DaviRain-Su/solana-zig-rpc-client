@@ -1026,6 +1026,14 @@ pub const RpcClient = struct {
         return RpcClient.newWithRequestSenderAndOptions(allocator, sender, .{});
     }
 
+    pub fn newWithRequestSenderAndRequestSenderOptions(
+        allocator: Allocator,
+        sender: RequestSenderType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndOptions(allocator, sender, options);
+    }
+
     pub fn newWithMockRequestSender(
         allocator: Allocator,
         responses: []const MockResponseType,
@@ -1470,6 +1478,15 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn newWithRequestCallbackAndRequestSenderOptions(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndOptions(allocator, context, callback, options);
+    }
+
     pub fn newWithRequestCallbackAndDeinitAndOptions(
         allocator: Allocator,
         context: ?*anyopaque,
@@ -1480,6 +1497,22 @@ pub const RpcClient = struct {
         return RpcClient.newWithRequestSenderAndOptions(
             allocator,
             RequestSender.initWithDeinit(context, callback, deinit_callback),
+            options,
+        );
+    }
+
+    pub fn newWithRequestCallbackAndDeinitAndRequestSenderOptions(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndOptions(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
             options,
         );
     }

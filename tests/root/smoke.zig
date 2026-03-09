@@ -1186,6 +1186,91 @@ test "root.newWithMockRequestSenderWithSenderAndRequestSenderOptions aliases And
     try std.testing.expectEqual(@as(u64, 803), slot);
 }
 
+test "root.newWithRequestSenderAndRequestSenderOptions aliases AndOptions" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 1110 };
+
+    var rpc = try client.RpcClient.newWithRequestSenderAndRequestSenderOptions(
+        allocator,
+        client.RequestSender.init(&context, customRequestSender),
+        .{
+            .endpoint = "custom://request-sender-alias",
+            .commitment = .confirmed,
+            .request_timeout_ms = 4_300,
+            .confirm_transaction_initial_timeout_ms = 7_300,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqualStrings("custom://request-sender-alias", rpc.url());
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 4_300), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 7_300), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 1111), slot);
+    try std.testing.expect(context.saw_confirmed_commitment);
+}
+
+test "root.newWithRequestCallbackAndRequestSenderOptions aliases AndOptions" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 1710 };
+
+    var rpc = try client.RpcClient.newWithRequestCallbackAndRequestSenderOptions(
+        allocator,
+        &context,
+        customRequestSender,
+        .{
+            .endpoint = "custom://request-callback-alias",
+            .commitment = .finalized,
+            .request_timeout_ms = 22,
+            .confirm_transaction_initial_timeout_ms = 35,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqualStrings("custom://request-callback-alias", rpc.url());
+    try std.testing.expectEqual(client.Commitment.finalized, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 22), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 35), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 1711), slot);
+    try std.testing.expect(context.saw_finalized_commitment);
+}
+
+test "root.newWithRequestCallbackAndDeinitAndRequestSenderOptions aliases AndOptions" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 1720 };
+
+    {
+        var rpc = try client.RpcClient.newWithRequestCallbackAndDeinitAndRequestSenderOptions(
+            allocator,
+            &context,
+            customRequestSender,
+            countingRequestSenderDeinit,
+            .{
+                .endpoint = "custom://request-callback-deinit-alias",
+                .commitment = .confirmed,
+                .request_timeout_ms = 23,
+                .confirm_transaction_initial_timeout_ms = 36,
+            },
+        );
+        defer rpc.deinit();
+
+        try std.testing.expectEqualStrings("custom://request-callback-deinit-alias", rpc.url());
+        try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+        try std.testing.expectEqual(@as(?u64, 23), rpc.getRequestTimeoutMs());
+        try std.testing.expectEqual(@as(?u64, 36), rpc.getConfirmTransactionInitialTimeoutMs());
+
+        const slot = try rpc.getSlot(null);
+        try std.testing.expectEqual(@as(u64, 1721), slot);
+        try std.testing.expect(context.saw_confirmed_commitment);
+    }
+
+    try std.testing.expectEqual(@as(usize, 1), context.deinit_count);
+}
+
 test "root.newWithRequestSenderAndCommitment applies commitment default" {
     const allocator = std.testing.allocator;
     var context = RequestSenderContext{
