@@ -1380,6 +1380,7 @@ test "root.PubsubSubscription unsubscribe surfaces RPC errors and leaves subscri
     try std.testing.expect(!subscription.isClosed());
     try std.testing.expect(subscription.isOpen());
     try std.testing.expectEqual(client.PubsubCloseReason.none, subscription.closeReason());
+    try std.testing.expect(subscription.isCloseReason(.none));
     try std.testing.expect(!subscription.hasCloseReason());
     try std.testing.expect(!subscription.isClientShutdownClosed());
     try std.testing.expect(subscription.hasLastError());
@@ -1665,6 +1666,7 @@ test "root.PubsubClient heartbeat timeout closes subscriptions when server stops
     try waitForHeartbeatPingCount(&app, 1, 1000);
     try waitForClosed(subscription, 1000);
     try std.testing.expectEqual(client.PubsubCloseReason.transport_closed, subscription.closeReason());
+    try std.testing.expect(subscription.isCloseReason(.transport_closed));
     try std.testing.expect(subscription.hasCloseReason());
     try std.testing.expect(subscription.isTransportClosed());
     try std.testing.expect(!subscription.isOpen());
@@ -3717,6 +3719,7 @@ test "root.PubsubSubscription typedReceiver provides typed receive and lifecycle
     try std.testing.expect(try receiver.unsubscribe());
     try std.testing.expect(subscription.isClosed());
     try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, receiver.closeReason());
+    try std.testing.expect(receiver.isCloseReason(.unsubscribed));
     try std.testing.expect(receiver.hasCloseReason());
     try std.testing.expect(receiver.isUnsubscribed());
     try std.testing.expect(!receiver.isOpen());
@@ -3803,6 +3806,7 @@ test "root.PubsubSubscription waitClosedTimeout reports unsubscribe close reason
     try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, try subscription.waitClosedTimeout(1000));
     const close_result = try subscription.waitClosedResultTimeout(1000);
     try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, close_result.reason);
+    try std.testing.expect(subscription.isCloseReason(.unsubscribed));
     try std.testing.expect(subscription.hasCloseReason());
     try std.testing.expect(subscription.isUnsubscribed());
     try std.testing.expect(!subscription.isClientShutdownClosed());
@@ -4010,6 +4014,7 @@ test "root.PubsubSubscription unsubscribe during reconnect closes locally withou
     try std.testing.expect(try subscription.unsubscribe());
     try std.testing.expect(subscription.isClosed());
     try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, subscription.closeReason());
+    try std.testing.expect(subscription.isCloseReason(.unsubscribed));
     try std.testing.expect(subscription.hasCloseReason());
     try std.testing.expect(subscription.isUnsubscribed());
     try std.testing.expect(!subscription.isClientShutdownClosed());

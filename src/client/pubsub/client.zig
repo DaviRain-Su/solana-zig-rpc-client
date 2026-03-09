@@ -461,6 +461,10 @@ pub const PubsubSubscription = struct {
         return self.close_reason;
     }
 
+    pub fn isCloseReason(self: *Self, reason: PubsubCloseReason) bool {
+        return self.closeReason() == reason;
+    }
+
     pub fn isUnsubscribed(self: *Self) bool {
         return self.closeReason() == .unsubscribed;
     }
@@ -1007,6 +1011,10 @@ pub const PubsubSlotsUpdatesSubscriptionWithCallback = struct {
         return self.subscription.closeReason();
     }
 
+    pub fn isCloseReason(self: *const Self, reason: PubsubCloseReason) bool {
+        return self.closeReason() == reason;
+    }
+
     pub fn isUnsubscribed(self: *const Self) bool {
         return self.closeReason() == .unsubscribed;
     }
@@ -1127,6 +1135,10 @@ pub const PubsubRootSubscriptionWithCallback = struct {
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.subscription.closeReason();
+    }
+
+    pub fn isCloseReason(self: *const Self, reason: PubsubCloseReason) bool {
+        return self.closeReason() == reason;
     }
 
     pub fn isUnsubscribed(self: *const Self) bool {
@@ -2373,6 +2385,10 @@ pub fn TypedPubsubReceiver(comptime ValueType: type) type {
             return self.receiver.closeReason();
         }
 
+        pub fn isCloseReason(self: *const Self, reason: PubsubCloseReason) bool {
+            return self.closeReason() == reason;
+        }
+
         pub fn isUnsubscribed(self: *const Self) bool {
             return self.closeReason() == .unsubscribed;
         }
@@ -2503,6 +2519,10 @@ pub const PubsubSubscriptionWithReceiver = struct {
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.receiver.closeReason();
+    }
+
+    pub fn isCloseReason(self: *const Self, reason: PubsubCloseReason) bool {
+        return self.closeReason() == reason;
     }
 
     pub fn isUnsubscribed(self: *const Self) bool {
@@ -2940,6 +2960,10 @@ pub fn TypedPubsubSubscriptionWithReceiver(comptime ValueType: type) type {
             return self.receiver.closeReason();
         }
 
+        pub fn isCloseReason(self: *const Self, reason: PubsubCloseReason) bool {
+            return self.closeReason() == reason;
+        }
+
         pub fn isUnsubscribed(self: *const Self) bool {
             return self.closeReason() == .unsubscribed;
         }
@@ -3072,6 +3096,10 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
 
         pub fn closeReason(self: *const Self) PubsubCloseReason {
             return self.receiver.closeReason();
+        }
+
+        pub fn isCloseReason(self: *const Self, reason: PubsubCloseReason) bool {
+            return self.closeReason() == reason;
         }
 
         pub fn isUnsubscribed(self: *const Self) bool {
