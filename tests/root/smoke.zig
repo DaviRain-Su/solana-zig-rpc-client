@@ -5183,6 +5183,8 @@ test "root.RequestSender.fromMockSender borrows scripted mock sender state" {
         const slot = try rpc.getSlot(null);
         try std.testing.expectEqual(@as(u64, 321), slot);
         try std.testing.expectEqual(@as(usize, 1), sender.requestCount());
+        try mock_sender_assertions.expectMockSenderRequestCount(&sender, 1);
+        try mock_sender_assertions.expectMockRpcRequestCount(&rpc, 1);
         try std.testing.expectEqual(@as(u64, 1), sender.firstCapturedRequestId().?);
         try std.testing.expectEqual(@as(u64, 1), rpc.firstCapturedMockRequestId().?);
         try std.testing.expectEqual(@as(u64, 1), sender.lastCapturedRequestId().?);
@@ -5230,6 +5232,8 @@ test "root.RequestSender.fromMockSender borrows scripted mock sender state" {
     const second_slot = try second_rpc.getSlot(.processed);
     try std.testing.expectEqual(@as(u64, 654), second_slot);
     try std.testing.expectEqual(@as(usize, 2), sender.requestCount());
+    try mock_sender_assertions.expectMockSenderRequestCount(&sender, 2);
+    try mock_sender_assertions.expectMockRpcRequestCount(&second_rpc, 1);
     try std.testing.expectEqual(@as(u64, 1), sender.firstCapturedRequestId().?);
     try std.testing.expectEqual(@as(u64, 1), second_rpc.firstCapturedMockRequestId().?);
     try std.testing.expectEqual(@as(u64, 1), sender.lastCapturedRequestId().?);
@@ -5247,6 +5251,7 @@ test "root.RequestSender.fromMockSender borrows scripted mock sender state" {
     try mock_sender_assertions.expectMockSenderLastCapturedRequestMethod(&sender, "getSlot");
     try mock_sender_assertions.expectMockRpcLastCapturedRequestMethod(&second_rpc, "getSlot");
     const last_request_sender = try second_rpc.requestSender();
+    try mock_sender_assertions.expectMockRequestSenderRequestCount(last_request_sender, 1);
     try std.testing.expectEqual(@as(u64, 1), last_request_sender.firstCapturedMockRequestId().?);
     try std.testing.expectEqual(@as(u64, 1), last_request_sender.lastCapturedMockRequestId().?);
     try std.testing.expectEqualStrings("getSlot", last_request_sender.firstCapturedMockRequestMethod().?);
