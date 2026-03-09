@@ -390,6 +390,10 @@ pub const PubsubSubscription = struct {
         return self.closed;
     }
 
+    pub fn isOpen(self: *Self) bool {
+        return !self.isClosed();
+    }
+
     pub fn queuedCount(self: *Self) usize {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -975,6 +979,10 @@ pub const PubsubSlotsUpdatesSubscriptionWithCallback = struct {
         return self.subscription.isClosed();
     }
 
+    pub fn isOpen(self: *const Self) bool {
+        return !self.isClosed();
+    }
+
     pub fn queuedCount(self: *const Self) usize {
         return self.subscription.queuedCount();
     }
@@ -1101,6 +1109,10 @@ pub const PubsubRootSubscriptionWithCallback = struct {
         return self.subscription.isClosed();
     }
 
+    pub fn isOpen(self: *const Self) bool {
+        return !self.isClosed();
+    }
+
     pub fn queuedCount(self: *const Self) usize {
         return self.subscription.queuedCount();
     }
@@ -1219,6 +1231,10 @@ pub const PubsubVoteSubscriptionWithCallback = struct {
         return self.subscription.isClosed();
     }
 
+    pub fn isOpen(self: *const Self) bool {
+        return !self.isClosed();
+    }
+
     pub fn queuedCount(self: *const Self) usize {
         return self.subscription.queuedCount();
     }
@@ -1315,6 +1331,10 @@ pub const PubsubBlockSubscriptionWithCallback = struct {
 
     pub fn isClosed(self: *const Self) bool {
         return self.subscription.isClosed();
+    }
+
+    pub fn isOpen(self: *const Self) bool {
+        return !self.isClosed();
     }
 
     pub fn queuedCount(self: *const Self) usize {
@@ -1415,6 +1435,10 @@ pub const PubsubSignatureSubscriptionWithCallback = struct {
         return self.subscription.isClosed();
     }
 
+    pub fn isOpen(self: *const Self) bool {
+        return !self.isClosed();
+    }
+
     pub fn queuedCount(self: *const Self) usize {
         return self.subscription.queuedCount();
     }
@@ -1511,6 +1535,10 @@ pub const PubsubAccountSubscriptionWithCallback = struct {
 
     pub fn isClosed(self: *const Self) bool {
         return self.subscription.isClosed();
+    }
+
+    pub fn isOpen(self: *const Self) bool {
+        return !self.isClosed();
     }
 
     pub fn queuedCount(self: *const Self) usize {
@@ -1611,6 +1639,10 @@ pub const PubsubLogsSubscriptionWithCallback = struct {
         return self.subscription.isClosed();
     }
 
+    pub fn isOpen(self: *const Self) bool {
+        return !self.isClosed();
+    }
+
     pub fn queuedCount(self: *const Self) usize {
         return self.subscription.queuedCount();
     }
@@ -1707,6 +1739,10 @@ pub const PubsubProgramSubscriptionWithCallback = struct {
 
     pub fn isClosed(self: *const Self) bool {
         return self.subscription.isClosed();
+    }
+
+    pub fn isOpen(self: *const Self) bool {
+        return !self.isClosed();
     }
 
     pub fn queuedCount(self: *const Self) usize {
@@ -1807,6 +1843,10 @@ pub const PubsubSlotSubscriptionWithCallback = struct {
         return self.subscription.isClosed();
     }
 
+    pub fn isOpen(self: *const Self) bool {
+        return !self.isClosed();
+    }
+
     pub fn queuedCount(self: *const Self) usize {
         return self.subscription.queuedCount();
     }
@@ -1901,6 +1941,10 @@ pub const PubsubReceiver = struct {
 
     pub fn isClosed(self: *const Self) bool {
         return self.subscription.isClosed();
+    }
+
+    pub fn isOpen(self: *const Self) bool {
+        return !self.isClosed();
     }
 
     pub fn queuedCount(self: *const Self) usize {
@@ -2297,6 +2341,10 @@ pub fn TypedPubsubReceiver(comptime ValueType: type) type {
             return self.receiver.isClosed();
         }
 
+        pub fn isOpen(self: *const Self) bool {
+            return !self.isClosed();
+        }
+
         pub fn queuedCount(self: *const Self) usize {
             return self.receiver.queuedCount();
         }
@@ -2423,6 +2471,10 @@ pub const PubsubSubscriptionWithReceiver = struct {
 
     pub fn isClosed(self: *const Self) bool {
         return self.subscription.isClosed();
+    }
+
+    pub fn isOpen(self: *const Self) bool {
+        return !self.isClosed();
     }
 
     pub fn queuedCount(self: *const Self) usize {
@@ -2864,6 +2916,10 @@ pub fn TypedPubsubSubscriptionWithReceiver(comptime ValueType: type) type {
             return self.subscription.isClosed();
         }
 
+        pub fn isOpen(self: *const Self) bool {
+            return !self.isClosed();
+        }
+
         pub fn queuedCount(self: *const Self) usize {
             return self.receiver.queuedCount();
         }
@@ -2992,6 +3048,10 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
 
         pub fn isClosed(self: *const Self) bool {
             return self.subscription.isClosed();
+        }
+
+        pub fn isOpen(self: *const Self) bool {
+            return !self.isClosed();
         }
 
         pub fn queuedCount(self: *const Self) usize {

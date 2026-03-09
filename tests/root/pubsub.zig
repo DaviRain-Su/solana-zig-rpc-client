@@ -1378,6 +1378,7 @@ test "root.PubsubSubscription unsubscribe surfaces RPC errors and leaves subscri
     try std.testing.expectError(error.UnsubscribeRpcError, subscription.unsubscribe());
     try std.testing.expect(app.signature_unsubscribe_error_seen);
     try std.testing.expect(!subscription.isClosed());
+    try std.testing.expect(subscription.isOpen());
     try std.testing.expectEqual(client.PubsubCloseReason.none, subscription.closeReason());
     try std.testing.expect(!subscription.hasCloseReason());
     try std.testing.expect(!subscription.isClientShutdownClosed());
@@ -1666,6 +1667,7 @@ test "root.PubsubClient heartbeat timeout closes subscriptions when server stops
     try std.testing.expectEqual(client.PubsubCloseReason.transport_closed, subscription.closeReason());
     try std.testing.expect(subscription.hasCloseReason());
     try std.testing.expect(subscription.isTransportClosed());
+    try std.testing.expect(!subscription.isOpen());
     try std.testing.expect(!subscription.isClientShutdownClosed());
     try std.testing.expect(!subscription.isQueueOverflowClosed());
     try std.testing.expect(!subscription.isUnsubscribed());
@@ -3717,6 +3719,7 @@ test "root.PubsubSubscription typedReceiver provides typed receive and lifecycle
     try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, receiver.closeReason());
     try std.testing.expect(receiver.hasCloseReason());
     try std.testing.expect(receiver.isUnsubscribed());
+    try std.testing.expect(!receiver.isOpen());
     try std.testing.expect(!receiver.isClientShutdownClosed());
     try std.testing.expect(!receiver.isTransportClosed());
     try std.testing.expect(!receiver.isQueueOverflowClosed());
