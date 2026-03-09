@@ -5186,6 +5186,8 @@ test "root.RequestSender.fromMockSender borrows scripted mock sender state" {
         try std.testing.expectEqualStrings("getSlot", sender.capturedRequests()[0].method);
         try std.testing.expectEqualStrings("getSlot", sender.lastCapturedRequestMethod().?);
         try std.testing.expectEqualStrings("getSlot", rpc.lastCapturedMockRequestMethod().?);
+        try std.testing.expect(std.mem.indexOf(u8, sender.lastCapturedRequestParamsJson().?, "\"processed\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, rpc.lastCapturedMockRequestParamsJson().?, "\"processed\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, sender.capturedRequests()[0].params_json, "\"processed\"") != null);
     }
 
@@ -5204,6 +5206,9 @@ test "root.RequestSender.fromMockSender borrows scripted mock sender state" {
     try std.testing.expectEqualStrings("getSlot", second_rpc.lastCapturedMockRequestMethod().?);
     const last_request_sender = try second_rpc.requestSender();
     try std.testing.expectEqualStrings("getSlot", last_request_sender.lastCapturedMockRequestMethod().?);
+    try std.testing.expect(std.mem.indexOf(u8, sender.lastCapturedRequestParamsJson().?, "\"processed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, second_rpc.lastCapturedMockRequestParamsJson().?, "\"processed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, last_request_sender.lastCapturedMockRequestParamsJson().?, "\"processed\"") != null);
 }
 
 test "root.newWithBorrowedMockSender borrows scripted mock sender state" {

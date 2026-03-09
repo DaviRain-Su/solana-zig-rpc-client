@@ -4180,6 +4180,10 @@ pub const RpcClient = struct {
         return if (self.lastCapturedMockRequest()) |request| request.method else null;
     }
 
+    pub fn lastCapturedMockRequestParamsJson(self: *const RpcClient) ?[]const u8 {
+        return if (self.lastCapturedMockRequest()) |request| request.params_json else null;
+    }
+
     pub fn lastMockScriptMissRequest(self: *const RpcClient) ?MockRequestViewType {
         return if (self.resolvedMockSenderConst()) |sender| sender.lastScriptMissRequest() else null;
     }
