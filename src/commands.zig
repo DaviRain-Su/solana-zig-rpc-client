@@ -4148,6 +4148,7 @@ test "runCommand sends increasing request ids for block calls" {
         try runCommand(allocator, &rpc, &parsed_second);
         try expectGetBlockRequestWithId(allocator, commandCapturedRequestAt(&sender_context, 1), 2, 222, null);
     }
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
 }
 
@@ -4632,6 +4633,7 @@ test "runCommand blocks-since-signature-confirmation prints confirmations" {
         false,
         "confirmed",
     );
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature Sig111111111111111111111111111111111111 confirmed blocks: 9\n",
@@ -4827,6 +4829,7 @@ test "runCommand transfer fetches blockhash builds transaction and confirms sign
         true,
         "confirmed",
     );
+    try expectMockSenderRequestCount(&sender_context.sender, 3);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "confirmed transfer signature: Sig444444444444444444444444444444444444444444444444444444444444444444\n",
@@ -4928,6 +4931,7 @@ test "runCommand transfer accepts sender keypair file" {
         false,
         "confirmed",
     );
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "confirmed transfer signature: Sig666666666666666666666666666666666666666666666666666666666666666666\n",
