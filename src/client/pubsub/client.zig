@@ -4437,6 +4437,10 @@ pub const PubsubClient = struct {
         return self.getHeartbeatTimeoutMs() != null;
     }
 
+    pub fn usesDefaultHeartbeatTimeout(self: *const Self) bool {
+        return !self.hasHeartbeatTimeout();
+    }
+
     pub fn getEffectiveHeartbeatTimeoutMs(self: *const Self) ?u32 {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
@@ -4524,6 +4528,10 @@ pub const PubsubClient = struct {
         return self.getReconnectMaxAttempts() != null;
     }
 
+    pub fn usesDefaultReconnectMaxAttempts(self: *const Self) bool {
+        return !self.hasReconnectMaxAttempts();
+    }
+
     pub fn isReconnectAttemptLimited(self: *const Self) bool {
         return self.hasReconnectMaxAttempts();
     }
@@ -4598,6 +4606,10 @@ pub const PubsubClient = struct {
 
     pub fn hasWriteTimeout(self: *const Self) bool {
         return self.getWriteTimeoutMs() != null;
+    }
+
+    pub fn usesDefaultWriteTimeout(self: *const Self) bool {
+        return !self.hasWriteTimeout();
     }
 
     pub fn isWriteTimeoutEnabled(self: *const Self) bool {
