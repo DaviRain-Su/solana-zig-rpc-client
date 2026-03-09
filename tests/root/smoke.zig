@@ -3777,6 +3777,57 @@ test "root.RequestSender.replaceMockHandler aliases replaceWithMockHandler" {
     try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
 }
 
+test "root.RequestSender.replaceBorrowedMock aliases replaceBorrowedMockSender" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 3398 };
+    var mock_sender = client.MockSender.init(allocator);
+    defer mock_sender.deinit();
+    try mock_sender.pushSlotResult(3399);
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.init(
+            &context,
+            customRequestSender,
+        ),
+    );
+    defer rpc.deinit();
+
+    const sender = try rpc.requestSender();
+    sender.replaceBorrowedMock(allocator, &mock_sender);
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 3399), slot);
+}
+
+test "root.RequestSender.replaceOwnedMock aliases replaceOwnedMockSender" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 3400 };
+    var owned_mock = client.MockSender.init(allocator);
+    try owned_mock.pushSlotResult(3401);
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.init(
+            &context,
+            customRequestSender,
+        ),
+    );
+    defer rpc.deinit();
+
+    const sender = try rpc.requestSender();
+    try sender.replaceOwnedMock(allocator, owned_mock);
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 3401), slot);
+}
+
 test "root.RequestSender.initCallbackDeinit aliases initCallbackWithDeinit" {
     const allocator = std.testing.allocator;
     var context = RequestSenderContext{ .base_slot = 3394 };

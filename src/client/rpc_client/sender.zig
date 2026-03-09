@@ -171,6 +171,14 @@ pub const RequestSender = struct {
         self.replaceWithBorrowedMockSender(allocator, sender);
     }
 
+    pub fn replaceBorrowedMock(
+        self: *RequestSender,
+        allocator: Allocator,
+        sender: *MockSender,
+    ) void {
+        self.replaceBorrowedMockSender(allocator, sender);
+    }
+
     pub fn replaceWithOwnedMockSender(
         self: *RequestSender,
         allocator: Allocator,
@@ -186,6 +194,14 @@ pub const RequestSender = struct {
         sender: MockSender,
     ) !void {
         try self.replaceWithOwnedMockSender(allocator, sender);
+    }
+
+    pub fn replaceOwnedMock(
+        self: *RequestSender,
+        allocator: Allocator,
+        sender: MockSender,
+    ) !void {
+        try self.replaceOwnedMockSender(allocator, sender);
     }
 
     pub fn replaceWithMockSender(
