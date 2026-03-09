@@ -2429,6 +2429,13 @@ pub const RpcClient = struct {
         return RpcClient.newWithBorrowedMockSender(allocator, sender);
     }
 
+    pub fn newBorrowedMock(
+        allocator: Allocator,
+        sender: *MockSenderType,
+    ) !RpcClient {
+        return RpcClient.newBorrowedMockSender(allocator, sender);
+    }
+
     pub fn newBorrowedMockSenderAndCommitment(
         allocator: Allocator,
         sender: *MockSenderType,
@@ -2533,6 +2540,14 @@ pub const RpcClient = struct {
         options: RequestSenderOptions,
     ) !RpcClient {
         return RpcClient.newWithBorrowedMockSenderAndRequestSenderOptions(allocator, sender, options);
+    }
+
+    pub fn newBorrowedMockAndRequestSenderOptions(
+        allocator: Allocator,
+        sender: *MockSenderType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newBorrowedMockSenderAndRequestSenderOptions(allocator, sender, options);
     }
 
     pub fn newWithOwnedMockSender(
@@ -2685,6 +2700,13 @@ pub const RpcClient = struct {
         return RpcClient.newWithOwnedMockSender(allocator, sender);
     }
 
+    pub fn newOwnedMock(
+        allocator: Allocator,
+        sender: MockSenderType,
+    ) !RpcClient {
+        return RpcClient.newOwnedMockSender(allocator, sender);
+    }
+
     pub fn newOwnedMockSenderAndCommitment(
         allocator: Allocator,
         sender: MockSenderType,
@@ -2789,6 +2811,14 @@ pub const RpcClient = struct {
         options: RequestSenderOptions,
     ) !RpcClient {
         return RpcClient.newWithOwnedMockSenderAndRequestSenderOptions(allocator, sender, options);
+    }
+
+    pub fn newOwnedMockAndRequestSenderOptions(
+        allocator: Allocator,
+        sender: MockSenderType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newOwnedMockSenderAndRequestSenderOptions(allocator, sender, options);
     }
 
     pub fn newWithRequestSenderAndCommitment(
