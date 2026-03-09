@@ -4978,6 +4978,7 @@ test "runCommand request-airdrop uses default params" {
         null,
         null,
     );
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "airdrop signature: Sig111111111111111111111111111111111111111111111111111111111111111111\n",
@@ -5032,6 +5033,7 @@ test "runCommand request-airdrop with commitment and recent blockhash passes bot
         "confirmed",
         "RecentBlockhash11111111111111111111111111",
     );
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "airdrop signature: Sig111111111111111111111111111111111111111111111111111111111111111111\n",
@@ -5092,6 +5094,7 @@ test "runCommand account-data decodes base64 and prints hex" {
         123,
         "base64",
     );
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "account data for Address11111111111111111111111111111111: 3 bytes\n010203\n",
@@ -5150,6 +5153,7 @@ test "runCommand ui-account prints parsed account details" {
         "confirmed",
         99,
     );
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "ui account context slot: 77\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "ui account for Address11111111111111111111111111111111: lamports=111 executable=false owner=Owner1111111111111111111111111111111111 rent_epoch=3 space=64\n") != null);
@@ -5209,6 +5213,7 @@ test "runCommand multiple-ui-accounts prints parsed entries and not found" {
         "confirmed",
         null,
     );
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "multiple ui accounts context slot: 66\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "multiple ui accounts: 2\n") != null);
@@ -5270,6 +5275,7 @@ test "runCommand program-ui-accounts prints ui program accounts" {
         "confirmed",
         true,
     );
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "program ui accounts context slot: 55\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "program ui accounts for Program1111111111111111111111111111111111: 1\n") != null);
@@ -5326,6 +5332,7 @@ test "runCommand token-account prints parsed account details" {
         44,
         "jsonParsed",
     );
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "token account for TokenAcct1111111111111111111111111111111: lamports=77 executable=false owner=Owner1111111111111111111111111111111111 rent_epoch=4 space=165\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  data(jsonParsed): ") != null);
