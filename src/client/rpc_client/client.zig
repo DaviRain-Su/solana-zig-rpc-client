@@ -714,6 +714,14 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn newMockAndRequestSenderOptions(
+        allocator: Allocator,
+        responses: []const MockResponseType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newMockWithOptions(allocator, responses, options);
+    }
+
     pub fn newMockWithTimeout(
         allocator: Allocator,
         responses: []const MockResponseType,
@@ -831,6 +839,14 @@ pub const RpcClient = struct {
             options.request_timeout_ms,
             options.confirm_transaction_initial_timeout_ms,
         );
+    }
+
+    pub fn newMockWithHandlerAndRequestSenderOptions(
+        allocator: Allocator,
+        handler: MockRequestHandlerType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newMockWithHandlerAndOptions(allocator, handler, options);
     }
 
     pub fn newMockWithTimeoutsAndCommitment(
