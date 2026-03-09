@@ -3824,6 +3824,30 @@ test "root.RequestSender.replaceMock aliases replaceWithMock" {
     try std.testing.expectEqual(@as(u64, 3385), slot);
 }
 
+test "root.RequestSender.replaceMockResponses aliases replaceMock" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 3386 };
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.init(
+            &context,
+            customRequestSender,
+        ),
+    );
+    defer rpc.deinit();
+
+    const sender = try rpc.requestSender();
+    try sender.replaceMockResponses(allocator, &.{});
+    try sender.pushMockSlotResult(3387);
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 3387), slot);
+}
+
 test "root.RequestSender.replaceWithMockHandler installs owned handler-backed sender" {
     const allocator = std.testing.allocator;
     var context = RequestSenderContext{ .base_slot = 3390 };
@@ -3969,6 +3993,23 @@ test "root.RequestSender.initMockHandler aliases initMockWithHandler" {
     const slot = try rpc.getSlot(.finalized);
     try std.testing.expectEqual(@as(u64, 789), slot);
     try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+}
+
+test "root.RequestSender.initMockResponses aliases initMock" {
+    const allocator = std.testing.allocator;
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        try client.RequestSender.initMockResponses(allocator, &.{
+            .{ .result_json = "3398" },
+        }),
+    );
+    defer rpc.deinit();
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 3398), slot);
 }
 
 test "root.RequestSender.initBorrowedMock aliases initBorrowedMockSender" {

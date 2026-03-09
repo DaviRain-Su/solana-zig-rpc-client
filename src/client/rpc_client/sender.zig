@@ -95,6 +95,10 @@ pub const RequestSender = struct {
         );
     }
 
+    pub fn initMockResponses(allocator: Allocator, responses: []const MockResponse) !RequestSender {
+        return try RequestSender.initMock(allocator, responses);
+    }
+
     pub fn initMockWithHandler(allocator: Allocator, handler: MockRequestHandler) !RequestSender {
         return try RequestSender.fromOwnedMockSender(
             allocator,
@@ -229,6 +233,14 @@ pub const RequestSender = struct {
 
     pub fn replaceMock(self: *RequestSender, allocator: Allocator, responses: []const MockResponse) !void {
         try self.replaceWithMock(allocator, responses);
+    }
+
+    pub fn replaceMockResponses(
+        self: *RequestSender,
+        allocator: Allocator,
+        responses: []const MockResponse,
+    ) !void {
+        try self.replaceMock(allocator, responses);
     }
 
     pub fn replaceWithMockHandler(
