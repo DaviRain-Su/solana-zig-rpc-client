@@ -2142,6 +2142,119 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn newBorrowedMockSender(
+        allocator: Allocator,
+        sender: *MockSenderType,
+    ) !RpcClient {
+        return RpcClient.newWithBorrowedMockSender(allocator, sender);
+    }
+
+    pub fn newBorrowedMockSenderAndCommitment(
+        allocator: Allocator,
+        sender: *MockSenderType,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithBorrowedMockSenderAndCommitment(allocator, sender, commitment);
+    }
+
+    pub fn newBorrowedMockSenderAndTimeout(
+        allocator: Allocator,
+        sender: *MockSenderType,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithBorrowedMockSenderAndTimeout(allocator, sender, timeout_ms);
+    }
+
+    pub fn newBorrowedMockSenderAndTimeouts(
+        allocator: Allocator,
+        sender: *MockSenderType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithBorrowedMockSenderAndTimeouts(
+            allocator,
+            sender,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newBorrowedMockSenderAndCommitmentAndTimeout(
+        allocator: Allocator,
+        sender: *MockSenderType,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithBorrowedMockSenderAndCommitmentAndTimeout(
+            allocator,
+            sender,
+            commitment,
+            timeout_ms,
+        );
+    }
+
+    pub fn newBorrowedMockSenderAndTimeoutAndCommitment(
+        allocator: Allocator,
+        sender: *MockSenderType,
+        timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithBorrowedMockSenderAndTimeoutAndCommitment(
+            allocator,
+            sender,
+            timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn newBorrowedMockSenderAndCommitmentAndTimeouts(
+        allocator: Allocator,
+        sender: *MockSenderType,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithBorrowedMockSenderAndCommitmentAndTimeouts(
+            allocator,
+            sender,
+            commitment,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newBorrowedMockSenderAndTimeoutsAndCommitment(
+        allocator: Allocator,
+        sender: *MockSenderType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithBorrowedMockSenderAndTimeoutsAndCommitment(
+            allocator,
+            sender,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn newBorrowedMockSenderAndOptions(
+        allocator: Allocator,
+        sender: *MockSenderType,
+        options: MockClientOptions,
+    ) !RpcClient {
+        return RpcClient.newWithBorrowedMockSenderAndOptions(allocator, sender, options);
+    }
+
+    pub fn newBorrowedMockSenderAndRequestSenderOptions(
+        allocator: Allocator,
+        sender: *MockSenderType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithBorrowedMockSenderAndRequestSenderOptions(allocator, sender, options);
+    }
+
     pub fn newWithOwnedMockSender(
         allocator: Allocator,
         sender: MockSenderType,
@@ -2283,6 +2396,119 @@ pub const RpcClient = struct {
                 .confirm_transaction_initial_timeout_ms = options.confirm_transaction_initial_timeout_ms,
             },
         );
+    }
+
+    pub fn newOwnedMockSender(
+        allocator: Allocator,
+        sender: MockSenderType,
+    ) !RpcClient {
+        return RpcClient.newWithOwnedMockSender(allocator, sender);
+    }
+
+    pub fn newOwnedMockSenderAndCommitment(
+        allocator: Allocator,
+        sender: MockSenderType,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithOwnedMockSenderAndCommitment(allocator, sender, commitment);
+    }
+
+    pub fn newOwnedMockSenderAndTimeout(
+        allocator: Allocator,
+        sender: MockSenderType,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithOwnedMockSenderAndTimeout(allocator, sender, timeout_ms);
+    }
+
+    pub fn newOwnedMockSenderAndTimeouts(
+        allocator: Allocator,
+        sender: MockSenderType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithOwnedMockSenderAndTimeouts(
+            allocator,
+            sender,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newOwnedMockSenderAndCommitmentAndTimeout(
+        allocator: Allocator,
+        sender: MockSenderType,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithOwnedMockSenderAndCommitmentAndTimeout(
+            allocator,
+            sender,
+            commitment,
+            timeout_ms,
+        );
+    }
+
+    pub fn newOwnedMockSenderAndTimeoutAndCommitment(
+        allocator: Allocator,
+        sender: MockSenderType,
+        timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithOwnedMockSenderAndTimeoutAndCommitment(
+            allocator,
+            sender,
+            timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn newOwnedMockSenderAndCommitmentAndTimeouts(
+        allocator: Allocator,
+        sender: MockSenderType,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithOwnedMockSenderAndCommitmentAndTimeouts(
+            allocator,
+            sender,
+            commitment,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newOwnedMockSenderAndTimeoutsAndCommitment(
+        allocator: Allocator,
+        sender: MockSenderType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithOwnedMockSenderAndTimeoutsAndCommitment(
+            allocator,
+            sender,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn newOwnedMockSenderAndOptions(
+        allocator: Allocator,
+        sender: MockSenderType,
+        options: MockClientOptions,
+    ) !RpcClient {
+        return RpcClient.newWithOwnedMockSenderAndOptions(allocator, sender, options);
+    }
+
+    pub fn newOwnedMockSenderAndRequestSenderOptions(
+        allocator: Allocator,
+        sender: MockSenderType,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithOwnedMockSenderAndRequestSenderOptions(allocator, sender, options);
     }
 
     pub fn newWithRequestSenderAndCommitment(

@@ -3576,6 +3576,49 @@ test "root.newWithBorrowedMockSenderAndTimeoutsAndCommitment preserves timeout-f
     try std.testing.expectEqual(@as(u64, 702), slot);
 }
 
+test "root.newBorrowedMockSender aliases borrowed mock sender constructor" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
+    try sender.pushSlotResult(703);
+
+    var rpc = try client.RpcClient.newBorrowedMockSender(allocator, &sender);
+    defer rpc.deinit();
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 703), slot);
+}
+
+test "root.newBorrowedMockSenderAndRequestSenderOptions aliases borrowed request-sender constructor" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
+    try sender.pushSlotResult(704);
+
+    var rpc = try client.RpcClient.newBorrowedMockSenderAndRequestSenderOptions(
+        allocator,
+        &sender,
+        .{
+            .endpoint = "custom://borrowed-mock-sender-alias",
+            .commitment = .confirmed,
+            .request_timeout_ms = 8_100,
+            .confirm_transaction_initial_timeout_ms = 9_100,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqualStrings("custom://borrowed-mock-sender-alias", rpc.url());
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 8_100), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 9_100), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(.confirmed);
+    try std.testing.expectEqual(@as(u64, 704), slot);
+}
+
 test "root.newWithOwnedMockSenderAndRequestSenderOptions customizes endpoint and timeouts" {
     const allocator = std.testing.allocator;
     var sender = client.MockSender.init(allocator);
@@ -3746,6 +3789,47 @@ test "root.newWithOwnedMockSenderAndOptions applies all constructor options" {
     const health = try rpc.getHealth();
     defer allocator.free(health);
     try std.testing.expectEqualStrings("ok", health);
+}
+
+test "root.newOwnedMockSender aliases owned mock sender constructor" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(8891);
+
+    var rpc = try client.RpcClient.newOwnedMockSender(allocator, sender);
+    defer rpc.deinit();
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 8891), slot);
+}
+
+test "root.newOwnedMockSenderAndRequestSenderOptions aliases owned request-sender constructor" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(8892);
+
+    var rpc = try client.RpcClient.newOwnedMockSenderAndRequestSenderOptions(
+        allocator,
+        sender,
+        .{
+            .endpoint = "custom://owned-mock-sender-alias",
+            .commitment = .processed,
+            .request_timeout_ms = 8_200,
+            .confirm_transaction_initial_timeout_ms = 9_200,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqualStrings("custom://owned-mock-sender-alias", rpc.url());
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 8_200), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 9_200), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 8892), slot);
 }
 
 test "root.RequestSender.fromOwnedMockSender supports scripted sender replacement" {
