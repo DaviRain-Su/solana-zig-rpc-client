@@ -757,6 +757,69 @@ test "root.newMockWithSenderAndRequestSenderOptions customizes endpoint and mock
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"confirmed\"") != null);
 }
 
+test "root.newMockSender aliases newMockWithSender" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(655);
+
+    var rpc = try client.RpcClient.newMockSender(allocator, sender);
+    defer rpc.deinit();
+
+    try std.testing.expect(rpc.isDirectMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 655), slot);
+}
+
+test "root.newMockSenderAndRequestSenderOptions aliases newMockWithSenderAndRequestSenderOptions" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(656);
+
+    var rpc = try client.RpcClient.newMockSenderAndRequestSenderOptions(
+        allocator,
+        sender,
+        .{
+            .endpoint = "custom://mock-sender-request-sender-options",
+            .commitment = .confirmed,
+            .request_timeout_ms = 33,
+            .confirm_transaction_initial_timeout_ms = 66,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqualStrings("custom://mock-sender-request-sender-options", rpc.url());
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 33), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 66), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(.confirmed);
+    try std.testing.expectEqual(@as(u64, 656), slot);
+}
+
+test "root.newMockSenderAndCommitmentAndTimeouts preserves alias semantics" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(657);
+
+    var rpc = try client.RpcClient.newMockSenderAndCommitmentAndTimeouts(
+        allocator,
+        sender,
+        .processed,
+        34,
+        68,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 34), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 68), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 657), slot);
+}
+
 test "root.newMockWithSenderAndCommitment applies commitment default" {
     const allocator = std.testing.allocator;
     var sender = client.MockSender.init(allocator);
