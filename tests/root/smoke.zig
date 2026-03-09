@@ -4415,6 +4415,54 @@ test "root.newBorrowedMockAndRequestSenderOptions aliases borrowed request-sende
     try std.testing.expectEqual(@as(u64, 706), slot);
 }
 
+test "root.newBorrowedMockAndCommitmentAndTimeouts preserves short alias semantics" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
+    try sender.pushSlotResult(707);
+
+    var rpc = try client.RpcClient.newBorrowedMockAndCommitmentAndTimeouts(
+        allocator,
+        &sender,
+        .confirmed,
+        8_500,
+        9_500,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 8_500), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 9_500), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(.confirmed);
+    try std.testing.expectEqual(@as(u64, 707), slot);
+}
+
+test "root.newBorrowedMockAndOptions aliases borrowed mock options constructor" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    defer sender.deinit();
+    try sender.pushSlotResult(708);
+
+    var rpc = try client.RpcClient.newBorrowedMockAndOptions(
+        allocator,
+        &sender,
+        .{
+            .commitment = .finalized,
+            .request_timeout_ms = 8_600,
+            .confirm_transaction_initial_timeout_ms = 9_600,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.finalized, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 8_600), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 9_600), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 708), slot);
+}
+
 test "root.newWithOwnedMockSenderAndRequestSenderOptions customizes endpoint and timeouts" {
     const allocator = std.testing.allocator;
     var sender = client.MockSender.init(allocator);
@@ -4667,6 +4715,53 @@ test "root.newOwnedMockAndRequestSenderOptions aliases owned request-sender cons
 
     const slot = try rpc.getSlot(.confirmed);
     try std.testing.expectEqual(@as(u64, 8894), slot);
+}
+
+test "root.newOwnedMockAndTimeoutsAndCommitment preserves short alias semantics" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(8895);
+
+    var rpc = try client.RpcClient.newOwnedMockAndTimeoutsAndCommitment(
+        allocator,
+        sender,
+        8_700,
+        9_700,
+        .processed,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 8_700), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 9_700), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 8895), slot);
+}
+
+test "root.newOwnedMockAndOptions aliases owned mock options constructor" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushHealthOk();
+
+    var rpc = try client.RpcClient.newOwnedMockAndOptions(
+        allocator,
+        sender,
+        .{
+            .commitment = .confirmed,
+            .request_timeout_ms = 8_800,
+            .confirm_transaction_initial_timeout_ms = 9_800,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 8_800), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 9_800), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const health = try rpc.getHealth();
+    defer allocator.free(health);
+    try std.testing.expectEqualStrings("ok", health);
 }
 
 test "root.RequestSender.fromOwnedMockSender supports scripted sender replacement" {
