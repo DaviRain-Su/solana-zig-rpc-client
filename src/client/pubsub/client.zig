@@ -4461,6 +4461,21 @@ pub const PubsubClient = struct {
         );
     }
 
+    pub fn getNextReconnectDelayMs(self: *const Self) u32 {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        return State.computeReconnectDelayMs(
+            self.state.options.reconnect_delay_ms,
+            self.state.options.reconnect_backoff_factor,
+            self.state.options.reconnect_max_delay_ms,
+            self.state.reconnect_attempt,
+        );
+    }
+
+    pub fn isReconnectImmediate(self: *const Self) bool {
+        return self.getNextReconnectDelayMs() == 0;
+    }
+
     pub fn getReconnectBackoffFactor(self: *const Self) u8 {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
