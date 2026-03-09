@@ -4421,6 +4421,7 @@ test "root.RequestSender route helpers expose scripted route surface" {
             .once(),
     });
 
+    try mock_sender_assertions.expectMockRequestSenderRouteCount(&request_sender, 3);
     try std.testing.expectEqual(@as(usize, 3), request_sender.mockRouteCount());
     try std.testing.expectEqual(@as(usize, 0), request_sender.mockMatchedRouteCount());
     try std.testing.expectEqual(@as(usize, 3), request_sender.mockPendingScriptedDispatchCount());
@@ -5062,6 +5063,7 @@ test "root.MockSender boolean helpers reflect mock state" {
         .build());
 
     try mock_sender_assertions.expectMockSenderResponseCount(&mock_sender, 1);
+    try mock_sender_assertions.expectMockSenderRouteCount(&mock_sender, 1);
     try std.testing.expect(mock_sender.hasResponses());
     try std.testing.expect(mock_sender.hasRoutes());
     try std.testing.expect(!mock_sender.hasMatchedRoutes());
@@ -6257,6 +6259,7 @@ test "root.mock routes match by method and params fragment" {
         .params_json_contains = "\"finalized\"",
     }, "999", 1);
 
+    try mock_sender_assertions.expectMockRpcRouteCount(&rpc, 1);
     try std.testing.expectEqual(@as(usize, 1), rpc.mockRouteCount());
 
     const finalized_slot = try rpc.getSlot(.finalized);

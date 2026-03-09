@@ -49,6 +49,16 @@ pub fn expectMockSenderResponseCount(
     try std.testing.expectEqual(expected, sender.responseCount());
 }
 
+pub fn expectMockSenderRouteCount(
+    sender: *const client.MockSender,
+    expected: usize,
+) !void {
+    if (sender.routeCount() != expected) {
+        try printMockSenderSummary(sender);
+    }
+    try std.testing.expectEqual(expected, sender.routeCount());
+}
+
 pub fn expectMockSenderMatchedRouteCount(
     sender: *const client.MockSender,
     expected: usize,
@@ -188,6 +198,16 @@ pub fn expectMockRequestSenderResponseCount(
     try std.testing.expectEqual(expected, sender.mockResponseCount());
 }
 
+pub fn expectMockRequestSenderRouteCount(
+    sender: *const client.RequestSender,
+    expected: usize,
+) !void {
+    if (sender.mockRouteCount() != expected) {
+        try printMockRequestSenderSummary(sender);
+    }
+    try std.testing.expectEqual(expected, sender.mockRouteCount());
+}
+
 pub fn expectMockRequestSenderMatchedRouteCount(
     sender: *const client.RequestSender,
     expected: usize,
@@ -325,6 +345,16 @@ pub fn expectMockRpcResponseCount(
         try printMockRpcSummary(rpc);
     }
     try std.testing.expectEqual(expected, rpc.mockResponseCount());
+}
+
+pub fn expectMockRpcRouteCount(
+    rpc: *const client.RpcClient,
+    expected: usize,
+) !void {
+    if (rpc.mockRouteCount() != expected) {
+        try printMockRpcSummary(rpc);
+    }
+    try std.testing.expectEqual(expected, rpc.mockRouteCount());
 }
 
 pub fn expectMockRpcMatchedRouteCount(
