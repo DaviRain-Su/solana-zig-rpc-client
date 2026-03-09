@@ -3561,6 +3561,13 @@ pub const RpcClient = struct {
         self.setRequestSender(RequestSender.fromMockSender(sender));
     }
 
+    pub fn setBorrowedMock(
+        self: *RpcClient,
+        sender: *MockSenderType,
+    ) void {
+        self.setBorrowedMockSender(sender);
+    }
+
     pub fn setBorrowedMockSenderAndRequestSenderOptions(
         self: *RpcClient,
         sender: *MockSenderType,
@@ -3569,8 +3576,20 @@ pub const RpcClient = struct {
         self.setRequestSenderAndRequestSenderOptions(RequestSender.fromMockSender(sender), options);
     }
 
+    pub fn setBorrowedMockAndRequestSenderOptions(
+        self: *RpcClient,
+        sender: *MockSenderType,
+        options: RequestSenderOptions,
+    ) void {
+        self.setBorrowedMockSenderAndRequestSenderOptions(sender, options);
+    }
+
     pub fn setOwnedMockSender(self: *RpcClient, sender: MockSenderType) !void {
         self.setRequestSender(try RequestSender.fromOwnedMockSender(self.allocator, sender));
+    }
+
+    pub fn setOwnedMock(self: *RpcClient, sender: MockSenderType) !void {
+        try self.setOwnedMockSender(sender);
     }
 
     pub fn setOwnedMockSenderAndRequestSenderOptions(
@@ -3582,6 +3601,14 @@ pub const RpcClient = struct {
             try RequestSender.fromOwnedMockSender(self.allocator, sender),
             options,
         );
+    }
+
+    pub fn setOwnedMockAndRequestSenderOptions(
+        self: *RpcClient,
+        sender: MockSenderType,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.setOwnedMockSenderAndRequestSenderOptions(sender, options);
     }
 
     pub fn setMock(self: *RpcClient, responses: []const MockResponseType) !void {
@@ -3648,6 +3675,13 @@ pub const RpcClient = struct {
         try self.replaceRequestSender(RequestSender.fromMockSender(sender));
     }
 
+    pub fn replaceBorrowedMock(
+        self: *RpcClient,
+        sender: *MockSenderType,
+    ) !void {
+        try self.replaceWithBorrowedMockSender(sender);
+    }
+
     pub fn replaceWithBorrowedMockSenderAndRequestSenderOptions(
         self: *RpcClient,
         sender: *MockSenderType,
@@ -3659,8 +3693,20 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn replaceBorrowedMockAndRequestSenderOptions(
+        self: *RpcClient,
+        sender: *MockSenderType,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.replaceWithBorrowedMockSenderAndRequestSenderOptions(sender, options);
+    }
+
     pub fn replaceWithOwnedMockSender(self: *RpcClient, sender: MockSenderType) !void {
         try self.replaceRequestSender(try RequestSender.fromOwnedMockSender(self.allocator, sender));
+    }
+
+    pub fn replaceOwnedMock(self: *RpcClient, sender: MockSenderType) !void {
+        try self.replaceWithOwnedMockSender(sender);
     }
 
     pub fn replaceWithOwnedMockSenderAndRequestSenderOptions(
@@ -3672,6 +3718,14 @@ pub const RpcClient = struct {
             try RequestSender.fromOwnedMockSender(self.allocator, sender),
             options,
         );
+    }
+
+    pub fn replaceOwnedMockAndRequestSenderOptions(
+        self: *RpcClient,
+        sender: MockSenderType,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.replaceWithOwnedMockSenderAndRequestSenderOptions(sender, options);
     }
 
     pub fn replaceWithMockRequestSender(self: *RpcClient, responses: []const MockResponseType) !void {
