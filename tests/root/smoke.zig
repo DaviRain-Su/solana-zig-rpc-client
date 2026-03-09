@@ -1718,6 +1718,98 @@ test "root.newMockRequestSenderWithSenderAndRequestSenderOptions aliases newWith
     try std.testing.expectEqual(@as(u64, 807), slot);
 }
 
+test "root.newMockRequestMockSender aliases newMockRequestSenderWithSender" {
+    const allocator = std.testing.allocator;
+
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(808);
+
+    var rpc = try client.RpcClient.newMockRequestMockSender(allocator, sender);
+    defer rpc.deinit();
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 808), slot);
+}
+
+test "root.newMockRequestMockSenderAndRequestSenderOptions aliases newMockRequestSenderWithSenderAndRequestSenderOptions" {
+    const allocator = std.testing.allocator;
+
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(809);
+
+    var rpc = try client.RpcClient.newMockRequestMockSenderAndRequestSenderOptions(
+        allocator,
+        sender,
+        .{
+            .endpoint = "custom://short-mock-request-mock-sender",
+            .commitment = .confirmed,
+            .request_timeout_ms = 5_170,
+            .confirm_transaction_initial_timeout_ms = 8_170,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqualStrings("custom://short-mock-request-mock-sender", rpc.url());
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 5_170), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 8_170), rpc.getConfirmTransactionInitialTimeoutMs());
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 809), slot);
+}
+
+test "root.newMockRequestMockSenderAndCommitmentAndTimeouts preserves short alias semantics" {
+    const allocator = std.testing.allocator;
+
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(810);
+
+    var rpc = try client.RpcClient.newMockRequestMockSenderAndCommitmentAndTimeouts(
+        allocator,
+        sender,
+        .finalized,
+        5_180,
+        8_180,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.finalized, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 5_180), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 8_180), rpc.getConfirmTransactionInitialTimeoutMs());
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 810), slot);
+}
+
+test "root.newMockRequestMockSenderAndTimeoutsAndCommitment preserves short alias semantics" {
+    const allocator = std.testing.allocator;
+
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(811);
+
+    var rpc = try client.RpcClient.newMockRequestMockSenderAndTimeoutsAndCommitment(
+        allocator,
+        sender,
+        5_190,
+        8_190,
+        .processed,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 5_190), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 8_190), rpc.getConfirmTransactionInitialTimeoutMs());
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+
+    const slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 811), slot);
+}
+
 test "root.newWithRequestSenderAndRequestSenderOptions aliases AndOptions" {
     const allocator = std.testing.allocator;
     var context = RequestSenderContext{ .base_slot = 1110 };
