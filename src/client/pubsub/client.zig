@@ -4417,6 +4417,10 @@ pub const PubsubClient = struct {
         return self.isAutoReconnectEnabled() == (pubsub_types.PubsubClientOptions{}).auto_reconnect;
     }
 
+    pub fn usesCustomAutoReconnect(self: *const Self) bool {
+        return !self.usesDefaultAutoReconnect();
+    }
+
     pub fn getHeartbeatIntervalMs(self: *const Self) ?u32 {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
@@ -4429,6 +4433,10 @@ pub const PubsubClient = struct {
 
     pub fn usesDefaultHeartbeatInterval(self: *const Self) bool {
         return !self.hasHeartbeatInterval();
+    }
+
+    pub fn usesCustomHeartbeatInterval(self: *const Self) bool {
+        return !self.usesDefaultHeartbeatInterval();
     }
 
     pub fn isHeartbeatEnabled(self: *const Self) bool {
@@ -4447,6 +4455,10 @@ pub const PubsubClient = struct {
 
     pub fn usesDefaultHeartbeatTimeout(self: *const Self) bool {
         return !self.hasHeartbeatTimeout();
+    }
+
+    pub fn usesCustomHeartbeatTimeout(self: *const Self) bool {
+        return !self.usesDefaultHeartbeatTimeout();
     }
 
     pub fn usesDefaultHeartbeatConfig(self: *const Self) bool {
@@ -4472,6 +4484,10 @@ pub const PubsubClient = struct {
 
     pub fn usesDefaultReconnectDelay(self: *const Self) bool {
         return self.getReconnectDelayMs() == (pubsub_types.PubsubClientOptions{}).reconnect_delay_ms;
+    }
+
+    pub fn usesCustomReconnectDelay(self: *const Self) bool {
+        return !self.usesDefaultReconnectDelay();
     }
 
     pub fn getReconnectDelayForAttempt(self: *const Self, attempt: u32) u32 {
@@ -4510,6 +4526,10 @@ pub const PubsubClient = struct {
         return self.getReconnectBackoffFactor() == (pubsub_types.PubsubClientOptions{}).reconnect_backoff_factor;
     }
 
+    pub fn usesCustomReconnectBackoffFactor(self: *const Self) bool {
+        return !self.usesDefaultReconnectBackoffFactor();
+    }
+
     pub fn isReconnectBackoffEnabled(self: *const Self) bool {
         return self.getReconnectDelayMs() > 0 and self.getReconnectBackoffFactor() > 1;
     }
@@ -4530,6 +4550,10 @@ pub const PubsubClient = struct {
 
     pub fn usesDefaultReconnectMaxDelay(self: *const Self) bool {
         return !self.hasReconnectMaxDelay();
+    }
+
+    pub fn usesCustomReconnectMaxDelay(self: *const Self) bool {
+        return !self.usesDefaultReconnectMaxDelay();
     }
 
     pub fn isReconnectDelayCapped(self: *const Self) bool {
@@ -4554,6 +4578,10 @@ pub const PubsubClient = struct {
 
     pub fn usesDefaultReconnectMaxAttempts(self: *const Self) bool {
         return !self.hasReconnectMaxAttempts();
+    }
+
+    pub fn usesCustomReconnectMaxAttempts(self: *const Self) bool {
+        return !self.usesDefaultReconnectMaxAttempts();
     }
 
     pub fn usesDefaultReconnectConfig(self: *const Self) bool {
@@ -4602,6 +4630,10 @@ pub const PubsubClient = struct {
         return self.getSubscriptionQueueLimit() == (pubsub_types.PubsubClientOptions{}).subscription_queue_limit;
     }
 
+    pub fn usesCustomSubscriptionQueueLimit(self: *const Self) bool {
+        return !self.usesDefaultSubscriptionQueueLimit();
+    }
+
     pub fn getQueueOverflowPolicy(self: *const Self) pubsub_types.PubsubQueueOverflowPolicy {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
@@ -4610,6 +4642,10 @@ pub const PubsubClient = struct {
 
     pub fn usesDefaultQueueOverflowPolicy(self: *const Self) bool {
         return self.isQueueOverflowDropOldest();
+    }
+
+    pub fn usesCustomQueueOverflowPolicy(self: *const Self) bool {
+        return !self.usesDefaultQueueOverflowPolicy();
     }
 
     pub fn usesDefaultQueueConfig(self: *const Self) bool {
@@ -4650,6 +4686,10 @@ pub const PubsubClient = struct {
         return self.getHandshakeTimeoutMs() == (pubsub_types.PubsubClientOptions{}).handshake_timeout_ms;
     }
 
+    pub fn usesCustomHandshakeTimeout(self: *const Self) bool {
+        return !self.usesDefaultHandshakeTimeout();
+    }
+
     pub fn getWriteTimeoutMs(self: *const Self) ?u32 {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
@@ -4662,6 +4702,10 @@ pub const PubsubClient = struct {
 
     pub fn usesDefaultWriteTimeout(self: *const Self) bool {
         return !self.hasWriteTimeout();
+    }
+
+    pub fn usesCustomWriteTimeout(self: *const Self) bool {
+        return !self.usesDefaultWriteTimeout();
     }
 
     pub fn isWriteTimeoutEnabled(self: *const Self) bool {
@@ -4678,6 +4722,10 @@ pub const PubsubClient = struct {
         return self.getMaxMessageSize() == (pubsub_types.PubsubClientOptions{}).max_message_size;
     }
 
+    pub fn usesCustomMaxMessageSize(self: *const Self) bool {
+        return !self.usesDefaultMaxMessageSize();
+    }
+
     pub fn getBufferSize(self: *const Self) usize {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
@@ -4686,6 +4734,10 @@ pub const PubsubClient = struct {
 
     pub fn usesDefaultBufferSize(self: *const Self) bool {
         return self.getBufferSize() == (pubsub_types.PubsubClientOptions{}).buffer_size;
+    }
+
+    pub fn usesCustomBufferSize(self: *const Self) bool {
+        return !self.usesDefaultBufferSize();
     }
 
     pub fn usesDefaultTransportConfig(self: *const Self) bool {
