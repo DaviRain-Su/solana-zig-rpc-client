@@ -1975,6 +1975,22 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expect(pubsub.usesCustomBufferSize());
     try std.testing.expect(!pubsub.usesDefaultTransportConfig());
     try std.testing.expect(pubsub.usesCustomTransportConfig());
+    const options = pubsub.getOptions();
+    try std.testing.expect(options.auto_reconnect);
+    try std.testing.expectEqual(@as(?u32, 25), options.heartbeat_interval_ms);
+    try std.testing.expectEqual(@as(?u32, 75), options.heartbeat_timeout_ms);
+    try std.testing.expectEqual(@as(u32, 80), options.reconnect_delay_ms);
+    try std.testing.expectEqual(@as(u8, 3), options.reconnect_backoff_factor);
+    try std.testing.expectEqual(@as(?u32, 250), options.reconnect_max_delay_ms);
+    try std.testing.expectEqual(@as(?u32, 7), options.reconnect_max_attempts);
+    try std.testing.expectEqual(@as(usize, 5), options.subscription_queue_limit);
+    try std.testing.expectEqual(client.PubsubQueueOverflowPolicy.close_subscription, options.queue_overflow_policy);
+    try std.testing.expectEqual(@as(u32, 150), options.handshake_timeout_ms);
+    try std.testing.expectEqual(@as(?u32, 250), options.write_timeout_ms);
+    try std.testing.expectEqual(@as(usize, 128 * 1024), options.max_message_size);
+    try std.testing.expectEqual(@as(usize, 2048), options.buffer_size);
+    const config = pubsub.getConfig();
+    try std.testing.expectEqual(options.buffer_size, config.buffer_size);
     try std.testing.expectEqual(@as(u32, 0), pubsub.getReconnectAttemptCount());
     try std.testing.expect(!pubsub.hasReconnectAttempts());
     try std.testing.expect(!pubsub.hasEverReconnected());
@@ -2145,6 +2161,22 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.usesDefaultBufferSize());
     try std.testing.expect(pubsub.usesCustomBufferSize());
     try std.testing.expect(!pubsub.usesDefaultTransportConfig());
+    const updated_options = pubsub.getOptions();
+    try std.testing.expect(!updated_options.auto_reconnect);
+    try std.testing.expectEqual(@as(?u32, null), updated_options.heartbeat_interval_ms);
+    try std.testing.expectEqual(@as(?u32, 12_345), updated_options.heartbeat_timeout_ms);
+    try std.testing.expectEqual(@as(u32, 555), updated_options.reconnect_delay_ms);
+    try std.testing.expectEqual(@as(u8, 4), updated_options.reconnect_backoff_factor);
+    try std.testing.expectEqual(@as(?u32, 4_321), updated_options.reconnect_max_delay_ms);
+    try std.testing.expectEqual(@as(?u32, 9), updated_options.reconnect_max_attempts);
+    try std.testing.expectEqual(@as(usize, 13), updated_options.subscription_queue_limit);
+    try std.testing.expectEqual(client.PubsubQueueOverflowPolicy.drop_newest, updated_options.queue_overflow_policy);
+    try std.testing.expectEqual(@as(u32, 8_765), updated_options.handshake_timeout_ms);
+    try std.testing.expectEqual(@as(?u32, 432), updated_options.write_timeout_ms);
+    try std.testing.expectEqual(@as(usize, 1024), updated_options.max_message_size);
+    try std.testing.expectEqual(@as(usize, 2048), updated_options.buffer_size);
+    const updated_config = pubsub.getConfig();
+    try std.testing.expectEqual(updated_options.max_message_size, updated_config.max_message_size);
 }
 
 test "root.PubsubClient signatureSubscribe parses receivedSignature notifications" {

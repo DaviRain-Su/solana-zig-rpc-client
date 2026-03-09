@@ -4732,6 +4732,16 @@ pub const PubsubClient = struct {
         return self.state.options.buffer_size;
     }
 
+    pub fn getOptions(self: *const Self) pubsub_types.PubsubClientOptions {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        return self.state.options;
+    }
+
+    pub fn getConfig(self: *const Self) pubsub_types.PubsubClientOptions {
+        return self.getOptions();
+    }
+
     pub fn usesDefaultBufferSize(self: *const Self) bool {
         return self.getBufferSize() == (pubsub_types.PubsubClientOptions{}).buffer_size;
     }
