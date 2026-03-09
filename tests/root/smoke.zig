@@ -372,6 +372,78 @@ test "root.newMockWithHandlerAndRequestSenderOptions aliases newMockWithHandlerA
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"confirmed\"") != null);
 }
 
+test "root.newMockHandler aliases newMockWithHandler" {
+    const allocator = std.testing.allocator;
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.newMockHandler(allocator, .{
+        .context = &handler_context,
+        .callback = dynamicMockHandler,
+    });
+    defer rpc.deinit();
+
+    try std.testing.expect(rpc.isDirectMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 456), slot);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+}
+
+test "root.newMockHandlerAndRequestSenderOptions aliases newMockWithHandlerAndRequestSenderOptions" {
+    const allocator = std.testing.allocator;
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.newMockHandlerAndRequestSenderOptions(
+        allocator,
+        .{
+            .context = &handler_context,
+            .callback = dynamicMockHandler,
+        },
+        .{
+            .endpoint = "custom://mock-handler-alias-options",
+            .commitment = .processed,
+            .request_timeout_ms = 3_020,
+            .confirm_transaction_initial_timeout_ms = 4_020,
+        },
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqualStrings("custom://mock-handler-alias-options", rpc.url());
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 3_020), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 4_020), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 456), slot);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+}
+
+test "root.newMockHandlerAndCommitmentAndTimeouts preserves alias semantics" {
+    const allocator = std.testing.allocator;
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.newMockHandlerAndCommitmentAndTimeouts(
+        allocator,
+        .{
+            .context = &handler_context,
+            .callback = dynamicMockHandler,
+        },
+        .confirmed,
+        3_030,
+        4_030,
+    );
+    defer rpc.deinit();
+
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 3_030), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 4_030), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(.confirmed);
+    try std.testing.expectEqual(@as(u64, 456), slot);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+}
+
 test "root.newMockWithHandlerAndCommitmentAndTimeout applies commitment and timeout" {
     const allocator = std.testing.allocator;
     var handler_context = MockHandlerContext{};
