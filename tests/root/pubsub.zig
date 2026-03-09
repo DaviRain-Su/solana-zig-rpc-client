@@ -1895,10 +1895,12 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expectEqual(@as(?u32, 25), pubsub.getHeartbeatIntervalMs());
     try std.testing.expect(pubsub.hasHeartbeatTimeout());
     try std.testing.expectEqual(@as(?u32, 75), pubsub.getHeartbeatTimeoutMs());
+    try std.testing.expectEqual(@as(?u32, 75), pubsub.getEffectiveHeartbeatTimeoutMs());
     try std.testing.expectEqual(@as(u32, 80), pubsub.getReconnectDelayMs());
     try std.testing.expectEqual(@as(u8, 3), pubsub.getReconnectBackoffFactor());
     try std.testing.expect(pubsub.hasReconnectMaxDelay());
     try std.testing.expectEqual(@as(?u32, 250), pubsub.getReconnectMaxDelayMs());
+    try std.testing.expectEqual(@as(u32, 250), pubsub.getEffectiveReconnectMaxDelayMs());
     try std.testing.expect(pubsub.hasReconnectMaxAttempts());
     try std.testing.expectEqual(@as(?u32, 7), pubsub.getReconnectMaxAttempts());
     try std.testing.expectEqual(@as(usize, 5), pubsub.getSubscriptionQueueLimit());
@@ -1931,6 +1933,9 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
     defer pubsub.deinit();
 
+    try std.testing.expectEqual(@as(?u32, null), pubsub.getEffectiveHeartbeatTimeoutMs());
+    try std.testing.expectEqual(@as(u32, 250), pubsub.getEffectiveReconnectMaxDelayMs());
+
     pubsub.setAutoReconnectEnabled(false);
     pubsub.setHeartbeatTimeoutMs(12_345);
     pubsub.setReconnectDelayMs(555);
@@ -1947,10 +1952,12 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.isAutoReconnectEnabled());
     try std.testing.expect(pubsub.hasHeartbeatTimeout());
     try std.testing.expectEqual(@as(?u32, 12_345), pubsub.getHeartbeatTimeoutMs());
+    try std.testing.expectEqual(@as(?u32, null), pubsub.getEffectiveHeartbeatTimeoutMs());
     try std.testing.expectEqual(@as(u32, 555), pubsub.getReconnectDelayMs());
     try std.testing.expectEqual(@as(u8, 4), pubsub.getReconnectBackoffFactor());
     try std.testing.expect(pubsub.hasReconnectMaxDelay());
     try std.testing.expectEqual(@as(?u32, 4_321), pubsub.getReconnectMaxDelayMs());
+    try std.testing.expectEqual(@as(u32, 4_321), pubsub.getEffectiveReconnectMaxDelayMs());
     try std.testing.expect(pubsub.hasReconnectMaxAttempts());
     try std.testing.expectEqual(@as(?u32, 9), pubsub.getReconnectMaxAttempts());
     try std.testing.expectEqual(@as(usize, 13), pubsub.getSubscriptionQueueLimit());

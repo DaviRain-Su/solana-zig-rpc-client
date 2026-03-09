@@ -4416,6 +4416,13 @@ pub const PubsubClient = struct {
         return self.getHeartbeatTimeoutMs() != null;
     }
 
+    pub fn getEffectiveHeartbeatTimeoutMs(self: *const Self) ?u32 {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        const interval_ms = self.state.options.heartbeat_interval_ms orelse return null;
+        return self.state.options.heartbeat_timeout_ms orelse interval_ms * 3;
+    }
+
     pub fn getReconnectDelayMs(self: *const Self) u32 {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
@@ -4436,6 +4443,12 @@ pub const PubsubClient = struct {
 
     pub fn hasReconnectMaxDelay(self: *const Self) bool {
         return self.getReconnectMaxDelayMs() != null;
+    }
+
+    pub fn getEffectiveReconnectMaxDelayMs(self: *const Self) u32 {
+        self.state.mutex.lock();
+        defer self.state.mutex.unlock();
+        return self.state.options.reconnect_max_delay_ms orelse self.state.options.reconnect_delay_ms;
     }
 
     pub fn getReconnectMaxAttempts(self: *const Self) ?u32 {
