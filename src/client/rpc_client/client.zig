@@ -1999,6 +1999,286 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn newRequestCallback(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallback(allocator, context, callback);
+    }
+
+    pub fn newRequestCallbackAndRequestSenderOptions(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndRequestSenderOptions(
+            allocator,
+            context,
+            callback,
+            options,
+        );
+    }
+
+    pub fn newRequestCallbackAndCommitment(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndCommitment(allocator, context, callback, commitment);
+    }
+
+    pub fn newRequestCallbackAndTimeout(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndTimeout(allocator, context, callback, timeout_ms);
+    }
+
+    pub fn newRequestCallbackAndTimeouts(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndTimeouts(
+            allocator,
+            context,
+            callback,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newRequestCallbackAndCommitmentAndTimeout(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndCommitmentAndTimeout(
+            allocator,
+            context,
+            callback,
+            commitment,
+            timeout_ms,
+        );
+    }
+
+    pub fn newRequestCallbackAndTimeoutAndCommitment(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndTimeoutAndCommitment(
+            allocator,
+            context,
+            callback,
+            timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn newRequestCallbackAndCommitmentAndTimeouts(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndCommitmentAndTimeouts(
+            allocator,
+            context,
+            callback,
+            commitment,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newRequestCallbackAndTimeoutsAndCommitment(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndTimeoutsAndCommitment(
+            allocator,
+            context,
+            callback,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn newRequestCallbackAndDeinit(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinit(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+        );
+    }
+
+    pub fn newRequestCallbackAndDeinitAndRequestSenderOptions(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndRequestSenderOptions(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            options,
+        );
+    }
+
+    pub fn newRequestCallbackAndDeinitAndCommitment(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndCommitment(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            commitment,
+        );
+    }
+
+    pub fn newRequestCallbackAndDeinitAndTimeout(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndTimeout(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            timeout_ms,
+        );
+    }
+
+    pub fn newRequestCallbackAndDeinitAndTimeouts(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndTimeouts(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newRequestCallbackAndDeinitAndCommitmentAndTimeout(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndCommitmentAndTimeout(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            commitment,
+            timeout_ms,
+        );
+    }
+
+    pub fn newRequestCallbackAndDeinitAndTimeoutAndCommitment(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndTimeoutAndCommitment(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn newRequestCallbackAndDeinitAndCommitmentAndTimeouts(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndCommitmentAndTimeouts(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            commitment,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+        );
+    }
+
+    pub fn newRequestCallbackAndDeinitAndTimeoutsAndCommitment(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndTimeoutsAndCommitment(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
     pub fn newWithBorrowedMockSender(
         allocator: Allocator,
         sender: *MockSenderType,
