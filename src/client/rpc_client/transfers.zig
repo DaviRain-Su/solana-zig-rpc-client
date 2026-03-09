@@ -252,8 +252,9 @@ fn buildVersionedTransferMessageBytesWithResolvedBlockhash(
         );
     }
 
-    return try sdk.buildVersionedTransferMessageBytes(
+    return try sdk.buildVersionedTransferMessageBytesWithSender(
         self.allocator,
+        keypair.public_key,
         keypair.public_key,
         destination_pubkey,
         blockhash,
@@ -887,6 +888,47 @@ pub fn buildOwnedVersionedTransferMessageWithSender(
         recent_blockhash,
         address_lookup_tables,
         null,
+    );
+}
+
+fn buildOwnedVersionedTransferMessageWithSenderAndResolvedBlockhash(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    nonce_account_pubkey: ?[]const u8,
+) !OwnedVersionedMessageV0 {
+    const fee_payer = try Keypair.fromBase58SecretKey(self.allocator, fee_payer_secret_key);
+    const sender = try Keypair.fromBase58SecretKey(self.allocator, sender_secret_key);
+    const destination_pubkey = try Pubkey.fromBase58(self.allocator, destination);
+    const blockhash = try Hash.fromBase58(self.allocator, recent_blockhash);
+
+    if (nonce_account_pubkey) |value| {
+        const nonce_pubkey = try Pubkey.fromBase58(self.allocator, value);
+        return try sdk.buildOwnedVersionedNonceTransferMessageWithSender(
+            self.allocator,
+            fee_payer.public_key,
+            sender.public_key,
+            nonce_pubkey,
+            sender.public_key,
+            destination_pubkey,
+            blockhash,
+            lamports,
+            address_lookup_tables,
+        );
+    }
+
+    return try sdk.buildOwnedVersionedTransferMessageWithSender(
+        self.allocator,
+        fee_payer.public_key,
+        sender.public_key,
+        destination_pubkey,
+        blockhash,
+        lamports,
+        address_lookup_tables,
     );
 }
 
@@ -4047,7 +4089,7 @@ pub fn sendVersionedTransferWithSenderAndOptions(
     );
     defer self.allocator.free(signed_tx_base64);
 
-    return try self.sendEncodedTransaction(
+    return try self.sendTransaction(
         signed_tx_base64,
         if (options) |value| value.send_transaction_options else null,
     );
@@ -4500,7 +4542,7 @@ pub fn versionedTransferWithSenderAndOptions(
     );
     defer self.allocator.free(signed_tx_base64);
 
-    return try self.sendAndConfirmEncodedTransaction(
+    return try self.sendTransactionAndConfirm(
         signed_tx_base64,
         if (options) |value| value.send_transaction_options else null,
         if (options) |value| value.commitment else null,

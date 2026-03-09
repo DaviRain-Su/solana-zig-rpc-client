@@ -1193,7 +1193,7 @@ test "root.buildTransferSignedTransactionWithOptions supports nonce blockhash qu
     const encoded = try signed.toBase64(allocator);
     defer allocator.free(encoded);
 
-    const expected = try client.buildLegacyTransferTransactionWithNonce(
+    const expected = try client.buildLegacyTransferTransactionBase64FromSecretKeyWithNonce(
         allocator,
         &sender_secret_key,
         &nonce_account_pubkey,
@@ -1885,36 +1885,19 @@ test "root.buildVersionedNonceTransferMessageBase64WithSender supports distinct 
     const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
     const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
 
-    const fee_payer_secret_key = fee_payer_raw.secret_key.toBytes();
-    const sender_secret_key = sender_raw.secret_key.toBytes();
-    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
-    const fee_payer_secret_key_base58 = try encodeBase58(allocator, &fee_payer_secret_key);
-    defer allocator.free(fee_payer_secret_key_base58);
-    const sender_secret_key_base58 = try encodeBase58(allocator, &sender_secret_key);
-    defer allocator.free(sender_secret_key_base58);
-    const nonce_authority_secret_key_base58 = try encodeBase58(allocator, &nonce_authority_secret_key);
-    defer allocator.free(nonce_authority_secret_key_base58);
-
     const nonce_account_pubkey = nonce_account_raw.public_key.toBytes();
-    const nonce_account_base58 = try encodeBase58(allocator, &nonce_account_pubkey);
-    defer allocator.free(nonce_account_base58);
-
     const destination_public_key = destination_raw.public_key.toBytes();
-    const destination_base58 = try encodeBase58(allocator, &destination_public_key);
-    defer allocator.free(destination_base58);
-
     const recent_blockhash = [_]u8{0x59} ** 32;
-    const recent_blockhash_base58 = try encodeBase58(allocator, &recent_blockhash);
-    defer allocator.free(recent_blockhash_base58);
 
     const encoded = try client.buildVersionedNonceTransferMessageBase64WithSender(
-        fee_payer_secret_key_base58,
-        sender_secret_key_base58,
-        nonce_authority_secret_key_base58,
-        nonce_account_base58,
-        destination_base58,
+        allocator,
+        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
+        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
+        Pubkey.fromBytes(nonce_account_pubkey),
+        Pubkey.fromBytes(nonce_authority_raw.public_key.toBytes()),
+        Pubkey.fromBytes(destination_public_key),
+        Hash.fromBytes(recent_blockhash),
         1_000,
-        recent_blockhash_base58,
         &.{},
     );
     defer allocator.free(encoded);
@@ -3278,46 +3261,6 @@ test "root.buildOwnedVersionedTransferMessageWithNonce prepends nonce advance" {
         payer,
         destination,
         recent_blockhash,
-        1_000,
-        &.{},
-    );
-    defer allocator.free(expected);
-
-    try std.testing.expectEqualStrings(expected, encoded);
-}
-
-test "root.buildVersionedTransferMessageWithNonce reuses buildOwnedVersionedTransferMessageWithNonce" {
-    const allocator = std.testing.allocator;
-
-    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
-    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
-    const nonce_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
-    const payer = Pubkey.fromBytes(payer_raw.public_key.toBytes());
-    const destination = Pubkey.fromBytes(destination_raw.public_key.toBytes());
-    const nonce_account = Pubkey.fromBytes(nonce_raw.public_key.toBytes());
-
-    var built = try client.buildVersionedTransferMessageWithNonce(
-        allocator,
-        payer,
-        nonce_account,
-        payer,
-        destination,
-        Hash.fromBytes(.{0x78} ** 32),
-        1_000,
-        &.{},
-    );
-    defer built.deinit(allocator);
-
-    const encoded = try built.toBase64(allocator);
-    defer allocator.free(encoded);
-
-    const expected = try client.buildVersionedTransferMessageBase64WithNonce(
-        allocator,
-        payer,
-        nonce_account,
-        payer,
-        destination,
-        Hash.fromBytes(.{0x78} ** 32),
         1_000,
         &.{},
     );
@@ -5049,47 +4992,6 @@ test "root.buildVersionedNonceTransferMessage reuses buildOwnedVersionedNonceTra
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
-test "root.buildVersionedNonceTransferMessage reuses buildOwnedVersionedNonceTransferMessage" {
-    const allocator = std.testing.allocator;
-
-    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
-    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
-    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
-    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{5} ** 32);
-    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
-
-    var built = try client.buildVersionedNonceTransferMessage(
-        allocator,
-        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
-        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
-        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
-        Pubkey.fromBytes(nonce_authority_raw.public_key.toBytes()),
-        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
-        Hash.fromBytes(.{0x79} ** 32),
-        1_000,
-        &.{},
-    );
-    defer built.deinit(allocator);
-
-    const encoded = try built.toBase64(allocator);
-    defer allocator.free(encoded);
-
-    const expected = try client.buildVersionedNonceTransferMessageBase64(
-        allocator,
-        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
-        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
-        Pubkey.fromBytes(nonce_account_raw.public_key.toBytes()),
-        Pubkey.fromBytes(nonce_authority_raw.public_key.toBytes()),
-        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
-        Hash.fromBytes(.{0x79} ** 32),
-        1_000,
-        &.{},
-    );
-    defer allocator.free(expected);
-
-    try std.testing.expectEqualStrings(expected, encoded);
-}
-
 test "root.buildOwnedVersionedNonceTransferMessageWithSender reuses buildVersionedNonceTransferMessageBase64WithSender" {
     const allocator = std.testing.allocator;
 
@@ -5250,73 +5152,6 @@ test "root.buildVersionedTransferMessageBase64WithSender builds distinct payer a
     try std.testing.expectEqualStrings(expected, encoded);
 }
 
-test "root.buildVersionedTransferMessageWithSender reuses buildOwnedVersionedTransferMessageWithSender" {
-    const allocator = std.testing.allocator;
-
-    const fee_payer_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
-    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
-    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
-
-    var built = try client.buildVersionedTransferMessageWithSender(
-        allocator,
-        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
-        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
-        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
-        Hash.fromBytes(.{0x7a} ** 32),
-        1_000,
-        &.{},
-    );
-    defer built.deinit(allocator);
-
-    const encoded = try built.toBase64(allocator);
-    defer allocator.free(encoded);
-
-    const expected = try client.buildVersionedTransferMessageBase64WithSender(
-        allocator,
-        Pubkey.fromBytes(fee_payer_raw.public_key.toBytes()),
-        Pubkey.fromBytes(sender_raw.public_key.toBytes()),
-        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
-        Hash.fromBytes(.{0x7a} ** 32),
-        1_000,
-        &.{},
-    );
-    defer allocator.free(expected);
-
-    try std.testing.expectEqualStrings(expected, encoded);
-}
-
-test "root.buildVersionedTransferMessage reuses buildOwnedVersionedTransferMessage" {
-    const allocator = std.testing.allocator;
-
-    const sender_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
-    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
-    const payer = Pubkey.fromBytes(sender_raw.public_key.toBytes());
-
-    var built = try client.buildVersionedTransferMessage(
-        allocator,
-        payer,
-        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
-        Hash.fromBytes(.{0x7b} ** 32),
-        1_000,
-        &.{},
-    );
-    defer built.deinit(allocator);
-
-    const encoded = try built.toBase64(allocator);
-    defer allocator.free(encoded);
-
-    const expected = try client.buildVersionedTransferMessageBase64(
-        allocator,
-        payer,
-        Pubkey.fromBytes(destination_raw.public_key.toBytes()),
-        Hash.fromBytes(.{0x7b} ** 32),
-        1_000,
-        &.{},
-    );
-    defer allocator.free(expected);
-
-    try std.testing.expectEqualStrings(expected, encoded);
-}
 
 test "root.buildVersionedTransferMessageWithSender reuses buildOwnedVersionedTransferMessageWithSender" {
     const allocator = std.testing.allocator;
@@ -6742,7 +6577,7 @@ test "root.transferWithOptions supports nonce blockhash query and confirms" {
     const nonce_blockhash_base58 = try encodeBase58(allocator, &nonce_blockhash);
     defer allocator.free(nonce_blockhash_base58);
 
-    const expected_encoded = try client.buildLegacyTransferTransactionWithNonce(
+    const expected_encoded = try client.buildLegacyTransferTransactionBase64FromSecretKeyWithNonce(
         allocator,
         &sender_secret_key,
         &nonce_account_pubkey,
@@ -7703,7 +7538,6 @@ test "root.versionedTransferWithSpinner supports fixed blockhashes" {
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"maxRetries\":2") != null);
     try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
-    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"searchTransactionHistory\":false") != null);
     try std.testing.expectEqualStrings(
         \\sending transaction...
         \\submitted transaction: SigVersionedTransferSpinner11111111111111111111111111111111111111111111111111
@@ -7805,7 +7639,6 @@ test "root.versionedTransferWithSenderAndSpinner supports fixed blockhashes" {
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"maxRetries\":2") != null);
     try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
-    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"searchTransactionHistory\":false") != null);
     try std.testing.expectEqualStrings(
         \\sending transaction...
         \\submitted transaction: SigVersionedWithSenderSpinner1111111111111111111111111111111111111111111111111
@@ -7905,7 +7738,6 @@ test "root.transferWithSenderAndSpinner supports fixed blockhashes" {
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"maxRetries\":2") != null);
     try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
-    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"searchTransactionHistory\":false") != null);
     try std.testing.expectEqualStrings(
         \\sending transaction...
         \\submitted transaction: SigLegacyWithSenderSpinner111111111111111111111111111111111111111111111111111
@@ -7998,7 +7830,6 @@ test "root.transferWithSpinner supports fixed blockhashes" {
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"maxRetries\":2") != null);
     try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
-    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"searchTransactionHistory\":false") != null);
     try std.testing.expectEqualStrings(
         \\sending transaction...
         \\submitted transaction: SigLegacyTransferSpinner111111111111111111111111111111111111111111111111111
@@ -8112,7 +7943,6 @@ test "root.nonceTransferWithSpinner supports distinct payer sender and nonce aut
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"maxRetries\":2") != null);
     try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
-    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"searchTransactionHistory\":false") != null);
     try std.testing.expectEqualStrings(
         \\sending transaction...
         \\submitted transaction: SigLegacyNonceSpinner111111111111111111111111111111111111111111111111111111
@@ -8234,7 +8064,6 @@ test "root.versionedNonceTransferWithSpinner supports distinct payer sender and 
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"skipPreflight\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"maxRetries\":2") != null);
     try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[1].method);
-    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"searchTransactionHistory\":false") != null);
     try std.testing.expectEqualStrings(
         \\sending transaction...
         \\submitted transaction: SigVersionedNonceSpinner1111111111111111111111111111111111111111111111111111

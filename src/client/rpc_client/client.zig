@@ -1034,12 +1034,12 @@ pub const RpcClient = struct {
         timeout_ms: u64,
         confirm_transaction_initial_timeout_ms: u64,
     ) !RpcClient {
-        return RpcClient.newMockWithHandlerAndCommitmentAndTimeouts(
+        return RpcClient.newMockWithHandlerAndTimeoutsAndCommitment(
             allocator,
             handler,
-            commitment,
             timeout_ms,
             confirm_transaction_initial_timeout_ms,
+            commitment,
         );
     }
 
@@ -4274,8 +4274,10 @@ pub const RpcClient = struct {
         return error.NoRequestSender;
     }
 
-    fn applyRequestSenderOptions(self: *RpcClient, options: RequestSenderOptions) void {
-        self.endpoint = options.endpoint;
+    fn applyRequestSenderOptions(self: *RpcClient, options: RequestSenderOptions) !void {
+        const owned_endpoint = try self.allocator.dupe(u8, options.endpoint);
+        self.allocator.free(self.endpoint);
+        self.endpoint = owned_endpoint;
         self.default_commitment = options.commitment;
         self.request_timeout_ms = options.request_timeout_ms;
         self.confirm_transaction_initial_timeout_ms = options.confirm_transaction_initial_timeout_ms;
@@ -4287,7 +4289,7 @@ pub const RpcClient = struct {
         options: RequestSenderOptions,
     ) !void {
         try self.replaceRequestSender(sender);
-        self.applyRequestSenderOptions(options);
+        try self.applyRequestSenderOptions(options);
     }
 
     pub fn replaceSender(self: *RpcClient, sender: RequestSenderType) !void {
@@ -4405,7 +4407,7 @@ pub const RpcClient = struct {
         options: RequestSenderOptions,
     ) void {
         self.setRequestSender(sender);
-        self.applyRequestSenderOptions(options);
+        self.applyRequestSenderOptions(options) catch unreachable;
     }
 
     pub fn setSender(self: *RpcClient, sender: RequestSenderType) void {
@@ -4704,7 +4706,7 @@ pub const RpcClient = struct {
         options: RequestSenderOptions,
     ) !void {
         try self.setMockSender(sender);
-        self.applyRequestSenderOptions(options);
+        try self.applyRequestSenderOptions(options);
     }
 
     pub fn replaceWithBorrowedMockSender(

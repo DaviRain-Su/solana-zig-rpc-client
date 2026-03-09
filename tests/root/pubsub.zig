@@ -4169,7 +4169,7 @@ test "root.TypedPubsubReceiver next aliases forward typed receive helpers" {
     defer notification.deinit();
 
     try std.testing.expectEqual(@as(u64, 41), notification.notification.subscription);
-    try std.testing.expect(receiver.tryNext() == null);
+    try std.testing.expect((try receiver.tryNext()) == null);
     try std.testing.expectError(error.Timeout, receiver.nextTimeout(10));
 
     try std.testing.expect(try receiver.unsubscribe());
@@ -4200,6 +4200,7 @@ test "root.PubsubSubscription hasQueued and hasDropped reflect queue state" {
     );
     defer subscription.deinit();
 
+    try waitForQueuedCount(subscription, 1, 1000);
     try std.testing.expect(subscription.hasQueued());
     try std.testing.expect(!subscription.hasDropped());
 
@@ -4238,6 +4239,7 @@ test "root.TypedPubsubReceiver hasQueued and hasDropped reflect queue state" {
     defer subscription.deinit();
 
     var receiver = subscription.typedReceiver(client.SignatureNotificationValue);
+    try waitForQueuedCount(subscription, 1, 1000);
     try std.testing.expect(receiver.hasQueued());
     try std.testing.expect(!receiver.hasDropped());
 

@@ -9,6 +9,7 @@ pub const RequestSenderContext = struct {
     call_count: usize = 0,
     deinit_count: usize = 0,
     saw_confirmed_commitment: bool = false,
+    saw_finalized_commitment: bool = false,
     last_request_id: u64 = 0,
     base_slot: u64 = 0,
     error_code: i64 = -32055,
@@ -86,6 +87,9 @@ pub fn customRequestSender(
     context.last_request_id = request.id;
     if (std.mem.indexOf(u8, request.params_json, "\"confirmed\"") != null) {
         context.saw_confirmed_commitment = true;
+    }
+    if (std.mem.indexOf(u8, request.params_json, "\"finalized\"") != null) {
+        context.saw_finalized_commitment = true;
     }
 
     if (std.mem.eql(u8, request.method, "getSlot")) {

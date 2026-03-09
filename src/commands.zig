@@ -4409,7 +4409,7 @@ test "runCommand confirm-transaction respects commitment" {
         "confirmed",
     );
     try expectMockSenderRequestCount(&sender_context.sender, 1);
-    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "requestAirdrop");
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings("signature Sig111111111111111111111111111111111111 confirmed: false\n", captured);
 }
@@ -4461,7 +4461,7 @@ test "runCommand signature-status prints status" {
         "confirmed",
     );
     try expectMockSenderRequestCount(&sender_context.sender, 1);
-    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getAccountInfo");
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature status: has_error=false slot=55 confirmations=7 confirmation=confirmed\n",
@@ -4526,7 +4526,7 @@ test "runCommand signature-statuses prints per-signature output" {
         null,
     );
     try expectMockSenderRequestCount(&sender_context.sender, 1);
-    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "requestAirdrop");
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "signature statuses: 3\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "  [0] SigA111111111111111111111111111111111111: not found\n") != null);
@@ -4853,6 +4853,7 @@ test "runCommand transfer fetches blockhash builds transaction and confirms sign
         "confirmed",
     );
     try expectMockSenderRequestCount(&sender_context.sender, 3);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "confirmed transfer signature: Sig444444444444444444444444444444444444444444444444444444444444444444\n",
@@ -4955,6 +4956,7 @@ test "runCommand transfer accepts sender keypair file" {
         "confirmed",
     );
     try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "confirmed transfer signature: Sig666666666666666666666666666666666666666666666666666666666666666666\n",
@@ -5006,7 +5008,7 @@ test "runCommand request-airdrop uses default params" {
         null,
     );
     try expectMockSenderRequestCount(&sender_context.sender, 1);
-    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "requestAirdrop");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "airdrop signature: Sig111111111111111111111111111111111111111111111111111111111111111111\n",
@@ -5062,7 +5064,7 @@ test "runCommand request-airdrop with commitment and recent blockhash passes bot
         "RecentBlockhash11111111111111111111111111",
     );
     try expectMockSenderRequestCount(&sender_context.sender, 1);
-    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "requestAirdrop");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "airdrop signature: Sig111111111111111111111111111111111111111111111111111111111111111111\n",
@@ -5124,7 +5126,7 @@ test "runCommand account-data decodes base64 and prints hex" {
         "base64",
     );
     try expectMockSenderRequestCount(&sender_context.sender, 1);
-    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getAccountInfo");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "account data for Address11111111111111111111111111111111: 3 bytes\n010203\n",

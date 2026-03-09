@@ -2270,7 +2270,7 @@ pub fn buildLegacyTransferMessageWithNonce(
     return try owned.serialize(allocator);
 }
 
-pub fn buildLegacyTransferTransactionWithNonce(
+pub fn buildLegacyTransferTransactionBase64FromSecretKeyWithNonce(
     allocator: Allocator,
     secret_key: []const u8,
     nonce_account_public_key: []const u8,
@@ -3026,8 +3026,9 @@ pub fn buildVersionedTransferMessageBase64(
     lamports: u64,
     address_lookup_tables: []const AddressLookupTableAccount,
 ) ![]u8 {
-    const message_bytes = try buildVersionedTransferMessageBytes(
+    const message_bytes = try buildVersionedTransferMessageBytesWithSender(
         allocator,
+        payer,
         payer,
         destination,
         recent_blockhash,

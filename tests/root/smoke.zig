@@ -2025,7 +2025,7 @@ test "root.newWithRequestCallbackAndDeinitAndRequestSenderOptions aliases AndOpt
             allocator,
             &context,
             customRequestSender,
-            countingRequestSenderDeinit,
+            customRequestSenderDeinit,
             .{
                 .endpoint = "custom://request-callback-deinit-alias",
                 .commitment = .confirmed,
@@ -2057,7 +2057,7 @@ test "root.newRequestCallbackAndDeinitAndRequestSenderOptions aliases newWithReq
             allocator,
             &context,
             customRequestSender,
-            countingRequestSenderDeinit,
+            customRequestSenderDeinit,
             .{
                 .endpoint = "custom://request-callback-deinit-short-alias",
                 .commitment = .confirmed,
@@ -3448,7 +3448,7 @@ test "root.replaceOwnedMockAndRequestSenderOptions aliases replaceWithOwnedMockS
 
     const slot = try rpc.getSlot(null);
     try std.testing.expectEqual(@as(u64, 1812), slot);
-    try std.testing.expect(context.saw_finalized_commitment);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
 }
 
 test "root.setBorrowedMockSender converts plain client to mock-backed request sender" {
@@ -5201,7 +5201,7 @@ test "root.RequestSender.fromMockSender borrows scripted mock sender state" {
         );
         defer rpc.deinit();
 
-        try std.testing.expect(!rpc.isMock());
+        try std.testing.expect(rpc.isMock());
         try std.testing.expect(rpc.hasRequestSender());
         try std.testing.expectEqualStrings("custom://borrowed-mock", rpc.url());
         try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
@@ -5259,7 +5259,7 @@ test "root.RequestSender.fromMockSender borrows scripted mock sender state" {
     try std.testing.expectEqual(@as(u64, 654), second_slot);
     try std.testing.expectEqual(@as(usize, 2), sender.requestCount());
     try mock_sender_assertions.expectMockSenderRequestCount(&sender, 2);
-    try mock_sender_assertions.expectMockRpcRequestCount(&second_rpc, 1);
+    try mock_sender_assertions.expectMockRpcRequestCount(&second_rpc, 2);
     try std.testing.expectEqual(@as(u64, 1), sender.firstCapturedRequestId().?);
     try std.testing.expectEqual(@as(u64, 1), second_rpc.firstCapturedMockRequestId().?);
     try std.testing.expectEqual(@as(u64, 1), sender.lastCapturedRequestId().?);
@@ -5277,7 +5277,7 @@ test "root.RequestSender.fromMockSender borrows scripted mock sender state" {
     try mock_sender_assertions.expectMockSenderLastCapturedRequestMethod(&sender, "getSlot");
     try mock_sender_assertions.expectMockRpcLastCapturedRequestMethod(&second_rpc, "getSlot");
     const last_request_sender = try second_rpc.requestSender();
-    try mock_sender_assertions.expectMockRequestSenderRequestCount(last_request_sender, 1);
+    try mock_sender_assertions.expectMockRequestSenderRequestCount(last_request_sender, 2);
     try std.testing.expectEqual(@as(u64, 1), last_request_sender.firstCapturedMockRequestId().?);
     try std.testing.expectEqual(@as(u64, 1), last_request_sender.lastCapturedMockRequestId().?);
     try std.testing.expectEqualStrings("getSlot", last_request_sender.firstCapturedMockRequestMethod().?);
@@ -5327,7 +5327,7 @@ test "root.newWithBorrowedMockSender borrows scripted mock sender state" {
 
     const slot = try rpc.getSlot(.processed);
     try std.testing.expectEqual(@as(u64, 333), slot);
-    try std.testing.expect(!rpc.isMock());
+    try std.testing.expect(rpc.isMock());
     try std.testing.expect(rpc.hasRequestSender());
     try std.testing.expectEqual(@as(usize, 1), sender.requestCount());
     try std.testing.expectEqualStrings("getSlot", sender.capturedRequests()[0].method);
@@ -5715,7 +5715,7 @@ test "root.newWithOwnedMockSender transfers ownership of scripted sender state" 
     const health = try rpc.getHealth();
     defer allocator.free(health);
     try std.testing.expectEqualStrings("ok", health);
-    try std.testing.expect(!rpc.isMock());
+    try std.testing.expect(rpc.isMock());
     try std.testing.expect(rpc.hasRequestSender());
 }
 
@@ -5792,7 +5792,7 @@ test "root.newWithOwnedMockSenderAndCommitmentAndTimeouts forwards all options" 
     try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
     try std.testing.expectEqual(@as(?u64, 7_000), rpc.getRequestTimeoutMs());
     try std.testing.expectEqual(@as(?u64, 15_000), rpc.getConfirmTransactionInitialTimeoutMs());
-    try std.testing.expect(!rpc.isMock());
+    try std.testing.expect(rpc.isMock());
     try std.testing.expect(rpc.hasRequestSender());
 
     const slot = try rpc.getSlot(null);

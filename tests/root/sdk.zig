@@ -571,7 +571,7 @@ test "root.buildLegacyTransferTransactionWithNonce matches typed durable nonce t
     const expected = try transaction.toBase64(allocator, &.{keypair});
     defer allocator.free(expected);
 
-    const actual = try client.buildLegacyTransferTransactionWithNonce(
+    const actual = try client.buildLegacyTransferTransactionBase64FromSecretKeyWithNonce(
         allocator,
         &sender_secret_key,
         &nonce_account_key_pair.public_key.toBytes(),
@@ -651,7 +651,7 @@ test "root.buildSignedLegacyTransactionWithNonceInstructions matches transfer-sp
     const actual = try signed.toBase64(allocator);
     defer allocator.free(actual);
 
-    const expected = try client.buildLegacyTransferTransactionWithNonce(
+    const expected = try client.buildLegacyTransferTransactionBase64FromSecretKeyWithNonce(
         allocator,
         &sender_secret_key,
         &nonce_account_key_pair.public_key.toBytes(),

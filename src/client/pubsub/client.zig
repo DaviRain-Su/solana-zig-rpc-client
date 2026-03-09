@@ -639,7 +639,7 @@ pub const PubsubSubscription = struct {
 
     pub fn tryRecvParsed(self: *Self, comptime ValueType: type) !?pubsub_types.OwnedPubsubNotification(ValueType) {
         const raw_message = self.tryRecv() orelse return null;
-        return pubsub_types.parseOwnedPubsubNotification(self.state.allocator, raw_message, ValueType);
+        return try pubsub_types.parseOwnedPubsubNotification(self.state.allocator, raw_message, ValueType);
     }
 
     pub fn tryNextParsed(self: *Self, comptime ValueType: type) !?pubsub_types.OwnedPubsubNotification(ValueType) {
@@ -648,7 +648,7 @@ pub const PubsubSubscription = struct {
 
     fn tryRecvCallbackParsed(self: *Self, comptime ValueType: type) !?pubsub_types.OwnedPubsubNotification(ValueType) {
         const raw_message = self.tryRecvCallback() orelse return null;
-        return pubsub_types.parseOwnedPubsubNotification(self.state.allocator, raw_message, ValueType);
+        return try pubsub_types.parseOwnedPubsubNotification(self.state.allocator, raw_message, ValueType);
     }
 
     pub fn recvParsedTimeout(
@@ -1191,6 +1191,10 @@ pub const PubsubVoteSubscriptionWithCallback = struct {
         return self.subscription.getLastError();
     }
 
+    pub fn hasLastError(self: *Self) bool {
+        return self.getLastError() != null;
+    }
+
     pub fn clearLastError(self: *Self) void {
         self.subscription.clearLastError();
     }
@@ -1283,6 +1287,10 @@ pub const PubsubBlockSubscriptionWithCallback = struct {
 
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
         return self.subscription.getLastError();
+    }
+
+    pub fn hasLastError(self: *Self) bool {
+        return self.getLastError() != null;
     }
 
     pub fn clearLastError(self: *Self) void {
@@ -1379,6 +1387,10 @@ pub const PubsubSignatureSubscriptionWithCallback = struct {
         return self.subscription.getLastError();
     }
 
+    pub fn hasLastError(self: *Self) bool {
+        return self.getLastError() != null;
+    }
+
     pub fn clearLastError(self: *Self) void {
         self.subscription.clearLastError();
     }
@@ -1471,6 +1483,10 @@ pub const PubsubAccountSubscriptionWithCallback = struct {
 
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
         return self.subscription.getLastError();
+    }
+
+    pub fn hasLastError(self: *Self) bool {
+        return self.getLastError() != null;
     }
 
     pub fn clearLastError(self: *Self) void {
@@ -1567,6 +1583,10 @@ pub const PubsubLogsSubscriptionWithCallback = struct {
         return self.subscription.getLastError();
     }
 
+    pub fn hasLastError(self: *Self) bool {
+        return self.getLastError() != null;
+    }
+
     pub fn clearLastError(self: *Self) void {
         self.subscription.clearLastError();
     }
@@ -1661,6 +1681,10 @@ pub const PubsubProgramSubscriptionWithCallback = struct {
         return self.subscription.getLastError();
     }
 
+    pub fn hasLastError(self: *Self) bool {
+        return self.getLastError() != null;
+    }
+
     pub fn clearLastError(self: *Self) void {
         self.subscription.clearLastError();
     }
@@ -1753,6 +1777,10 @@ pub const PubsubSlotSubscriptionWithCallback = struct {
 
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
         return self.subscription.getLastError();
+    }
+
+    pub fn hasLastError(self: *Self) bool {
+        return self.getLastError() != null;
     }
 
     pub fn clearLastError(self: *Self) void {
@@ -1860,6 +1888,10 @@ pub const PubsubReceiver = struct {
 
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
         return self.subscription.getLastError();
+    }
+
+    pub fn hasLastError(self: *Self) bool {
+        return self.getLastError() != null;
     }
 
     pub fn clearLastError(self: *Self) void {
@@ -2205,20 +2237,12 @@ pub fn TypedPubsubReceiver(comptime ValueType: type) type {
             return self.queuedCount() > 0;
         }
 
-        pub fn hasQueued(self: *const Self) bool {
-            return self.queuedCount() > 0;
-        }
-
         pub fn subscriptionId(self: *const Self) u64 {
             return self.receiver.subscriptionId();
         }
 
         pub fn droppedCount(self: *const Self) usize {
             return self.receiver.droppedCount();
-        }
-
-        pub fn hasDropped(self: *const Self) bool {
-            return self.droppedCount() > 0;
         }
 
         pub fn hasDropped(self: *const Self) bool {
@@ -2331,6 +2355,10 @@ pub const PubsubSubscriptionWithReceiver = struct {
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
         return self.receiver.closeReason();
+    }
+
+    pub fn hasLastError(self: *Self) bool {
+        return self.receiver.hasLastError();
     }
 
     pub fn closeResult(self: *Self) PubsubCloseResult {
@@ -2864,6 +2892,10 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
 
         pub fn getLastError(self: *Self) ?RpcErrorDetail {
             return self.receiver.getLastError();
+        }
+
+        pub fn hasLastError(self: *Self) bool {
+            return self.getLastError() != null;
         }
 
         pub fn clearLastError(self: *Self) void {
