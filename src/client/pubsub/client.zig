@@ -4683,6 +4683,13 @@ pub const PubsubClient = struct {
             self.usesDefaultBufferSize();
     }
 
+    pub fn usesDefaultConfig(self: *const Self) bool {
+        return self.usesDefaultHeartbeatConfig() and
+            self.usesDefaultReconnectConfig() and
+            self.usesDefaultQueueConfig() and
+            self.usesDefaultTransportConfig();
+    }
+
     pub fn setAutoReconnectEnabled(self: *Self, enabled: bool) void {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();

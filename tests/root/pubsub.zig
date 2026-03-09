@@ -1899,6 +1899,7 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     });
     defer pubsub.deinit();
 
+    try std.testing.expect(!pubsub.usesDefaultConfig());
     try std.testing.expect(pubsub.isAutoReconnectEnabled());
     try std.testing.expect(!pubsub.usesDefaultAutoReconnect());
     try std.testing.expect(pubsub.hasHeartbeatInterval());
@@ -1982,6 +1983,7 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     var pubsub = try client.PubsubClient.init(std.testing.allocator, endpoint);
     defer pubsub.deinit();
 
+    try std.testing.expect(pubsub.usesDefaultConfig());
     try std.testing.expect(pubsub.usesDefaultAutoReconnect());
     try std.testing.expectEqual(@as(?u32, null), pubsub.getEffectiveHeartbeatTimeoutMs());
     try std.testing.expectEqual(@as(u32, 250), pubsub.getEffectiveReconnectMaxDelayMs());
@@ -2036,6 +2038,7 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     pubsub.setMaxMessageSize(1024);
     pubsub.setBufferSize(2048);
 
+    try std.testing.expect(!pubsub.usesDefaultConfig());
     try std.testing.expect(!pubsub.isAutoReconnectEnabled());
     try std.testing.expect(pubsub.usesDefaultAutoReconnect());
     try std.testing.expect(pubsub.hasHeartbeatTimeout());
