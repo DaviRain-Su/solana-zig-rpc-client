@@ -1396,8 +1396,16 @@ test "root.PubsubSubscription unsubscribe surfaces RPC errors and leaves subscri
 
     const close_result = subscription.closeResult();
     try std.testing.expectEqual(client.PubsubCloseReason.none, close_result.reason);
+    try std.testing.expect(!close_result.hasCloseReason());
+    try std.testing.expect(close_result.isCloseReason(.none));
+    try std.testing.expect(!close_result.isUnsubscribed());
+    try std.testing.expect(!close_result.isClientShutdownClosed());
+    try std.testing.expect(!close_result.isTransportClosed());
+    try std.testing.expect(!close_result.isQueueOverflowClosed());
     try std.testing.expectEqual(@as(usize, 0), close_result.dropped_messages);
+    try std.testing.expect(!close_result.hasDroppedMessages());
     try std.testing.expect(close_result.last_error != null);
+    try std.testing.expect(close_result.hasLastError());
     try std.testing.expectEqual(@as(i64, -32011), close_result.last_error.?.code);
 }
 
@@ -3806,12 +3814,20 @@ test "root.PubsubSubscription waitClosedTimeout reports unsubscribe close reason
     try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, try subscription.waitClosedTimeout(1000));
     const close_result = try subscription.waitClosedResultTimeout(1000);
     try std.testing.expectEqual(client.PubsubCloseReason.unsubscribed, close_result.reason);
+    try std.testing.expect(close_result.hasCloseReason());
+    try std.testing.expect(close_result.isCloseReason(.unsubscribed));
+    try std.testing.expect(close_result.isUnsubscribed());
+    try std.testing.expect(!close_result.isClientShutdownClosed());
+    try std.testing.expect(!close_result.isTransportClosed());
+    try std.testing.expect(!close_result.isQueueOverflowClosed());
     try std.testing.expect(subscription.isCloseReason(.unsubscribed));
     try std.testing.expect(subscription.hasCloseReason());
     try std.testing.expect(subscription.isUnsubscribed());
     try std.testing.expect(!subscription.isClientShutdownClosed());
     try std.testing.expectEqual(@as(usize, 0), close_result.dropped_messages);
+    try std.testing.expect(!close_result.hasDroppedMessages());
     try std.testing.expect(close_result.last_error == null);
+    try std.testing.expect(!close_result.hasLastError());
     try std.testing.expect(app.signature_unsubscribe_seen);
 }
 

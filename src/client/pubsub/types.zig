@@ -37,6 +37,38 @@ pub const PubsubCloseResult = struct {
     reason: PubsubCloseReason,
     dropped_messages: usize = 0,
     last_error: ?rpc_types.RpcErrorDetail = null,
+
+    pub fn hasCloseReason(self: *const @This()) bool {
+        return self.reason != .none;
+    }
+
+    pub fn isCloseReason(self: *const @This(), reason: PubsubCloseReason) bool {
+        return self.reason == reason;
+    }
+
+    pub fn isUnsubscribed(self: *const @This()) bool {
+        return self.reason == .unsubscribed;
+    }
+
+    pub fn isClientShutdownClosed(self: *const @This()) bool {
+        return self.reason == .client_shutdown;
+    }
+
+    pub fn isTransportClosed(self: *const @This()) bool {
+        return self.reason == .transport_closed;
+    }
+
+    pub fn isQueueOverflowClosed(self: *const @This()) bool {
+        return self.reason == .queue_overflow;
+    }
+
+    pub fn hasDroppedMessages(self: *const @This()) bool {
+        return self.dropped_messages > 0;
+    }
+
+    pub fn hasLastError(self: *const @This()) bool {
+        return self.last_error != null;
+    }
 };
 
 pub const SignatureSubscribeOptions = struct {
