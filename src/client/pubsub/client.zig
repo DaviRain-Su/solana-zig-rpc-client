@@ -4574,6 +4574,10 @@ pub const PubsubClient = struct {
         return self.state.options.subscription_queue_limit;
     }
 
+    pub fn usesDefaultSubscriptionQueueLimit(self: *const Self) bool {
+        return self.getSubscriptionQueueLimit() == (pubsub_types.PubsubClientOptions{}).subscription_queue_limit;
+    }
+
     pub fn getQueueOverflowPolicy(self: *const Self) pubsub_types.PubsubQueueOverflowPolicy {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
@@ -4610,6 +4614,10 @@ pub const PubsubClient = struct {
         return self.state.options.handshake_timeout_ms;
     }
 
+    pub fn usesDefaultHandshakeTimeout(self: *const Self) bool {
+        return self.getHandshakeTimeoutMs() == (pubsub_types.PubsubClientOptions{}).handshake_timeout_ms;
+    }
+
     pub fn getWriteTimeoutMs(self: *const Self) ?u32 {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
@@ -4634,10 +4642,18 @@ pub const PubsubClient = struct {
         return self.state.options.max_message_size;
     }
 
+    pub fn usesDefaultMaxMessageSize(self: *const Self) bool {
+        return self.getMaxMessageSize() == (pubsub_types.PubsubClientOptions{}).max_message_size;
+    }
+
     pub fn getBufferSize(self: *const Self) usize {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
         return self.state.options.buffer_size;
+    }
+
+    pub fn usesDefaultBufferSize(self: *const Self) bool {
+        return self.getBufferSize() == (pubsub_types.PubsubClientOptions{}).buffer_size;
     }
 
     pub fn setAutoReconnectEnabled(self: *Self, enabled: bool) void {
