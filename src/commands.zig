@@ -22,6 +22,10 @@ const command_test_support = if (builtin.is_test) @import("command_test_support"
     }
 };
 const mock_sender_assertions = if (builtin.is_test) @import("mock_sender_assertions") else struct {
+    pub fn expectMockSenderRequestCount(_: *const client.MockSender, _: usize) !void {
+        unreachable;
+    }
+
     pub fn expectMockSenderScriptSatisfied(_: *const client.MockSender) !void {
         unreachable;
     }
@@ -30,6 +34,7 @@ const CommandTestSender = if (builtin.is_test) command_test_support.CommandTestS
 const commandCapturedRequest = command_test_support.commandCapturedRequest;
 const commandCapturedRequestAt = command_test_support.commandCapturedRequestAt;
 const commandCapturedRequestCount = command_test_support.commandCapturedRequestCount;
+const expectMockSenderRequestCount = mock_sender_assertions.expectMockSenderRequestCount;
 const expectMockSenderScriptSatisfied = mock_sender_assertions.expectMockSenderScriptSatisfied;
 
 fn reportInvalidCliMessage(comptime msg: []const u8, args: anytype) void {
@@ -3815,7 +3820,7 @@ test "runCommand new-latest-blockhash waits for updated value" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try std.testing.expectEqual(@as(usize, 2), commandCapturedRequestCount(&sender_context));
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
     try expectGetLatestBlockhashRequest(allocator, commandCapturedRequestAt(&sender_context, 0), null);
     try expectGetLatestBlockhashRequest(allocator, commandCapturedRequestAt(&sender_context, 1), null);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
@@ -4322,7 +4327,7 @@ test "runCommand status waits for signature status with search history and commi
         true,
         "confirmed",
     );
-    try std.testing.expectEqual(@as(usize, 2), commandCapturedRequestCount(&sender_context));
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings("signature confirmed\n", captured);
 }
@@ -4561,7 +4566,7 @@ test "runCommand poll-for-signature-confirmation polls until min confirmed block
         true,
         "confirmed",
     );
-    try std.testing.expectEqual(@as(usize, 2), commandCapturedRequestCount(&sender_context));
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature Sig111111111111111111111111111111111111 reached 2 confirmed blocks (target=2)\n",
@@ -4789,7 +4794,7 @@ test "runCommand transfer fetches blockhash builds transaction and confirms sign
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try std.testing.expectEqual(@as(usize, 3), commandCapturedRequestCount(&sender_context));
+    try expectMockSenderRequestCount(&sender_context.sender, 3);
     try expectGetLatestBlockhashRequest(allocator, commandCapturedRequestAt(&sender_context, 0), "confirmed");
     try expectSendTransferTransactionRequest(
         allocator,
@@ -4891,7 +4896,7 @@ test "runCommand transfer accepts sender keypair file" {
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try std.testing.expectEqual(@as(usize, 2), commandCapturedRequestCount(&sender_context));
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
     try expectSendTransferTransactionRequest(
         allocator,
         commandCapturedRequestAt(&sender_context, 0),
