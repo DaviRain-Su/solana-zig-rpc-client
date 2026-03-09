@@ -1269,6 +1269,10 @@ pub const MockSender = struct {
         };
     }
 
+    pub fn lastCapturedRequestId(self: *const MockSender) ?u64 {
+        return if (self.lastCapturedRequest()) |request| request.id else null;
+    }
+
     pub fn lastCapturedRequestMethod(self: *const MockSender) ?[]const u8 {
         return if (self.lastCapturedRequest()) |request| request.method else null;
     }

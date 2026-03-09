@@ -4176,6 +4176,10 @@ pub const RpcClient = struct {
         return if (self.resolvedMockSenderConst()) |sender| sender.lastCapturedRequest() else null;
     }
 
+    pub fn lastCapturedMockRequestId(self: *const RpcClient) ?u64 {
+        return if (self.lastCapturedMockRequest()) |request| request.id else null;
+    }
+
     pub fn lastCapturedMockRequestMethod(self: *const RpcClient) ?[]const u8 {
         return if (self.lastCapturedMockRequest()) |request| request.method else null;
     }
