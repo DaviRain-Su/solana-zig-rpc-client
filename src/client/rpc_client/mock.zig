@@ -1270,12 +1270,24 @@ pub const MockSender = struct {
         return self.responses.items.len;
     }
 
+    pub fn hasResponses(self: *const MockSender) bool {
+        return self.responseCount() > 0;
+    }
+
     pub fn routeCount(self: *const MockSender) usize {
         return self.routes.items.len;
     }
 
+    pub fn hasRoutes(self: *const MockSender) bool {
+        return self.routeCount() > 0;
+    }
+
     pub fn matchedRouteCount(self: *const MockSender) usize {
         return self.matched_route_count;
+    }
+
+    pub fn hasMatchedRoutes(self: *const MockSender) bool {
+        return self.matchedRouteCount() > 0;
     }
 
     pub fn routeMatchCountForLabel(self: *const MockSender, label: []const u8) usize {
@@ -1283,6 +1295,10 @@ pub const MockSender = struct {
             if (std.mem.eql(u8, entry.label, label)) return entry.count;
         }
         return 0;
+    }
+
+    pub fn hasRouteMatch(self: *const MockSender, label: []const u8) bool {
+        return self.routeMatchCountForLabel(label) > 0;
     }
 
     pub fn persistentRouteCount(self: *const MockSender) usize {
@@ -1293,6 +1309,10 @@ pub const MockSender = struct {
         return count;
     }
 
+    pub fn hasPersistentRoutes(self: *const MockSender) bool {
+        return self.persistentRouteCount() > 0;
+    }
+
     pub fn pendingScriptedDispatchCount(self: *const MockSender) usize {
         var count = self.responses.items.len;
         for (self.routes.items) |route| {
@@ -1301,8 +1321,20 @@ pub const MockSender = struct {
         return count;
     }
 
+    pub fn hasPendingScriptedDispatches(self: *const MockSender) bool {
+        return self.pendingScriptedDispatchCount() > 0;
+    }
+
+    pub fn isScriptExhausted(self: *const MockSender) bool {
+        return self.pendingScriptedDispatchCount() == 0;
+    }
+
     pub fn scriptMissCount(self: *const MockSender) usize {
         return self.script_miss_count;
+    }
+
+    pub fn hasScriptMisses(self: *const MockSender) bool {
+        return self.scriptMissCount() > 0;
     }
 
     pub fn lastScriptMissRequest(self: *const MockSender) ?MockRequestView {
@@ -1318,6 +1350,14 @@ pub const MockSender = struct {
 
     pub fn lastScriptMissMethod(self: *const MockSender) ?[]const u8 {
         return if (self.lastScriptMissRequest()) |request| request.method else null;
+    }
+
+    pub fn hasCapturedRequests(self: *const MockSender) bool {
+        return self.requestCount() > 0;
+    }
+
+    pub fn isScriptSatisfied(self: *const MockSender) bool {
+        return self.isScriptExhausted() and !self.hasScriptMisses();
     }
 
     pub fn requestCount(self: *const MockSender) usize {

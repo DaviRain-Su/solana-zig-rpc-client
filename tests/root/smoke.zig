@@ -5036,6 +5036,73 @@ test "root.MockSender lastScriptMissMethod exposes last miss method" {
     try std.testing.expectEqualStrings("getSlot", mock_sender.lastScriptMissMethod().?);
 }
 
+test "root.MockSender boolean helpers reflect mock state" {
+    const allocator = std.testing.allocator;
+    var mock_sender = client.MockSender.init(allocator);
+    defer mock_sender.deinit();
+
+    try std.testing.expect(!mock_sender.hasResponses());
+    try std.testing.expect(!mock_sender.hasRoutes());
+    try std.testing.expect(!mock_sender.hasMatchedRoutes());
+    try std.testing.expect(!mock_sender.hasRouteMatch("slot"));
+    try std.testing.expect(!mock_sender.hasPersistentRoutes());
+    try std.testing.expect(!mock_sender.hasPendingScriptedDispatches());
+    try std.testing.expect(!mock_sender.hasScriptMisses());
+    try std.testing.expect(!mock_sender.hasCapturedRequests());
+    try std.testing.expect(mock_sender.isScriptExhausted());
+    try std.testing.expect(mock_sender.isScriptSatisfied());
+
+    try mock_sender.pushSlotResult(3399);
+    try mock_sender.pushRoute(try client.MockRouteBuilder.init()
+        .label("health")
+        .matchGetHealth()
+        .resultJson("\"ok\"")
+        .once()
+        .build());
+
+    try std.testing.expect(mock_sender.hasResponses());
+    try std.testing.expect(mock_sender.hasRoutes());
+    try std.testing.expect(!mock_sender.hasMatchedRoutes());
+    try std.testing.expect(!mock_sender.hasRouteMatch("health"));
+    try std.testing.expect(!mock_sender.hasPersistentRoutes());
+    try std.testing.expect(mock_sender.hasPendingScriptedDispatches());
+    try std.testing.expect(!mock_sender.hasScriptMisses());
+    try std.testing.expect(!mock_sender.hasCapturedRequests());
+    try std.testing.expect(!mock_sender.isScriptExhausted());
+    try std.testing.expect(!mock_sender.isScriptSatisfied());
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.fromMockSender(&mock_sender),
+    );
+    defer rpc.deinit();
+
+    const slot = try rpc.getSlot(.processed);
+    try std.testing.expectEqual(@as(u64, 3399), slot);
+    try std.testing.expect(mock_sender.hasCapturedRequests());
+    try std.testing.expect(!mock_sender.hasResponses());
+    try std.testing.expect(mock_sender.hasRoutes());
+    try std.testing.expect(!mock_sender.hasMatchedRoutes());
+    try std.testing.expect(!mock_sender.hasRouteMatch("health"));
+    try std.testing.expect(mock_sender.hasPendingScriptedDispatches());
+    try std.testing.expect(!mock_sender.isScriptSatisfied());
+
+    const health = try rpc.getHealth();
+    defer allocator.free(health);
+    try std.testing.expectEqualStrings("ok", health);
+    try std.testing.expect(!mock_sender.hasRoutes());
+    try std.testing.expect(mock_sender.hasMatchedRoutes());
+    try std.testing.expect(mock_sender.hasRouteMatch("health"));
+    try std.testing.expect(!mock_sender.hasPendingScriptedDispatches());
+    try std.testing.expect(mock_sender.isScriptExhausted());
+    try std.testing.expect(mock_sender.isScriptSatisfied());
+
+    try std.testing.expectError(error.MockResponseExhausted, rpc.getSlot(.processed));
+    try std.testing.expect(mock_sender.hasScriptMisses());
+    try std.testing.expect(mock_sender.isScriptExhausted());
+    try std.testing.expect(!mock_sender.isScriptSatisfied());
+}
+
 test "root.RequestSender mock script helpers expose pending counts and summary" {
     const allocator = std.testing.allocator;
     var mock_sender = client.MockSender.init(allocator);
