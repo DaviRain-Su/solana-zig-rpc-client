@@ -4750,6 +4750,58 @@ pub const PubsubClient = struct {
         return defaultOptions();
     }
 
+    pub fn defaultAutoReconnectEnabled() bool {
+        return defaultOptions().auto_reconnect;
+    }
+
+    pub fn defaultHeartbeatIntervalMs() ?u32 {
+        return defaultOptions().heartbeat_interval_ms;
+    }
+
+    pub fn defaultHeartbeatTimeoutMs() ?u32 {
+        return defaultOptions().heartbeat_timeout_ms;
+    }
+
+    pub fn defaultReconnectDelayMs() u32 {
+        return defaultOptions().reconnect_delay_ms;
+    }
+
+    pub fn defaultReconnectBackoffFactor() u8 {
+        return defaultOptions().reconnect_backoff_factor;
+    }
+
+    pub fn defaultReconnectMaxDelayMs() ?u32 {
+        return defaultOptions().reconnect_max_delay_ms;
+    }
+
+    pub fn defaultReconnectMaxAttempts() ?u32 {
+        return defaultOptions().reconnect_max_attempts;
+    }
+
+    pub fn defaultSubscriptionQueueLimit() usize {
+        return defaultOptions().subscription_queue_limit;
+    }
+
+    pub fn defaultQueueOverflowPolicy() pubsub_types.PubsubQueueOverflowPolicy {
+        return defaultOptions().queue_overflow_policy;
+    }
+
+    pub fn defaultHandshakeTimeoutMs() u32 {
+        return defaultOptions().handshake_timeout_ms;
+    }
+
+    pub fn defaultWriteTimeoutMs() ?u32 {
+        return defaultOptions().write_timeout_ms;
+    }
+
+    pub fn defaultMaxMessageSize() usize {
+        return defaultOptions().max_message_size;
+    }
+
+    pub fn defaultBufferSize() usize {
+        return defaultOptions().buffer_size;
+    }
+
     pub fn usesDefaultBufferSize(self: *const Self) bool {
         return self.getBufferSize() == (pubsub_types.PubsubClientOptions{}).buffer_size;
     }
