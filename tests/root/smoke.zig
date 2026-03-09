@@ -3132,6 +3132,65 @@ test "root.replaceMockRequestHandler aliases replaceWithMockRequestSenderWithHan
     try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
 }
 
+test "root.replaceMockRequestMockSender aliases replaceWithMockRequestSenderWithSender" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 1842 };
+
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(1848);
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.init(
+            &context,
+            customRequestSender,
+        ),
+    );
+    defer rpc.deinit();
+
+    try rpc.replaceMockRequestMockSender(sender);
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+    try std.testing.expect(rpc.hasRequestSender());
+
+    const slot = try rpc.getSlot(.confirmed);
+    try std.testing.expectEqual(@as(u64, 1848), slot);
+}
+
+test "root.replaceMockRequestMockSenderAndRequestSenderOptions aliases replaceWithMockRequestSenderWithSenderAndRequestSenderOptions" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 1843 };
+
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(1849);
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.initWithDeinit(&context, customRequestSender, customRequestSenderDeinit),
+    );
+    defer rpc.deinit();
+
+    try rpc.replaceMockRequestMockSenderAndRequestSenderOptions(
+        sender,
+        .{
+            .endpoint = "custom://replace-mock-request-mock-sender",
+            .commitment = .confirmed,
+            .request_timeout_ms = 48,
+            .confirm_transaction_initial_timeout_ms = 68,
+        },
+    );
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expectEqualStrings("custom://replace-mock-request-mock-sender", rpc.url());
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 48), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 68), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(.confirmed);
+    try std.testing.expectEqual(@as(u64, 1849), slot);
+}
+
 test "root.setRequestSender converts plain client to request sender client" {
     const allocator = std.testing.allocator;
     var context = RequestSenderContext{ .base_slot = 2000 };
@@ -3496,6 +3555,54 @@ test "root.setMockRequestSenderWithSenderAndRequestSenderOptions converts plain 
 
     const slot = try rpc.getSlot(null);
     try std.testing.expectEqual(@as(u64, 2162), slot);
+}
+
+test "root.setMockRequestMockSender aliases setMockRequestSenderWithSender" {
+    const allocator = std.testing.allocator;
+
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(2164);
+
+    var rpc = try client.RpcClient.new(allocator, "http://127.0.0.1:8899");
+    defer rpc.deinit();
+
+    try rpc.setMockRequestMockSender(sender);
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+    try std.testing.expect(rpc.hasRequestSender());
+
+    const slot = try rpc.getSlot(.confirmed);
+    try std.testing.expectEqual(@as(u64, 2164), slot);
+}
+
+test "root.setMockRequestMockSenderAndRequestSenderOptions aliases setMockRequestSenderWithSenderAndRequestSenderOptions" {
+    const allocator = std.testing.allocator;
+
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(2165);
+
+    var rpc = try client.RpcClient.new(allocator, "http://127.0.0.1:8899");
+    defer rpc.deinit();
+
+    try rpc.setMockRequestMockSenderAndRequestSenderOptions(
+        sender,
+        .{
+            .endpoint = "custom://set-mock-request-mock-sender",
+            .commitment = .processed,
+            .request_timeout_ms = 47,
+            .confirm_transaction_initial_timeout_ms = 67,
+        },
+    );
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expectEqualStrings("custom://set-mock-request-mock-sender", rpc.url());
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 47), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 67), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 2165), slot);
 }
 
 test "root.setMockRequestResponsesAndRequestSenderOptions aliases setMockRequestSenderAndRequestSenderOptions" {
