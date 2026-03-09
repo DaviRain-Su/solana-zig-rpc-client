@@ -69,6 +69,12 @@ pub const RpcClient = struct {
     pub const MockSender = mock_methods.MockSender;
     pub const MockRpcError = mock_methods.MockRpcError;
     pub const MockTransportError = mock_methods.MockTransportError;
+    pub const BackendKind = enum {
+        http,
+        callback_request_sender,
+        request_sender_backed_mock,
+        direct_mock,
+    };
     pub const MockClientOptions = struct {
         commitment: ?Commitment = null,
         request_timeout_ms: ?u64 = null,
@@ -422,8 +428,11 @@ pub const RpcClient = struct {
     pub const buildVersionedNonceTransferSignedTransactionWithOptions = transfer_methods.buildVersionedNonceTransferSignedTransactionWithOptions;
     pub const buildVersionedNonceTransferSignedTransactionWithConfig = transfer_methods.buildVersionedNonceTransferSignedTransactionWithConfig;
     pub const buildOwnedVersionedNonceTransferMessage = transfer_methods.buildOwnedVersionedNonceTransferMessage;
+    pub const buildOwnedVersionedNonceTransferMessageWithSender = transfer_methods.buildOwnedVersionedNonceTransferMessageWithSender;
     pub const buildOwnedVersionedNonceTransferMessageWithOptions = transfer_methods.buildOwnedVersionedNonceTransferMessageWithOptions;
+    pub const buildOwnedVersionedNonceTransferMessageWithSenderAndOptions = transfer_methods.buildOwnedVersionedNonceTransferMessageWithSenderAndOptions;
     pub const buildOwnedVersionedNonceTransferMessageWithConfig = transfer_methods.buildOwnedVersionedNonceTransferMessageWithConfig;
+    pub const buildOwnedVersionedNonceTransferMessageWithSenderAndConfig = transfer_methods.buildOwnedVersionedNonceTransferMessageWithSenderAndConfig;
     pub const buildNonceTransferSignedTransaction = transfer_methods.buildNonceTransferSignedTransaction;
     pub const buildTransferSignedTransactionWithOptions = transfer_methods.buildTransferSignedTransactionWithOptions;
     pub const buildNonceTransferSignedTransactionWithOptions = transfer_methods.buildNonceTransferSignedTransactionWithOptions;
@@ -433,8 +442,11 @@ pub const RpcClient = struct {
     pub const buildOwnedTransferMessageWithOptions = transfer_methods.buildOwnedTransferMessageWithOptions;
     pub const buildOwnedTransferMessageWithConfig = transfer_methods.buildOwnedTransferMessageWithConfig;
     pub const buildOwnedNonceTransferMessage = transfer_methods.buildOwnedNonceTransferMessage;
+    pub const buildOwnedNonceTransferMessageWithSender = transfer_methods.buildOwnedNonceTransferMessageWithSender;
     pub const buildOwnedNonceTransferMessageWithOptions = transfer_methods.buildOwnedNonceTransferMessageWithOptions;
+    pub const buildOwnedNonceTransferMessageWithSenderAndOptions = transfer_methods.buildOwnedNonceTransferMessageWithSenderAndOptions;
     pub const buildOwnedNonceTransferMessageWithConfig = transfer_methods.buildOwnedNonceTransferMessageWithConfig;
+    pub const buildOwnedNonceTransferMessageWithSenderAndConfig = transfer_methods.buildOwnedNonceTransferMessageWithSenderAndConfig;
     pub const buildTransferMessageBytesWithSender = transfer_methods.buildTransferMessageBytesWithSender;
     pub const buildTransferMessageBytesWithSenderAndOptions = transfer_methods.buildTransferMessageBytesWithSenderAndOptions;
     pub const buildTransferMessageBytesWithSenderAndConfig = transfer_methods.buildTransferMessageBytesWithSenderAndConfig;
@@ -442,8 +454,11 @@ pub const RpcClient = struct {
     pub const buildTransferMessageBytesWithOptions = transfer_methods.buildTransferMessageBytesWithOptions;
     pub const buildTransferMessageBytesWithConfig = transfer_methods.buildTransferMessageBytesWithConfig;
     pub const buildNonceTransferMessageBytes = transfer_methods.buildNonceTransferMessageBytes;
+    pub const buildNonceTransferMessageBytesWithSender = transfer_methods.buildNonceTransferMessageBytesWithSender;
     pub const buildNonceTransferMessageBytesWithOptions = transfer_methods.buildNonceTransferMessageBytesWithOptions;
+    pub const buildNonceTransferMessageBytesWithSenderAndOptions = transfer_methods.buildNonceTransferMessageBytesWithSenderAndOptions;
     pub const buildNonceTransferMessageBytesWithConfig = transfer_methods.buildNonceTransferMessageBytesWithConfig;
+    pub const buildNonceTransferMessageBytesWithSenderAndConfig = transfer_methods.buildNonceTransferMessageBytesWithSenderAndConfig;
     pub const buildVersionedTransferMessageBytes = transfer_methods.buildVersionedTransferMessageBytes;
     pub const buildVersionedTransferMessageBytesWithOptions = transfer_methods.buildVersionedTransferMessageBytesWithOptions;
     pub const buildVersionedTransferMessageBytesWithConfig = transfer_methods.buildVersionedTransferMessageBytesWithConfig;
@@ -460,8 +475,11 @@ pub const RpcClient = struct {
     pub const buildTransferMessageBase64WithSenderAndOptions = transfer_methods.buildTransferMessageBase64WithSenderAndOptions;
     pub const buildTransferMessageBase64WithSenderAndConfig = transfer_methods.buildTransferMessageBase64WithSenderAndConfig;
     pub const buildNonceTransferMessageBase64 = transfer_methods.buildNonceTransferMessageBase64;
+    pub const buildNonceTransferMessageBase64WithSender = transfer_methods.buildNonceTransferMessageBase64WithSender;
     pub const buildNonceTransferMessageBase64WithOptions = transfer_methods.buildNonceTransferMessageBase64WithOptions;
+    pub const buildNonceTransferMessageBase64WithSenderAndOptions = transfer_methods.buildNonceTransferMessageBase64WithSenderAndOptions;
     pub const buildNonceTransferMessageBase64WithConfig = transfer_methods.buildNonceTransferMessageBase64WithConfig;
+    pub const buildNonceTransferMessageBase64WithSenderAndConfig = transfer_methods.buildNonceTransferMessageBase64WithSenderAndConfig;
     pub const buildVersionedTransferMessageBase64WithSender = transfer_methods.buildVersionedTransferMessageBase64WithSender;
     pub const buildVersionedTransferMessageBase64WithSenderAndOptions = transfer_methods.buildVersionedTransferMessageBase64WithSenderAndOptions;
     pub const buildVersionedTransferMessageBase64WithSenderAndConfig = transfer_methods.buildVersionedTransferMessageBase64WithSenderAndConfig;
@@ -478,11 +496,17 @@ pub const RpcClient = struct {
     pub const getFeeForTransferMessageWithSenderAndOptions = transfer_methods.getFeeForTransferMessageWithSenderAndOptions;
     pub const getFeeForTransferMessageWithSenderAndConfig = transfer_methods.getFeeForTransferMessageWithSenderAndConfig;
     pub const getFeeForNonceTransferMessageResponse = transfer_methods.getFeeForNonceTransferMessageResponse;
+    pub const getFeeForNonceTransferMessageWithSenderResponse = transfer_methods.getFeeForNonceTransferMessageWithSenderResponse;
     pub const getFeeForNonceTransferMessageResponseWithOptions = transfer_methods.getFeeForNonceTransferMessageResponseWithOptions;
+    pub const getFeeForNonceTransferMessageWithSenderResponseWithOptions = transfer_methods.getFeeForNonceTransferMessageWithSenderResponseWithOptions;
     pub const getFeeForNonceTransferMessageResponseWithConfig = transfer_methods.getFeeForNonceTransferMessageResponseWithConfig;
+    pub const getFeeForNonceTransferMessageWithSenderResponseWithConfig = transfer_methods.getFeeForNonceTransferMessageWithSenderResponseWithConfig;
     pub const getFeeForNonceTransferMessage = transfer_methods.getFeeForNonceTransferMessage;
+    pub const getFeeForNonceTransferMessageWithSender = transfer_methods.getFeeForNonceTransferMessageWithSender;
     pub const getFeeForNonceTransferMessageWithOptions = transfer_methods.getFeeForNonceTransferMessageWithOptions;
+    pub const getFeeForNonceTransferMessageWithSenderAndOptions = transfer_methods.getFeeForNonceTransferMessageWithSenderAndOptions;
     pub const getFeeForNonceTransferMessageWithConfig = transfer_methods.getFeeForNonceTransferMessageWithConfig;
+    pub const getFeeForNonceTransferMessageWithSenderAndConfig = transfer_methods.getFeeForNonceTransferMessageWithSenderAndConfig;
     pub const getFeeForVersionedTransferMessageResponse = transfer_methods.getFeeForVersionedTransferMessageResponse;
     pub const getFeeForVersionedTransferMessageResponseWithOptions = transfer_methods.getFeeForVersionedTransferMessageResponseWithOptions;
     pub const getFeeForVersionedTransferMessageResponseWithConfig = transfer_methods.getFeeForVersionedTransferMessageResponseWithConfig;
@@ -496,17 +520,29 @@ pub const RpcClient = struct {
     pub const getFeeForVersionedTransferMessageWithSenderAndOptions = transfer_methods.getFeeForVersionedTransferMessageWithSenderAndOptions;
     pub const getFeeForVersionedTransferMessageWithSenderAndConfig = transfer_methods.getFeeForVersionedTransferMessageWithSenderAndConfig;
     pub const buildVersionedNonceTransferMessageBytes = transfer_methods.buildVersionedNonceTransferMessageBytes;
+    pub const buildVersionedNonceTransferMessageBytesWithSender = transfer_methods.buildVersionedNonceTransferMessageBytesWithSender;
     pub const buildVersionedNonceTransferMessageBytesWithOptions = transfer_methods.buildVersionedNonceTransferMessageBytesWithOptions;
+    pub const buildVersionedNonceTransferMessageBytesWithSenderAndOptions = transfer_methods.buildVersionedNonceTransferMessageBytesWithSenderAndOptions;
     pub const buildVersionedNonceTransferMessageBytesWithConfig = transfer_methods.buildVersionedNonceTransferMessageBytesWithConfig;
+    pub const buildVersionedNonceTransferMessageBytesWithSenderAndConfig = transfer_methods.buildVersionedNonceTransferMessageBytesWithSenderAndConfig;
     pub const buildVersionedNonceTransferMessageBase64 = transfer_methods.buildVersionedNonceTransferMessageBase64;
+    pub const buildVersionedNonceTransferMessageBase64WithSender = transfer_methods.buildVersionedNonceTransferMessageBase64WithSender;
     pub const buildVersionedNonceTransferMessageBase64WithOptions = transfer_methods.buildVersionedNonceTransferMessageBase64WithOptions;
+    pub const buildVersionedNonceTransferMessageBase64WithSenderAndOptions = transfer_methods.buildVersionedNonceTransferMessageBase64WithSenderAndOptions;
     pub const buildVersionedNonceTransferMessageBase64WithConfig = transfer_methods.buildVersionedNonceTransferMessageBase64WithConfig;
+    pub const buildVersionedNonceTransferMessageBase64WithSenderAndConfig = transfer_methods.buildVersionedNonceTransferMessageBase64WithSenderAndConfig;
     pub const getFeeForVersionedNonceTransferMessageResponse = transfer_methods.getFeeForVersionedNonceTransferMessageResponse;
+    pub const getFeeForVersionedNonceTransferMessageWithSenderResponse = transfer_methods.getFeeForVersionedNonceTransferMessageWithSenderResponse;
     pub const getFeeForVersionedNonceTransferMessageResponseWithOptions = transfer_methods.getFeeForVersionedNonceTransferMessageResponseWithOptions;
+    pub const getFeeForVersionedNonceTransferMessageWithSenderResponseWithOptions = transfer_methods.getFeeForVersionedNonceTransferMessageWithSenderResponseWithOptions;
     pub const getFeeForVersionedNonceTransferMessageResponseWithConfig = transfer_methods.getFeeForVersionedNonceTransferMessageResponseWithConfig;
+    pub const getFeeForVersionedNonceTransferMessageWithSenderResponseWithConfig = transfer_methods.getFeeForVersionedNonceTransferMessageWithSenderResponseWithConfig;
     pub const getFeeForVersionedNonceTransferMessage = transfer_methods.getFeeForVersionedNonceTransferMessage;
+    pub const getFeeForVersionedNonceTransferMessageWithSender = transfer_methods.getFeeForVersionedNonceTransferMessageWithSender;
     pub const getFeeForVersionedNonceTransferMessageWithOptions = transfer_methods.getFeeForVersionedNonceTransferMessageWithOptions;
+    pub const getFeeForVersionedNonceTransferMessageWithSenderAndOptions = transfer_methods.getFeeForVersionedNonceTransferMessageWithSenderAndOptions;
     pub const getFeeForVersionedNonceTransferMessageWithConfig = transfer_methods.getFeeForVersionedNonceTransferMessageWithConfig;
+    pub const getFeeForVersionedNonceTransferMessageWithSenderAndConfig = transfer_methods.getFeeForVersionedNonceTransferMessageWithSenderAndConfig;
     pub const buildTransferTransaction = transfer_methods.buildTransferTransaction;
     pub const buildTransferTransactionWithSender = transfer_methods.buildTransferTransactionWithSender;
     pub const buildTransferTransactionWithSenderAndOptions = transfer_methods.buildTransferTransactionWithSenderAndOptions;
@@ -990,6 +1026,310 @@ pub const RpcClient = struct {
         return RpcClient.newWithRequestSenderAndOptions(allocator, sender, .{});
     }
 
+    pub fn newWithRequestCallback(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSender(
+            allocator,
+            RequestSender.init(context, callback),
+        );
+    }
+
+    pub fn newWithRequestCallbackAndDeinit(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSender(
+            allocator,
+            RequestSender.initWithDeinit(context, callback, deinit_callback),
+        );
+    }
+
+    pub fn newWithRequestCallbackAndOptions(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndOptions(
+            allocator,
+            RequestSender.init(context, callback),
+            options,
+        );
+    }
+
+    pub fn newWithRequestCallbackAndDeinitAndOptions(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        options: RequestSenderOptions,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndOptions(
+            allocator,
+            RequestSender.initWithDeinit(context, callback, deinit_callback),
+            options,
+        );
+    }
+
+    pub fn newWithRequestCallbackAndCommitment(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndOptions(
+            allocator,
+            context,
+            callback,
+            .{ .commitment = commitment },
+        );
+    }
+
+    pub fn newWithRequestCallbackAndTimeout(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndOptions(
+            allocator,
+            context,
+            callback,
+            .{ .request_timeout_ms = timeout_ms },
+        );
+    }
+
+    pub fn newWithRequestCallbackAndTimeouts(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndOptions(
+            allocator,
+            context,
+            callback,
+            .{
+                .request_timeout_ms = timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+            },
+        );
+    }
+
+    pub fn newWithRequestCallbackAndCommitmentAndTimeout(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndOptions(
+            allocator,
+            context,
+            callback,
+            .{
+                .commitment = commitment,
+                .request_timeout_ms = timeout_ms,
+            },
+        );
+    }
+
+    pub fn newWithRequestCallbackAndTimeoutAndCommitment(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndOptions(
+            allocator,
+            context,
+            callback,
+            .{
+                .request_timeout_ms = timeout_ms,
+                .commitment = commitment,
+            },
+        );
+    }
+
+    pub fn newWithRequestCallbackAndCommitmentAndTimeouts(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndTimeoutsAndCommitment(
+            allocator,
+            context,
+            callback,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn newWithRequestCallbackAndTimeoutsAndCommitment(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndOptions(
+            allocator,
+            context,
+            callback,
+            .{
+                .request_timeout_ms = timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .commitment = commitment,
+            },
+        );
+    }
+
+    pub fn newWithRequestCallbackAndDeinitAndCommitment(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndOptions(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            .{ .commitment = commitment },
+        );
+    }
+
+    pub fn newWithRequestCallbackAndDeinitAndTimeout(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndOptions(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            .{ .request_timeout_ms = timeout_ms },
+        );
+    }
+
+    pub fn newWithRequestCallbackAndDeinitAndTimeouts(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndOptions(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            .{
+                .request_timeout_ms = timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+            },
+        );
+    }
+
+    pub fn newWithRequestCallbackAndDeinitAndCommitmentAndTimeout(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndOptions(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            .{
+                .commitment = commitment,
+                .request_timeout_ms = timeout_ms,
+            },
+        );
+    }
+
+    pub fn newWithRequestCallbackAndDeinitAndTimeoutAndCommitment(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndOptions(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            .{
+                .request_timeout_ms = timeout_ms,
+                .commitment = commitment,
+            },
+        );
+    }
+
+    pub fn newWithRequestCallbackAndDeinitAndCommitmentAndTimeouts(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndTimeoutsAndCommitment(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn newWithRequestCallbackAndDeinitAndTimeoutsAndCommitment(
+        allocator: Allocator,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestCallbackAndDeinitAndOptions(
+            allocator,
+            context,
+            callback,
+            deinit_callback,
+            .{
+                .request_timeout_ms = timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .commitment = commitment,
+            },
+        );
+    }
+
     pub fn newWithBorrowedMockSender(
         allocator: Allocator,
         sender: *MockSenderType,
@@ -1316,6 +1656,22 @@ pub const RpcClient = struct {
         );
     }
 
+    pub fn newWithRequestSenderAndCommitmentAndTimeouts(
+        allocator: Allocator,
+        sender: RequestSenderType,
+        commitment: ?Commitment,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndTimeoutsAndCommitment(
+            allocator,
+            sender,
+            timeout_ms,
+            confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
     pub fn newWithRequestSenderAndCommitmentAndTimeout(
         allocator: Allocator,
         sender: RequestSenderType,
@@ -1328,6 +1684,24 @@ pub const RpcClient = struct {
             .{
                 .commitment = commitment,
                 .request_timeout_ms = timeout_ms,
+            },
+        );
+    }
+
+    pub fn newWithRequestSenderAndTimeoutsAndCommitment(
+        allocator: Allocator,
+        sender: RequestSenderType,
+        timeout_ms: u64,
+        confirm_transaction_initial_timeout_ms: u64,
+        commitment: ?Commitment,
+    ) !RpcClient {
+        return RpcClient.newWithRequestSenderAndOptions(
+            allocator,
+            sender,
+            .{
+                .request_timeout_ms = timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .commitment = commitment,
             },
         );
     }
@@ -1450,53 +1824,97 @@ pub const RpcClient = struct {
         return &self.http_client;
     }
 
+    fn resolvedMockSender(self: *RpcClient) ?*MockSenderType {
+        if (self.mock_sender) |sender| return sender;
+        if (self.request_sender) |*sender| return sender.mockSender() catch null;
+        return null;
+    }
+
+    fn resolvedMockSenderConst(self: *const RpcClient) ?*const MockSenderType {
+        if (self.mock_sender) |sender| return sender;
+        if (self.request_sender) |*sender| return sender.mockSenderConst() catch null;
+        return null;
+    }
+
     pub fn isMock(self: *const RpcClient) bool {
-        return self.mock_sender != null;
+        return self.resolvedMockSenderConst() != null;
+    }
+
+    pub fn backendKind(self: *const RpcClient) BackendKind {
+        if (self.mock_sender != null) return .direct_mock;
+        if (self.request_sender) |sender| {
+            return if (sender.isMockSender()) .request_sender_backed_mock else .callback_request_sender;
+        }
+        return .http;
     }
 
     pub fn hasRequestSender(self: *const RpcClient) bool {
         return self.request_sender != null and self.mock_sender == null;
     }
 
+    pub fn hasMockRequestSender(self: *const RpcClient) bool {
+        return if (self.request_sender) |sender| sender.isMockSender() else false;
+    }
+
+    pub fn isDirectMockClient(self: *const RpcClient) bool {
+        return self.mock_sender != null;
+    }
+
+    pub fn isRequestSenderBackedMockClient(self: *const RpcClient) bool {
+        return self.mock_sender == null and self.hasMockRequestSender();
+    }
+
+    pub fn isCallbackRequestSenderClient(self: *const RpcClient) bool {
+        return self.request_sender != null and self.mock_sender == null and !self.hasMockRequestSender();
+    }
+
+    pub fn isHttpTransportClient(self: *const RpcClient) bool {
+        return self.request_sender == null and self.mock_sender == null;
+    }
+
     pub fn mockResponseCount(self: *const RpcClient) usize {
-        return if (self.mock_sender) |sender| sender.responseCount() else 0;
+        return if (self.resolvedMockSenderConst()) |sender| sender.responseCount() else 0;
     }
 
     pub fn mockRouteCount(self: *const RpcClient) usize {
-        return if (self.mock_sender) |sender| sender.routeCount() else 0;
+        return if (self.resolvedMockSenderConst()) |sender| sender.routeCount() else 0;
     }
 
     pub fn mockMatchedRouteCount(self: *const RpcClient) usize {
-        return if (self.mock_sender) |sender| sender.matchedRouteCount() else 0;
+        return if (self.resolvedMockSenderConst()) |sender| sender.matchedRouteCount() else 0;
     }
 
     pub fn mockRouteMatchCount(self: *const RpcClient, label: []const u8) usize {
-        return if (self.mock_sender) |sender| sender.routeMatchCountForLabel(label) else 0;
+        return if (self.resolvedMockSenderConst()) |sender| sender.routeMatchCountForLabel(label) else 0;
     }
 
     pub fn mockPersistentRouteCount(self: *const RpcClient) usize {
-        return if (self.mock_sender) |sender| sender.persistentRouteCount() else 0;
+        return if (self.resolvedMockSenderConst()) |sender| sender.persistentRouteCount() else 0;
     }
 
     pub fn mockPendingScriptedDispatchCount(self: *const RpcClient) usize {
-        return if (self.mock_sender) |sender| sender.pendingScriptedDispatchCount() else 0;
+        return if (self.resolvedMockSenderConst()) |sender| sender.pendingScriptedDispatchCount() else 0;
     }
 
     pub fn mockScriptMissCount(self: *const RpcClient) usize {
-        return if (self.mock_sender) |sender| sender.scriptMissCount() else 0;
+        return if (self.resolvedMockSenderConst()) |sender| sender.scriptMissCount() else 0;
     }
 
     pub fn mockRequestCount(self: *const RpcClient) usize {
-        return if (self.mock_sender) |sender| sender.requestCount() else 0;
+        return if (self.resolvedMockSenderConst()) |sender| sender.requestCount() else 0;
     }
 
     pub fn hasMockHandler(self: *const RpcClient) bool {
-        return if (self.mock_sender) |sender| sender.hasHandler() else false;
+        return if (self.resolvedMockSenderConst()) |sender| sender.hasHandler() else false;
     }
 
     pub fn requestSender(self: *RpcClient) !*RequestSenderType {
         if (self.mock_sender != null) return error.NoRequestSender;
         return if (self.request_sender) |*sender| sender else error.NoRequestSender;
+    }
+
+    pub fn requestSenderMockSender(self: *RpcClient) !*MockSenderType {
+        return if (self.request_sender) |*sender| sender.mockSender() else error.NoRequestSender;
     }
 
     pub fn getInnerRequestSender(self: *const RpcClient) !*const RequestSenderType {
@@ -1514,36 +1932,40 @@ pub const RpcClient = struct {
         return if (self.request_sender) |*sender| sender else error.NoRequestSender;
     }
 
+    pub fn requestSenderMockSenderConst(self: *const RpcClient) !*const MockSenderType {
+        return if (self.request_sender) |*sender| sender.mockSenderConst() else error.NoRequestSender;
+    }
+
     pub fn mockSender(self: *RpcClient) !*MockSenderType {
-        return if (self.mock_sender) |sender| sender else error.NotMockClient;
+        return if (self.resolvedMockSender()) |sender| sender else error.NotMockClient;
     }
 
     pub fn mockSenderConst(self: *const RpcClient) !*const MockSenderType {
-        return if (self.mock_sender) |sender| sender else error.NotMockClient;
+        return if (self.resolvedMockSenderConst()) |sender| sender else error.NotMockClient;
     }
 
     pub fn capturedMockRequests(self: *const RpcClient) []const MockRequestType {
-        return if (self.mock_sender) |sender| sender.capturedRequests() else &.{};
+        return if (self.resolvedMockSenderConst()) |sender| sender.capturedRequests() else &.{};
     }
 
     pub fn lastMockScriptMissRequest(self: *const RpcClient) ?MockRequestViewType {
-        return if (self.mock_sender) |sender| sender.lastScriptMissRequest() else null;
+        return if (self.resolvedMockSenderConst()) |sender| sender.lastScriptMissRequest() else null;
     }
 
     pub fn mockScriptSummaryAlloc(self: *const RpcClient, allocator: Allocator) ![]u8 {
-        return if (self.mock_sender) |sender| sender.scriptSummaryAlloc(allocator) else allocator.dupe(u8, "not a mock client\n");
+        return if (self.resolvedMockSenderConst()) |sender| sender.scriptSummaryAlloc(allocator) else allocator.dupe(u8, "not a mock client\n");
     }
 
     pub fn clearCapturedMockRequests(self: *RpcClient) void {
-        if (self.mock_sender) |sender| sender.clearCapturedRequests();
+        if (self.resolvedMockSender()) |sender| sender.clearCapturedRequests();
     }
 
     pub fn clearMockResponses(self: *RpcClient) void {
-        if (self.mock_sender) |sender| sender.clearResponses();
+        if (self.resolvedMockSender()) |sender| sender.clearResponses();
     }
 
     pub fn clearMockRoutes(self: *RpcClient) void {
-        if (self.mock_sender) |sender| sender.clearRoutes();
+        if (self.resolvedMockSender()) |sender| sender.clearRoutes();
     }
 
     pub fn replaceMockSender(self: *RpcClient, sender: MockSenderType) !void {
@@ -1554,6 +1976,15 @@ pub const RpcClient = struct {
             replacement.* = sender;
             self.mock_sender = replacement;
             self.request_sender = lifecycle_methods.makeMockRequestSender(replacement);
+            self.request_id = 1;
+            self.transport_stats = .{};
+            return;
+        }
+
+        if (self.request_sender) |existing| {
+            if (!existing.isMockSender()) return error.NotMockClient;
+            existing.deinit(self.allocator);
+            self.request_sender = try RequestSender.fromOwnedMockSender(self.allocator, sender);
             self.request_id = 1;
             self.transport_stats = .{};
             return;
@@ -1575,8 +2006,96 @@ pub const RpcClient = struct {
         return error.NoRequestSender;
     }
 
+    pub fn replaceRequestCallback(
+        self: *RpcClient,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+    ) !void {
+        try self.replaceRequestSender(RequestSender.init(context, callback));
+    }
+
+    pub fn replaceRequestCallbackAndDeinit(
+        self: *RpcClient,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+    ) !void {
+        try self.replaceRequestSender(RequestSender.initWithDeinit(context, callback, deinit_callback));
+    }
+
+    pub fn setRequestSender(self: *RpcClient, sender: RequestSenderType) void {
+        if (self.mock_sender) |existing| {
+            existing.deinit();
+            self.allocator.destroy(existing);
+            self.mock_sender = null;
+        } else if (self.request_sender) |existing| {
+            existing.deinit(self.allocator);
+        }
+
+        self.request_sender = sender;
+        self.request_id = 1;
+        self.transport_stats = .{};
+    }
+
+    pub fn setRequestCallback(
+        self: *RpcClient,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+    ) void {
+        self.setRequestSender(RequestSender.init(context, callback));
+    }
+
+    pub fn setRequestCallbackAndDeinit(
+        self: *RpcClient,
+        context: ?*anyopaque,
+        callback: RequestSenderType.Callback,
+        deinit_callback: RequestSenderType.DeinitCallback,
+    ) void {
+        self.setRequestSender(RequestSender.initWithDeinit(context, callback, deinit_callback));
+    }
+
+    pub fn setBorrowedMockSender(
+        self: *RpcClient,
+        sender: *MockSenderType,
+    ) void {
+        self.setRequestSender(RequestSender.fromMockSender(sender));
+    }
+
+    pub fn setOwnedMockSender(self: *RpcClient, sender: MockSenderType) !void {
+        self.setRequestSender(try RequestSender.fromOwnedMockSender(self.allocator, sender));
+    }
+
+    pub fn setMockSender(self: *RpcClient, sender: MockSenderType) !void {
+        if (self.mock_sender) |existing| {
+            existing.deinit();
+            self.allocator.destroy(existing);
+            self.mock_sender = null;
+            self.request_sender = null;
+        } else if (self.request_sender) |existing| {
+            existing.deinit(self.allocator);
+        }
+
+        const replacement = try self.allocator.create(MockSenderType);
+        replacement.* = sender;
+        self.mock_sender = replacement;
+        self.request_sender = lifecycle_methods.makeMockRequestSender(replacement);
+        self.request_id = 1;
+        self.transport_stats = .{};
+    }
+
+    pub fn replaceWithBorrowedMockSender(
+        self: *RpcClient,
+        sender: *MockSenderType,
+    ) !void {
+        try self.replaceRequestSender(RequestSender.fromMockSender(sender));
+    }
+
+    pub fn replaceWithOwnedMockSender(self: *RpcClient, sender: MockSenderType) !void {
+        try self.replaceRequestSender(try RequestSender.fromOwnedMockSender(self.allocator, sender));
+    }
+
     pub fn setMockHandler(self: *RpcClient, handler: MockRequestHandlerType) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             sender.setHandler(handler);
             return;
         }
@@ -1585,7 +2104,7 @@ pub const RpcClient = struct {
     }
 
     pub fn clearMockHandler(self: *RpcClient) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             sender.clearHandler();
             return;
         }
@@ -1594,7 +2113,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockResponse(self: *RpcClient, response: MockResponseType) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushResponse(response);
             return;
         }
@@ -1603,7 +2122,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockJsonResponse(self: *RpcClient, response_body: []const u8) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushJsonResponse(response_body);
             return;
         }
@@ -1612,7 +2131,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockResultJson(self: *RpcClient, result_json: []const u8) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushResultJson(result_json);
             return;
         }
@@ -1621,7 +2140,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockStringResult(self: *RpcClient, value: []const u8) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushStringResult(value);
             return;
         }
@@ -1630,7 +2149,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockSlotResult(self: *RpcClient, slot: u64) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushSlotResult(slot);
             return;
         }
@@ -1639,7 +2158,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockBoolResult(self: *RpcClient, value: bool) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushBoolResult(value);
             return;
         }
@@ -1648,7 +2167,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockNullResult(self: *RpcClient) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushNullResult();
             return;
         }
@@ -1661,7 +2180,7 @@ pub const RpcClient = struct {
         context_slot: u64,
         value: u64,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushBalanceResponse(context_slot, value);
             return;
         }
@@ -1673,7 +2192,7 @@ pub const RpcClient = struct {
         self: *RpcClient,
         steps: []const MockBalancePollStep,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushBalancePollResults(steps);
             return;
         }
@@ -1686,7 +2205,7 @@ pub const RpcClient = struct {
         context_slot: u64,
         value: ?u64,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushFeeForMessageResponse(context_slot, value);
             return;
         }
@@ -1699,7 +2218,7 @@ pub const RpcClient = struct {
         context_slot: u64,
         value: TokenAmountType,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushTokenAmountResponse(context_slot, value);
             return;
         }
@@ -1712,7 +2231,7 @@ pub const RpcClient = struct {
         context_slot: u64,
         accounts: []const TokenLargestAccountType,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushTokenLargestAccountsResponse(context_slot, accounts);
             return;
         }
@@ -1725,7 +2244,7 @@ pub const RpcClient = struct {
         context_slot: u64,
         account: ?AccountInfoType,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushAccountInfoResponse(context_slot, account);
             return;
         }
@@ -1738,7 +2257,7 @@ pub const RpcClient = struct {
         context_slot: u64,
         account: ?JsonParsedAccountInfoType,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushUiAccountResponse(context_slot, account);
             return;
         }
@@ -1751,7 +2270,7 @@ pub const RpcClient = struct {
         context_slot: u64,
         accounts: []const ?JsonParsedAccountInfoType,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushMultipleUiAccountsResponse(context_slot, accounts);
             return;
         }
@@ -1764,7 +2283,7 @@ pub const RpcClient = struct {
         context_slot: ?u64,
         accounts: []const JsonParsedProgramAccountType,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushProgramUiAccountsResponse(context_slot, accounts);
             return;
         }
@@ -1773,7 +2292,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockHealthOk(self: *RpcClient) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushHealthOk();
             return;
         }
@@ -1782,7 +2301,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockSignatureResult(self: *RpcClient, signature: []const u8) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushSignatureResult(signature);
             return;
         }
@@ -1795,7 +2314,7 @@ pub const RpcClient = struct {
         context_slot: u64,
         statuses: []const ?MockSignatureStatus,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushSignatureStatusesResult(context_slot, statuses);
             return;
         }
@@ -1808,7 +2327,7 @@ pub const RpcClient = struct {
         context_slot: u64,
         status: ?MockSignatureStatus,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushSingleSignatureStatusResult(context_slot, status);
             return;
         }
@@ -1817,7 +2336,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockSignatureStatusNotFound(self: *RpcClient, context_slot: u64) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushSignatureStatusNotFound(context_slot);
             return;
         }
@@ -1829,7 +2348,7 @@ pub const RpcClient = struct {
         self: *RpcClient,
         steps: []const MockSignatureStatusPollStep,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushSignatureStatusPollResults(steps);
             return;
         }
@@ -1841,7 +2360,7 @@ pub const RpcClient = struct {
         self: *RpcClient,
         steps: []const MockSignatureObservationPollStep,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushSignatureObservationPollResults(steps);
             return;
         }
@@ -1855,7 +2374,7 @@ pub const RpcClient = struct {
         blockhash: []const u8,
         last_valid_block_height: u64,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushLatestBlockhashResponse(context_slot, blockhash, last_valid_block_height);
             return;
         }
@@ -1872,7 +2391,7 @@ pub const RpcClient = struct {
         statuses_context_slot: u64,
         statuses: []const ?MockSignatureStatus,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushLatestBlockhashSendAndSignatureStatusesFlow(
                 latest_blockhash_context_slot,
                 blockhash,
@@ -1892,7 +2411,7 @@ pub const RpcClient = struct {
         signature: []const u8,
         steps: []const MockSignatureStatusPollStep,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushSendAndSignatureStatusPollFlow(signature, steps);
             return;
         }
@@ -1908,7 +2427,7 @@ pub const RpcClient = struct {
         signature: []const u8,
         steps: []const MockSignatureStatusPollStep,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushLatestBlockhashSendAndSignatureStatusPollFlow(
                 latest_blockhash_context_slot,
                 blockhash,
@@ -1927,7 +2446,7 @@ pub const RpcClient = struct {
         observation_steps: []const MockSignatureObservationPollStep,
         confirmation_steps: []const MockSignatureStatusPollStep,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushConfirmTransactionSpinnerFlow(
                 observation_steps,
                 confirmation_steps,
@@ -1947,7 +2466,7 @@ pub const RpcClient = struct {
         status_context_slot: u64,
         status: ?MockSignatureStatus,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushLatestBlockhashSendAndSingleSignatureStatusFlow(
                 latest_blockhash_context_slot,
                 blockhash,
@@ -1970,7 +2489,7 @@ pub const RpcClient = struct {
         signature: []const u8,
         status_context_slot: u64,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushLatestBlockhashSendAndStatusNotFoundFlow(
                 latest_blockhash_context_slot,
                 blockhash,
@@ -1985,7 +2504,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockRpcError(self: *RpcClient, rpc_error: MockRpcErrorType) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushRpcError(rpc_error);
             return;
         }
@@ -1994,7 +2513,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockTransportError(self: *RpcClient, transport_error: MockTransportErrorType) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushTransportError(transport_error);
             return;
         }
@@ -2003,7 +2522,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockRoute(self: *RpcClient, route: MockRouteType) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushRoute(route);
             return;
         }
@@ -2012,7 +2531,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockRouteBuilder(self: *RpcClient, builder: MockRouteBuilder) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushRouteBuilder(builder);
             return;
         }
@@ -2021,7 +2540,7 @@ pub const RpcClient = struct {
     }
 
     pub fn pushMockRouteBuilders(self: *RpcClient, builders: []const MockRouteBuilder) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushRouteBuilders(builders);
             return;
         }
@@ -2034,7 +2553,7 @@ pub const RpcClient = struct {
         matcher: MockRequestMatcherType,
         response: MockResponseType,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushOnceRoute(matcher, response);
             return;
         }
@@ -2047,7 +2566,7 @@ pub const RpcClient = struct {
         matcher: MockRequestMatcherType,
         response: MockResponseType,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushPersistentRoute(matcher, response);
             return;
         }
@@ -2061,7 +2580,7 @@ pub const RpcClient = struct {
         result_json: []const u8,
         remaining_uses: ?usize,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushResultRoute(matcher, result_json, remaining_uses);
             return;
         }
@@ -2074,7 +2593,7 @@ pub const RpcClient = struct {
         matcher: MockRequestMatcherType,
         result_json: []const u8,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushOnceResultRoute(matcher, result_json);
             return;
         }
@@ -2087,7 +2606,7 @@ pub const RpcClient = struct {
         matcher: MockRequestMatcherType,
         result_json: []const u8,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushPersistentResultRoute(matcher, result_json);
             return;
         }
@@ -2101,7 +2620,7 @@ pub const RpcClient = struct {
         rpc_error: MockRpcErrorType,
         remaining_uses: ?usize,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushRpcErrorRoute(matcher, rpc_error, remaining_uses);
             return;
         }
@@ -2114,7 +2633,7 @@ pub const RpcClient = struct {
         matcher: MockRequestMatcherType,
         rpc_error: MockRpcErrorType,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushOnceRpcErrorRoute(matcher, rpc_error);
             return;
         }
@@ -2127,7 +2646,7 @@ pub const RpcClient = struct {
         matcher: MockRequestMatcherType,
         rpc_error: MockRpcErrorType,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushPersistentRpcErrorRoute(matcher, rpc_error);
             return;
         }
@@ -2141,7 +2660,7 @@ pub const RpcClient = struct {
         transport_error: MockTransportErrorType,
         remaining_uses: ?usize,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushTransportErrorRoute(matcher, transport_error, remaining_uses);
             return;
         }
@@ -2154,7 +2673,7 @@ pub const RpcClient = struct {
         matcher: MockRequestMatcherType,
         transport_error: MockTransportErrorType,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushOnceTransportErrorRoute(matcher, transport_error);
             return;
         }
@@ -2167,7 +2686,7 @@ pub const RpcClient = struct {
         matcher: MockRequestMatcherType,
         transport_error: MockTransportErrorType,
     ) !void {
-        if (self.mock_sender) |sender| {
+        if (self.resolvedMockSender()) |sender| {
             try sender.pushPersistentTransportErrorRoute(matcher, transport_error);
             return;
         }

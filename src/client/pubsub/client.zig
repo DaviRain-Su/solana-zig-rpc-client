@@ -396,6 +396,10 @@ pub const PubsubSubscription = struct {
         return self.queue.items.len;
     }
 
+    pub fn hasQueued(self: *Self) bool {
+        return self.queuedCount() > 0;
+    }
+
     pub fn receiver(self: *Self) PubsubReceiver {
         return .{ .subscription = self };
     }
@@ -437,6 +441,10 @@ pub const PubsubSubscription = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         return self.dropped_messages;
+    }
+
+    pub fn hasDropped(self: *Self) bool {
+        return self.droppedCount() > 0;
     }
 
     pub fn closeReason(self: *Self) PubsubCloseReason {
@@ -519,6 +527,10 @@ pub const PubsubSubscription = struct {
         return self.last_error;
     }
 
+    pub fn hasLastError(self: *Self) bool {
+        return self.getLastError() != null;
+    }
+
     pub fn clearLastError(self: *Self) void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -538,6 +550,10 @@ pub const PubsubSubscription = struct {
         }
 
         return self.queue.orderedRemove(0);
+    }
+
+    pub fn next(self: *Self) ![]u8 {
+        return self.recv();
     }
 
     fn recvCallback(self: *Self) ![]u8 {
@@ -564,6 +580,10 @@ pub const PubsubSubscription = struct {
         }
 
         return self.queue.orderedRemove(0);
+    }
+
+    pub fn tryNext(self: *Self) ?[]u8 {
+        return self.tryRecv();
     }
 
     fn tryRecvCallback(self: *Self) ?[]u8 {
@@ -601,8 +621,16 @@ pub const PubsubSubscription = struct {
         return self.queue.orderedRemove(0);
     }
 
+    pub fn nextTimeout(self: *Self, timeout_ms: u64) error{ Closed, Timeout }![]u8 {
+        return self.recvTimeout(timeout_ms);
+    }
+
     pub fn recvParsed(self: *Self, comptime ValueType: type) !pubsub_types.OwnedPubsubNotification(ValueType) {
         return pubsub_types.parseOwnedPubsubNotification(self.state.allocator, try self.recv(), ValueType);
+    }
+
+    pub fn nextParsed(self: *Self, comptime ValueType: type) !pubsub_types.OwnedPubsubNotification(ValueType) {
+        return self.recvParsed(ValueType);
     }
 
     fn recvCallbackParsed(self: *Self, comptime ValueType: type) !pubsub_types.OwnedPubsubNotification(ValueType) {
@@ -612,6 +640,10 @@ pub const PubsubSubscription = struct {
     pub fn tryRecvParsed(self: *Self, comptime ValueType: type) !?pubsub_types.OwnedPubsubNotification(ValueType) {
         const raw_message = self.tryRecv() orelse return null;
         return pubsub_types.parseOwnedPubsubNotification(self.state.allocator, raw_message, ValueType);
+    }
+
+    pub fn tryNextParsed(self: *Self, comptime ValueType: type) !?pubsub_types.OwnedPubsubNotification(ValueType) {
+        return self.tryRecvParsed(ValueType);
     }
 
     fn tryRecvCallbackParsed(self: *Self, comptime ValueType: type) !?pubsub_types.OwnedPubsubNotification(ValueType) {
@@ -625,6 +657,14 @@ pub const PubsubSubscription = struct {
         timeout_ms: u64,
     ) !pubsub_types.OwnedPubsubNotification(ValueType) {
         return pubsub_types.parseOwnedPubsubNotification(self.state.allocator, try self.recvTimeout(timeout_ms), ValueType);
+    }
+
+    pub fn nextParsedTimeout(
+        self: *Self,
+        comptime ValueType: type,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(ValueType) {
+        return self.recvParsedTimeout(ValueType, timeout_ms);
     }
 
     pub fn recvCallbackTimeout(self: *Self, timeout_ms: u64) error{ Closed, Timeout }![]u8 {
@@ -915,8 +955,16 @@ pub const PubsubSlotsUpdatesSubscriptionWithCallback = struct {
         return self.subscription.queuedCount();
     }
 
+    pub fn hasQueued(self: *const Self) bool {
+        return self.queuedCount() > 0;
+    }
+
     pub fn droppedCount(self: *const Self) usize {
         return self.subscription.droppedCount();
+    }
+
+    pub fn hasDropped(self: *const Self) bool {
+        return self.droppedCount() > 0;
     }
 
     pub fn subscriptionId(self: *const Self) u64 {
@@ -945,6 +993,10 @@ pub const PubsubSlotsUpdatesSubscriptionWithCallback = struct {
 
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
         return self.subscription.getLastError();
+    }
+
+    pub fn hasLastError(self: *Self) bool {
+        return self.getLastError() != null;
     }
 
     pub fn clearLastError(self: *Self) void {
@@ -1039,6 +1091,10 @@ pub const PubsubRootSubscriptionWithCallback = struct {
 
     pub fn getLastError(self: *Self) ?RpcErrorDetail {
         return self.subscription.getLastError();
+    }
+
+    pub fn hasLastError(self: *Self) bool {
+        return self.getLastError() != null;
     }
 
     pub fn clearLastError(self: *Self) void {
@@ -1822,20 +1878,40 @@ pub const PubsubReceiver = struct {
         return self.subscription.recv();
     }
 
+    pub fn next(self: *Self) ![]u8 {
+        return self.recv();
+    }
+
     pub fn tryRecv(self: *Self) ?[]u8 {
         return self.subscription.tryRecv();
+    }
+
+    pub fn tryNext(self: *Self) ?[]u8 {
+        return self.tryRecv();
     }
 
     pub fn recvTimeout(self: *Self, timeout_ms: u64) error{ Closed, Timeout }![]u8 {
         return self.subscription.recvTimeout(timeout_ms);
     }
 
+    pub fn nextTimeout(self: *Self, timeout_ms: u64) error{ Closed, Timeout }![]u8 {
+        return self.recvTimeout(timeout_ms);
+    }
+
     pub fn recvParsed(self: *Self, comptime ValueType: type) !pubsub_types.OwnedPubsubNotification(ValueType) {
         return self.subscription.recvParsed(ValueType);
     }
 
+    pub fn nextParsed(self: *Self, comptime ValueType: type) !pubsub_types.OwnedPubsubNotification(ValueType) {
+        return self.recvParsed(ValueType);
+    }
+
     pub fn tryRecvParsed(self: *Self, comptime ValueType: type) !?pubsub_types.OwnedPubsubNotification(ValueType) {
         return self.subscription.tryRecvParsed(ValueType);
+    }
+
+    pub fn tryNextParsed(self: *Self, comptime ValueType: type) !?pubsub_types.OwnedPubsubNotification(ValueType) {
+        return self.tryRecvParsed(ValueType);
     }
 
     pub fn recvParsedTimeout(
@@ -1844,6 +1920,14 @@ pub const PubsubReceiver = struct {
         timeout_ms: u64,
     ) !pubsub_types.OwnedPubsubNotification(ValueType) {
         return self.subscription.recvParsedTimeout(ValueType, timeout_ms);
+    }
+
+    pub fn nextParsedTimeout(
+        self: *Self,
+        comptime ValueType: type,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(ValueType) {
+        return self.recvParsedTimeout(ValueType, timeout_ms);
     }
 
     pub fn recvSignatureNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.SignatureNotificationValue) {
@@ -2117,12 +2201,28 @@ pub fn TypedPubsubReceiver(comptime ValueType: type) type {
             return self.receiver.queuedCount();
         }
 
+        pub fn hasQueued(self: *const Self) bool {
+            return self.queuedCount() > 0;
+        }
+
+        pub fn hasQueued(self: *const Self) bool {
+            return self.queuedCount() > 0;
+        }
+
         pub fn subscriptionId(self: *const Self) u64 {
             return self.receiver.subscriptionId();
         }
 
         pub fn droppedCount(self: *const Self) usize {
             return self.receiver.droppedCount();
+        }
+
+        pub fn hasDropped(self: *const Self) bool {
+            return self.droppedCount() > 0;
+        }
+
+        pub fn hasDropped(self: *const Self) bool {
+            return self.droppedCount() > 0;
         }
 
         pub fn closeReason(self: *const Self) PubsubCloseReason {
@@ -2153,6 +2253,10 @@ pub fn TypedPubsubReceiver(comptime ValueType: type) type {
             return self.receiver.getLastError();
         }
 
+        pub fn hasLastError(self: *Self) bool {
+            return self.getLastError() != null;
+        }
+
         pub fn clearLastError(self: *Self) void {
             self.receiver.clearLastError();
         }
@@ -2165,12 +2269,24 @@ pub fn TypedPubsubReceiver(comptime ValueType: type) type {
             return self.receiver.recvParsed(ValueType);
         }
 
+        pub fn next(self: *Self) !pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.recv();
+        }
+
         pub fn tryRecv(self: *Self) !?pubsub_types.OwnedPubsubNotification(ValueType) {
             return self.receiver.tryRecvParsed(ValueType);
         }
 
+        pub fn tryNext(self: *Self) !?pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.tryRecv();
+        }
+
         pub fn recvTimeout(self: *Self, timeout_ms: u64) !pubsub_types.OwnedPubsubNotification(ValueType) {
             return self.receiver.recvParsedTimeout(ValueType, timeout_ms);
+        }
+
+        pub fn nextTimeout(self: *Self, timeout_ms: u64) !pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.recvTimeout(timeout_ms);
         }
 
         pub fn rawSubscription(self: *const Self) *PubsubSubscription {
@@ -2197,12 +2313,20 @@ pub const PubsubSubscriptionWithReceiver = struct {
         return self.receiver.queuedCount();
     }
 
+    pub fn hasQueued(self: *const Self) bool {
+        return self.queuedCount() > 0;
+    }
+
     pub fn subscriptionId(self: *const Self) u64 {
         return self.subscription.subscriptionId();
     }
 
     pub fn droppedCount(self: *const Self) usize {
         return self.receiver.droppedCount();
+    }
+
+    pub fn hasDropped(self: *const Self) bool {
+        return self.droppedCount() > 0;
     }
 
     pub fn closeReason(self: *const Self) PubsubCloseReason {
@@ -2253,20 +2377,40 @@ pub const PubsubSubscriptionWithReceiver = struct {
         return self.receiver.recv();
     }
 
+    pub fn next(self: *Self) ![]u8 {
+        return self.recv();
+    }
+
     pub fn tryRecv(self: *Self) ?[]u8 {
         return self.receiver.tryRecv();
+    }
+
+    pub fn tryNext(self: *Self) ?[]u8 {
+        return self.tryRecv();
     }
 
     pub fn recvTimeout(self: *Self, timeout_ms: u64) error{ Closed, Timeout }![]u8 {
         return self.receiver.recvTimeout(timeout_ms);
     }
 
+    pub fn nextTimeout(self: *Self, timeout_ms: u64) error{ Closed, Timeout }![]u8 {
+        return self.recvTimeout(timeout_ms);
+    }
+
     pub fn recvParsed(self: *Self, comptime ValueType: type) !pubsub_types.OwnedPubsubNotification(ValueType) {
         return self.receiver.recvParsed(ValueType);
     }
 
+    pub fn nextParsed(self: *Self, comptime ValueType: type) !pubsub_types.OwnedPubsubNotification(ValueType) {
+        return self.recvParsed(ValueType);
+    }
+
     pub fn tryRecvParsed(self: *Self, comptime ValueType: type) !?pubsub_types.OwnedPubsubNotification(ValueType) {
         return self.receiver.tryRecvParsed(ValueType);
+    }
+
+    pub fn tryNextParsed(self: *Self, comptime ValueType: type) !?pubsub_types.OwnedPubsubNotification(ValueType) {
+        return self.tryRecvParsed(ValueType);
     }
 
     pub fn recvParsedTimeout(
@@ -2275,6 +2419,14 @@ pub const PubsubSubscriptionWithReceiver = struct {
         timeout_ms: u64,
     ) !pubsub_types.OwnedPubsubNotification(ValueType) {
         return self.receiver.recvParsedTimeout(ValueType, timeout_ms);
+    }
+
+    pub fn nextParsedTimeout(
+        self: *Self,
+        comptime ValueType: type,
+        timeout_ms: u64,
+    ) !pubsub_types.OwnedPubsubNotification(ValueType) {
+        return self.recvParsedTimeout(ValueType, timeout_ms);
     }
 
     pub fn recvSignatureNotification(self: *Self) !pubsub_types.OwnedPubsubNotification(pubsub_types.SignatureNotificationValue) {
@@ -2608,6 +2760,10 @@ pub fn TypedPubsubSubscriptionWithReceiver(comptime ValueType: type) type {
             return self.receiver.getLastError();
         }
 
+        pub fn hasLastError(self: *Self) bool {
+            return self.getLastError() != null;
+        }
+
         pub fn clearLastError(self: *Self) void {
             self.receiver.clearLastError();
         }
@@ -2616,12 +2772,24 @@ pub fn TypedPubsubSubscriptionWithReceiver(comptime ValueType: type) type {
             return self.receiver.recv();
         }
 
+        pub fn next(self: *Self) !pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.recv();
+        }
+
         pub fn tryRecv(self: *Self) !?pubsub_types.OwnedPubsubNotification(ValueType) {
             return self.receiver.tryRecv();
         }
 
+        pub fn tryNext(self: *Self) !?pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.tryRecv();
+        }
+
         pub fn recvTimeout(self: *Self, timeout_ms: u64) !pubsub_types.OwnedPubsubNotification(ValueType) {
             return self.receiver.recvTimeout(timeout_ms);
+        }
+
+        pub fn nextTimeout(self: *Self, timeout_ms: u64) !pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.recvTimeout(timeout_ms);
         }
 
         pub fn unsubscribe(self: *Self) !bool {
@@ -2706,12 +2874,24 @@ pub fn TypedPubsubSubscription(comptime ValueType: type) type {
             return self.receiver.recv();
         }
 
+        pub fn next(self: *Self) !pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.recv();
+        }
+
         pub fn tryRecv(self: *Self) !?pubsub_types.OwnedPubsubNotification(ValueType) {
             return self.receiver.tryRecv();
         }
 
+        pub fn tryNext(self: *Self) !?pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.tryRecv();
+        }
+
         pub fn recvTimeout(self: *Self, timeout_ms: u64) !pubsub_types.OwnedPubsubNotification(ValueType) {
             return self.receiver.recvTimeout(timeout_ms);
+        }
+
+        pub fn nextTimeout(self: *Self, timeout_ms: u64) !pubsub_types.OwnedPubsubNotification(ValueType) {
+            return self.recvTimeout(timeout_ms);
         }
 
         pub fn unsubscribe(self: *Self) !bool {
@@ -3880,6 +4060,10 @@ pub const PubsubClient = struct {
 
     pub fn getLastError(self: *const Self) ?RpcErrorDetail {
         return self.state.last_error;
+    }
+
+    pub fn hasLastError(self: *const Self) bool {
+        return self.getLastError() != null;
     }
 
     pub fn clearLastError(self: *Self) void {

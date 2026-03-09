@@ -13,6 +13,12 @@ fn printMockRpcSummary(rpc: *const client.RpcClient) !void {
     std.debug.print("mock rpc summary:\n{s}", .{summary});
 }
 
+fn printMockRequestSenderSummary(sender: *const client.RequestSender) !void {
+    const summary = try sender.mockScriptSummaryAlloc(std.testing.allocator);
+    defer std.testing.allocator.free(summary);
+    std.debug.print("mock request sender summary:\n{s}", .{summary});
+}
+
 pub fn expectMockSenderPendingScriptedDispatchCount(
     sender: *const client.MockSender,
     expected: usize,
@@ -66,6 +72,61 @@ pub fn expectMockSenderLastScriptMissMethod(
 pub fn expectMockSenderScriptSatisfied(sender: *const client.MockSender) !void {
     try expectMockSenderScriptExhausted(sender);
     try expectMockSenderNoScriptMisses(sender);
+}
+
+pub fn expectMockRequestSenderPendingScriptedDispatchCount(
+    sender: *const client.RequestSender,
+    expected: usize,
+) !void {
+    if (sender.mockPendingScriptedDispatchCount() != expected) {
+        try printMockRequestSenderSummary(sender);
+    }
+    try std.testing.expectEqual(expected, sender.mockPendingScriptedDispatchCount());
+}
+
+pub fn expectMockRequestSenderMatchedRouteCount(
+    sender: *const client.RequestSender,
+    expected: usize,
+) !void {
+    if (sender.mockMatchedRouteCount() != expected) {
+        try printMockRequestSenderSummary(sender);
+    }
+    try std.testing.expectEqual(expected, sender.mockMatchedRouteCount());
+}
+
+pub fn expectMockRequestSenderRouteMatchCount(
+    sender: *const client.RequestSender,
+    label: []const u8,
+    expected: usize,
+) !void {
+    if (sender.mockRouteMatchCount(label) != expected) {
+        try printMockRequestSenderSummary(sender);
+    }
+    try std.testing.expectEqual(expected, sender.mockRouteMatchCount(label));
+}
+
+pub fn expectMockRequestSenderScriptExhausted(sender: *const client.RequestSender) !void {
+    try expectMockRequestSenderPendingScriptedDispatchCount(sender, 0);
+}
+
+pub fn expectMockRequestSenderNoScriptMisses(sender: *const client.RequestSender) !void {
+    if (sender.mockScriptMissCount() != 0) {
+        try printMockRequestSenderSummary(sender);
+    }
+    try std.testing.expectEqual(@as(usize, 0), sender.mockScriptMissCount());
+}
+
+pub fn expectMockRequestSenderLastScriptMissMethod(
+    sender: *const client.RequestSender,
+    expected_method: []const u8,
+) !void {
+    const request = sender.lastMockScriptMissRequest() orelse return error.TestExpectedError;
+    try std.testing.expectEqualStrings(expected_method, request.method);
+}
+
+pub fn expectMockRequestSenderScriptSatisfied(sender: *const client.RequestSender) !void {
+    try expectMockRequestSenderScriptExhausted(sender);
+    try expectMockRequestSenderNoScriptMisses(sender);
 }
 
 pub fn expectMockRpcPendingScriptedDispatchCount(

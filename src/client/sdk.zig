@@ -1825,6 +1825,28 @@ pub fn buildOwnedLegacyNonceTransferMessage(
     );
 }
 
+pub fn buildOwnedLegacyNonceTransferMessageWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) !OwnedLegacyMessage {
+    return try buildOwnedLegacyNonceTransferMessage(
+        allocator,
+        payer,
+        sender,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
+}
+
 pub fn buildLegacyNonceTransferMessage(
     allocator: Allocator,
     payer: Pubkey,
@@ -1836,6 +1858,28 @@ pub fn buildLegacyNonceTransferMessage(
     lamports: u64,
 ) !OwnedLegacyMessage {
     return try buildOwnedLegacyNonceTransferMessage(
+        allocator,
+        payer,
+        sender,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
+}
+
+pub fn buildLegacyNonceTransferMessageWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) !OwnedLegacyMessage {
+    return try buildOwnedLegacyNonceTransferMessageWithSender(
         allocator,
         payer,
         sender,
@@ -1893,6 +1937,28 @@ pub fn buildLegacyNonceTransferMessageBytes(
     return try owned.serialize(allocator);
 }
 
+pub fn buildLegacyNonceTransferMessageBytesWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) ![]u8 {
+    return try buildLegacyNonceTransferMessageBytes(
+        allocator,
+        payer,
+        sender,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
+}
+
 pub fn buildLegacyTransferMessageBase64WithNonce(
     allocator: Allocator,
     payer: Pubkey,
@@ -1937,6 +2003,28 @@ pub fn buildLegacyNonceTransferMessageBase64(
     defer allocator.free(message_bytes);
 
     return try encodeBase64(allocator, message_bytes);
+}
+
+pub fn buildLegacyNonceTransferMessageBase64WithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    nonce_authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+) ![]u8 {
+    return try buildLegacyNonceTransferMessageBase64(
+        allocator,
+        payer,
+        sender,
+        nonce_account,
+        nonce_authority,
+        destination,
+        recent_blockhash,
+        lamports,
+    );
 }
 
 pub fn buildOwnedLegacyTransferMessage(
@@ -2765,6 +2853,30 @@ pub fn buildOwnedVersionedNonceTransferMessage(
     );
 }
 
+pub fn buildOwnedVersionedNonceTransferMessageWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedNonceTransferMessage(
+        allocator,
+        payer,
+        sender,
+        nonce_account,
+        authority,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+    );
+}
+
 pub fn buildVersionedNonceTransferMessage(
     allocator: Allocator,
     payer: Pubkey,
@@ -2777,6 +2889,30 @@ pub fn buildVersionedNonceTransferMessage(
     address_lookup_tables: []const AddressLookupTableAccount,
 ) !OwnedVersionedMessageV0 {
     return try buildOwnedVersionedNonceTransferMessage(
+        allocator,
+        payer,
+        sender,
+        nonce_account,
+        authority,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildVersionedNonceTransferMessageWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedNonceTransferMessageWithSender(
         allocator,
         payer,
         sender,
@@ -2854,6 +2990,30 @@ pub fn buildVersionedNonceTransferMessageBytes(
         authority,
         recent_blockhash,
         instructions[0..],
+        address_lookup_tables,
+    );
+}
+
+pub fn buildVersionedNonceTransferMessageBytesWithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    return try buildVersionedNonceTransferMessageBytes(
+        allocator,
+        payer,
+        sender,
+        nonce_account,
+        authority,
+        destination,
+        recent_blockhash,
+        lamports,
         address_lookup_tables,
     );
 }
@@ -2947,6 +3107,30 @@ pub fn buildVersionedNonceTransferMessageBase64(
     );
     defer allocator.free(message_bytes);
     return try encodeBase64(allocator, message_bytes);
+}
+
+pub fn buildVersionedNonceTransferMessageBase64WithSender(
+    allocator: Allocator,
+    payer: Pubkey,
+    sender: Pubkey,
+    nonce_account: Pubkey,
+    authority: Pubkey,
+    destination: Pubkey,
+    recent_blockhash: Hash,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    return try buildVersionedNonceTransferMessageBase64(
+        allocator,
+        payer,
+        sender,
+        nonce_account,
+        authority,
+        destination,
+        recent_blockhash,
+        lamports,
+        address_lookup_tables,
+    );
 }
 
 pub fn buildSignedVersionedTransferTransactionWithSender(

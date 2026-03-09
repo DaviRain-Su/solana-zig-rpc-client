@@ -1897,6 +1897,27 @@ pub fn buildOwnedNonceTransferMessage(
     );
 }
 
+pub fn buildOwnedNonceTransferMessageWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+) !OwnedLegacyMessage {
+    return try self.buildOwnedNonceTransferMessage(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        recent_blockhash,
+    );
+}
+
 pub fn buildOwnedNonceTransferMessageWithOptions(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -1923,6 +1944,27 @@ pub fn buildOwnedNonceTransferMessageWithOptions(
     );
 }
 
+pub fn buildOwnedNonceTransferMessageWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?NonceTransferBuildOptions,
+) !OwnedLegacyMessage {
+    return try self.buildOwnedNonceTransferMessageWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        options,
+    );
+}
+
 pub fn buildOwnedNonceTransferMessageWithConfig(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -1934,6 +1976,27 @@ pub fn buildOwnedNonceTransferMessageWithConfig(
     options: ?NonceTransferBuildOptions,
 ) !OwnedLegacyMessage {
     return try self.buildOwnedNonceTransferMessageWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        options,
+    );
+}
+
+pub fn buildOwnedNonceTransferMessageWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?NonceTransferBuildOptions,
+) !OwnedLegacyMessage {
+    return try self.buildOwnedNonceTransferMessageWithSenderAndOptions(
         fee_payer_secret_key,
         sender_secret_key,
         nonce_authority_secret_key,
@@ -1967,6 +2030,27 @@ pub fn buildNonceTransferMessageBytes(
     return try owned.serialize(self.allocator);
 }
 
+pub fn buildNonceTransferMessageBytesWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+) ![]u8 {
+    return try self.buildNonceTransferMessageBytes(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        recent_blockhash,
+    );
+}
+
 pub fn buildNonceTransferMessageBytesWithOptions(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -1990,6 +2074,27 @@ pub fn buildNonceTransferMessageBytesWithOptions(
     return try owned.serialize(self.allocator);
 }
 
+pub fn buildNonceTransferMessageBytesWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?NonceTransferBuildOptions,
+) ![]u8 {
+    return try self.buildNonceTransferMessageBytesWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        options,
+    );
+}
+
 pub fn buildNonceTransferMessageBytesWithConfig(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2001,6 +2106,27 @@ pub fn buildNonceTransferMessageBytesWithConfig(
     options: ?NonceTransferBuildOptions,
 ) ![]u8 {
     return try self.buildNonceTransferMessageBytesWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        options,
+    );
+}
+
+pub fn buildNonceTransferMessageBytesWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?NonceTransferBuildOptions,
+) ![]u8 {
+    return try self.buildNonceTransferMessageBytesWithSenderAndOptions(
         fee_payer_secret_key,
         sender_secret_key,
         nonce_authority_secret_key,
@@ -2034,6 +2160,27 @@ pub fn buildNonceTransferMessageBase64(
     return try sdk.encodeBase64(self.allocator, message_bytes);
 }
 
+pub fn buildNonceTransferMessageBase64WithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+) ![]u8 {
+    return try self.buildNonceTransferMessageBase64(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        recent_blockhash,
+    );
+}
+
 pub fn buildNonceTransferMessageBase64WithOptions(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2057,6 +2204,27 @@ pub fn buildNonceTransferMessageBase64WithOptions(
     return try sdk.encodeBase64(self.allocator, message_bytes);
 }
 
+pub fn buildNonceTransferMessageBase64WithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?NonceTransferBuildOptions,
+) ![]u8 {
+    return try self.buildNonceTransferMessageBase64WithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        options,
+    );
+}
+
 pub fn buildNonceTransferMessageBase64WithConfig(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2068,6 +2236,27 @@ pub fn buildNonceTransferMessageBase64WithConfig(
     options: ?NonceTransferBuildOptions,
 ) ![]u8 {
     return try self.buildNonceTransferMessageBase64WithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        options,
+    );
+}
+
+pub fn buildNonceTransferMessageBase64WithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?NonceTransferBuildOptions,
+) ![]u8 {
+    return try self.buildNonceTransferMessageBase64WithSenderAndOptions(
         fee_payer_secret_key,
         sender_secret_key,
         nonce_authority_secret_key,
@@ -2091,6 +2280,29 @@ pub fn buildOwnedVersionedNonceTransferMessage(
 ) !OwnedVersionedMessageV0 {
     return try buildOwnedVersionedNonceTransferMessageWithResolvedBlockhash(
         self,
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildOwnedVersionedNonceTransferMessageWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) !OwnedVersionedMessageV0 {
+    return try self.buildOwnedVersionedNonceTransferMessage(
         fee_payer_secret_key,
         sender_secret_key,
         nonce_authority_secret_key,
@@ -2130,6 +2342,29 @@ pub fn buildOwnedVersionedNonceTransferMessageWithOptions(
     );
 }
 
+pub fn buildOwnedVersionedNonceTransferMessageWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+) !OwnedVersionedMessageV0 {
+    return try self.buildOwnedVersionedNonceTransferMessageWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+}
+
 pub fn buildOwnedVersionedNonceTransferMessageWithConfig(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2142,6 +2377,29 @@ pub fn buildOwnedVersionedNonceTransferMessageWithConfig(
     options: ?NonceTransferBuildOptions,
 ) !OwnedVersionedMessageV0 {
     return try self.buildOwnedVersionedNonceTransferMessageWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+}
+
+pub fn buildOwnedVersionedNonceTransferMessageWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+) !OwnedVersionedMessageV0 {
+    return try self.buildOwnedVersionedNonceTransferMessageWithSenderAndOptions(
         fee_payer_secret_key,
         sender_secret_key,
         nonce_authority_secret_key,
@@ -2166,6 +2424,29 @@ pub fn buildVersionedNonceTransferMessageBytes(
 ) ![]u8 {
     return try buildVersionedNonceTransferMessageBytesWithResolvedBlockhash(
         self,
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+    );
+}
+
+pub fn buildVersionedNonceTransferMessageBytesWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    return try self.buildVersionedNonceTransferMessageBytes(
         fee_payer_secret_key,
         sender_secret_key,
         nonce_authority_secret_key,
@@ -2205,6 +2486,29 @@ pub fn buildVersionedNonceTransferMessageBytesWithOptions(
     );
 }
 
+pub fn buildVersionedNonceTransferMessageBytesWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+) ![]u8 {
+    return try self.buildVersionedNonceTransferMessageBytesWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+}
+
 pub fn buildVersionedNonceTransferMessageBytesWithConfig(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2217,6 +2521,29 @@ pub fn buildVersionedNonceTransferMessageBytesWithConfig(
     options: ?NonceTransferBuildOptions,
 ) ![]u8 {
     return try self.buildVersionedNonceTransferMessageBytesWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+}
+
+pub fn buildVersionedNonceTransferMessageBytesWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+) ![]u8 {
+    return try self.buildVersionedNonceTransferMessageBytesWithSenderAndOptions(
         fee_payer_secret_key,
         sender_secret_key,
         nonce_authority_secret_key,
@@ -2253,6 +2580,29 @@ pub fn buildVersionedNonceTransferMessageBase64(
     return try sdk.encodeBase64(self.allocator, message_bytes);
 }
 
+pub fn buildVersionedNonceTransferMessageBase64WithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+) ![]u8 {
+    return try self.buildVersionedNonceTransferMessageBase64(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+    );
+}
+
 pub fn buildVersionedNonceTransferMessageBase64WithOptions(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2278,6 +2628,29 @@ pub fn buildVersionedNonceTransferMessageBase64WithOptions(
     return try sdk.encodeBase64(self.allocator, message_bytes);
 }
 
+pub fn buildVersionedNonceTransferMessageBase64WithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+) ![]u8 {
+    return try self.buildVersionedNonceTransferMessageBase64WithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+}
+
 pub fn buildVersionedNonceTransferMessageBase64WithConfig(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2290,6 +2663,29 @@ pub fn buildVersionedNonceTransferMessageBase64WithConfig(
     options: ?NonceTransferBuildOptions,
 ) ![]u8 {
     return try self.buildVersionedNonceTransferMessageBase64WithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+    );
+}
+
+pub fn buildVersionedNonceTransferMessageBase64WithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+) ![]u8 {
+    return try self.buildVersionedNonceTransferMessageBase64WithSenderAndOptions(
         fee_payer_secret_key,
         sender_secret_key,
         nonce_authority_secret_key,
@@ -2324,6 +2720,29 @@ pub fn getFeeForNonceTransferMessageResponse(
     );
 }
 
+pub fn getFeeForNonceTransferMessageWithSenderResponse(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForNonceTransferMessageResponse(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        recent_blockhash,
+        commitment,
+    );
+}
+
 pub fn getFeeForNonceTransferMessageResponseWithOptions(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2354,6 +2773,29 @@ pub fn getFeeForNonceTransferMessageResponseWithOptions(
     return try self.getFeeForMessageResponseTyped(owned.message, commitment);
 }
 
+pub fn getFeeForNonceTransferMessageWithSenderResponseWithOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?NonceTransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForNonceTransferMessageResponseWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        options,
+        commitment,
+    );
+}
+
 pub fn getFeeForNonceTransferMessageResponseWithConfig(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2377,6 +2819,29 @@ pub fn getFeeForNonceTransferMessageResponseWithConfig(
     );
 }
 
+pub fn getFeeForNonceTransferMessageWithSenderResponseWithConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?NonceTransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForNonceTransferMessageWithSenderResponseWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        options,
+        commitment,
+    );
+}
+
 pub fn getFeeForNonceTransferMessage(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2389,6 +2854,30 @@ pub fn getFeeForNonceTransferMessage(
     commitment: ?Commitment,
 ) !FeeForMessage {
     const response = try self.getFeeForNonceTransferMessageResponse(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        recent_blockhash,
+        commitment,
+    );
+    return FeeForMessage{ .value = response.value };
+}
+
+pub fn getFeeForNonceTransferMessageWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    const response = try self.getFeeForNonceTransferMessageWithSenderResponse(
         fee_payer_secret_key,
         sender_secret_key,
         nonce_authority_secret_key,
@@ -2425,6 +2914,30 @@ pub fn getFeeForNonceTransferMessageWithOptions(
     return FeeForMessage{ .value = response.value };
 }
 
+pub fn getFeeForNonceTransferMessageWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?NonceTransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    const response = try self.getFeeForNonceTransferMessageWithSenderResponseWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        options,
+        commitment,
+    );
+    return FeeForMessage{ .value = response.value };
+}
+
 pub fn getFeeForNonceTransferMessageWithConfig(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2437,6 +2950,29 @@ pub fn getFeeForNonceTransferMessageWithConfig(
     commitment: ?Commitment,
 ) !FeeForMessage {
     return try self.getFeeForNonceTransferMessageWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        options,
+        commitment,
+    );
+}
+
+pub fn getFeeForNonceTransferMessageWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    options: ?NonceTransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    return try self.getFeeForNonceTransferMessageWithSenderAndOptions(
         fee_payer_secret_key,
         sender_secret_key,
         nonce_authority_secret_key,
@@ -2473,6 +3009,31 @@ pub fn getFeeForVersionedNonceTransferMessageResponse(
     );
 }
 
+pub fn getFeeForVersionedNonceTransferMessageWithSenderResponse(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForVersionedNonceTransferMessageResponse(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+        commitment,
+    );
+}
+
 pub fn getFeeForVersionedNonceTransferMessageResponseWithOptions(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2505,6 +3066,31 @@ pub fn getFeeForVersionedNonceTransferMessageResponseWithOptions(
     return try self.getFeeForVersionedMessageResponseTyped(owned.message, commitment);
 }
 
+pub fn getFeeForVersionedNonceTransferMessageWithSenderResponseWithOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForVersionedNonceTransferMessageResponseWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+        commitment,
+    );
+}
+
 pub fn getFeeForVersionedNonceTransferMessageResponseWithConfig(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2530,6 +3116,31 @@ pub fn getFeeForVersionedNonceTransferMessageResponseWithConfig(
     );
 }
 
+pub fn getFeeForVersionedNonceTransferMessageWithSenderResponseWithConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessageResponse {
+    return try self.getFeeForVersionedNonceTransferMessageWithSenderResponseWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+        commitment,
+    );
+}
+
 pub fn getFeeForVersionedNonceTransferMessage(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2543,6 +3154,32 @@ pub fn getFeeForVersionedNonceTransferMessage(
     commitment: ?Commitment,
 ) !FeeForMessage {
     const response = try self.getFeeForVersionedNonceTransferMessageResponse(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        recent_blockhash,
+        address_lookup_tables,
+        commitment,
+    );
+    return FeeForMessage{ .value = response.value };
+}
+
+pub fn getFeeForVersionedNonceTransferMessageWithSender(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    recent_blockhash: []const u8,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    const response = try self.getFeeForVersionedNonceTransferMessageWithSenderResponse(
         fee_payer_secret_key,
         sender_secret_key,
         nonce_authority_secret_key,
@@ -2582,6 +3219,32 @@ pub fn getFeeForVersionedNonceTransferMessageWithOptions(
     return FeeForMessage{ .value = response.value };
 }
 
+pub fn getFeeForVersionedNonceTransferMessageWithSenderAndOptions(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    const response = try self.getFeeForVersionedNonceTransferMessageWithSenderResponseWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+        commitment,
+    );
+    return FeeForMessage{ .value = response.value };
+}
+
 pub fn getFeeForVersionedNonceTransferMessageWithConfig(
     self: anytype,
     fee_payer_secret_key: []const u8,
@@ -2595,6 +3258,31 @@ pub fn getFeeForVersionedNonceTransferMessageWithConfig(
     commitment: ?Commitment,
 ) !FeeForMessage {
     return try self.getFeeForVersionedNonceTransferMessageWithOptions(
+        fee_payer_secret_key,
+        sender_secret_key,
+        nonce_authority_secret_key,
+        nonce_account_pubkey,
+        destination,
+        lamports,
+        address_lookup_tables,
+        options,
+        commitment,
+    );
+}
+
+pub fn getFeeForVersionedNonceTransferMessageWithSenderAndConfig(
+    self: anytype,
+    fee_payer_secret_key: []const u8,
+    sender_secret_key: []const u8,
+    nonce_authority_secret_key: []const u8,
+    nonce_account_pubkey: []const u8,
+    destination: []const u8,
+    lamports: u64,
+    address_lookup_tables: []const AddressLookupTableAccount,
+    options: ?NonceTransferBuildOptions,
+    commitment: ?Commitment,
+) !FeeForMessage {
+    return try self.getFeeForVersionedNonceTransferMessageWithSenderAndOptions(
         fee_payer_secret_key,
         sender_secret_key,
         nonce_authority_secret_key,
