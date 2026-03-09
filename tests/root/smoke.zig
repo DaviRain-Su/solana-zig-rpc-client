@@ -1981,6 +1981,32 @@ test "root.setMock converts plain client to direct mock client from response que
     try std.testing.expectEqual(@as(u64, 2151), slot);
 }
 
+test "root.setMockAndRequestSenderOptions converts plain client to direct mock client and updates runtime options" {
+    const allocator = std.testing.allocator;
+
+    var rpc = try client.RpcClient.new(allocator, "http://127.0.0.1:8899");
+    defer rpc.deinit();
+
+    try rpc.setMockAndRequestSenderOptions(
+        &.{ .{ .result_json = "2152" } },
+        .{
+            .endpoint = "custom://set-mock-direct",
+            .commitment = .confirmed,
+            .request_timeout_ms = 50,
+            .confirm_transaction_initial_timeout_ms = 70,
+        },
+    );
+
+    try std.testing.expect(rpc.isDirectMockClient());
+    try std.testing.expectEqualStrings("custom://set-mock-direct", rpc.url());
+    try std.testing.expectEqual(client.Commitment.confirmed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 50), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 70), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 2152), slot);
+}
+
 test "root.setMockWithHandler converts plain client to direct handler-backed mock client" {
     const allocator = std.testing.allocator;
     var handler_context = MockHandlerContext{};
@@ -1996,6 +2022,37 @@ test "root.setMockWithHandler converts plain client to direct handler-backed moc
     try std.testing.expect(rpc.isDirectMockClient());
     try std.testing.expect(rpc.isMock());
     try std.testing.expect(rpc.hasMockHandler());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 789), slot);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+}
+
+test "root.setMockWithHandlerAndRequestSenderOptions converts plain client to direct handler-backed mock client and updates runtime options" {
+    const allocator = std.testing.allocator;
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.new(allocator, "http://127.0.0.1:8899");
+    defer rpc.deinit();
+
+    try rpc.setMockWithHandlerAndRequestSenderOptions(
+        .{
+            .context = &handler_context,
+            .callback = dynamicMockHandler,
+        },
+        .{
+            .endpoint = "custom://set-mock-handler-direct",
+            .commitment = .finalized,
+            .request_timeout_ms = 51,
+            .confirm_transaction_initial_timeout_ms = 71,
+        },
+    );
+
+    try std.testing.expect(rpc.isDirectMockClient());
+    try std.testing.expectEqualStrings("custom://set-mock-handler-direct", rpc.url());
+    try std.testing.expectEqual(client.Commitment.finalized, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 51), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 71), rpc.getConfirmTransactionInitialTimeoutMs());
 
     const slot = try rpc.getSlot(.finalized);
     try std.testing.expectEqual(@as(u64, 789), slot);
@@ -2135,6 +2192,34 @@ test "root.setMockSender converts plain client to direct mock client" {
 
     const slot = try rpc.getSlot(null);
     try std.testing.expectEqual(@as(u64, 2301), slot);
+}
+
+test "root.setMockSenderAndRequestSenderOptions converts plain client to direct mock client and updates runtime options" {
+    const allocator = std.testing.allocator;
+    var sender = client.MockSender.init(allocator);
+    try sender.pushSlotResult(2302);
+
+    var rpc = try client.RpcClient.new(allocator, "http://127.0.0.1:8899");
+    defer rpc.deinit();
+
+    try rpc.setMockSenderAndRequestSenderOptions(
+        sender,
+        .{
+            .endpoint = "custom://set-mock-sender-direct",
+            .commitment = .processed,
+            .request_timeout_ms = 52,
+            .confirm_transaction_initial_timeout_ms = 72,
+        },
+    );
+
+    try std.testing.expect(rpc.isDirectMockClient());
+    try std.testing.expectEqualStrings("custom://set-mock-sender-direct", rpc.url());
+    try std.testing.expectEqual(client.Commitment.processed, rpc.getDefaultCommitment().?);
+    try std.testing.expectEqual(@as(?u64, 52), rpc.getRequestTimeoutMs());
+    try std.testing.expectEqual(@as(?u64, 72), rpc.getConfirmTransactionInitialTimeoutMs());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 2302), slot);
 }
 
 test "root.setMockSender converts request sender client to direct mock client" {

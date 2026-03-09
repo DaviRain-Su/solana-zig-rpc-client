@@ -2646,8 +2646,30 @@ pub const RpcClient = struct {
         try self.setMockSender(try MockSenderType.initSequence(self.allocator, responses));
     }
 
+    pub fn setMockAndRequestSenderOptions(
+        self: *RpcClient,
+        responses: []const MockResponseType,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.setMockSenderAndRequestSenderOptions(
+            try MockSenderType.initSequence(self.allocator, responses),
+            options,
+        );
+    }
+
     pub fn setMockWithHandler(self: *RpcClient, handler: MockRequestHandlerType) !void {
         try self.setMockSender(MockSenderType.initWithHandler(self.allocator, handler));
+    }
+
+    pub fn setMockWithHandlerAndRequestSenderOptions(
+        self: *RpcClient,
+        handler: MockRequestHandlerType,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.setMockSenderAndRequestSenderOptions(
+            MockSenderType.initWithHandler(self.allocator, handler),
+            options,
+        );
     }
 
     pub fn setMockSender(self: *RpcClient, sender: MockSenderType) !void {
@@ -2666,6 +2688,15 @@ pub const RpcClient = struct {
         self.request_sender = lifecycle_methods.makeMockRequestSender(replacement);
         self.request_id = 1;
         self.transport_stats = .{};
+    }
+
+    pub fn setMockSenderAndRequestSenderOptions(
+        self: *RpcClient,
+        sender: MockSenderType,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.setMockSender(sender);
+        self.applyRequestSenderOptions(options);
     }
 
     pub fn replaceWithBorrowedMockSender(
