@@ -4413,6 +4413,10 @@ pub const PubsubClient = struct {
         return self.state.options.auto_reconnect;
     }
 
+    pub fn usesDefaultAutoReconnect(self: *const Self) bool {
+        return self.isAutoReconnectEnabled() == (pubsub_types.PubsubClientOptions{}).auto_reconnect;
+    }
+
     pub fn getHeartbeatIntervalMs(self: *const Self) ?u32 {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
