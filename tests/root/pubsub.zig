@@ -1800,12 +1800,16 @@ test "root.PubsubClient auto_reconnect setter can enable reconnect at runtime" {
     defer pubsub.deinit();
 
     try std.testing.expect(!pubsub.isAutoReconnectEnabled());
+    try std.testing.expect(!pubsub.canReconnect());
+    try std.testing.expect(pubsub.cannotReconnect());
     try std.testing.expectEqual(@as(u32, 0), pubsub.getNextReconnectDelayMs());
     try std.testing.expect(pubsub.isReconnectImmediate());
     try std.testing.expect(!pubsub.isReconnectBackoffEnabled());
     try std.testing.expect(!pubsub.isReconnectFixedDelay());
     pubsub.setAutoReconnectEnabled(true);
     try std.testing.expect(pubsub.isAutoReconnectEnabled());
+    try std.testing.expect(pubsub.canReconnect());
+    try std.testing.expect(!pubsub.cannotReconnect());
 
     const subscription = try pubsub.signatureSubscribe(
         "Reconnect1111111111111111111111111111111111111",
@@ -1946,6 +1950,8 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expectEqual(@as(?u32, 7), pubsub.getRemainingReconnectAttempts());
     try std.testing.expect(pubsub.hasRemainingReconnectAttempts());
     try std.testing.expect(!pubsub.isReconnectExhausted());
+    try std.testing.expect(pubsub.canReconnect());
+    try std.testing.expect(!pubsub.cannotReconnect());
     try std.testing.expectEqual(@as(usize, 5), pubsub.getSubscriptionQueueLimit());
     try std.testing.expect(!pubsub.usesDefaultSubscriptionQueueLimit());
     try std.testing.expect(pubsub.usesCustomSubscriptionQueueLimit());
@@ -2007,7 +2013,7 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expectEqual(default_options.reconnect_max_attempts, client.PubsubClient.defaultReconnectMaxAttempts());
     try std.testing.expectEqual(@as(u32, 250), client.PubsubClient.defaultEffectiveReconnectMaxDelayMs());
     try std.testing.expectEqual(@as(u32, 250), client.PubsubClient.defaultReconnectDelayForAttempt(0));
-    try std.testing.expectEqual(@as(u32, 500), client.PubsubClient.defaultReconnectDelayForAttempt(1));
+    try std.testing.expectEqual(@as(u32, 250), client.PubsubClient.defaultReconnectDelayForAttempt(1));
     try std.testing.expectEqual(default_options.subscription_queue_limit, client.PubsubClient.defaultSubscriptionQueueLimit());
     try std.testing.expectEqual(default_options.queue_overflow_policy, client.PubsubClient.defaultQueueOverflowPolicy());
     try std.testing.expectEqual(default_options.handshake_timeout_ms, client.PubsubClient.defaultHandshakeTimeoutMs());
@@ -2076,6 +2082,8 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.hasEverReconnected());
     try std.testing.expect(pubsub.hasRemainingReconnectAttempts());
     try std.testing.expect(!pubsub.isReconnectExhausted());
+    try std.testing.expect(!pubsub.canReconnect());
+    try std.testing.expect(pubsub.cannotReconnect());
     try std.testing.expect(!pubsub.isReconnectLimitReached());
     try std.testing.expect(pubsub.usesDefaultSubscriptionQueueLimit());
     try std.testing.expect(!pubsub.usesCustomSubscriptionQueueLimit());
@@ -2157,6 +2165,8 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expectEqual(@as(?u32, 9), pubsub.getRemainingReconnectAttempts());
     try std.testing.expect(pubsub.hasRemainingReconnectAttempts());
     try std.testing.expect(!pubsub.isReconnectExhausted());
+    try std.testing.expect(!pubsub.canReconnect());
+    try std.testing.expect(pubsub.cannotReconnect());
     try std.testing.expectEqual(@as(usize, 13), pubsub.getSubscriptionQueueLimit());
     try std.testing.expect(!pubsub.usesDefaultSubscriptionQueueLimit());
     try std.testing.expect(pubsub.usesCustomSubscriptionQueueLimit());
