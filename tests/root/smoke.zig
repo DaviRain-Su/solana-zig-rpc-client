@@ -5192,6 +5192,10 @@ test "root.RequestSender.fromMockSender borrows scripted mock sender state" {
         try std.testing.expectEqualStrings("getSlot", rpc.lastCapturedMockRequestMethod().?);
         try mock_sender_assertions.expectMockSenderLastCapturedRequestMethod(&sender, "getSlot");
         try mock_sender_assertions.expectMockRpcLastCapturedRequestMethod(&rpc, "getSlot");
+        try mock_sender_assertions.expectMockSenderLastCapturedRequestParamsJsonContains(&sender, "\"processed\"");
+        try mock_sender_assertions.expectMockRpcLastCapturedRequestParamsJsonContains(&rpc, "\"processed\"");
+        try mock_sender_assertions.expectMockSenderLastCapturedRequestBodyContains(&sender, "\"method\":\"getSlot\"");
+        try mock_sender_assertions.expectMockRpcLastCapturedRequestBodyContains(&rpc, "\"method\":\"getSlot\"");
         try std.testing.expect(std.mem.indexOf(u8, sender.lastCapturedRequestParamsJson().?, "\"processed\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, rpc.lastCapturedMockRequestParamsJson().?, "\"processed\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, sender.lastCapturedRequestBody().?, "\"method\":\"getSlot\"") != null);
@@ -5223,6 +5227,12 @@ test "root.RequestSender.fromMockSender borrows scripted mock sender state" {
     try mock_sender_assertions.expectMockRequestSenderLastCapturedRequestId(last_request_sender, 1);
     try std.testing.expectEqualStrings("getSlot", last_request_sender.lastCapturedMockRequestMethod().?);
     try mock_sender_assertions.expectMockRequestSenderLastCapturedRequestMethod(last_request_sender, "getSlot");
+    try mock_sender_assertions.expectMockSenderLastCapturedRequestParamsJsonContains(&sender, "\"processed\"");
+    try mock_sender_assertions.expectMockRpcLastCapturedRequestParamsJsonContains(&second_rpc, "\"processed\"");
+    try mock_sender_assertions.expectMockRequestSenderLastCapturedRequestParamsJsonContains(last_request_sender, "\"processed\"");
+    try mock_sender_assertions.expectMockSenderLastCapturedRequestBodyContains(&sender, "\"method\":\"getSlot\"");
+    try mock_sender_assertions.expectMockRpcLastCapturedRequestBodyContains(&second_rpc, "\"method\":\"getSlot\"");
+    try mock_sender_assertions.expectMockRequestSenderLastCapturedRequestBodyContains(last_request_sender, "\"method\":\"getSlot\"");
     try std.testing.expect(std.mem.indexOf(u8, sender.lastCapturedRequestParamsJson().?, "\"processed\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, second_rpc.lastCapturedMockRequestParamsJson().?, "\"processed\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, last_request_sender.lastCapturedMockRequestParamsJson().?, "\"processed\"") != null);
