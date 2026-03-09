@@ -414,6 +414,26 @@ pub const RequestSender = struct {
         return if (self.mockSenderConst() catch null) |sender| sender.capturedRequests() else &.{};
     }
 
+    pub fn firstCapturedMockRequest(self: *const RequestSender) ?MockRequestView {
+        return if (self.mockSenderConst() catch null) |sender| sender.firstCapturedRequest() else null;
+    }
+
+    pub fn firstCapturedMockRequestId(self: *const RequestSender) ?u64 {
+        return if (self.firstCapturedMockRequest()) |request| request.id else null;
+    }
+
+    pub fn firstCapturedMockRequestMethod(self: *const RequestSender) ?[]const u8 {
+        return if (self.firstCapturedMockRequest()) |request| request.method else null;
+    }
+
+    pub fn firstCapturedMockRequestParamsJson(self: *const RequestSender) ?[]const u8 {
+        return if (self.firstCapturedMockRequest()) |request| request.params_json else null;
+    }
+
+    pub fn firstCapturedMockRequestBody(self: *const RequestSender) ?[]const u8 {
+        return if (self.firstCapturedMockRequest()) |request| request.request_body else null;
+    }
+
     pub fn lastCapturedMockRequest(self: *const RequestSender) ?MockRequestView {
         return if (self.mockSenderConst() catch null) |sender| sender.lastCapturedRequest() else null;
     }

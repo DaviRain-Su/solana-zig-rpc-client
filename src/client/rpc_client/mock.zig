@@ -1258,6 +1258,33 @@ pub const MockSender = struct {
         return self.requests.items;
     }
 
+    pub fn firstCapturedRequest(self: *const MockSender) ?MockRequestView {
+        if (self.requests.items.len == 0) return null;
+        const request = self.requests.items[0];
+        return .{
+            .id = request.id,
+            .method = request.method,
+            .params_json = request.params_json,
+            .request_body = request.request_body,
+        };
+    }
+
+    pub fn firstCapturedRequestId(self: *const MockSender) ?u64 {
+        return if (self.firstCapturedRequest()) |request| request.id else null;
+    }
+
+    pub fn firstCapturedRequestMethod(self: *const MockSender) ?[]const u8 {
+        return if (self.firstCapturedRequest()) |request| request.method else null;
+    }
+
+    pub fn firstCapturedRequestParamsJson(self: *const MockSender) ?[]const u8 {
+        return if (self.firstCapturedRequest()) |request| request.params_json else null;
+    }
+
+    pub fn firstCapturedRequestBody(self: *const MockSender) ?[]const u8 {
+        return if (self.firstCapturedRequest()) |request| request.request_body else null;
+    }
+
     pub fn lastCapturedRequest(self: *const MockSender) ?MockRequestView {
         if (self.requests.items.len == 0) return null;
         const request = self.requests.items[self.requests.items.len - 1];

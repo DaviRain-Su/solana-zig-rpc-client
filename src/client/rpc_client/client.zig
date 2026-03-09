@@ -4172,6 +4172,26 @@ pub const RpcClient = struct {
         return self.capturedMockRequests().len > 0;
     }
 
+    pub fn firstCapturedMockRequest(self: *const RpcClient) ?MockRequestViewType {
+        return if (self.resolvedMockSenderConst()) |sender| sender.firstCapturedRequest() else null;
+    }
+
+    pub fn firstCapturedMockRequestId(self: *const RpcClient) ?u64 {
+        return if (self.firstCapturedMockRequest()) |request| request.id else null;
+    }
+
+    pub fn firstCapturedMockRequestMethod(self: *const RpcClient) ?[]const u8 {
+        return if (self.firstCapturedMockRequest()) |request| request.method else null;
+    }
+
+    pub fn firstCapturedMockRequestParamsJson(self: *const RpcClient) ?[]const u8 {
+        return if (self.firstCapturedMockRequest()) |request| request.params_json else null;
+    }
+
+    pub fn firstCapturedMockRequestBody(self: *const RpcClient) ?[]const u8 {
+        return if (self.firstCapturedMockRequest()) |request| request.request_body else null;
+    }
+
     pub fn lastCapturedMockRequest(self: *const RpcClient) ?MockRequestViewType {
         return if (self.resolvedMockSenderConst()) |sender| sender.lastCapturedRequest() else null;
     }
