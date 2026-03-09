@@ -4402,10 +4402,18 @@ pub const PubsubClient = struct {
         return self.state.options.heartbeat_interval_ms;
     }
 
+    pub fn hasHeartbeatInterval(self: *const Self) bool {
+        return self.getHeartbeatIntervalMs() != null;
+    }
+
     pub fn getHeartbeatTimeoutMs(self: *const Self) ?u32 {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
         return self.state.options.heartbeat_timeout_ms;
+    }
+
+    pub fn hasHeartbeatTimeout(self: *const Self) bool {
+        return self.getHeartbeatTimeoutMs() != null;
     }
 
     pub fn getReconnectDelayMs(self: *const Self) u32 {
@@ -4426,10 +4434,18 @@ pub const PubsubClient = struct {
         return self.state.options.reconnect_max_delay_ms;
     }
 
+    pub fn hasReconnectMaxDelay(self: *const Self) bool {
+        return self.getReconnectMaxDelayMs() != null;
+    }
+
     pub fn getReconnectMaxAttempts(self: *const Self) ?u32 {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
         return self.state.options.reconnect_max_attempts;
+    }
+
+    pub fn hasReconnectMaxAttempts(self: *const Self) bool {
+        return self.getReconnectMaxAttempts() != null;
     }
 
     pub fn getSubscriptionQueueLimit(self: *const Self) usize {
@@ -4454,6 +4470,10 @@ pub const PubsubClient = struct {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
         return self.state.options.write_timeout_ms;
+    }
+
+    pub fn hasWriteTimeout(self: *const Self) bool {
+        return self.getWriteTimeoutMs() != null;
     }
 
     pub fn getMaxMessageSize(self: *const Self) usize {

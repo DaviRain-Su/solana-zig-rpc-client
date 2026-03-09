@@ -1891,15 +1891,20 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     defer pubsub.deinit();
 
     try std.testing.expect(pubsub.isAutoReconnectEnabled());
+    try std.testing.expect(pubsub.hasHeartbeatInterval());
     try std.testing.expectEqual(@as(?u32, 25), pubsub.getHeartbeatIntervalMs());
+    try std.testing.expect(pubsub.hasHeartbeatTimeout());
     try std.testing.expectEqual(@as(?u32, 75), pubsub.getHeartbeatTimeoutMs());
     try std.testing.expectEqual(@as(u32, 80), pubsub.getReconnectDelayMs());
     try std.testing.expectEqual(@as(u8, 3), pubsub.getReconnectBackoffFactor());
+    try std.testing.expect(pubsub.hasReconnectMaxDelay());
     try std.testing.expectEqual(@as(?u32, 250), pubsub.getReconnectMaxDelayMs());
+    try std.testing.expect(pubsub.hasReconnectMaxAttempts());
     try std.testing.expectEqual(@as(?u32, 7), pubsub.getReconnectMaxAttempts());
     try std.testing.expectEqual(@as(usize, 5), pubsub.getSubscriptionQueueLimit());
     try std.testing.expectEqual(client.PubsubQueueOverflowPolicy.close_subscription, pubsub.getQueueOverflowPolicy());
     try std.testing.expectEqual(@as(u32, 150), pubsub.getHandshakeTimeoutMs());
+    try std.testing.expect(pubsub.hasWriteTimeout());
     try std.testing.expectEqual(@as(?u32, 250), pubsub.getWriteTimeoutMs());
     try std.testing.expectEqual(@as(usize, 128 * 1024), pubsub.getMaxMessageSize());
     try std.testing.expectEqual(@as(usize, 2048), pubsub.getBufferSize());
@@ -1940,14 +1945,18 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     pubsub.setBufferSize(2048);
 
     try std.testing.expect(!pubsub.isAutoReconnectEnabled());
+    try std.testing.expect(pubsub.hasHeartbeatTimeout());
     try std.testing.expectEqual(@as(?u32, 12_345), pubsub.getHeartbeatTimeoutMs());
     try std.testing.expectEqual(@as(u32, 555), pubsub.getReconnectDelayMs());
     try std.testing.expectEqual(@as(u8, 4), pubsub.getReconnectBackoffFactor());
+    try std.testing.expect(pubsub.hasReconnectMaxDelay());
     try std.testing.expectEqual(@as(?u32, 4_321), pubsub.getReconnectMaxDelayMs());
+    try std.testing.expect(pubsub.hasReconnectMaxAttempts());
     try std.testing.expectEqual(@as(?u32, 9), pubsub.getReconnectMaxAttempts());
     try std.testing.expectEqual(@as(usize, 13), pubsub.getSubscriptionQueueLimit());
     try std.testing.expectEqual(client.PubsubQueueOverflowPolicy.drop_newest, pubsub.getQueueOverflowPolicy());
     try std.testing.expectEqual(@as(u32, 8_765), pubsub.getHandshakeTimeoutMs());
+    try std.testing.expect(pubsub.hasWriteTimeout());
     try std.testing.expectEqual(@as(?u32, 432), pubsub.getWriteTimeoutMs());
     try std.testing.expectEqual(@as(usize, 1024), pubsub.getMaxMessageSize());
     try std.testing.expectEqual(@as(usize, 2048), pubsub.getBufferSize());
