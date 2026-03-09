@@ -1915,6 +1915,58 @@ test "root.RequestSender.replaceWithCallbackAndDeinit deinitializes previous cal
     try std.testing.expectEqual(@as(u64, 3371), slot);
 }
 
+test "root.RequestSender.replaceWithMock converts callback sender to owned mock sender" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 3380 };
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.init(
+            &context,
+            customRequestSender,
+        ),
+    );
+    defer rpc.deinit();
+
+    const sender = try rpc.requestSender();
+    try sender.replaceWithMock(allocator, &.{});
+    try sender.pushMockSlotResult(3381);
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(null);
+    try std.testing.expectEqual(@as(u64, 3381), slot);
+}
+
+test "root.RequestSender.replaceWithMockHandler installs owned handler-backed sender" {
+    const allocator = std.testing.allocator;
+    var context = RequestSenderContext{ .base_slot = 3390 };
+    var handler_context = MockHandlerContext{};
+
+    var rpc = try client.RpcClient.newWithRequestSender(
+        allocator,
+        client.RequestSender.init(
+            &context,
+            customRequestSender,
+        ),
+    );
+    defer rpc.deinit();
+
+    const sender = try rpc.requestSender();
+    try sender.replaceWithMockHandler(allocator, .{
+        .context = &handler_context,
+        .callback = dynamicMockHandler,
+    });
+
+    try std.testing.expect(rpc.isRequestSenderBackedMockClient());
+    try std.testing.expect(rpc.isMock());
+
+    const slot = try rpc.getSlot(.finalized);
+    try std.testing.expectEqual(@as(u64, 789), slot);
+    try std.testing.expectEqual(@as(usize, 1), handler_context.call_count);
+}
+
 test "root.RequestSender mock script helpers expose pending counts and summary" {
     const allocator = std.testing.allocator;
     var mock_sender = client.MockSender.init(allocator);
