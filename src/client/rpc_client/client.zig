@@ -4205,6 +4205,10 @@ pub const RpcClient = struct {
         self.setRequestSender(try RequestSender.initMockWithHandler(self.allocator, handler));
     }
 
+    pub fn setMockRequestHandler(self: *RpcClient, handler: MockRequestHandlerType) !void {
+        try self.setMockRequestSenderWithHandler(handler);
+    }
+
     pub fn setMockRequestSenderWithHandlerAndRequestSenderOptions(
         self: *RpcClient,
         handler: MockRequestHandlerType,
@@ -4214,6 +4218,14 @@ pub const RpcClient = struct {
             try RequestSender.initMockWithHandler(self.allocator, handler),
             options,
         );
+    }
+
+    pub fn setMockRequestHandlerAndRequestSenderOptions(
+        self: *RpcClient,
+        handler: MockRequestHandlerType,
+        options: RequestSenderOptions,
+    ) !void {
+        try self.setMockRequestSenderWithHandlerAndRequestSenderOptions(handler, options);
     }
 
     pub fn setMockRequestSenderWithSender(self: *RpcClient, sender: MockSenderType) !void {
