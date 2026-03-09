@@ -426,6 +426,10 @@ pub const RequestSender = struct {
         return if (self.lastCapturedMockRequest()) |request| request.params_json else null;
     }
 
+    pub fn lastCapturedMockRequestBody(self: *const RequestSender) ?[]const u8 {
+        return if (self.lastCapturedMockRequest()) |request| request.request_body else null;
+    }
+
     pub fn lastMockScriptMissRequest(self: *const RequestSender) ?MockRequestView {
         return if (self.mockSenderConst() catch null) |sender| sender.lastScriptMissRequest() else null;
     }

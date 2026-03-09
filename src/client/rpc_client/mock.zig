@@ -1277,6 +1277,10 @@ pub const MockSender = struct {
         return if (self.lastCapturedRequest()) |request| request.params_json else null;
     }
 
+    pub fn lastCapturedRequestBody(self: *const MockSender) ?[]const u8 {
+        return if (self.lastCapturedRequest()) |request| request.request_body else null;
+    }
+
     pub fn clearCapturedRequests(self: *MockSender) void {
         for (self.requests.items) |request| {
             request.deinit(self.allocator);
