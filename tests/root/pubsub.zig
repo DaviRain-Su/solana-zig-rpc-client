@@ -1916,6 +1916,7 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expectEqual(@as(u32, 250), pubsub.getReconnectDelayForAttempt(2));
     try std.testing.expectEqual(@as(u8, 3), pubsub.getReconnectBackoffFactor());
     try std.testing.expect(pubsub.hasReconnectMaxDelay());
+    try std.testing.expect(!pubsub.usesDefaultReconnectMaxDelay());
     try std.testing.expect(pubsub.isReconnectDelayCapped());
     try std.testing.expectEqual(@as(?u32, 250), pubsub.getReconnectMaxDelayMs());
     try std.testing.expectEqual(@as(u32, 250), pubsub.getEffectiveReconnectMaxDelayMs());
@@ -1928,6 +1929,7 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expect(!pubsub.isReconnectExhausted());
     try std.testing.expectEqual(@as(usize, 5), pubsub.getSubscriptionQueueLimit());
     try std.testing.expectEqual(client.PubsubQueueOverflowPolicy.close_subscription, pubsub.getQueueOverflowPolicy());
+    try std.testing.expect(!pubsub.usesDefaultQueueOverflowPolicy());
     try std.testing.expect(!pubsub.isQueueOverflowDropOldest());
     try std.testing.expect(!pubsub.isQueueOverflowDropNewest());
     try std.testing.expect(pubsub.isQueueOverflowCloseSubscription());
@@ -1973,6 +1975,7 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.isReconnectFixedDelay());
     try std.testing.expect(!pubsub.isHeartbeatEnabled());
     try std.testing.expect(!pubsub.isReconnectDelayCapped());
+    try std.testing.expect(pubsub.usesDefaultReconnectMaxDelay());
     try std.testing.expect(!pubsub.isReconnectAttemptLimited());
     try std.testing.expect(pubsub.isReconnectUnlimited());
     try std.testing.expectEqual(@as(?u32, null), pubsub.getRemainingReconnectAttempts());
@@ -1983,6 +1986,7 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.isReconnectExhausted());
     try std.testing.expect(!pubsub.isReconnectLimitReached());
     try std.testing.expect(!pubsub.isWriteTimeoutEnabled());
+    try std.testing.expect(pubsub.usesDefaultQueueOverflowPolicy());
     try std.testing.expect(pubsub.isQueueOverflowDropOldest());
     try std.testing.expect(!pubsub.isQueueOverflowDropNewest());
     try std.testing.expect(!pubsub.isQueueOverflowCloseSubscription());
@@ -2017,6 +2021,7 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expectEqual(@as(u32, 4_321), pubsub.getReconnectDelayForAttempt(2));
     try std.testing.expectEqual(@as(u8, 4), pubsub.getReconnectBackoffFactor());
     try std.testing.expect(pubsub.hasReconnectMaxDelay());
+    try std.testing.expect(!pubsub.usesDefaultReconnectMaxDelay());
     try std.testing.expect(pubsub.isReconnectDelayCapped());
     try std.testing.expectEqual(@as(?u32, 4_321), pubsub.getReconnectMaxDelayMs());
     try std.testing.expectEqual(@as(u32, 4_321), pubsub.getEffectiveReconnectMaxDelayMs());
@@ -2029,6 +2034,7 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.isReconnectExhausted());
     try std.testing.expectEqual(@as(usize, 13), pubsub.getSubscriptionQueueLimit());
     try std.testing.expectEqual(client.PubsubQueueOverflowPolicy.drop_newest, pubsub.getQueueOverflowPolicy());
+    try std.testing.expect(!pubsub.usesDefaultQueueOverflowPolicy());
     try std.testing.expect(!pubsub.isQueueOverflowDropOldest());
     try std.testing.expect(pubsub.isQueueOverflowDropNewest());
     try std.testing.expect(!pubsub.isQueueOverflowCloseSubscription());

@@ -4500,6 +4500,10 @@ pub const PubsubClient = struct {
         return self.getReconnectMaxDelayMs() != null;
     }
 
+    pub fn usesDefaultReconnectMaxDelay(self: *const Self) bool {
+        return !self.hasReconnectMaxDelay();
+    }
+
     pub fn isReconnectDelayCapped(self: *const Self) bool {
         return self.hasReconnectMaxDelay();
     }
@@ -4554,6 +4558,10 @@ pub const PubsubClient = struct {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
         return self.state.options.queue_overflow_policy;
+    }
+
+    pub fn usesDefaultQueueOverflowPolicy(self: *const Self) bool {
+        return self.isQueueOverflowDropOldest();
     }
 
     pub fn isQueueOverflowDropOldest(self: *const Self) bool {
