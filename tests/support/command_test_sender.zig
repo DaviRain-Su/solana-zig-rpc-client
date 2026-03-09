@@ -23,7 +23,3 @@ pub fn commandCapturedRequest(context: *const CommandTestSender) []const u8 {
 pub fn commandCapturedRequestAt(context: *const CommandTestSender, index: usize) []const u8 {
     return context.sender.capturedRequests()[index].request_body;
 }
-
-pub fn commandCapturedRequestCount(context: *const CommandTestSender) usize {
-    return context.sender.capturedRequests().len;
-}

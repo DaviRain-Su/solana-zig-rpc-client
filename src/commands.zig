@@ -17,9 +17,6 @@ const command_test_support = if (builtin.is_test) @import("command_test_support"
         unreachable;
     }
 
-    pub fn commandCapturedRequestCount(_: *const SenderType) usize {
-        unreachable;
-    }
 };
 const mock_sender_assertions = if (builtin.is_test) @import("mock_sender_assertions") else struct {
     pub fn expectMockSenderRequestCount(_: *const client.MockSender, _: usize) !void {
@@ -33,7 +30,6 @@ const mock_sender_assertions = if (builtin.is_test) @import("mock_sender_asserti
 const CommandTestSender = if (builtin.is_test) command_test_support.CommandTestSender else command_test_support.SenderType;
 const commandCapturedRequest = command_test_support.commandCapturedRequest;
 const commandCapturedRequestAt = command_test_support.commandCapturedRequestAt;
-const commandCapturedRequestCount = command_test_support.commandCapturedRequestCount;
 const expectMockSenderRequestCount = mock_sender_assertions.expectMockSenderRequestCount;
 const expectMockSenderScriptSatisfied = mock_sender_assertions.expectMockSenderScriptSatisfied;
 
