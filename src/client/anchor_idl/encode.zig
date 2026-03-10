@@ -139,6 +139,34 @@ fn encodeArgValue(
 
             return error.UnsupportedAnchorIdlType;
         }
+
+        if (type_spec.object.get("array")) |array_value| {
+            const element_type, const expected_len: usize = switch (array_value) {
+                .array => |items| blk: {
+                    if (items.items.len != 2) return error.UnsupportedAnchorIdlType;
+                    const element_type = items.items[0];
+                    const len_value = items.items[1];
+                    if (len_value != .integer or len_value.integer < 0) return error.InvalidAnchorIdlArgValue;
+                    const len = @intCast(len_value.integer);
+                    break :blk .{ element_type, len };
+                },
+                .object => |object_value| blk: {
+                    const element_type = object_value.get("type") orelse return error.UnsupportedAnchorIdlType;
+                    const len_value = object_value.get("len") orelse return error.UnsupportedAnchorIdlType;
+                    if (len_value != .integer or len_value.integer < 0) return error.InvalidAnchorIdlArgValue;
+                    break :blk .{ element_type, @intCast(len_value.integer) };
+                },
+                else => return error.UnsupportedAnchorIdlType,
+            };
+
+            if (value != .array) return error.InvalidAnchorIdlArgValue;
+            if (value.array.items.len != expected_len) return error.InvalidAnchorIdlArgValue;
+
+            for (value.array.items) |item| {
+                try encodeArgValue(allocator, bytes, idl, element_type, item);
+            }
+            return;
+        }
     }
 
     if (type_spec != .string) return error.UnsupportedAnchorIdlType;
@@ -193,6 +221,25 @@ fn encodeArgValue(
         if (value.string.len > std.math.maxInt(u32)) return error.InvalidAnchorIdlArgValue;
         try appendIntLittle(u32, bytes, allocator, @intCast(value.string.len));
         try bytes.appendSlice(allocator, value.string);
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "bytes")) {
+        switch (value) {
+            .string => {
+                if (value.string.len > std.math.maxInt(u32)) return error.InvalidAnchorIdlArgValue;
+                try appendIntLittle(u32, bytes, allocator, @intCast(value.string.len));
+                try bytes.appendSlice(allocator, value.string);
+            },
+            .array => {
+                if (value.array.items.len > std.math.maxInt(u32)) return error.InvalidAnchorIdlArgValue;
+                try appendIntLittle(u32, bytes, allocator, @intCast(value.array.items.len));
+                for (value.array.items) |byte_value| {
+                    if (byte_value != .integer or byte_value.integer < 0 or byte_value.integer > 255) return error.InvalidAnchorIdlArgValue;
+                    try bytes.append(allocator, @intCast(byte_value.integer));
+                }
+            },
+            else => return error.InvalidAnchorIdlArgValue,
+        }
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "pubkey")) {
@@ -325,6 +372,68 @@ test "anchor idl encodeInstructionData encodes option and vec args" {
         0x02, 0x00, 0x00, 0x00,
         0x01, 0x00,
         0x01, 0x02,
+    };
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "anchor idl encodeInstructionData encodes fixed array args" {
+    const allocator = std.testing.allocator;
+    const array_type = try std.json.parseFromSlice(std.json.Value, allocator, "[\"u16\", 3]", .{});
+    defer array_type.deinit();
+    const args = [_]idl_types.IdlArg{
+        .{ .name = "weights", .@"type" = array_type.value },
+    };
+    const instruction = idl_types.Instruction{
+        .name = "setWeights",
+        .discriminator = &.{ 2, 2, 2, 2, 2, 2, 2, 2 },
+        .args = &args,
+    };
+    const idl = idl_types.Idl{
+        .instructions = &.{instruction},
+    };
+
+    const encoded = try encodeInstructionData(
+        allocator,
+        &idl,
+        &instruction,
+        "{\"weights\":[10,11,12]}",
+    );
+    defer allocator.free(encoded);
+
+    const expected = [_]u8{
+        2, 2, 2, 2, 2, 2, 2, 2,
+        0x0a, 0x00,
+        0x0b, 0x00,
+        0x0c, 0x00,
+    };
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "anchor idl encodeInstructionData encodes bytes args" {
+    const allocator = std.testing.allocator;
+    const instruction = idl_types.Instruction{
+        .name = "setBytes",
+        .discriminator = &.{ 3, 3, 3, 3, 3, 3, 3, 3 },
+        .args = &.{
+            .{ .name = "payload", .@"type" = .{ .string = "bytes" } },
+        },
+    };
+    const idl = idl_types.Idl{
+        .instructions = &.{instruction},
+    };
+
+    const encoded = try encodeInstructionData(
+        allocator,
+        &idl,
+        &instruction,
+        "{\"payload\":[1, 2, 3]}",
+    );
+    defer allocator.free(encoded);
+
+    const expected = [_]u8{
+        3, 3, 3, 3, 3, 3, 3, 3,
+        0x03, 0x00, 0x00, 0x00,
+        0x01, 0x02, 0x03,
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
