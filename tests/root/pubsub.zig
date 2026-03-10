@@ -1922,6 +1922,7 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expect(pubsub.usesCustomHeartbeatTimeout());
     try std.testing.expect(!pubsub.usesDefaultHeartbeatConfig());
     try std.testing.expect(pubsub.usesCustomHeartbeatConfig());
+    try std.testing.expect(pubsub.hasHeartbeatConfig());
     try std.testing.expectEqual(@as(?u32, 75), pubsub.getHeartbeatTimeoutMs());
     try std.testing.expectEqual(@as(?u32, 75), pubsub.getEffectiveHeartbeatTimeoutMs());
     try std.testing.expectEqual(@as(u32, 80), pubsub.getReconnectDelayMs());
@@ -1948,6 +1949,7 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expect(pubsub.usesCustomReconnectMaxAttempts());
     try std.testing.expect(!pubsub.usesDefaultReconnectConfig());
     try std.testing.expect(pubsub.usesCustomReconnectConfig());
+    try std.testing.expect(pubsub.hasReconnectConfig());
     try std.testing.expect(pubsub.isReconnectAttemptLimited());
     try std.testing.expect(!pubsub.isReconnectUnlimited());
     try std.testing.expectEqual(@as(?u32, 7), pubsub.getReconnectMaxAttempts());
@@ -1966,6 +1968,7 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expect(pubsub.usesCustomQueueOverflowPolicy());
     try std.testing.expect(!pubsub.usesDefaultQueueConfig());
     try std.testing.expect(pubsub.usesCustomQueueConfig());
+    try std.testing.expect(pubsub.hasQueueConfig());
     try std.testing.expect(!pubsub.isQueueOverflowDropOldest());
     try std.testing.expect(!pubsub.isQueueOverflowDropNewest());
     try std.testing.expect(pubsub.isQueueOverflowCloseSubscription());
@@ -1987,6 +1990,7 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
     try std.testing.expect(pubsub.usesCustomBufferSize());
     try std.testing.expect(!pubsub.usesDefaultTransportConfig());
     try std.testing.expect(pubsub.usesCustomTransportConfig());
+    try std.testing.expect(pubsub.hasTransportConfig());
     const options = pubsub.getOptions();
     try std.testing.expect(options.auto_reconnect);
     try std.testing.expectEqual(@as(?u32, 25), options.heartbeat_interval_ms);
@@ -2073,6 +2077,7 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.usesCustomHeartbeatTimeout());
     try std.testing.expect(pubsub.usesDefaultHeartbeatConfig());
     try std.testing.expect(!pubsub.usesCustomHeartbeatConfig());
+    try std.testing.expect(!pubsub.hasHeartbeatConfig());
     try std.testing.expect(!pubsub.isReconnectDelayCapped());
     try std.testing.expect(pubsub.usesDefaultReconnectMaxDelay());
     try std.testing.expect(!pubsub.usesCustomReconnectMaxDelay());
@@ -2081,6 +2086,7 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.usesCustomReconnectMaxAttempts());
     try std.testing.expect(pubsub.usesDefaultReconnectConfig());
     try std.testing.expect(!pubsub.usesCustomReconnectConfig());
+    try std.testing.expect(!pubsub.hasReconnectConfig());
     try std.testing.expect(pubsub.isReconnectUnlimited());
     try std.testing.expectEqual(@as(?u32, null), pubsub.getRemainingReconnectAttempts());
     try std.testing.expectEqual(@as(u32, 250), pubsub.getReconnectDelayForAttempt(0));
@@ -2106,10 +2112,12 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.usesCustomBufferSize());
     try std.testing.expect(pubsub.usesDefaultTransportConfig());
     try std.testing.expect(!pubsub.usesCustomTransportConfig());
+    try std.testing.expect(!pubsub.hasTransportConfig());
     try std.testing.expect(pubsub.usesDefaultQueueOverflowPolicy());
     try std.testing.expect(!pubsub.usesCustomQueueOverflowPolicy());
     try std.testing.expect(pubsub.usesDefaultQueueConfig());
     try std.testing.expect(!pubsub.usesCustomQueueConfig());
+    try std.testing.expect(!pubsub.hasQueueConfig());
     try std.testing.expect(pubsub.isQueueOverflowDropOldest());
     try std.testing.expect(!pubsub.isQueueOverflowDropNewest());
     try std.testing.expect(!pubsub.isQueueOverflowCloseSubscription());
@@ -2141,6 +2149,7 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(pubsub.usesCustomHeartbeatTimeout());
     try std.testing.expect(!pubsub.usesDefaultHeartbeatConfig());
     try std.testing.expect(pubsub.usesCustomHeartbeatConfig());
+    try std.testing.expect(pubsub.hasHeartbeatConfig());
     try std.testing.expect(!pubsub.isHeartbeatEnabled());
     try std.testing.expectEqual(@as(?u32, 12_345), pubsub.getHeartbeatTimeoutMs());
     try std.testing.expectEqual(@as(?u32, null), pubsub.getEffectiveHeartbeatTimeoutMs());
@@ -2167,6 +2176,7 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.usesDefaultReconnectMaxAttempts());
     try std.testing.expect(pubsub.usesCustomReconnectMaxAttempts());
     try std.testing.expect(!pubsub.usesDefaultReconnectConfig());
+    try std.testing.expect(pubsub.hasReconnectConfig());
     try std.testing.expect(pubsub.isReconnectAttemptLimited());
     try std.testing.expect(!pubsub.isReconnectUnlimited());
     try std.testing.expectEqual(@as(?u32, 9), pubsub.getReconnectMaxAttempts());
@@ -2184,6 +2194,7 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.usesDefaultQueueOverflowPolicy());
     try std.testing.expect(pubsub.usesCustomQueueOverflowPolicy());
     try std.testing.expect(!pubsub.usesDefaultQueueConfig());
+    try std.testing.expect(pubsub.hasQueueConfig());
     try std.testing.expect(!pubsub.isQueueOverflowDropOldest());
     try std.testing.expect(pubsub.isQueueOverflowDropNewest());
     try std.testing.expect(!pubsub.isQueueOverflowCloseSubscription());
@@ -2204,6 +2215,7 @@ test "root.PubsubClient mutable policy setters update runtime values" {
     try std.testing.expect(!pubsub.usesDefaultBufferSize());
     try std.testing.expect(pubsub.usesCustomBufferSize());
     try std.testing.expect(!pubsub.usesDefaultTransportConfig());
+    try std.testing.expect(pubsub.hasTransportConfig());
     const updated_options = pubsub.getOptions();
     try std.testing.expect(!updated_options.auto_reconnect);
     try std.testing.expectEqual(@as(?u32, null), updated_options.heartbeat_interval_ms);

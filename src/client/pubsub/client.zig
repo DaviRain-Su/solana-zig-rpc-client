@@ -4469,6 +4469,10 @@ pub const PubsubClient = struct {
         return !self.usesDefaultHeartbeatConfig();
     }
 
+    pub fn hasHeartbeatConfig(self: *const Self) bool {
+        return self.usesCustomHeartbeatConfig();
+    }
+
     pub fn getEffectiveHeartbeatTimeoutMs(self: *const Self) ?u32 {
         self.state.mutex.lock();
         defer self.state.mutex.unlock();
@@ -4596,6 +4600,10 @@ pub const PubsubClient = struct {
         return !self.usesDefaultReconnectConfig();
     }
 
+    pub fn hasReconnectConfig(self: *const Self) bool {
+        return self.usesCustomReconnectConfig();
+    }
+
     pub fn isReconnectAttemptLimited(self: *const Self) bool {
         return self.hasReconnectMaxAttempts();
     }
@@ -4670,6 +4678,10 @@ pub const PubsubClient = struct {
 
     pub fn usesCustomQueueConfig(self: *const Self) bool {
         return !self.usesDefaultQueueConfig();
+    }
+
+    pub fn hasQueueConfig(self: *const Self) bool {
+        return self.usesCustomQueueConfig();
     }
 
     pub fn isQueueOverflowDropOldest(self: *const Self) bool {
@@ -4853,6 +4865,10 @@ pub const PubsubClient = struct {
 
     pub fn usesCustomTransportConfig(self: *const Self) bool {
         return !self.usesDefaultTransportConfig();
+    }
+
+    pub fn hasTransportConfig(self: *const Self) bool {
+        return self.usesCustomTransportConfig();
     }
 
     pub fn usesDefaultConfig(self: *const Self) bool {
