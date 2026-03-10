@@ -672,6 +672,7 @@ fn loadAnchorIdlInvokeInstructionSpec(
     args_json_arg: ?[]const u8,
     account_bindings: []const []const u8,
     remaining_accounts: []const []const u8,
+    remaining_accounts_json_arg: ?[]const u8,
     payer_keypair_path_arg: ?[]const u8,
 ) !LoadedCliInstructionSpec {
     const idl_source = loadInstructionSpecSource(allocator, idl_arg) catch return error.InvalidCli;
@@ -696,6 +697,18 @@ fn loadAnchorIdlInvokeInstructionSpec(
     else
         null;
     defer if (parsed_args) |*value| value.deinit();
+    const remaining_accounts_json_source = if (remaining_accounts_json_arg) |value|
+        loadInstructionSpecSource(allocator, value) catch return error.InvalidCli
+    else
+        null;
+    defer if (remaining_accounts_json_source) |value| allocator.free(value);
+    const parsed_remaining_accounts = if (remaining_accounts_json_source) |value|
+        std.json.parseFromSlice([]CliInstructionAccountMeta, allocator, value, .{
+            .ignore_unknown_fields = true,
+        }) catch return error.InvalidCli
+    else
+        null;
+    defer if (parsed_remaining_accounts) |*value| value.deinit();
 
     const encoded_data = anchor_idl_encode.encodeInstructionData(
         allocator,
@@ -707,7 +720,8 @@ fn loadAnchorIdlInvokeInstructionSpec(
 
     const program_id_pubkey = try client.Pubkey.fromBase58(allocator, program_id);
     const leaf_account_count = try countAnchorIdlLeafAccounts(instruction.accounts);
-    const cli_accounts = try allocator.alloc(CliInstructionAccountMeta, leaf_account_count + remaining_accounts.len);
+    const json_remaining_account_count = if (parsed_remaining_accounts) |value| value.value.len else 0;
+    const cli_accounts = try allocator.alloc(CliInstructionAccountMeta, leaf_account_count + remaining_accounts.len + json_remaining_account_count);
     defer allocator.free(cli_accounts);
     var owned_resolved_account_pubkeys: std.ArrayListUnmanaged([]u8) = .{};
     defer {
@@ -730,6 +744,11 @@ fn loadAnchorIdlInvokeInstructionSpec(
     if (next_index != leaf_account_count) return error.InvalidCli;
     for (remaining_accounts, 0..) |raw_remaining_account, index| {
         cli_accounts[next_index + index] = try parseCliRemainingAccountMeta(raw_remaining_account);
+    }
+    if (parsed_remaining_accounts) |value| {
+        for (value.value, 0..) |account, index| {
+            cli_accounts[next_index + remaining_accounts.len + index] = account;
+        }
     }
 
     const discriminator_hex = try allocator.alloc(u8, encoded_data.len * 2);
@@ -2236,6 +2255,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_args_json_arg,
                 idl_account_bindings.items,
                 idl_remaining_accounts.items,
+                args.idl_remaining_accounts_json_arg,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-idl-invoke currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
@@ -2285,6 +2305,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_args_json_arg,
                 idl_account_bindings.items,
                 idl_remaining_accounts.items,
+                args.idl_remaining_accounts_json_arg,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-idl-invoke-and-confirm currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
@@ -2843,6 +2864,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_args_json_arg,
                 idl_account_bindings.items,
                 idl_remaining_accounts.items,
+                args.idl_remaining_accounts_json_arg,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: simulate-idl-invoke currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
@@ -8466,6 +8488,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from const and arg seeds" {
         args_json,
         &.{},
         &.{},
+        null,
         payer_keypair_realpath,
     );
     defer loaded.deinit(allocator);
@@ -8530,6 +8553,7 @@ test "loadAnchorIdlInvokeInstructionSpec flattens nested anchor account groups" 
         null,
         &.{ state_binding, authority_binding },
         &.{},
+        null,
         payer_keypair_realpath,
     );
     defer loaded.deinit(allocator);
@@ -8582,6 +8606,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from const and account seed
         null,
         &.{authority_binding},
         &.{},
+        null,
         payer_keypair_realpath,
     );
     defer loaded.deinit(allocator);
@@ -8641,6 +8666,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from account seed key path"
         null,
         &.{authority_binding},
         &.{},
+        null,
         payer_keypair_realpath,
     );
     defer loaded.deinit(allocator);
@@ -8695,6 +8721,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA with pda program override" 
         null,
         &.{},
         &.{},
+        null,
         payer_keypair_realpath,
     );
     defer loaded.deinit(allocator);
@@ -8750,6 +8777,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA with pda program account ov
         null,
         &.{program_binding},
         &.{},
+        null,
         payer_keypair_realpath,
     );
     defer loaded.deinit(allocator);
@@ -8798,6 +8826,7 @@ test "loadAnchorIdlInvokeInstructionSpec appends remaining accounts" {
         null,
         &.{},
         &.{remaining_account},
+        null,
         payer_keypair_realpath,
     );
     defer loaded.deinit(allocator);
@@ -8806,6 +8835,54 @@ test "loadAnchorIdlInvokeInstructionSpec appends remaining accounts" {
     try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(extra));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec appends json remaining accounts" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{61} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-json-remaining-accounts-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const extra = client.Pubkey.fromBytes(.{40} ** 32);
+    const extra_base58 = try extra.toBase58(allocator);
+    defer allocator.free(extra_base58);
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[8,8,8,8,8,8,8,8],"accounts":[],"args":[]}]}
+    ;
+    const remaining_accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"is_signer\":false,\"is_writable\":true}}]",
+        .{extra_base58},
+    );
+    defer allocator.free(remaining_accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        &.{},
+        &.{},
+        remaining_accounts_json,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(extra));
+    try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_signer);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
 }
 
