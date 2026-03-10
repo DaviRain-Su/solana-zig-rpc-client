@@ -294,6 +294,39 @@ test "root.NonblockingRpcClient getBalanceAsync returns waitable balance respons
     try std.testing.expectEqual(@as(u64, 444), balance.value);
 }
 
+test "root.NonblockingRpcClient getBalanceForAddressAsync sends requested address" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const address = "BalanceCustom111111111111111111111111111111111";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        address,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":66},\"value\":777},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getBalanceForAddressAsync(address, .confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const balance = try task.wait();
+    try std.testing.expectEqual(@as(u64, 66), balance.context_slot);
+    try std.testing.expectEqual(@as(u64, 777), balance.value);
+    try std.testing.expect(matched);
+}
+
 test "root.NonblockingRpcClient getSupplyAsync returns waitable supply" {
     const allocator = std.testing.allocator;
     var listener = try createListener();
@@ -1077,6 +1110,38 @@ test "root.NonblockingRpcClient getFeatureActivationSlotAsync returns optional s
 
     const activation_slot = try task.wait();
     try std.testing.expectEqual(@as(?u64, 4242), activation_slot);
+}
+
+test "root.NonblockingRpcClient getFeatureActivationSlotForFeatureAsync sends requested feature id" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const feature_id = "FeatureCustom11111111111111111111111111111111";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        feature_id,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":5252,\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getFeatureActivationSlotForFeatureAsync(feature_id, .processed);
+    try std.testing.expect(!task.isDone());
+
+    const activation_slot = try task.wait();
+    try std.testing.expectEqual(@as(?u64, 5252), activation_slot);
+    try std.testing.expect(matched);
 }
 
 test "root.NonblockingRpcClient getNewLatestBlockhashAsync returns owned new blockhash" {

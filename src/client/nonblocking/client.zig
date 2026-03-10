@@ -205,6 +205,27 @@ fn runGetBalance(
     return try client.getBalanceResponse("Balance111111111111111111111111111111111111", commitment);
 }
 
+fn runGetBalanceForAddress(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    address: []const u8,
+    commitment: ?Commitment,
+) !BalanceResponse {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getBalanceResponse(address, commitment);
+}
+
 fn runGetSupply(
     allocator: Allocator,
     endpoint: []const u8,
@@ -288,6 +309,27 @@ fn runGetFeatureActivationSlot(
         "Feature111111111111111111111111111111111111",
         commitment,
     );
+}
+
+fn runGetFeatureActivationSlotForFeature(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    feature_id: []const u8,
+    commitment: ?Commitment,
+) !?u64 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getFeatureActivationSlot(feature_id, commitment);
 }
 
 fn runGetBlockTime(
@@ -1031,6 +1073,126 @@ fn AsyncTaskWithU64Pair(
     };
 }
 
+fn AsyncTaskWithStringAndCommitment(
+    comptime ResultType: type,
+    comptime work_fn: *const fn (
+        Allocator,
+        []const u8,
+        ?Commitment,
+        ?u64,
+        ?u64,
+        []const u8,
+        ?Commitment,
+    ) anyerror!ResultType,
+) type {
+    return struct {
+        allocator: Allocator,
+        endpoint: []const u8,
+        default_commitment: ?Commitment,
+        request_timeout_ms: ?u64,
+        confirm_transaction_initial_timeout_ms: ?u64,
+        value: []const u8,
+        commitment: ?Commitment,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+        done: bool = false,
+        result: ?Result = null,
+        thread: ?std.Thread = null,
+
+        const Self = @This();
+        const Result = union(enum) {
+            success: ResultType,
+            failure: anyerror,
+        };
+
+        pub fn start(
+            allocator: Allocator,
+            endpoint: []const u8,
+            default_commitment: ?Commitment,
+            request_timeout_ms: ?u64,
+            confirm_transaction_initial_timeout_ms: ?u64,
+            value: []const u8,
+            commitment: ?Commitment,
+        ) !*Self {
+            const self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
+
+            self.* = .{
+                .allocator = allocator,
+                .endpoint = try allocator.dupe(u8, endpoint),
+                .default_commitment = default_commitment,
+                .request_timeout_ms = request_timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .value = try allocator.dupe(u8, value),
+                .commitment = commitment,
+            };
+            errdefer {
+                allocator.free(self.endpoint);
+                allocator.free(self.value);
+            }
+
+            self.thread = try std.Thread.spawn(.{}, Self.run, .{self});
+            return self;
+        }
+
+        fn run(self: *Self) void {
+            const value = work_fn(
+                self.allocator,
+                self.endpoint,
+                self.default_commitment,
+                self.request_timeout_ms,
+                self.confirm_transaction_initial_timeout_ms,
+                self.value,
+                self.commitment,
+            ) catch |err| {
+                self.complete(.{ .failure = err });
+                return;
+            };
+            self.complete(.{ .success = value });
+        }
+
+        fn complete(self: *Self, result: Result) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.result = result;
+            self.done = true;
+            self.cond.broadcast();
+        }
+
+        pub fn isDone(self: *const Self) bool {
+            const mutable_self: *Self = @constCast(self);
+            mutable_self.mutex.lock();
+            defer mutable_self.mutex.unlock();
+            return mutable_self.done;
+        }
+
+        pub fn wait(self: *Self) anyerror!ResultType {
+            self.mutex.lock();
+            while (!self.done) {
+                self.cond.wait(&self.mutex);
+            }
+            const result = self.result.?;
+            self.mutex.unlock();
+
+            if (self.thread) |thread| {
+                thread.join();
+                self.thread = null;
+            }
+
+            defer {
+                self.allocator.free(self.endpoint);
+                self.allocator.free(self.value);
+                self.allocator.destroy(self);
+            }
+
+            return switch (result) {
+                .success => |value| value,
+                .failure => |err| err,
+            };
+        }
+    };
+}
+
 pub const NonblockingRpcClient = struct {
     allocator: Allocator,
     endpoint: []const u8,
@@ -1054,10 +1216,12 @@ pub const NonblockingRpcClient = struct {
     pub const MaxRetransmitSlotTask = AsyncTask(u64, runGetMaxRetransmitSlot);
     pub const MaxShredInsertSlotTask = AsyncTask(u64, runGetMaxShredInsertSlot);
     pub const BalanceTask = AsyncTask(BalanceResponse, runGetBalance);
+    pub const BalanceForAddressTask = AsyncTaskWithStringAndCommitment(BalanceResponse, runGetBalanceForAddress);
     pub const SupplyTask = AsyncTask(Supply, runGetSupply);
     pub const EpochInfoTask = AsyncTask(EpochInfo, runGetEpochInfo);
     pub const EpochScheduleTask = AsyncTask(EpochSchedule, runGetEpochSchedule);
     pub const FeatureActivationSlotTask = AsyncTask(?u64, runGetFeatureActivationSlot);
+    pub const FeatureActivationSlotForFeatureTask = AsyncTaskWithStringAndCommitment(?u64, runGetFeatureActivationSlotForFeature);
     pub const BlockTimeTask = AsyncTask(?i64, runGetBlockTime);
     pub const BlockTimeForSlotTask = AsyncTaskWithU64(?i64, runGetBlockTimeForSlot);
     pub const HighestSnapshotSlotTask = AsyncTask(SnapshotSlots, runGetHighestSnapshotSlot);
@@ -1293,6 +1457,22 @@ pub const NonblockingRpcClient = struct {
         );
     }
 
+    pub fn getBalanceForAddressAsync(
+        self: *const NonblockingRpcClient,
+        address: []const u8,
+        commitment: ?Commitment,
+    ) !*BalanceForAddressTask {
+        return BalanceForAddressTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            address,
+            commitment,
+        );
+    }
+
     pub fn getSupplyAsync(self: *const NonblockingRpcClient, commitment: ?Commitment) !*SupplyTask {
         return SupplyTask.start(
             self.allocator,
@@ -1336,6 +1516,22 @@ pub const NonblockingRpcClient = struct {
             self.default_commitment,
             self.request_timeout_ms,
             self.confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn getFeatureActivationSlotForFeatureAsync(
+        self: *const NonblockingRpcClient,
+        feature_id: []const u8,
+        commitment: ?Commitment,
+    ) !*FeatureActivationSlotForFeatureTask {
+        return FeatureActivationSlotForFeatureTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            feature_id,
             commitment,
         );
     }
