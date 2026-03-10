@@ -603,6 +603,95 @@ test "root.NonblockingRpcClient getIdentityAsync returns owned identity string" 
     try std.testing.expectEqualStrings("Identity1111111111111111111111111111111111", identity);
 }
 
+test "root.NonblockingRpcClient getHighestSnapshotSlotAsync returns waitable snapshot slots" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"full\":111,\"incremental\":222},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getHighestSnapshotSlotAsync();
+    try std.testing.expect(!task.isDone());
+
+    const snapshot_slots = try task.wait();
+    try std.testing.expectEqual(@as(?u64, 111), snapshot_slots.full);
+    try std.testing.expectEqual(@as(?u64, 222), snapshot_slots.incremental);
+}
+
+test "root.NonblockingRpcClient getInflationRateAsync returns waitable rate" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"total\":1.1,\"validator\":2.2,\"foundation\":3.3,\"epoch\":4},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getInflationRateAsync();
+    try std.testing.expect(!task.isDone());
+
+    const inflation_rate = try task.wait();
+    try std.testing.expectEqual(@as(f64, 1.1), inflation_rate.total);
+    try std.testing.expectEqual(@as(f64, 2.2), inflation_rate.validator);
+    try std.testing.expectEqual(@as(f64, 3.3), inflation_rate.foundation);
+    try std.testing.expectEqual(@as(u64, 4), inflation_rate.epoch);
+}
+
+test "root.NonblockingRpcClient getInflationGovernorAsync returns waitable governor" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"foundation\":1.5,\"foundationTerm\":2.5,\"initial\":3.5,\"taper\":4.5,\"terminal\":5.5},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getInflationGovernorAsync();
+    try std.testing.expect(!task.isDone());
+
+    const inflation_governor = try task.wait();
+    try std.testing.expectEqual(@as(f64, 1.5), inflation_governor.foundation);
+    try std.testing.expectEqual(@as(f64, 2.5), inflation_governor.foundation_term);
+    try std.testing.expectEqual(@as(f64, 3.5), inflation_governor.initial);
+    try std.testing.expectEqual(@as(f64, 4.5), inflation_governor.taper);
+    try std.testing.expectEqual(@as(f64, 5.5), inflation_governor.terminal);
+}
+
 test "root.NonblockingRpcClient getFeatureActivationSlotAsync returns optional slot" {
     const allocator = std.testing.allocator;
     var listener = try createListener();

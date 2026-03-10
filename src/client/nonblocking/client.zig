@@ -8,8 +8,11 @@ const BalanceResponse = rpc_types.BalanceResponse;
 const Commitment = rpc_types.Commitment;
 const EpochSchedule = rpc_types.EpochSchedule;
 const EpochInfo = rpc_types.EpochInfo;
+const InflationGovernor = rpc_types.InflationGovernor;
+const InflationRate = rpc_types.InflationRate;
 const LatestBlockhash = rpc_types.LatestBlockhash;
 const LatestBlockhashResponse = rpc_types.LatestBlockhashResponse;
+const SnapshotSlots = rpc_types.SnapshotSlots;
 
 fn runGetSlot(
     allocator: Allocator,
@@ -282,6 +285,72 @@ fn runGetBlockTime(
     );
     defer client.deinit();
     return try client.getBlockTime(123);
+}
+
+fn runGetHighestSnapshotSlot(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !SnapshotSlots {
+    _ = commitment;
+
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getHighestSnapshotSlot();
+}
+
+fn runGetInflationRate(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !InflationRate {
+    _ = commitment;
+
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getInflationRate();
+}
+
+fn runGetInflationGovernor(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !InflationGovernor {
+    _ = commitment;
+
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getInflationGovernor();
 }
 
 fn runGetLatestBlockhash(
@@ -592,6 +661,9 @@ pub const NonblockingRpcClient = struct {
     pub const EpochScheduleTask = AsyncTask(EpochSchedule, runGetEpochSchedule);
     pub const FeatureActivationSlotTask = AsyncTask(?u64, runGetFeatureActivationSlot);
     pub const BlockTimeTask = AsyncTask(?i64, runGetBlockTime);
+    pub const HighestSnapshotSlotTask = AsyncTask(SnapshotSlots, runGetHighestSnapshotSlot);
+    pub const InflationRateTask = AsyncTask(InflationRate, runGetInflationRate);
+    pub const InflationGovernorTask = AsyncTask(InflationGovernor, runGetInflationGovernor);
     pub const LatestBlockhashTask = AsyncTask(LatestBlockhash, runGetLatestBlockhash);
     pub const LatestBlockhashResponseTask = AsyncTask(LatestBlockhashResponse, runGetLatestBlockhashResponse);
     pub const NewLatestBlockhashTask = AsyncTask([]const u8, runGetNewLatestBlockhash);
@@ -854,6 +926,39 @@ pub const NonblockingRpcClient = struct {
 
     pub fn getBlockTimeAsync(self: *const NonblockingRpcClient) !*BlockTimeTask {
         return BlockTimeTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            null,
+        );
+    }
+
+    pub fn getHighestSnapshotSlotAsync(self: *const NonblockingRpcClient) !*HighestSnapshotSlotTask {
+        return HighestSnapshotSlotTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            null,
+        );
+    }
+
+    pub fn getInflationRateAsync(self: *const NonblockingRpcClient) !*InflationRateTask {
+        return InflationRateTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            null,
+        );
+    }
+
+    pub fn getInflationGovernorAsync(self: *const NonblockingRpcClient) !*InflationGovernorTask {
+        return InflationGovernorTask.start(
             self.allocator,
             self.endpoint,
             self.default_commitment,
