@@ -3,6 +3,12 @@ const std = @import("std");
 pub const Idl = struct {
     address: ?[]const u8 = null,
     instructions: []const Instruction = &.{},
+    types: []const TypeDef = &.{},
+};
+
+pub const TypeDef = struct {
+    name: []const u8,
+    type: std.json.Value = .null,
 };
 
 pub const IdlArg = struct {
@@ -24,6 +30,13 @@ pub const Instruction = struct {
 pub fn findInstruction(idl: *const Idl, name: []const u8) ?Instruction {
     for (idl.instructions) |instruction| {
         if (std.mem.eql(u8, instruction.name, name)) return instruction;
+    }
+    return null;
+}
+
+pub fn findType(idl: *const Idl, name: []const u8) ?TypeDef {
+    for (idl.types) |type_def| {
+        if (std.mem.eql(u8, type_def.name, name)) return type_def;
     }
     return null;
 }

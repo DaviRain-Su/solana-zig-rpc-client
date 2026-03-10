@@ -25,6 +25,7 @@ fn appendIntLittle(
 fn encodeArgValue(
     allocator: Allocator,
     bytes: *std.ArrayListUnmanaged(u8),
+    idl: *const idl_types.Idl,
     type_spec: std.json.Value,
     value: std.json.Value,
 ) !void {
@@ -35,7 +36,7 @@ fn encodeArgValue(
                 return;
             }
             try bytes.append(allocator, 1);
-            try encodeArgValue(allocator, bytes, child_type, value);
+            try encodeArgValue(allocator, bytes, idl, child_type, value);
             return;
         }
         if (type_spec.object.get("vec")) |child_type| {
@@ -43,7 +44,33 @@ fn encodeArgValue(
             if (value.array.items.len > std.math.maxInt(u32)) return error.InvalidAnchorIdlArgValue;
             try appendIntLittle(u32, bytes, allocator, @intCast(value.array.items.len));
             for (value.array.items) |item| {
-                try encodeArgValue(allocator, bytes, child_type, item);
+                try encodeArgValue(allocator, bytes, idl, child_type, item);
+            }
+            return;
+        }
+        if (type_spec.object.get("defined")) |defined_value| {
+            const defined_name = switch (defined_value) {
+                .string => defined_value.string,
+                .object => blk: {
+                    const name_value = defined_value.object.get("name") orelse return error.UnsupportedAnchorIdlType;
+                    if (name_value != .string) return error.UnsupportedAnchorIdlType;
+                    break :blk name_value.string;
+                },
+                else => return error.UnsupportedAnchorIdlType,
+            };
+            const type_def = idl_types.findType(idl, defined_name) orelse return error.UnsupportedAnchorIdlType;
+            if (type_def.type != .object) return error.UnsupportedAnchorIdlType;
+            const kind_value = type_def.type.object.get("kind") orelse return error.UnsupportedAnchorIdlType;
+            if (kind_value != .string or !std.mem.eql(u8, kind_value.string, "struct")) return error.UnsupportedAnchorIdlType;
+            const fields_value = type_def.type.object.get("fields") orelse return error.UnsupportedAnchorIdlType;
+            if (fields_value != .array or value != .object) return error.InvalidAnchorIdlArgValue;
+            for (fields_value.array.items) |field_value| {
+                if (field_value != .object) return error.UnsupportedAnchorIdlType;
+                const field_name = field_value.object.get("name") orelse return error.UnsupportedAnchorIdlType;
+                const field_type = field_value.object.get("type") orelse return error.UnsupportedAnchorIdlType;
+                if (field_name != .string) return error.UnsupportedAnchorIdlType;
+                const field_arg_value = value.object.get(field_name.string) orelse return error.MissingAnchorIdlArg;
+                try encodeArgValue(allocator, bytes, idl, field_type, field_arg_value);
             }
             return;
         }
@@ -115,6 +142,7 @@ fn encodeArgValue(
 
 pub fn encodeInstructionData(
     allocator: Allocator,
+    idl: *const idl_types.Idl,
     instruction: *const idl_types.Instruction,
     args_json_source: ?[]const u8,
 ) ![]u8 {
@@ -131,7 +159,7 @@ pub fn encodeInstructionData(
 
     for (instruction.args) |arg| {
         const arg_value = parsed_args.value.object.get(arg.name) orelse return error.MissingAnchorIdlArg;
-        try encodeArgValue(allocator, &bytes, arg.@"type", arg_value);
+        try encodeArgValue(allocator, &bytes, idl, arg.@"type", arg_value);
     }
 
     return try allocator.dupe(u8, bytes.items);
@@ -148,9 +176,13 @@ test "anchor idl encodeInstructionData encodes scalar args" {
             .{ .name = "label", .@"type" = .{ .string = "string" } },
         },
     };
+    const idl = idl_types.Idl{
+        .instructions = &.{instruction},
+    };
 
     const encoded = try encodeInstructionData(
         allocator,
+        &idl,
         &instruction,
         "{\"enabled\":true,\"count\":513,\"label\":\"hi\"}",
     );
@@ -181,8 +213,11 @@ test "anchor idl encodeInstructionData encodes pubkey args" {
             .{ .name = "authority", .@"type" = .{ .string = "pubkey" } },
         },
     };
+    const idl = idl_types.Idl{
+        .instructions = &.{instruction},
+    };
 
-    const encoded = try encodeInstructionData(allocator, &instruction, args_json);
+    const encoded = try encodeInstructionData(allocator, &idl, &instruction, args_json);
     defer allocator.free(encoded);
 
     try std.testing.expectEqualSlices(u8, instruction.discriminator, encoded[0..8]);
@@ -205,9 +240,13 @@ test "anchor idl encodeInstructionData encodes option and vec args" {
         .discriminator = &.{ 7, 7, 7, 7, 7, 7, 7, 7 },
         .args = &args,
     };
+    const idl = idl_types.Idl{
+        .instructions = &.{instruction},
+    };
 
     const encoded = try encodeInstructionData(
         allocator,
+        &idl,
         &instruction,
         "{\"label\":\"hi\",\"counts\":[1,513]}",
     );
@@ -238,9 +277,13 @@ test "anchor idl encodeInstructionData encodes null option args" {
         .discriminator = &.{ 4, 4, 4, 4, 4, 4, 4, 4 },
         .args = &args,
     };
+    const idl = idl_types.Idl{
+        .instructions = &.{instruction},
+    };
 
     const encoded = try encodeInstructionData(
         allocator,
+        &idl,
         &instruction,
         "{\"maybe_amount\":null}",
     );
@@ -249,6 +292,34 @@ test "anchor idl encodeInstructionData encodes null option args" {
     const expected = [_]u8{
         4, 4, 4, 4, 4, 4, 4, 4,
         0,
+    };
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "anchor idl encodeInstructionData encodes defined struct args" {
+    const allocator = std.testing.allocator;
+    const parsed_idl = try std.json.parseFromSlice(
+        idl_types.Idl,
+        allocator,
+        \\{"instructions":[{"name":"setConfig","discriminator":[6,6,6,6,6,6,6,6],"args":[{"name":"config","type":{"defined":{"name":"Config"}}}]}],"types":[{"name":"Config","type":{"kind":"struct","fields":[{"name":"enabled","type":"bool"},{"name":"count","type":"u16"}]}}]}
+    ,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_idl.deinit();
+
+    const instruction = idl_types.findInstruction(&parsed_idl.value, "setConfig").?;
+    const encoded = try encodeInstructionData(
+        allocator,
+        &parsed_idl.value,
+        &instruction,
+        "{\"config\":{\"enabled\":true,\"count\":513}}",
+    );
+    defer allocator.free(encoded);
+
+    const expected = [_]u8{
+        6, 6, 6, 6, 6, 6, 6, 6,
+        1,
+        0x01, 0x02,
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }

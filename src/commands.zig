@@ -433,6 +433,7 @@ fn loadAnchorIdlInvokeInstructionSpec(
 
     const encoded_data = anchor_idl_encode.encodeInstructionData(
         allocator,
+        &parsed_idl.value,
         &instruction,
         args_json_source,
     ) catch return error.InvalidCli;
