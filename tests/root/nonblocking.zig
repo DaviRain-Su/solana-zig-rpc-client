@@ -94,6 +94,10 @@ fn freeAccountInfoResponse(allocator: std.mem.Allocator, response: client.Accoun
     if (response.account) |account| freeAccountInfo(allocator, account);
 }
 
+fn freeMaybeAccountInfo(allocator: std.mem.Allocator, account: ?client.AccountInfo) void {
+    if (account) |value| freeAccountInfo(allocator, value);
+}
+
 fn freeTokenAmount(allocator: std.mem.Allocator, amount: client.TokenAmount) void {
     allocator.free(amount.amount);
     allocator.free(amount.ui_amount_string);
@@ -393,6 +397,80 @@ test "root.NonblockingRpcClient getAccountInfoResponseAsync sends requested acco
     try std.testing.expectEqualStrings("base64", response.account.?.data_encoding.?);
     try std.testing.expectEqual(@as(?u64, 9), response.account.?.rent_epoch);
     try std.testing.expectEqual(@as(?u64, 5), response.account.?.space);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getAccountInfoAsync sends requested account" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const account = "AccountInfoDirect1111111111111111111111111111111";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        account,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":111},\"value\":{\"data\":[\"RGlyZWN0\",\"base64\"],\"executable\":true,\"lamports\":4321,\"owner\":\"Owner222222222222222222222222222222222222\",\"rentEpoch\":8,\"space\":6}},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getAccountInfoAsync(account, .processed);
+    try std.testing.expect(!task.isDone());
+
+    const info = try task.wait();
+    defer freeAccountInfo(allocator, info);
+
+    try std.testing.expectEqual(@as(u64, 4321), info.lamports);
+    try std.testing.expectEqualStrings("Owner222222222222222222222222222222222222", info.owner);
+    try std.testing.expectEqualStrings("RGlyZWN0", info.data.?);
+    try std.testing.expectEqualStrings("base64", info.data_encoding.?);
+    try std.testing.expect(info.executable);
+    try std.testing.expectEqual(@as(?u64, 8), info.rent_epoch);
+    try std.testing.expectEqual(@as(?u64, 6), info.space);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getAccountInfoMaybeAsync returns null for missing account" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const account = "MissingAccount11111111111111111111111111111111";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        account,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":202},\"value\":null},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getAccountInfoMaybeAsync(account, .confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const info = try task.wait();
+    defer freeMaybeAccountInfo(allocator, info);
+
+    try std.testing.expect(info == null);
     try std.testing.expect(matched);
 }
 
