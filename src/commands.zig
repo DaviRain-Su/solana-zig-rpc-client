@@ -2,7 +2,8 @@ const builtin = @import("builtin");
 const std = @import("std");
 const client = @import("solana_client_zig");
 const cli = @import("./cli.zig");
-const anchor_idl = @import("./client/anchor_idl/types.zig");
+const anchor_idl = client.anchor_idl;
+const anchor_idl_encode = client.anchor_idl_encode;
 
 const Allocator = std.mem.Allocator;
 const Ed25519 = std.crypto.sign.Ed25519;
@@ -162,6 +163,7 @@ fn loadAnchorIdlInvokeInstructionSpec(
     allocator: Allocator,
     idl_arg: []const u8,
     instruction_name: []const u8,
+    args_json_arg: ?[]const u8,
     payer_keypair_path_arg: ?[]const u8,
 ) !LoadedCliInstructionSpec {
     const idl_source = loadInstructionSpecSource(allocator, idl_arg) catch return error.InvalidCli;
@@ -174,12 +176,25 @@ fn loadAnchorIdlInvokeInstructionSpec(
 
     const program_id = parsed_idl.value.address orelse return error.InvalidCli;
     const instruction = anchor_idl.findInstruction(&parsed_idl.value, instruction_name) orelse return error.InvalidCli;
-    if (!instruction.hasZeroAccountsAndArgs()) return error.InvalidCli;
+    if (instruction.accounts.len != 0) return error.InvalidCli;
     if (instruction.discriminator.len == 0) return error.InvalidCli;
 
-    const discriminator_hex = try allocator.alloc(u8, instruction.discriminator.len * 2);
+    const args_json_source = if (args_json_arg) |value|
+        loadInstructionSpecSource(allocator, value) catch return error.InvalidCli
+    else
+        null;
+    defer if (args_json_source) |value| allocator.free(value);
+
+    const encoded_data = anchor_idl_encode.encodeInstructionData(
+        allocator,
+        &instruction,
+        args_json_source,
+    ) catch return error.InvalidCli;
+    defer allocator.free(encoded_data);
+
+    const discriminator_hex = try allocator.alloc(u8, encoded_data.len * 2);
     defer allocator.free(discriminator_hex);
-    for (instruction.discriminator, 0..) |byte, i| {
+    for (encoded_data, 0..) |byte, i| {
         discriminator_hex[i * 2] = std.fmt.hex_charset[byte >> 4];
         discriminator_hex[i * 2 + 1] = std.fmt.hex_charset[byte & 0x0f];
     }
@@ -675,6 +690,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const program_invoke_nonce_authority_keypair_path_arg = args.program_invoke_nonce_authority_keypair_path_arg;
     const idl_spec_arg = args.idl_spec_arg;
     const idl_instruction_arg = args.idl_instruction_arg;
+    const idl_args_json_arg = args.idl_args_json_arg;
     const raw_rpc_method_arg = args.raw_rpc_method_arg;
     const raw_rpc_params_arg = args.raw_rpc_params_arg;
     const slot_leaders_limit_arg = args.slot_leaders_limit_arg;
@@ -811,6 +827,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_idl_invoke_and_confirm)
     {
         reportInvalidCliMessage("error: --sender-keypair requires transfer, program-invoke, or idl-invoke commands\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (idl_args_json_arg != null and
+        command != .simulate_idl_invoke and
+        command != .send_idl_invoke and
+        command != .send_idl_invoke_and_confirm)
+    {
+        reportInvalidCliMessage("error: --idl-args-json requires idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
@@ -1657,9 +1682,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 allocator,
                 idl_arg,
                 instruction_name,
+                idl_args_json_arg,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
             ) catch {
-                reportInvalidCliMessage("error: send-idl-invoke currently supports zero-account zero-arg Anchor instructions\n", .{});
+                reportInvalidCliMessage("error: send-idl-invoke currently supports zero-account Anchor instructions with scalar args\n", .{});
                 return error.InvalidCli;
             };
             defer loaded.deinit(allocator);
@@ -1703,9 +1729,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 allocator,
                 idl_arg,
                 instruction_name,
+                idl_args_json_arg,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
             ) catch {
-                reportInvalidCliMessage("error: send-idl-invoke-and-confirm currently supports zero-account zero-arg Anchor instructions\n", .{});
+                reportInvalidCliMessage("error: send-idl-invoke-and-confirm currently supports zero-account Anchor instructions with scalar args\n", .{});
                 return error.InvalidCli;
             };
             defer loaded.deinit(allocator);
@@ -2258,9 +2285,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 allocator,
                 idl_arg,
                 instruction_name,
+                idl_args_json_arg,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
             ) catch {
-                reportInvalidCliMessage("error: simulate-idl-invoke currently supports zero-account zero-arg Anchor instructions\n", .{});
+                reportInvalidCliMessage("error: simulate-idl-invoke currently supports zero-account Anchor instructions with scalar args\n", .{});
                 return error.InvalidCli;
             };
             defer loaded.deinit(allocator);
@@ -7680,6 +7708,77 @@ test "runCommand simulate-idl-invoke simulates zero-account anchor instruction" 
     try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: idl-ok") != null);
+}
+
+test "runCommand simulate-idl-invoke encodes scalar anchor args" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var latest_blockhash_bytes: [32]u8 = undefined;
+    for (&latest_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 111);
+    const latest_blockhash = try client.encodeBase58(allocator, &latest_blockhash_bytes);
+    defer allocator.free(latest_blockhash);
+    try sender_context.sender.pushLatestBlockhashResponse(
+        67,
+        latest_blockhash,
+        109,
+    );
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":29},"value":{"accounts":[],"err":null,"fee":99,"unitsConsumed":18,"logs":["Program log: idl-args-ok"]}}
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://simulate-idl-invoke-args" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{52} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-simulate-idl-invoke-args-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"setConfig","discriminator":[1,2,3,4,5,6,7,8],"accounts":[],"args":[{"name":"enabled","type":"bool"},{"name":"count","type":"u16"},{"name":"label","type":"string"}]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-idl-invoke",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        "--idl-args-json",
+        "{\"enabled\":true,\"count\":513,\"label\":\"hi\"}",
+        idl_json,
+        "setConfig",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: idl-args-ok") != null);
 }
 
 test "runCommand send-idl-invoke sends zero-account anchor instruction" {

@@ -5,11 +5,16 @@ pub const Idl = struct {
     instructions: []const Instruction = &.{},
 };
 
+pub const IdlArg = struct {
+    name: []const u8,
+    @"type": std.json.Value = .null,
+};
+
 pub const Instruction = struct {
     name: []const u8,
     discriminator: []const u8 = &.{},
     accounts: []const std.json.Value = &.{},
-    args: []const std.json.Value = &.{},
+    args: []const IdlArg = &.{},
 
     pub fn hasZeroAccountsAndArgs(self: *const Instruction) bool {
         return self.accounts.len == 0 and self.args.len == 0;

@@ -1,6 +1,8 @@
 pub const sdk = @import("./client/sdk.zig");
 pub const rpc_types = @import("./client/rpc_types.zig");
 pub const pubsub_types = @import("./client/pubsub/types.zig");
+pub const anchor_idl = @import("./client/anchor_idl/types.zig");
+pub const anchor_idl_encode = @import("./client/anchor_idl/encode.zig");
 const rpc_client = @import("./client/rpc_client/client.zig");
 const nonblocking_client = @import("./client/nonblocking/client.zig");
 const pubsub_client = @import("./client/pubsub/client.zig");
