@@ -453,6 +453,8 @@ fn loadProgramInvokeInstructionSpec(
     signer_keypair_paths_arg: ?[]const u8,
     lookup_tables_arg: ?[]const u8,
     payer_keypair_path_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
 ) !LoadedCliInstructionSpec {
     const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch return error.InvalidCli;
     defer allocator.free(accounts_source);
@@ -510,6 +512,8 @@ fn loadProgramInvokeInstructionSpec(
     };
     const spec = CliSimulateInstructionsSpec{
         .payer_keypair_path = payer_keypair_path_arg,
+        .nonce_account = nonce_account_arg,
+        .nonce_authority_keypair_path = nonce_authority_keypair_path_arg,
         .additional_signer_keypair_paths = if (parsed_signer_keypair_paths) |value| value.value else &.{},
         .address_lookup_tables = if (parsed_lookup_tables) |value| value.value else &.{},
         .instructions = &instruction_specs,
@@ -627,6 +631,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const program_invoke_data_encoding_arg = args.program_invoke_data_encoding_arg;
     const program_invoke_signer_keypair_paths_arg = args.program_invoke_signer_keypair_paths_arg;
     const program_invoke_lookup_tables_arg = args.program_invoke_lookup_tables_arg;
+    const program_invoke_nonce_account_arg = args.program_invoke_nonce_account_arg;
+    const program_invoke_nonce_authority_keypair_path_arg = args.program_invoke_nonce_authority_keypair_path_arg;
     const raw_rpc_method_arg = args.raw_rpc_method_arg;
     const raw_rpc_params_arg = args.raw_rpc_params_arg;
     const slot_leaders_limit_arg = args.slot_leaders_limit_arg;
@@ -755,6 +761,35 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .simulate_versioned_program_invoke)
     {
         reportInvalidCliMessage("error: --sender-keypair requires transfer or program-invoke commands\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (program_invoke_nonce_account_arg != null and
+        command != .send_program_invoke and
+        command != .send_program_invoke_and_confirm and
+        command != .simulate_program_invoke and
+        command != .send_versioned_program_invoke and
+        command != .send_versioned_program_invoke_and_confirm and
+        command != .simulate_versioned_program_invoke)
+    {
+        reportInvalidCliMessage("error: --nonce-account requires program-invoke commands\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (program_invoke_nonce_authority_keypair_path_arg != null and
+        command != .send_program_invoke and
+        command != .send_program_invoke_and_confirm and
+        command != .simulate_program_invoke and
+        command != .send_versioned_program_invoke and
+        command != .send_versioned_program_invoke_and_confirm and
+        command != .simulate_versioned_program_invoke)
+    {
+        reportInvalidCliMessage("error: --nonce-authority-keypair requires program-invoke commands\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (program_invoke_nonce_authority_keypair_path_arg != null and program_invoke_nonce_account_arg == null) {
+        reportInvalidCliMessage("error: --nonce-authority-keypair requires --nonce-account\n", .{});
         return error.InvalidCli;
     }
 
@@ -1358,19 +1393,31 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_signer_keypair_paths_arg,
                 null,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                program_invoke_nonce_account_arg,
+                program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-program-invoke arguments are invalid\n", .{});
                 return error.InvalidCli;
             };
             defer loaded.deinit(allocator);
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                recent_blockhash_arg,
+                commitment orelse send_preflight_commitment,
+            ) catch {
+                reportInvalidCliMessage("error: send-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
 
             const tx_signature = try rpc.sendLegacyInstructionsWithOptions(
                 loaded.payer,
                 loaded.owned_instructions.instructions,
                 loaded.signers,
                 .{
-                    .recent_blockhash = recent_blockhash_arg,
-                    .blockhash_commitment = if (recent_blockhash_arg == null) commitment orelse send_preflight_commitment else null,
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
                     .send_transaction_options = send_transaction_options,
                 },
             );
@@ -1398,19 +1445,31 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_signer_keypair_paths_arg,
                 null,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                program_invoke_nonce_account_arg,
+                program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-program-invoke-and-confirm arguments are invalid\n", .{});
                 return error.InvalidCli;
             };
             defer loaded.deinit(allocator);
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                recent_blockhash_arg,
+                commitment orelse send_preflight_commitment,
+            ) catch {
+                reportInvalidCliMessage("error: send-program-invoke-and-confirm arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
 
             const tx_signature = try rpc.sendAndConfirmLegacyInstructionsWithOptions(
                 loaded.payer,
                 loaded.owned_instructions.instructions,
                 loaded.signers,
                 .{
-                    .recent_blockhash = recent_blockhash_arg,
-                    .blockhash_commitment = if (recent_blockhash_arg == null) commitment orelse send_preflight_commitment else null,
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
                     .send_transaction_options = send_transaction_options,
                     .commitment = commitment,
                     .search_transaction_history = search_transaction_history,
@@ -1442,11 +1501,21 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_signer_keypair_paths_arg,
                 program_invoke_lookup_tables_arg,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                program_invoke_nonce_account_arg,
+                program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-versioned-program-invoke arguments are invalid\n", .{});
                 return error.InvalidCli;
             };
             defer loaded.deinit(allocator);
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                recent_blockhash_arg,
+                commitment orelse send_preflight_commitment,
+            ) catch {
+                reportInvalidCliMessage("error: send-versioned-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
 
             const tx_signature = try rpc.sendVersionedInstructionsWithOptions(
                 loaded.payer,
@@ -1454,8 +1523,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 loaded.address_lookup_tables,
                 loaded.signers,
                 .{
-                    .recent_blockhash = recent_blockhash_arg,
-                    .blockhash_commitment = if (recent_blockhash_arg == null) commitment orelse send_preflight_commitment else null,
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
                     .send_transaction_options = send_transaction_options,
                 },
             );
@@ -1483,11 +1554,21 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_signer_keypair_paths_arg,
                 program_invoke_lookup_tables_arg,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                program_invoke_nonce_account_arg,
+                program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-versioned-program-invoke-and-confirm arguments are invalid\n", .{});
                 return error.InvalidCli;
             };
             defer loaded.deinit(allocator);
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                recent_blockhash_arg,
+                commitment orelse send_preflight_commitment,
+            ) catch {
+                reportInvalidCliMessage("error: send-versioned-program-invoke-and-confirm arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
 
             const tx_signature = try rpc.sendAndConfirmVersionedInstructionsWithOptions(
                 loaded.payer,
@@ -1495,8 +1576,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 loaded.address_lookup_tables,
                 loaded.signers,
                 .{
-                    .recent_blockhash = recent_blockhash_arg,
-                    .blockhash_commitment = if (recent_blockhash_arg == null) commitment orelse send_preflight_commitment else null,
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
                     .send_transaction_options = send_transaction_options,
                     .commitment = commitment,
                     .search_transaction_history = search_transaction_history,
@@ -1856,6 +1939,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_signer_keypair_paths_arg,
                 null,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                program_invoke_nonce_account_arg,
+                program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: simulate-program-invoke arguments are invalid\n", .{});
                 return error.InvalidCli;
@@ -1893,10 +1978,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             else
                 null;
-            const build_options = if (recent_blockhash_arg != null or commitment != null)
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                recent_blockhash_arg,
+                commitment,
+            ) catch {
+                reportInvalidCliMessage("error: simulate-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            const build_options = if (build_context.recent_blockhash != null or build_context.blockhash_commitment != null or build_context.blockhash_query != null or build_context.nonce_authority != null)
                 client.LegacyInstructionsBuildOptions{
-                    .recent_blockhash = recent_blockhash_arg,
-                    .blockhash_commitment = if (recent_blockhash_arg == null) commitment else null,
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
                 }
             else
                 null;
@@ -1932,6 +2027,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_signer_keypair_paths_arg,
                 program_invoke_lookup_tables_arg,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                program_invoke_nonce_account_arg,
+                program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: simulate-versioned-program-invoke arguments are invalid\n", .{});
                 return error.InvalidCli;
@@ -1969,10 +2066,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             else
                 null;
-            const build_options = if (recent_blockhash_arg != null or commitment != null)
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                recent_blockhash_arg,
+                commitment,
+            ) catch {
+                reportInvalidCliMessage("error: simulate-versioned-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            const build_options = if (build_context.recent_blockhash != null or build_context.blockhash_commitment != null or build_context.blockhash_query != null or build_context.nonce_authority != null)
                 client.VersionedInstructionsBuildOptions{
-                    .recent_blockhash = recent_blockhash_arg,
-                    .blockhash_commitment = if (recent_blockhash_arg == null) commitment else null,
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
                 }
             else
                 null;
@@ -7015,6 +7122,118 @@ test "runCommand simulate-program-invoke simulates instruction built from args" 
     try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: invoke-ok") != null);
 }
 
+test "runCommand send-program-invoke supports nonce account" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{41} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-send-program-invoke-nonce-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{42} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{43} ** 32);
+    const nonce_account_pubkey = try client.encodeBase58(allocator, &nonce_account_raw.public_key.toBytes());
+    defer allocator.free(nonce_account_pubkey);
+
+    var nonce_blockhash_bytes: [32]u8 = undefined;
+    for (&nonce_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 171);
+    const nonce_blockhash = try client.encodeBase58(allocator, &nonce_blockhash_bytes);
+    defer allocator.free(nonce_blockhash);
+
+    const nonce_data_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"program":"system","parsed":{{"type":"nonce","info":{{"authority":"{s}","blockhash":"{s}"}}}}}}
+        ,
+        .{ payer_pubkey_base58, nonce_blockhash },
+    );
+    defer allocator.free(nonce_data_json);
+
+    try sender_context.sender.pushUiAccountResponse(71, .{
+        .data_json = nonce_data_json,
+        .executable = false,
+        .lamports = 1,
+        .owner = "11111111111111111111111111111111",
+        .rent_epoch = 0,
+        .space = 80,
+    });
+    try sender_context.sender.pushResultJson("\"Sig161616161616161616161616161616161616161616161616161616161616161616\"");
+
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-program-invoke-nonce" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
+        ,
+        .{ payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-program-invoke",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        "--nonce-account",
+        nonce_account_pubkey,
+        "11111111111111111111111111111111",
+        accounts_json,
+        "ping",
+        "utf8",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetUiAccountRequest(
+        allocator,
+        commandCapturedRequestAt(&sender_context, 0),
+        nonce_account_pubkey,
+        null,
+        null,
+    );
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "signature: Sig161616161616161616161616161616161616161616161616161616161616161616\n",
+        captured,
+    );
+}
+
 test "runCommand send-versioned-program-invoke sends versioned instruction built from args" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
@@ -7094,6 +7313,137 @@ test "runCommand send-versioned-program-invoke sends versioned instruction built
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature: Sig141414141414141414141414141414141414141414141414141414141414141414\n",
+        captured,
+    );
+}
+
+test "runCommand send-versioned-program-invoke supports nonce authority keypair" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{44} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-send-versioned-program-invoke-nonce-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{45} ** 32);
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const nonce_authority = try client.Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+    const nonce_authority_pubkey_base58 = try nonce_authority.public_key.toBase58(allocator);
+    defer allocator.free(nonce_authority_pubkey_base58);
+
+    const nonce_authority_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-send-versioned-program-invoke-nonce-authority-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(nonce_authority_keypair_path);
+    defer std.fs.cwd().deleteFile(nonce_authority_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, nonce_authority_keypair_path, &nonce_authority_secret_key);
+    const nonce_authority_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, nonce_authority_keypair_path);
+    defer allocator.free(nonce_authority_keypair_realpath);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{46} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{47} ** 32);
+    const nonce_account_pubkey = try client.encodeBase58(allocator, &nonce_account_raw.public_key.toBytes());
+    defer allocator.free(nonce_account_pubkey);
+
+    var nonce_blockhash_bytes: [32]u8 = undefined;
+    for (&nonce_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 211);
+    const nonce_blockhash = try client.encodeBase58(allocator, &nonce_blockhash_bytes);
+    defer allocator.free(nonce_blockhash);
+
+    const nonce_data_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"program":"system","parsed":{{"type":"nonce","info":{{"authority":"{s}","blockhash":"{s}"}}}}}}
+        ,
+        .{ nonce_authority_pubkey_base58, nonce_blockhash },
+    );
+    defer allocator.free(nonce_data_json);
+
+    try sender_context.sender.pushUiAccountResponse(72, .{
+        .data_json = nonce_data_json,
+        .executable = false,
+        .lamports = 1,
+        .owner = "11111111111111111111111111111111",
+        .rent_epoch = 0,
+        .space = 80,
+    });
+    try sender_context.sender.pushResultJson("\"Sig171717171717171717171717171717171717171717171717171717171717171717\"");
+
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-versioned-program-invoke-nonce" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
+        ,
+        .{ payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-versioned-program-invoke",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        "--nonce-account",
+        nonce_account_pubkey,
+        "--nonce-authority-keypair",
+        nonce_authority_keypair_realpath,
+        "11111111111111111111111111111111",
+        accounts_json,
+        "ping",
+        "utf8",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetUiAccountRequest(
+        allocator,
+        commandCapturedRequestAt(&sender_context, 0),
+        nonce_account_pubkey,
+        null,
+        null,
+    );
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "signature: Sig171717171717171717171717171717171717171717171717171717171717171717\n",
         captured,
     );
 }
