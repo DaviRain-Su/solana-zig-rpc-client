@@ -352,6 +352,13 @@ fn findCliAccountBinding(
     return null;
 }
 
+fn normalizeAnchorIdlAccountPubkeyPath(path: []const u8) []const u8 {
+    if (std.mem.endsWith(u8, path, ".key")) return path[0 .. path.len - 4];
+    if (std.mem.endsWith(u8, path, ".pubkey")) return path[0 .. path.len - 7];
+    if (std.mem.endsWith(u8, path, ".address")) return path[0 .. path.len - 8];
+    return path;
+}
+
 fn findAnchorIdlAccountValue(accounts: []const std.json.Value, path: []const u8) ?std.json.Value {
     if (std.mem.indexOfScalar(u8, path, '.')) |dot_index| {
         const head = path[0..dot_index];
@@ -387,16 +394,17 @@ fn resolveAnchorIdlNamedAccountPubkeyFromAccounts(
     account_bindings: []const []const u8,
     path: []const u8,
 ) !client.Pubkey {
-    const leaf_name = if (std.mem.lastIndexOfScalar(u8, path, '.')) |dot_index|
-        path[dot_index + 1 ..]
+    const normalized_path = normalizeAnchorIdlAccountPubkeyPath(path);
+    const leaf_name = if (std.mem.lastIndexOfScalar(u8, normalized_path, '.')) |dot_index|
+        normalized_path[dot_index + 1 ..]
     else
-        path;
+        normalized_path;
 
-    if (findCliAccountBinding(account_bindings, path, leaf_name)) |pubkey_value| {
+    if (findCliAccountBinding(account_bindings, normalized_path, leaf_name)) |pubkey_value| {
         return client.Pubkey.fromBase58(allocator, pubkey_value) catch return error.InvalidCli;
     }
 
-    const account_value = findAnchorIdlAccountValue(accounts, path) orelse return error.InvalidCli;
+    const account_value = findAnchorIdlAccountValue(accounts, normalized_path) orelse return error.InvalidCli;
     if (account_value != .object) return error.InvalidCli;
     if (account_value.object.get("accounts") != null) return error.InvalidCli;
     const address_value = account_value.object.get("address") orelse return error.InvalidCli;
@@ -8491,6 +8499,61 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from const and account seed
     const expected_pda = try findProgramAddress(
         allocator,
         &.{ seed_const, seed_authority },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(authority));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from account seed key path" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{58} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-account-key-path-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const authority = client.Pubkey.fromBytes(.{25} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const authority_binding = try std.fmt.allocPrint(allocator, "authority={s}", .{authority_base58});
+    defer allocator.free(authority_binding);
+    const program_id = client.Pubkey.fromBytes(.{36} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[5,5,5,5,5,5,5,5],"accounts":[{{"name":"state","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[115,116,97,116,101]}},{{"kind":"account","path":"authority.key"}}]}}}},{{"name":"authority","signer":true}}],"args":[]}}]}}
+        ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        null,
+        &.{authority_binding},
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "state", &authority.bytes },
         program_id,
     );
 
