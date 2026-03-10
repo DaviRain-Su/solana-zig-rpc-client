@@ -93,6 +93,41 @@ fn runDelayedRootServerAndCheckBodyContainsBoth(
     request.respond(response_body, .{}) catch return;
 }
 
+fn runDelayedRootServerWithResponsePlan(
+    listener: *std.net.Server,
+    allocator: std.mem.Allocator,
+    delay_ms: u64,
+    expected_fragments: []const []const u8,
+    response_bodies: []const []const u8,
+    matched: []bool,
+) void {
+    var index: usize = 0;
+    while (index < response_bodies.len) : (index += 1) {
+        var connection = listener.accept() catch return;
+        defer connection.stream.close();
+
+        var receive_buffer: [4096]u8 = undefined;
+        var request_body_buffer: [4096]u8 = undefined;
+        var send_buffer: [4096]u8 = undefined;
+        var connection_reader = connection.stream.reader(&receive_buffer);
+        var connection_writer = connection.stream.writer(&send_buffer);
+        var http_server = std.http.Server.init(connection_reader.interface(), &connection_writer.interface);
+
+        var request = http_server.receiveHead() catch return;
+        const body_length = request.head.content_length orelse 0;
+        const request_body_reader = request.readerExpectNone(&request_body_buffer);
+        const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
+        defer allocator.free(request_body);
+
+        if (index < expected_fragments.len) {
+            matched[index] = std.mem.indexOf(u8, request_body, expected_fragments[index]) != null;
+        }
+
+        std.Thread.sleep(delay_ms * std.time.ns_per_ms);
+        request.respond(response_bodies[index], .{}) catch return;
+    }
+}
+
 fn createListener() !std.net.Server {
     const endpoint = std.net.Address.parseIp("127.0.0.1", 0) catch |err| {
         return err;
@@ -2451,6 +2486,80 @@ test "root.NonblockingRpcClient sendTransactionAsync sends transaction and retur
 
     try std.testing.expectEqualStrings("Sig111111111111111111111111111111111111", signature);
     try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient confirmTransactionAsync confirms signature status" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = [_]bool{false};
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
+        &listener,
+        allocator,
+        200,
+        &.{ "Sig111111111111111111111111111111111111" },
+        &.{"{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":33},\"value\":[{\"slot\":33,\"confirmations\":3,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}"},
+        &matched,
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.confirmTransactionAsync("Sig111111111111111111111111111111111111", .processed);
+    try std.testing.expect(!task.isDone());
+
+    const confirmed = try task.wait();
+    try std.testing.expect(confirmed);
+    try std.testing.expect(matched[0]);
+}
+
+test "root.NonblockingRpcClient sendAndConfirmTransactionAsync sends and waits for status" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = [_]bool{false, false};
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
+        &listener,
+        allocator,
+        200,
+        &.{ "sendTransaction", "\"getSignatureStatuses\"" },
+        &.{
+            "{\"jsonrpc\":\"2.0\",\"result\":\"Sig111111111111111111111111111111111111\",\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":[{\"slot\":44,\"confirmations\":3,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
+        },
+        &matched,
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.sendAndConfirmTransactionAsync(
+        "SignedTransactionBase64",
+        .{
+            .skip_preflight = true,
+            .max_retries = 4,
+            .preflight_commitment = .finalized,
+        },
+    );
+    try std.testing.expect(!task.isDone());
+
+    const signature = try task.wait();
+    defer allocator.free(signature);
+    try std.testing.expectEqualStrings("Sig111111111111111111111111111111111111", signature);
+    try std.testing.expect(matched[0]);
+    try std.testing.expect(matched[1]);
 }
 
 test "root.NonblockingRpcClient simulateTransactionAsync returns owned simulation result" {

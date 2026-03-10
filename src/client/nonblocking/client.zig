@@ -1381,6 +1381,48 @@ fn runSimulateTransaction(
     return try client.simulateTransaction(signed_tx_base64, options);
 }
 
+fn runConfirmTransaction(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    signature: []const u8,
+    commitment: ?Commitment,
+) !bool {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.confirmTransaction(signature, commitment, false);
+}
+
+fn runSendAndConfirmTransaction(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    signed_tx_base64: []const u8,
+    options: ?SendTransactionOptions,
+) ![]const u8 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.sendAndConfirmTransaction(signed_tx_base64, options);
+}
+
 fn runGetSignatureStatus(
     allocator: Allocator,
     endpoint: []const u8,
@@ -2751,6 +2793,8 @@ pub const NonblockingRpcClient = struct {
     pub const LeaderScheduleForIdentityTask = AsyncTaskWithStringAndCommitment(?[]LeaderSchedule, runGetLeaderScheduleForIdentity);
     pub const SendTransactionTask = AsyncTaskWithStringAndOptions([]const u8, SendTransactionOptions, runSendTransaction);
     pub const SimulateTransactionTask = AsyncTaskWithStringAndOptions(SimulatedTransaction, SimulateTransactionOptions, runSimulateTransaction);
+    pub const ConfirmTransactionTask = AsyncTaskWithStringAndCommitment(bool, runConfirmTransaction);
+    pub const SendAndConfirmTransactionTask = AsyncTaskWithStringAndOptions([]const u8, SendTransactionOptions, runSendAndConfirmTransaction);
     pub const SignatureStatusTask = AsyncTaskWithStringAndCommitment(SignatureStatus, runGetSignatureStatus);
     pub const SignatureStatusesTask = AsyncTaskWithStringListAndCommitment([]?SignatureStatus, runGetSignatureStatuses);
     pub const SignaturesForAddressTask = AsyncTaskWithSignaturesForAddressAndCommitment([]SignatureForAddress, runGetSignaturesForAddress);
@@ -3042,6 +3086,38 @@ pub const NonblockingRpcClient = struct {
         options: ?SimulateTransactionOptions,
     ) !*SimulateTransactionTask {
         return SimulateTransactionTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            signed_tx_base64,
+            options,
+        );
+    }
+
+    pub fn confirmTransactionAsync(
+        self: *const NonblockingRpcClient,
+        signature: []const u8,
+        commitment: ?Commitment,
+    ) !*ConfirmTransactionTask {
+        return ConfirmTransactionTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            signature,
+            commitment,
+        );
+    }
+
+    pub fn sendAndConfirmTransactionAsync(
+        self: *const NonblockingRpcClient,
+        signed_tx_base64: []const u8,
+        options: ?SendTransactionOptions,
+    ) !*SendAndConfirmTransactionTask {
+        return SendAndConfirmTransactionTask.start(
             self.allocator,
             self.endpoint,
             self.default_commitment,
