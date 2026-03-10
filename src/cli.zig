@@ -43,11 +43,11 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] signature-statuses <signature-1> [signature-2 ...]\n" ++
     "  solana_client_zig [--rpc <url>] send-transaction <signed-tx-base64>\n" ++
     "  solana_client_zig [--rpc <url>] send-transaction-and-confirm <signed-tx-base64>\n" ++
-    "  solana_client_zig [--rpc <url>] send-instructions <instruction-spec-json>\n" ++
-    "  solana_client_zig [--rpc <url>] send-instructions-and-confirm <instruction-spec-json>\n" ++
+    "  solana_client_zig [--rpc <url>] send-instructions <instruction-spec-json|@path>\n" ++
+    "  solana_client_zig [--rpc <url>] send-instructions-and-confirm <instruction-spec-json|@path>\n" ++
     "  solana_client_zig [--rpc <url>] transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-transaction <signed-tx-base64>\n" ++
-    "  solana_client_zig [--rpc <url>] simulate-instructions <instruction-spec-json>\n" ++
+    "  solana_client_zig [--rpc <url>] simulate-instructions <instruction-spec-json|@path>\n" ++
     "  solana_client_zig [--rpc <url>] raw-rpc <method> [params-json]\n" ++
     "  solana_client_zig [--rpc <url>] slot\n" ++
     "  solana_client_zig [--rpc <url>] block-height\n" ++
@@ -1528,9 +1528,9 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "inflation-reward <address-1> [address-2 ...] [--epoch <epoch>]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transaction <signature>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-transaction <signed-tx-base64>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions <instruction-spec-json>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions-and-confirm <instruction-spec-json>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-instructions <instruction-spec-json>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions <instruction-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions-and-confirm <instruction-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-instructions <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "raw-rpc <method> [params-json]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "poll-balance <account>") != null);

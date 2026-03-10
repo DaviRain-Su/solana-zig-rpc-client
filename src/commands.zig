@@ -188,6 +188,26 @@ fn decodeCliInstructionData(
     };
 }
 
+fn loadInstructionSpecSource(allocator: Allocator, arg: []const u8) ![]u8 {
+    if (!std.mem.startsWith(u8, arg, "@")) {
+        return try allocator.dupe(u8, arg);
+    }
+
+    const path_arg = arg[1..];
+    if (path_arg.len == 0) return error.InvalidCli;
+
+    const home_dir = std.process.getEnvVarOwned(allocator, "HOME") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => null,
+        else => return err,
+    };
+    defer if (home_dir) |value| allocator.free(value);
+
+    const expanded_path = try expandUserPathForHome(allocator, path_arg, home_dir);
+    defer allocator.free(expanded_path);
+
+    return try std.fs.cwd().readFileAlloc(allocator, expanded_path, 1 << 20);
+}
+
 fn resolveInstructionPayerKeypair(
     allocator: Allocator,
     spec: *const CliSimulateInstructionsSpec,
@@ -842,8 +862,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-instructions requires <instruction-spec-json>\n", .{});
                 return error.InvalidCli;
             };
+            const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
+                reportInvalidCliMessage("error: send-instructions spec must be valid JSON or @path\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(spec_source);
 
-            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_arg, .{
+            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
                 .ignore_unknown_fields = true,
             }) catch {
                 reportInvalidCliMessage("error: send-instructions spec must be valid JSON\n", .{});
@@ -877,8 +902,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-instructions-and-confirm requires <instruction-spec-json>\n", .{});
                 return error.InvalidCli;
             };
+            const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
+                reportInvalidCliMessage("error: send-instructions-and-confirm spec must be valid JSON or @path\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(spec_source);
 
-            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_arg, .{
+            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
                 .ignore_unknown_fields = true,
             }) catch {
                 reportInvalidCliMessage("error: send-instructions-and-confirm spec must be valid JSON\n", .{});
@@ -1069,8 +1099,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: simulate-instructions requires <instruction-spec-json>\n", .{});
                 return error.InvalidCli;
             };
+            const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
+                reportInvalidCliMessage("error: simulate-instructions spec must be valid JSON or @path\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(spec_source);
 
-            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_arg, .{
+            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
                 .ignore_unknown_fields = true,
             }) catch {
                 reportInvalidCliMessage("error: simulate-instructions spec must be valid JSON\n", .{});
@@ -5590,12 +5625,22 @@ test "runCommand simulate-instructions builds and simulates generic instruction 
         .{ payer_secret_key_base58, recent_blockhash, payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(spec_json);
+    const spec_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-simulate-instructions-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(spec_path);
+    defer std.fs.cwd().deleteFile(spec_path) catch {};
+    try std.fs.cwd().writeFile(.{ .sub_path = spec_path, .data = spec_json });
+    const spec_arg = try std.fmt.allocPrint(allocator, "@{s}", .{spec_path});
+    defer allocator.free(spec_arg);
 
     var parsed = try cli.parseCliArgs(allocator, &.{
         "simulate-instructions",
         "--sig-verify",
         "--inner-instructions",
-        spec_json,
+        spec_arg,
     });
     defer parsed.deinit(allocator);
 
