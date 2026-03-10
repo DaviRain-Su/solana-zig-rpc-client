@@ -58,8 +58,11 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] simulate-program-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]\n" ++
     "  solana_client_zig [--rpc <url>] simulate-versioned-program-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]\n" ++
     "  solana_client_zig [--rpc <url>] simulate-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]\n" ++
+    "  solana_client_zig [--rpc <url>] simulate-versioned-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]\n" ++
     "  solana_client_zig [--rpc <url>] send-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]\n" ++
     "  solana_client_zig [--rpc <url>] send-idl-invoke-and-confirm [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]\n" ++
+    "  solana_client_zig [--rpc <url>] send-versioned-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]\n" ++
+    "  solana_client_zig [--rpc <url>] send-versioned-idl-invoke-and-confirm [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]\n" ++
     "  solana_client_zig [--rpc <url>] raw-rpc <method> [params-json]\n" ++
     "  solana_client_zig [--rpc <url>] slot\n" ++
     "  solana_client_zig [--rpc <url>] block-height\n" ++
@@ -994,6 +997,18 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "send-versioned-idl-invoke")) {
+                parsed.command = .send_versioned_idl_invoke;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "send-versioned-idl-invoke-and-confirm")) {
+                parsed.command = .send_versioned_idl_invoke_and_confirm;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "transfer")) {
                 parsed.command = .transfer;
                 parsed.has_command = true;
@@ -1032,6 +1047,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
 
             if (std.mem.eql(u8, arg, "simulate-idl-invoke")) {
                 parsed.command = .simulate_idl_invoke;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "simulate-versioned-idl-invoke")) {
+                parsed.command = .simulate_versioned_idl_invoke;
                 parsed.has_command = true;
                 continue;
             }
@@ -1457,6 +1478,21 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 return error.InvalidCli;
             },
 
+            .simulate_versioned_idl_invoke,
+            .send_versioned_idl_invoke,
+            .send_versioned_idl_invoke_and_confirm,
+            => if (parsed.idl_spec_arg == null) {
+                parsed.idl_spec_arg = arg;
+            } else if (parsed.idl_instruction_arg == null) {
+                parsed.idl_instruction_arg = arg;
+            } else if (parsed.program_invoke_signer_keypair_paths_arg == null) {
+                parsed.program_invoke_signer_keypair_paths_arg = arg;
+            } else if (parsed.program_invoke_lookup_tables_arg == null) {
+                parsed.program_invoke_lookup_tables_arg = arg;
+            } else {
+                return error.InvalidCli;
+            },
+
             .send_program_invoke,
             .send_program_invoke_and_confirm,
             .simulate_program_invoke,
@@ -1658,6 +1694,8 @@ pub const Command = enum {
     send_versioned_program_invoke_and_confirm,
     send_idl_invoke,
     send_idl_invoke_and_confirm,
+    send_versioned_idl_invoke,
+    send_versioned_idl_invoke_and_confirm,
     transfer,
     simulate_transaction,
     simulate_instructions,
@@ -1665,6 +1703,7 @@ pub const Command = enum {
     simulate_program_invoke,
     simulate_versioned_program_invoke,
     simulate_idl_invoke,
+    simulate_versioned_idl_invoke,
     raw_rpc,
     slot,
     block_height,
@@ -1777,8 +1816,11 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-program-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-program-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke-and-confirm [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-idl-invoke-and-confirm [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "raw-rpc <method> [params-json]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "poll-balance <account>") != null);
@@ -2151,6 +2193,32 @@ test "cli.parseCliArgs parses send-idl-invoke-and-confirm args" {
     try std.testing.expectEqualStrings("Nonce222222222222222222222222222222222222222222", parsed.program_invoke_nonce_account_arg orelse "");
     try std.testing.expectEqualStrings("@target/idl/hello_world.json", parsed.idl_spec_arg orelse "");
     try std.testing.expectEqualStrings("initialize", parsed.idl_instruction_arg orelse "");
+}
+
+test "cli.parseCliArgs parses send-versioned-idl-invoke args" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "send-versioned-idl-invoke",
+        "--sender-keypair",
+        "/tmp/test-versioned-idl-send.json",
+        "--recent-blockhash",
+        "Recent333333333333333333333333333333333333333333",
+        "--program-id",
+        "Prog333333333333333333333333333333333333333333",
+        "@target/idl/hello_world.json",
+        "initialize",
+        "[\"/tmp/versioned-extra.json\"]",
+        "[{\"account_key\":\"Lookup111111111111111111111111111111111\",\"addresses\":[\"Addr1111111111111111111111111111111111111\"]}]",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.send_versioned_idl_invoke, parsed.command);
+    try std.testing.expectEqualStrings("/tmp/test-versioned-idl-send.json", parsed.sender_keypair_path_arg orelse "");
+    try std.testing.expectEqualStrings("Recent333333333333333333333333333333333333333333", parsed.recent_blockhash_arg orelse "");
+    try std.testing.expectEqualStrings("Prog333333333333333333333333333333333333333333", parsed.idl_program_id_arg orelse "");
+    try std.testing.expectEqualStrings("@target/idl/hello_world.json", parsed.idl_spec_arg orelse "");
+    try std.testing.expectEqualStrings("initialize", parsed.idl_instruction_arg orelse "");
+    try std.testing.expectEqualStrings("[\"/tmp/versioned-extra.json\"]", parsed.program_invoke_signer_keypair_paths_arg orelse "");
+    try std.testing.expectEqualStrings("[{\"account_key\":\"Lookup111111111111111111111111111111111\",\"addresses\":[\"Addr1111111111111111111111111111111111111\"]}]", parsed.program_invoke_lookup_tables_arg orelse "");
 }
 
 test "cli.parseCliArgs parses send-program-invoke args" {
