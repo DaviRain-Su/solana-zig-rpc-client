@@ -45,9 +45,12 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] send-transaction-and-confirm <signed-tx-base64>\n" ++
     "  solana_client_zig [--rpc <url>] send-instructions <instruction-spec-json|@path>\n" ++
     "  solana_client_zig [--rpc <url>] send-instructions-and-confirm <instruction-spec-json|@path>\n" ++
+    "  solana_client_zig [--rpc <url>] send-versioned-instructions <instruction-spec-json|@path>\n" ++
+    "  solana_client_zig [--rpc <url>] send-versioned-instructions-and-confirm <instruction-spec-json|@path>\n" ++
     "  solana_client_zig [--rpc <url>] transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-transaction <signed-tx-base64>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-instructions <instruction-spec-json|@path>\n" ++
+    "  solana_client_zig [--rpc <url>] simulate-versioned-instructions <instruction-spec-json|@path>\n" ++
     "  solana_client_zig [--rpc <url>] raw-rpc <method> [params-json]\n" ++
     "  solana_client_zig [--rpc <url>] slot\n" ++
     "  solana_client_zig [--rpc <url>] block-height\n" ++
@@ -835,6 +838,18 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "send-versioned-instructions")) {
+                parsed.command = .send_versioned_instructions;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "send-versioned-instructions-and-confirm")) {
+                parsed.command = .send_versioned_instructions_and_confirm;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "transfer")) {
                 parsed.command = .transfer;
                 parsed.has_command = true;
@@ -849,6 +864,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
 
             if (std.mem.eql(u8, arg, "simulate-instructions")) {
                 parsed.command = .simulate_instructions;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "simulate-versioned-instructions")) {
+                parsed.command = .simulate_versioned_instructions;
                 parsed.has_command = true;
                 continue;
             }
@@ -1249,7 +1270,13 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 return error.InvalidCli;
             },
 
-            .send_instructions, .send_instructions_and_confirm, .simulate_instructions => if (parsed.instructions_spec_arg == null) {
+            .send_instructions,
+            .send_instructions_and_confirm,
+            .send_versioned_instructions,
+            .send_versioned_instructions_and_confirm,
+            .simulate_instructions,
+            .simulate_versioned_instructions,
+            => if (parsed.instructions_spec_arg == null) {
                 parsed.instructions_spec_arg = arg;
             } else {
                 return error.InvalidCli;
@@ -1426,9 +1453,12 @@ pub const Command = enum {
     send_transaction_and_confirm,
     send_instructions,
     send_instructions_and_confirm,
+    send_versioned_instructions,
+    send_versioned_instructions_and_confirm,
     transfer,
     simulate_transaction,
     simulate_instructions,
+    simulate_versioned_instructions,
     raw_rpc,
     slot,
     block_height,
@@ -1530,7 +1560,10 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-transaction <signed-tx-base64>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions-and-confirm <instruction-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-instructions <instruction-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-instructions-and-confirm <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-instructions <instruction-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-instructions <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "raw-rpc <method> [params-json]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "poll-balance <account>") != null);
@@ -1813,6 +1846,20 @@ test "cli.parseCliArgs parses send-instructions spec" {
     defer parsed.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(Command.send_instructions, parsed.command);
+    try std.testing.expectEqualStrings(
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+        parsed.instructions_spec_arg orelse "",
+    );
+}
+
+test "cli.parseCliArgs parses simulate-versioned-instructions spec" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "simulate-versioned-instructions",
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.simulate_versioned_instructions, parsed.command);
     try std.testing.expectEqualStrings(
         "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
         parsed.instructions_spec_arg orelse "",

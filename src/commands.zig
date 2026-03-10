@@ -138,11 +138,17 @@ const CliInstructionSpec = struct {
     data_encoding: InstructionDataEncoding = .base64,
 };
 
+const CliAddressLookupTableSpec = struct {
+    account_key: []const u8,
+    addresses: []const []const u8 = &.{},
+};
+
 const CliSimulateInstructionsSpec = struct {
     payer_secret_key: ?[]const u8 = null,
     payer_keypair_path: ?[]const u8 = null,
     additional_signer_secret_keys: []const []const u8 = &.{},
     instructions: []const CliInstructionSpec = &.{},
+    address_lookup_tables: []const CliAddressLookupTableSpec = &.{},
     recent_blockhash: ?[]const u8 = null,
 };
 
@@ -150,8 +156,13 @@ const LoadedCliInstructionSpec = struct {
     payer: client.Pubkey,
     signers: []client.Keypair,
     owned_instructions: client.OwnedInstructions,
+    address_lookup_tables: []client.AddressLookupTableAccount,
 
     fn deinit(self: *LoadedCliInstructionSpec, allocator: Allocator) void {
+        for (self.address_lookup_tables) |table| {
+            allocator.free(table.addresses);
+        }
+        allocator.free(self.address_lookup_tables);
         allocator.free(self.signers);
         self.owned_instructions.deinit(allocator);
         self.* = undefined;
@@ -249,6 +260,7 @@ fn loadCliInstructionSpec(
         .payer = undefined,
         .signers = undefined,
         .owned_instructions = .{ .instructions = undefined },
+        .address_lookup_tables = undefined,
     };
     errdefer loaded.deinit(allocator);
 
@@ -289,6 +301,19 @@ fn loadCliInstructionSpec(
     }
 
     loaded.owned_instructions = .{ .instructions = instructions };
+    loaded.address_lookup_tables = try allocator.alloc(client.AddressLookupTableAccount, spec.address_lookup_tables.len);
+    errdefer allocator.free(loaded.address_lookup_tables);
+    for (spec.address_lookup_tables, 0..) |table_spec, index| {
+        const addresses = try allocator.alloc(client.Pubkey, table_spec.addresses.len);
+        errdefer allocator.free(addresses);
+        for (table_spec.addresses, 0..) |address_value, address_index| {
+            addresses[address_index] = try client.Pubkey.fromBase58(allocator, address_value);
+        }
+        loaded.address_lookup_tables[index] = .{
+            .account_key = try client.Pubkey.fromBase58(allocator, table_spec.account_key),
+            .addresses = addresses,
+        };
+    }
     return loaded;
 }
 
@@ -437,6 +462,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command == .send_transaction_and_confirm or
         command == .send_instructions or
         command == .send_instructions_and_confirm or
+        command == .send_versioned_instructions or
+        command == .send_versioned_instructions_and_confirm or
         command == .transfer;
     const is_account_min_context_command = command == .account_data or
         command == .account_info or
@@ -472,7 +499,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         status_poll_ms;
     if ((send_skip_preflight or send_max_retries != null or send_preflight_commitment != null) and !is_send_command) {
         reportInvalidCliMessage(
-            "error: send options (--skip-preflight, --max-retries, --preflight-commitment) require send-transaction, send-transaction-and-confirm, send-instructions, send-instructions-and-confirm, or transfer\n",
+            "error: send options (--skip-preflight, --max-retries, --preflight-commitment) require send-transaction, send-transaction-and-confirm, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, or transfer\n",
             .{},
         );
         return error.InvalidCli;
@@ -493,8 +520,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    if ((timeout_ms_overridden or poll_ms_overridden) and command != .status and command != .poll_balance and command != .wait_for_balance and command != .send_transaction_and_confirm and command != .send_instructions_and_confirm and command != .poll_for_signature_confirmation and command != .transfer) {
-        reportInvalidCliMessage("error: wait options (--timeout-ms, --poll-ms) require status, poll-balance, wait-for-balance, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, or transfer\n", .{});
+    if ((timeout_ms_overridden or poll_ms_overridden) and command != .status and command != .poll_balance and command != .wait_for_balance and command != .send_transaction_and_confirm and command != .send_instructions_and_confirm and command != .send_versioned_instructions_and_confirm and command != .poll_for_signature_confirmation and command != .transfer) {
+        reportInvalidCliMessage("error: wait options (--timeout-ms, --poll-ms) require status, poll-balance, wait-for-balance, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, send-versioned-instructions-and-confirm, or transfer\n", .{});
         return error.InvalidCli;
     }
 
@@ -507,10 +534,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .poll_for_signature_confirmation and
         command != .send_transaction_and_confirm and
         command != .send_instructions_and_confirm and
+        command != .send_versioned_instructions_and_confirm and
         command != .transfer)
     {
         reportInvalidCliMessage(
-            "error: --search-transaction-history requires status, confirm-transaction, signature-status, signature-statuses, blocks-since-signature-confirmation, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, or transfer\n",
+            "error: --search-transaction-history requires status, confirm-transaction, signature-status, signature-statuses, blocks-since-signature-confirmation, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, send-versioned-instructions-and-confirm, or transfer\n",
             .{},
         );
         return error.InvalidCli;
@@ -531,9 +559,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    const is_simulate_command = command == .simulate_transaction or command == .simulate_instructions;
+    const is_simulate_command = command == .simulate_transaction or command == .simulate_instructions or command == .simulate_versioned_instructions;
     if ((simulate_sig_verify or simulate_replace_recent_blockhash) and !is_simulate_command) {
-        reportInvalidCliMessage("error: --sig-verify and --replace-recent-blockhash require simulate-transaction or simulate-instructions\n", .{});
+        reportInvalidCliMessage("error: --sig-verify and --replace-recent-blockhash require simulate-transaction, simulate-instructions, or simulate-versioned-instructions\n", .{});
         return error.InvalidCli;
     }
 
@@ -541,7 +569,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         !is_simulate_command)
     {
         reportInvalidCliMessage(
-            "error: simulation query options require simulate-transaction or simulate-instructions\n",
+            "error: simulation query options require simulate-transaction, simulate-instructions, or simulate-versioned-instructions\n",
             .{},
         );
         return error.InvalidCli;
@@ -941,6 +969,92 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
         },
 
+        .send_versioned_instructions => {
+            const spec_arg = instructions_spec_arg orelse {
+                reportInvalidCliMessage("error: send-versioned-instructions requires <instruction-spec-json>\n", .{});
+                return error.InvalidCli;
+            };
+            const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
+                reportInvalidCliMessage("error: send-versioned-instructions spec must be valid JSON or @path\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(spec_source);
+
+            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
+                .ignore_unknown_fields = true,
+            }) catch {
+                reportInvalidCliMessage("error: send-versioned-instructions spec must be valid JSON\n", .{});
+                return error.InvalidCli;
+            };
+            defer parsed_spec.deinit();
+
+            var loaded = loadCliInstructionSpec(allocator, &parsed_spec.value) catch {
+                reportInvalidCliMessage("error: send-versioned-instructions spec is invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer loaded.deinit(allocator);
+
+            const tx_signature = try rpc.sendVersionedInstructionsWithOptions(
+                loaded.payer,
+                loaded.owned_instructions.instructions,
+                loaded.address_lookup_tables,
+                loaded.signers,
+                .{
+                    .recent_blockhash = parsed_spec.value.recent_blockhash,
+                    .blockhash_commitment = if (parsed_spec.value.recent_blockhash == null) commitment orelse send_preflight_commitment else null,
+                    .send_transaction_options = send_transaction_options,
+                },
+            );
+            defer allocator.free(tx_signature);
+
+            std.debug.print("signature: {s}\n", .{tx_signature});
+        },
+
+        .send_versioned_instructions_and_confirm => {
+            const spec_arg = instructions_spec_arg orelse {
+                reportInvalidCliMessage("error: send-versioned-instructions-and-confirm requires <instruction-spec-json>\n", .{});
+                return error.InvalidCli;
+            };
+            const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
+                reportInvalidCliMessage("error: send-versioned-instructions-and-confirm spec must be valid JSON or @path\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(spec_source);
+
+            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
+                .ignore_unknown_fields = true,
+            }) catch {
+                reportInvalidCliMessage("error: send-versioned-instructions-and-confirm spec must be valid JSON\n", .{});
+                return error.InvalidCli;
+            };
+            defer parsed_spec.deinit();
+
+            var loaded = loadCliInstructionSpec(allocator, &parsed_spec.value) catch {
+                reportInvalidCliMessage("error: send-versioned-instructions-and-confirm spec is invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer loaded.deinit(allocator);
+
+            const tx_signature = try rpc.sendAndConfirmVersionedInstructionsWithOptions(
+                loaded.payer,
+                loaded.owned_instructions.instructions,
+                loaded.address_lookup_tables,
+                loaded.signers,
+                .{
+                    .recent_blockhash = parsed_spec.value.recent_blockhash,
+                    .blockhash_commitment = if (parsed_spec.value.recent_blockhash == null) commitment orelse send_preflight_commitment else null,
+                    .send_transaction_options = send_transaction_options,
+                    .commitment = commitment,
+                    .search_transaction_history = search_transaction_history,
+                    .timeout_ms = status_timeout_ms,
+                    .poll_interval_ms = status_poll_ms,
+                },
+            );
+            defer allocator.free(tx_signature);
+
+            std.debug.print("confirmed signature: {s}\n", .{tx_signature});
+        },
+
         .raw_rpc => {
             const method = raw_rpc_method_arg orelse {
                 reportInvalidCliMessage("error: raw-rpc requires <method>\n", .{});
@@ -1161,6 +1275,83 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             const simulation = try rpc.simulateLegacyInstructionsWithOptions(
                 loaded.payer,
                 loaded.owned_instructions.instructions,
+                loaded.signers,
+                build_options,
+                options,
+            );
+            defer freeSimulatedTransaction(allocator, simulation);
+
+            printSimulationResult(simulation);
+        },
+
+        .simulate_versioned_instructions => {
+            const spec_arg = instructions_spec_arg orelse {
+                reportInvalidCliMessage("error: simulate-versioned-instructions requires <instruction-spec-json>\n", .{});
+                return error.InvalidCli;
+            };
+            const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
+                reportInvalidCliMessage("error: simulate-versioned-instructions spec must be valid JSON or @path\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(spec_source);
+
+            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
+                .ignore_unknown_fields = true,
+            }) catch {
+                reportInvalidCliMessage("error: simulate-versioned-instructions spec must be valid JSON\n", .{});
+                return error.InvalidCli;
+            };
+            defer parsed_spec.deinit();
+
+            var loaded = loadCliInstructionSpec(allocator, &parsed_spec.value) catch {
+                reportInvalidCliMessage("error: simulate-versioned-instructions spec is invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer loaded.deinit(allocator);
+
+            const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
+                parseAccountEncoding(value) orelse return error.InvalidCli
+            else
+                null;
+            const simulation_min_context_slot = if (simulation_min_context_slot_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const simulation_accounts_options = if (simulation_accounts.items.len > 0)
+                client.SimulationAccountsOptions{
+                    .addresses = simulation_accounts.items,
+                    .encoding = simulation_account_encoding,
+                }
+            else
+                null;
+            const options = if (simulate_sig_verify or
+                simulate_replace_recent_blockhash or
+                simulate_inner_instructions or
+                commitment != null or
+                simulation_min_context_slot != null or
+                simulation_accounts_options != null)
+                client.SimulateTransactionOptions{
+                    .sig_verify = simulate_sig_verify,
+                    .replace_recent_blockhash = simulate_replace_recent_blockhash,
+                    .commitment = commitment,
+                    .min_context_slot = simulation_min_context_slot,
+                    .inner_instructions = simulate_inner_instructions,
+                    .accounts = simulation_accounts_options,
+                }
+            else
+                null;
+            const build_options = if (parsed_spec.value.recent_blockhash != null or commitment != null)
+                client.VersionedInstructionsBuildOptions{
+                    .recent_blockhash = parsed_spec.value.recent_blockhash,
+                    .blockhash_commitment = if (parsed_spec.value.recent_blockhash == null) commitment else null,
+                }
+            else
+                null;
+
+            const simulation = try rpc.simulateVersionedInstructionsWithOptions(
+                loaded.payer,
+                loaded.owned_instructions.instructions,
+                loaded.address_lookup_tables,
                 loaded.signers,
                 build_options,
                 options,
@@ -3373,6 +3564,98 @@ fn expectGetFeeForMessageRequest(
         },
         else => return error.InvalidResponse,
     }
+}
+
+fn expectSendVersionedTransactionRequest(
+    allocator: Allocator,
+    body: []const u8,
+    expected_skip_preflight: bool,
+    expected_max_retries: ?u32,
+    expected_preflight_commitment: ?[]const u8,
+    expected_min_context_slot: ?u64,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("sendTransaction", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+    try std.testing.expectEqual(@as(usize, 2), params.items.len);
+
+    const encoded_transaction = switch (params.items[0]) {
+        .string => |value| value,
+        else => return error.InvalidResponse,
+    };
+    const options = switch (params.items[1]) {
+        .object => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    switch (options.get("encoding") orelse return error.InvalidResponse) {
+        .string => |value| try std.testing.expectEqualStrings("base64", value),
+        else => return error.InvalidResponse,
+    }
+    switch (options.get("skipPreflight") orelse return error.InvalidResponse) {
+        .bool => |value| try std.testing.expectEqual(expected_skip_preflight, value),
+        else => return error.InvalidResponse,
+    }
+
+    if (expected_max_retries) |value| {
+        switch (options.get("maxRetries") orelse return error.InvalidResponse) {
+            .integer => |actual| try std.testing.expectEqual(@as(i64, @intCast(value)), actual),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("maxRetries") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
+    }
+
+    if (expected_preflight_commitment) |value| {
+        switch (options.get("preflightCommitment") orelse return error.InvalidResponse) {
+            .string => |actual| try std.testing.expectEqualStrings(value, actual),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("preflightCommitment") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
+    }
+
+    if (expected_min_context_slot) |value| {
+        switch (options.get("minContextSlot") orelse return error.InvalidResponse) {
+            .integer => |actual| try std.testing.expectEqual(@as(i64, @intCast(value)), actual),
+            else => return error.InvalidResponse,
+        }
+    } else {
+        switch (options.get("minContextSlot") orelse return error.InvalidResponse) {
+            .null => {},
+            else => return error.InvalidResponse,
+        }
+    }
+
+    const tx_bytes_len = try std.base64.standard.Decoder.calcSizeForSlice(encoded_transaction);
+    const tx_bytes = try allocator.alloc(u8, tx_bytes_len);
+    defer allocator.free(tx_bytes);
+    try std.base64.standard.Decoder.decode(tx_bytes, encoded_transaction);
+
+    try std.testing.expect(tx_bytes.len > 1 + Ed25519.Signature.encoded_length);
+    const message = tx_bytes[(1 + Ed25519.Signature.encoded_length)..];
+    try std.testing.expect((message[0] & 0x80) == 0x80);
 }
 
 fn expectGetSignatureStatusesRequest(
@@ -5809,6 +6092,172 @@ test "runCommand send-instructions-and-confirm confirms generic instruction spec
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "confirmed signature: Sig888888888888888888888888888888888888888888888888888888888888888888\n",
+        captured,
+    );
+}
+
+test "runCommand simulate-versioned-instructions simulates with lookup tables" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":12},"value":{"accounts":[],"err":null,"fee":220,"unitsConsumed":99,"logs":["Program log: versioned"]}}
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://simulate-versioned-instructions" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const lookup_account_raw = try Ed25519.KeyPair.generateDeterministic(.{3} ** 32);
+    const lookup_account_bytes = lookup_account_raw.public_key.toBytes();
+    const lookup_account_pubkey = try client.encodeBase58(allocator, &lookup_account_bytes);
+    defer allocator.free(lookup_account_pubkey);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 65);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","recent_blockhash":"{s}","address_lookup_tables":[{{"account_key":"{s}","addresses":["{s}"]}}],"instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"ping","data_encoding":"utf8"}}]}}
+        ,
+        .{ payer_secret_key_base58, recent_blockhash, lookup_account_pubkey, destination_pubkey_base58, payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-versioned-instructions",
+        "--sig-verify",
+        spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "simulation: slot=12 err=null fee=220 units_consumed=99") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: versioned") != null);
+}
+
+test "runCommand send-versioned-instructions-and-confirm confirms versioned instruction spec" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushSendAndSignatureStatusPollFlow(
+        "Sig999999999999999999999999999999999999999999999999999999999999999999",
+        &.{
+            .{ .context_slot = 93, .status = .{
+                .slot = 93,
+                .confirmations = 1,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-versioned-instructions-and-confirm" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const lookup_account_raw = try Ed25519.KeyPair.generateDeterministic(.{3} ** 32);
+    const lookup_account_bytes = lookup_account_raw.public_key.toBytes();
+    const lookup_account_pubkey = try client.encodeBase58(allocator, &lookup_account_bytes);
+    defer allocator.free(lookup_account_pubkey);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 65);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","recent_blockhash":"{s}","address_lookup_tables":[{{"account_key":"{s}","addresses":["{s}"]}}],"instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"70696e67","data_encoding":"hex"}}]}}
+        ,
+        .{ payer_secret_key_base58, recent_blockhash, lookup_account_pubkey, destination_pubkey_base58, payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-versioned-instructions-and-confirm",
+        "--commitment",
+        "confirmed",
+        "--skip-preflight",
+        spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectSendVersionedTransactionRequest(
+        allocator,
+        commandCapturedRequestAt(&sender_context, 0),
+        true,
+        null,
+        null,
+        null,
+    );
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "confirmed signature: Sig999999999999999999999999999999999999999999999999999999999999999999\n",
         captured,
     );
 }
