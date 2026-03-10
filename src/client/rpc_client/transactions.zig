@@ -183,36 +183,29 @@ pub fn serializeSignatureStatusesParams(
     signatures: []const []const u8,
     options: ?SignatureStatusesQueryOptions,
 ) ![]u8 {
-    const search_transaction_history = if (options) |value| value.search_transaction_history else false;
-    const resolved_commitment = self.resolveCommitmentString(if (options) |value| value.commitment else null);
+    if (options) |value| {
+        const resolved_commitment = self.resolveCommitmentString(value.commitment);
 
-    if (!search_transaction_history and resolved_commitment == null) {
-        return try self.serializeParams(.{signatures});
+        if (resolved_commitment != null) {
+            return try self.serializeParams(.{
+                signatures,
+                .{
+                    .searchTransactionHistory = value.search_transaction_history,
+                    .commitment = resolved_commitment,
+                },
+            });
+        }
+
+        if (value.search_transaction_history) {
+            return try self.serializeParams(.{
+                signatures,
+                .{ .searchTransactionHistory = true },
+            });
+        }
     }
 
-    if (search_transaction_history and resolved_commitment != null) {
-        return try self.serializeParams(.{
-            signatures,
-            .{
-                .searchTransactionHistory = true,
-                .commitment = resolved_commitment,
-            },
-        });
-    }
-
-    if (search_transaction_history) {
-        return try self.serializeParams(.{
-            signatures,
-            .{ .searchTransactionHistory = true },
-        });
-    }
-
-    return try self.serializeParams(.{
-        signatures,
-        .{ .commitment = resolved_commitment },
-    });
+    return try self.serializeParams(.{signatures});
 }
-
 pub fn send(self: anytype, signed_tx_base64: []const u8) ![]const u8 {
     return try self.sendTransaction(signed_tx_base64, null);
 }

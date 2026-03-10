@@ -464,8 +464,6 @@ fn loadProgramInvokeInstructionSpec(
     }) catch return error.InvalidCli;
     defer parsed_accounts.deinit();
 
-    if (parsed_accounts.value.len == 0) return error.InvalidCli;
-
     var parsed_signer_keypair_paths: ?std.json.Parsed([]const []const u8) = null;
     defer if (parsed_signer_keypair_paths) |*value| value.deinit();
 
@@ -7120,6 +7118,73 @@ test "runCommand simulate-program-invoke simulates instruction built from args" 
     try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: invoke-ok") != null);
+}
+
+test "runCommand simulate-program-invoke supports zero-account instructions" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var latest_blockhash_bytes: [32]u8 = undefined;
+    for (&latest_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 201);
+    const latest_blockhash = try client.encodeBase58(allocator, &latest_blockhash_bytes);
+    defer allocator.free(latest_blockhash);
+    try sender_context.sender.pushLatestBlockhashResponse(
+        81,
+        latest_blockhash,
+        141,
+    );
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":33},"value":{"accounts":[],"err":null,"fee":111,"unitsConsumed":19,"logs":["Program log: zero-accounts-ok"]}}
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://simulate-program-invoke-zero-accounts" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{48} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-simulate-program-invoke-zero-accounts-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-program-invoke",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        "11111111111111111111111111111111",
+        "[]",
+        "ping",
+        "utf8",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: zero-accounts-ok") != null);
 }
 
 test "runCommand send-program-invoke supports nonce account" {
