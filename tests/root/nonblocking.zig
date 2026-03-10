@@ -602,3 +602,58 @@ test "root.NonblockingRpcClient getIdentityAsync returns owned identity string" 
     defer allocator.free(identity);
     try std.testing.expectEqualStrings("Identity1111111111111111111111111111111111", identity);
 }
+
+test "root.NonblockingRpcClient getFeatureActivationSlotAsync returns optional slot" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":4242,\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getFeatureActivationSlotAsync(.processed);
+    try std.testing.expect(!task.isDone());
+
+    const activation_slot = try task.wait();
+    try std.testing.expectEqual(@as(?u64, 4242), activation_slot);
+}
+
+test "root.NonblockingRpcClient getNewLatestBlockhashAsync returns owned new blockhash" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":88},\"value\":{\"blockhash\":\"new-blockhash\",\"lastValidBlockHeight\":555}},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getNewLatestBlockhashAsync();
+    try std.testing.expect(!task.isDone());
+
+    const blockhash = try task.wait();
+    defer allocator.free(blockhash);
+    try std.testing.expectEqualStrings("new-blockhash", blockhash);
+}
