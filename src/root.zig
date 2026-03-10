@@ -2,6 +2,7 @@ pub const sdk = @import("./client/sdk.zig");
 pub const rpc_types = @import("./client/rpc_types.zig");
 pub const pubsub_types = @import("./client/pubsub/types.zig");
 const rpc_client = @import("./client/rpc_client/client.zig");
+const nonblocking_client = @import("./client/nonblocking/client.zig");
 const pubsub_client = @import("./client/pubsub/client.zig");
 
 pub const max_lockout_history = sdk.max_lockout_history;
@@ -270,6 +271,7 @@ pub const largestAccountsFilterToString = rpc_types.largestAccountsFilterToStrin
 pub const tokenAccountsFilterParams = rpc_types.tokenAccountsFilterParams;
 
 pub const RpcClient = rpc_client.RpcClient;
+pub const NonblockingRpcClient = nonblocking_client.NonblockingRpcClient;
 pub const RequestSenderRequest = rpc_client.RpcClient.RequestSenderRequest;
 pub const RequestSender = rpc_client.RpcClient.RequestSender;
 pub const MockRequest = rpc_client.RpcClient.MockRequest;
@@ -289,6 +291,7 @@ pub const MockRpcError = rpc_client.RpcClient.MockRpcError;
 pub const MockTransportError = rpc_client.RpcClient.MockTransportError;
 pub const MockClientOptions = rpc_client.RpcClient.MockClientOptions;
 pub const RequestSenderOptions = rpc_client.RpcClient.RequestSenderOptions;
+pub const NonblockingRpcClientOptions = nonblocking_client.NonblockingRpcClient.Options;
 pub const encodeJsonRpcResultEnvelope = rpc_client.RpcClient.encodeJsonRpcResultEnvelope;
 pub const encodeJsonRpcErrorEnvelope = rpc_client.RpcClient.encodeJsonRpcErrorEnvelope;
 pub const PubsubClientOptions = pubsub_types.PubsubClientOptions;
