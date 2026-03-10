@@ -2187,3 +2187,105 @@ test "root.NonblockingRpcClient getNewLatestBlockhashAsync returns owned new blo
     defer allocator.free(blockhash);
     try std.testing.expectEqualStrings("new-blockhash", blockhash);
 }
+
+test "root.NonblockingRpcClient sendRawAsync sends custom method and params" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        "customMethod",
+        "CustomParam111",
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"ok\":true},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.sendRawAsync("customMethod", .{"CustomParam111"});
+    try std.testing.expect(!task.isDone());
+
+    const response = try task.wait();
+    defer allocator.free(response);
+
+    try std.testing.expect(std.mem.indexOf(u8, response, "\"ok\":true") != null);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient sendJsonRpcAsync parses owned result" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        "customJsonMethod",
+        "JsonParam222",
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":\"json-ok\",\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.sendJsonRpcAsync("customJsonMethod", .{"JsonParam222"}, []const u8);
+    try std.testing.expect(!task.isDone());
+
+    var result = try task.wait();
+    defer result.deinit();
+
+    try std.testing.expectEqualStrings("json-ok", result.value);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient sendTypedAsync uses request method" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        "customTypedMethod",
+        "TypedParam333",
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":333,\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.sendTypedAsync(client.RpcRequest.custom("customTypedMethod"), .{"TypedParam333"}, u64);
+    try std.testing.expect(!task.isDone());
+
+    var result = try task.wait();
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(u64, 333), result.value);
+    try std.testing.expect(matched);
+}

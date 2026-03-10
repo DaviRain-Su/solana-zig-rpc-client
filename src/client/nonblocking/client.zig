@@ -23,9 +23,11 @@ const LatestBlockhashResponse = rpc_types.LatestBlockhashResponse;
 const LeaderSchedule = rpc_types.LeaderSchedule;
 const MultipleAccountsResponse = rpc_types.MultipleAccountsResponse;
 const MultipleUiAccountsResponse = rpc_types.MultipleUiAccountsResponse;
+const OwnedRpcResult = rpc_types.OwnedRpcResult;
 const ProgramAccount = rpc_types.ProgramAccount;
 const ProgramAccountsResponse = rpc_types.ProgramAccountsResponse;
 const ProgramAccountsQueryOptions = rpc_types.ProgramAccountsQueryOptions;
+const RpcRequest = rpc_types.RpcRequest;
 const SnapshotSlots = rpc_types.SnapshotSlots;
 const Supply = rpc_types.Supply;
 const TokenAmount = rpc_types.TokenAmount;
@@ -239,6 +241,53 @@ fn runGetBalanceForAddress(
     );
     defer client.deinit();
     return try client.getBalanceResponse(address, commitment);
+}
+
+fn runSendRaw(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    method: []const u8,
+    params_json: []const u8,
+) ![]u8 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.sendRequest(method, params_json);
+}
+
+fn SendJsonRpcRunner(comptime ResultType: type) type {
+    return struct {
+        fn run(
+            allocator: Allocator,
+            endpoint: []const u8,
+            default_commitment: ?Commitment,
+            request_timeout_ms: ?u64,
+            confirm_transaction_initial_timeout_ms: ?u64,
+            method: []const u8,
+            params_json: []const u8,
+        ) !OwnedRpcResult(ResultType) {
+            var client = try lifecycle_methods.initClient(
+                rpc_client.RpcClient,
+                allocator,
+                endpoint,
+                default_commitment,
+                request_timeout_ms,
+                confirm_transaction_initial_timeout_ms,
+            );
+            defer client.deinit();
+            const response_body = try client.sendRequest(method, params_json);
+            return try client.parseOwnedResponse(response_body, ResultType);
+        }
+    };
 }
 
 fn runGetAccountInfoResponse(
@@ -1698,6 +1747,128 @@ fn AsyncTaskWithStringAndCommitment(
     };
 }
 
+fn AsyncTaskWithMethodAndParamsJson(
+    comptime ResultType: type,
+    comptime work_fn: *const fn (
+        Allocator,
+        []const u8,
+        ?Commitment,
+        ?u64,
+        ?u64,
+        []const u8,
+        []const u8,
+    ) anyerror!ResultType,
+) type {
+    return struct {
+        allocator: Allocator,
+        endpoint: []const u8,
+        default_commitment: ?Commitment,
+        request_timeout_ms: ?u64,
+        confirm_transaction_initial_timeout_ms: ?u64,
+        method: []const u8,
+        params_json: []const u8,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+        done: bool = false,
+        result: ?Result = null,
+        thread: ?std.Thread = null,
+
+        const Self = @This();
+        const Result = union(enum) {
+            success: ResultType,
+            failure: anyerror,
+        };
+
+        pub fn start(
+            allocator: Allocator,
+            endpoint: []const u8,
+            default_commitment: ?Commitment,
+            request_timeout_ms: ?u64,
+            confirm_transaction_initial_timeout_ms: ?u64,
+            method: []const u8,
+            params_json: []const u8,
+        ) !*Self {
+            const self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
+
+            self.* = .{
+                .allocator = allocator,
+                .endpoint = try allocator.dupe(u8, endpoint),
+                .default_commitment = default_commitment,
+                .request_timeout_ms = request_timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .method = try allocator.dupe(u8, method),
+                .params_json = try allocator.dupe(u8, params_json),
+            };
+            errdefer {
+                allocator.free(self.endpoint);
+                allocator.free(self.method);
+                allocator.free(self.params_json);
+            }
+
+            self.thread = try std.Thread.spawn(.{}, Self.run, .{self});
+            return self;
+        }
+
+        fn run(self: *Self) void {
+            const value = work_fn(
+                self.allocator,
+                self.endpoint,
+                self.default_commitment,
+                self.request_timeout_ms,
+                self.confirm_transaction_initial_timeout_ms,
+                self.method,
+                self.params_json,
+            ) catch |err| {
+                self.complete(.{ .failure = err });
+                return;
+            };
+            self.complete(.{ .success = value });
+        }
+
+        fn complete(self: *Self, result: Result) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.result = result;
+            self.done = true;
+            self.cond.broadcast();
+        }
+
+        pub fn isDone(self: *const Self) bool {
+            const mutable_self: *Self = @constCast(self);
+            mutable_self.mutex.lock();
+            defer mutable_self.mutex.unlock();
+            return mutable_self.done;
+        }
+
+        pub fn wait(self: *Self) anyerror!ResultType {
+            self.mutex.lock();
+            while (!self.done) {
+                self.cond.wait(&self.mutex);
+            }
+            const result = self.result.?;
+            self.mutex.unlock();
+
+            if (self.thread) |thread| {
+                thread.join();
+                self.thread = null;
+            }
+
+            defer {
+                self.allocator.free(self.endpoint);
+                self.allocator.free(self.method);
+                self.allocator.free(self.params_json);
+                self.allocator.destroy(self);
+            }
+
+            return switch (result) {
+                .success => |value| value,
+                .failure => |err| err,
+            };
+        }
+    };
+}
+
 fn AsyncTaskWithStringAndTokenAccountsFilterAndCommitment(
     comptime ResultType: type,
     comptime work_fn: *const fn (
@@ -1993,6 +2164,7 @@ pub const NonblockingRpcClient = struct {
     pub const MaxShredInsertSlotTask = AsyncTask(u64, runGetMaxShredInsertSlot);
     pub const BalanceTask = AsyncTask(BalanceResponse, runGetBalance);
     pub const BalanceForAddressTask = AsyncTaskWithStringAndCommitment(BalanceResponse, runGetBalanceForAddress);
+    pub const RawTask = AsyncTaskWithMethodAndParamsJson([]u8, runSendRaw);
     pub const AccountInfoResponseTask = AsyncTaskWithStringAndCommitment(AccountInfoResponse, runGetAccountInfoResponse);
     pub const AccountInfoTask = AsyncTaskWithStringAndCommitment(AccountInfo, runGetAccountInfo);
     pub const AccountDataTask = AsyncTaskWithStringAndCommitment([]const u8, runGetAccountData);
@@ -2254,6 +2426,51 @@ pub const NonblockingRpcClient = struct {
             self.confirm_transaction_initial_timeout_ms,
             commitment,
         );
+    }
+
+    pub fn sendRawAsync(self: *const NonblockingRpcClient, method: []const u8, params: anytype) !*RawTask {
+        const params_json = try std.json.Stringify.valueAlloc(self.allocator, params, .{});
+        defer self.allocator.free(params_json);
+
+        return RawTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            method,
+            params_json,
+        );
+    }
+
+    pub fn sendJsonRpcAsync(
+        self: *const NonblockingRpcClient,
+        method: []const u8,
+        params: anytype,
+        comptime ResultType: type,
+    ) !*AsyncTaskWithMethodAndParamsJson(OwnedRpcResult(ResultType), SendJsonRpcRunner(ResultType).run) {
+        const TaskType = AsyncTaskWithMethodAndParamsJson(OwnedRpcResult(ResultType), SendJsonRpcRunner(ResultType).run);
+        const params_json = try std.json.Stringify.valueAlloc(self.allocator, params, .{});
+        defer self.allocator.free(params_json);
+
+        return TaskType.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            method,
+            params_json,
+        );
+    }
+
+    pub fn sendTypedAsync(
+        self: *const NonblockingRpcClient,
+        request: RpcRequest,
+        params: anytype,
+        comptime ResultType: type,
+    ) !*AsyncTaskWithMethodAndParamsJson(OwnedRpcResult(ResultType), SendJsonRpcRunner(ResultType).run) {
+        return try self.sendJsonRpcAsync(request.method, params, ResultType);
     }
 
     pub fn getBalanceForAddressAsync(
