@@ -535,6 +535,40 @@ test "root.NonblockingRpcClient getAccountInfoAsync sends requested account" {
     try std.testing.expect(matched);
 }
 
+test "root.NonblockingRpcClient getAccountDataAsync returns decoded account data" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const account = "AccountData1111111111111111111111111111111111";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        account,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":222},\"value\":{\"data\":[\"SGVsbG8=\",\"base64\"],\"executable\":false,\"lamports\":100,\"owner\":\"OwnerData1111111111111111111111111111111111\",\"rentEpoch\":1,\"space\":5}},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getAccountDataAsync(account, .confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const data = try task.wait();
+    defer allocator.free(data);
+
+    try std.testing.expectEqualStrings("Hello", data);
+    try std.testing.expect(matched);
+}
+
 test "root.NonblockingRpcClient getAccountInfoMaybeAsync returns null for missing account" {
     const allocator = std.testing.allocator;
     var listener = try createListener();

@@ -283,6 +283,27 @@ fn runGetAccountInfo(
     return try client.getAccountInfo(account, commitment);
 }
 
+fn runGetAccountData(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    account: []const u8,
+    commitment: ?Commitment,
+) ![]const u8 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getAccountData(account, commitment);
+}
+
 fn runGetAccountInfoMaybe(
     allocator: Allocator,
     endpoint: []const u8,
@@ -1974,6 +1995,7 @@ pub const NonblockingRpcClient = struct {
     pub const BalanceForAddressTask = AsyncTaskWithStringAndCommitment(BalanceResponse, runGetBalanceForAddress);
     pub const AccountInfoResponseTask = AsyncTaskWithStringAndCommitment(AccountInfoResponse, runGetAccountInfoResponse);
     pub const AccountInfoTask = AsyncTaskWithStringAndCommitment(AccountInfo, runGetAccountInfo);
+    pub const AccountDataTask = AsyncTaskWithStringAndCommitment([]const u8, runGetAccountData);
     pub const MaybeAccountInfoTask = AsyncTaskWithStringAndCommitment(?AccountInfo, runGetAccountInfoMaybe);
     pub const MultipleAccountsResponseTask = AsyncTaskWithStringListAndCommitment(MultipleAccountsResponse, runGetMultipleAccountsResponse);
     pub const MultipleAccountsTask = AsyncTaskWithStringListAndCommitment([]?AccountInfo, runGetMultipleAccounts);
@@ -2272,6 +2294,22 @@ pub const NonblockingRpcClient = struct {
         commitment: ?Commitment,
     ) !*AccountInfoTask {
         return AccountInfoTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            account,
+            commitment,
+        );
+    }
+
+    pub fn getAccountDataAsync(
+        self: *const NonblockingRpcClient,
+        account: []const u8,
+        commitment: ?Commitment,
+    ) !*AccountDataTask {
+        return AccountDataTask.start(
             self.allocator,
             self.endpoint,
             self.default_commitment,
