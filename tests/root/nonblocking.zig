@@ -513,3 +513,92 @@ test "root.NonblockingRpcClient getMaxShredInsertSlotAsync returns waitable slot
     const max_shred_insert_slot = try task.wait();
     try std.testing.expectEqual(@as(u64, 1003), max_shred_insert_slot);
 }
+
+test "root.NonblockingRpcClient getLatestBlockhashResponseAsync returns owned response" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":77},\"value\":{\"blockhash\":\"resp-abc\",\"lastValidBlockHeight\":1234}},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getLatestBlockhashResponseAsync(.confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const latest_response = try task.wait();
+    defer allocator.free(latest_response.value.blockhash);
+    try std.testing.expectEqual(@as(u64, 77), latest_response.context_slot);
+    try std.testing.expectEqualStrings("resp-abc", latest_response.value.blockhash);
+    try std.testing.expectEqual(@as(u64, 1234), latest_response.value.last_valid_block_height);
+}
+
+test "root.NonblockingRpcClient getEpochScheduleAsync returns waitable schedule" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"firstNormalSlot\":10,\"firstNormalEpoch\":20,\"leaderScheduleSlotOffset\":30,\"slotsPerEpoch\":40,\"warmup\":true},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getEpochScheduleAsync();
+    try std.testing.expect(!task.isDone());
+
+    const epoch_schedule = try task.wait();
+    try std.testing.expectEqual(@as(u64, 10), epoch_schedule.first_normal_slot);
+    try std.testing.expectEqual(@as(u64, 20), epoch_schedule.first_normal_epoch);
+    try std.testing.expectEqual(@as(u64, 30), epoch_schedule.leader_schedule_slot_offset);
+    try std.testing.expectEqual(@as(u64, 40), epoch_schedule.slots_per_epoch);
+    try std.testing.expect(epoch_schedule.warmup);
+}
+
+test "root.NonblockingRpcClient getIdentityAsync returns owned identity string" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"identity\":\"Identity1111111111111111111111111111111111\"},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getIdentityAsync();
+    try std.testing.expect(!task.isDone());
+
+    const identity = try task.wait();
+    defer allocator.free(identity);
+    try std.testing.expectEqualStrings("Identity1111111111111111111111111111111111", identity);
+}
