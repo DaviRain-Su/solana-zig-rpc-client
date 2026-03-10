@@ -434,6 +434,13 @@ fn resolveAnchorIdlNamedAccountPubkeyFromAccounts(
     return client.Pubkey.fromBase58(allocator, address_value.string) catch return error.InvalidCli;
 }
 
+fn isAnchorIdlOptionalAccount(account_value: std.json.Value) !bool {
+    if (account_value != .object) return error.InvalidCli;
+    const optional_value = account_value.object.get("optional") orelse return false;
+    if (optional_value != .bool) return error.InvalidCli;
+    return optional_value.bool;
+}
+
 fn countAnchorIdlLeafAccounts(accounts: []const std.json.Value) !usize {
     var count: usize = 0;
     for (accounts) |account_value| {
@@ -514,6 +521,8 @@ fn populateAnchorIdlCliAccounts(
                 pubkey_value = resolved_pubkey_base58;
             }
         }
+        const is_optional = try isAnchorIdlOptionalAccount(account_value);
+        var is_missing_optional_account = false;
         const is_signer = if (account_value.object.get("signer")) |signer_value|
             if (signer_value == .bool) signer_value.bool else return error.InvalidCli
         else
@@ -522,11 +531,17 @@ fn populateAnchorIdlCliAccounts(
             if (writable_value == .bool) writable_value.bool else return error.InvalidCli
         else
             false;
+        if (pubkey_value == null and is_optional) {
+            const program_id_base58 = try program_id.toBase58(allocator);
+            try owned_resolved_account_pubkeys.append(allocator, program_id_base58);
+            pubkey_value = program_id_base58;
+            is_missing_optional_account = true;
+        }
 
         cli_accounts[next_index.*] = .{
             .pubkey = pubkey_value orelse return error.InvalidCli,
-            .is_signer = is_signer,
-            .is_writable = is_writable,
+            .is_signer = if (is_missing_optional_account) false else is_signer,
+            .is_writable = if (is_missing_optional_account) false else is_writable,
         };
         next_index.* += 1;
     }
@@ -9523,6 +9538,54 @@ test "loadAnchorIdlInvokeInstructionSpecWithOptions loads address lookup tables"
     try std.testing.expectEqual(@as(usize, 1), loaded.address_lookup_tables.len);
     try std.testing.expectEqual(@as(usize, 1), loaded.address_lookup_tables[0].addresses.len);
     try std.testing.expect(loaded.address_lookup_tables[0].addresses[0].eql(lookup_table_address));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec defaults missing optional account to program id" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{73} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-optional-account-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{47} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[4,4,4,4,4,4,4,4],"accounts":[{{"name":"maybeAuthority","optional":true,"signer":true,"writable":true}}],"args":[]}}]}}
+        ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(program_id));
+    try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+    try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_writable);
 }
 
 test "runCommand send-idl-invoke sends zero-account anchor instruction" {
