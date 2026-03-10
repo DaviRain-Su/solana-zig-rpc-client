@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const client = @import("solana_client_zig");
 const cli = @import("./cli.zig");
+const anchor_idl = @import("./client/anchor_idl/types.zig");
 
 const Allocator = std.mem.Allocator;
 const Ed25519 = std.crypto.sign.Ed25519;
@@ -156,6 +157,47 @@ const CliSimulateInstructionsSpec = struct {
     address_lookup_tables: []const CliAddressLookupTableSpec = &.{},
     recent_blockhash: ?[]const u8 = null,
 };
+
+fn loadAnchorIdlInvokeInstructionSpec(
+    allocator: Allocator,
+    idl_arg: []const u8,
+    instruction_name: []const u8,
+    payer_keypair_path_arg: ?[]const u8,
+) !LoadedCliInstructionSpec {
+    const idl_source = loadInstructionSpecSource(allocator, idl_arg) catch return error.InvalidCli;
+    defer allocator.free(idl_source);
+
+    const parsed_idl = std.json.parseFromSlice(anchor_idl.Idl, allocator, idl_source, .{
+        .ignore_unknown_fields = true,
+    }) catch return error.InvalidCli;
+    defer parsed_idl.deinit();
+
+    const program_id = parsed_idl.value.address orelse return error.InvalidCli;
+    const instruction = anchor_idl.findInstruction(&parsed_idl.value, instruction_name) orelse return error.InvalidCli;
+    if (!instruction.hasZeroAccountsAndArgs()) return error.InvalidCli;
+    if (instruction.discriminator.len == 0) return error.InvalidCli;
+
+    const discriminator_hex = try std.fmt.allocPrint(
+        allocator,
+        "{s}",
+        .{std.fmt.fmtSliceHexLower(instruction.discriminator)},
+    );
+    defer allocator.free(discriminator_hex);
+
+    const instruction_specs = [_]CliInstructionSpec{
+        .{
+            .program_id = program_id,
+            .accounts = &.{},
+            .data = discriminator_hex,
+            .data_encoding = .hex,
+        },
+    };
+    const spec = CliSimulateInstructionsSpec{
+        .payer_keypair_path = payer_keypair_path_arg,
+        .instructions = &instruction_specs,
+    };
+    return try loadCliInstructionSpec(allocator, &spec);
+}
 
 const LoadedCliInstructionSpec = struct {
     payer: client.Pubkey,
@@ -631,6 +673,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const program_invoke_lookup_tables_arg = args.program_invoke_lookup_tables_arg;
     const program_invoke_nonce_account_arg = args.program_invoke_nonce_account_arg;
     const program_invoke_nonce_authority_keypair_path_arg = args.program_invoke_nonce_authority_keypair_path_arg;
+    const idl_spec_arg = args.idl_spec_arg;
+    const idl_instruction_arg = args.idl_instruction_arg;
     const raw_rpc_method_arg = args.raw_rpc_method_arg;
     const raw_rpc_params_arg = args.raw_rpc_params_arg;
     const slot_leaders_limit_arg = args.slot_leaders_limit_arg;
@@ -738,9 +782,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_program_invoke and
         command != .send_versioned_program_invoke_and_confirm and
         command != .simulate_program_invoke and
-        command != .simulate_versioned_program_invoke)
+        command != .simulate_versioned_program_invoke and
+        command != .simulate_idl_invoke)
     {
-        reportInvalidCliMessage("error: --recent-blockhash requires instruction or program-invoke commands\n", .{});
+        reportInvalidCliMessage("error: --recent-blockhash requires instruction, program-invoke, or idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
@@ -756,9 +801,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .simulate_program_invoke and
         command != .send_versioned_program_invoke and
         command != .send_versioned_program_invoke_and_confirm and
-        command != .simulate_versioned_program_invoke)
+        command != .simulate_versioned_program_invoke and
+        command != .simulate_idl_invoke)
     {
-        reportInvalidCliMessage("error: --sender-keypair requires transfer or program-invoke commands\n", .{});
+        reportInvalidCliMessage("error: --sender-keypair requires transfer, program-invoke, or simulate-idl-invoke\n", .{});
         return error.InvalidCli;
     }
 
@@ -832,9 +878,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    const is_simulate_command = command == .simulate_transaction or command == .simulate_instructions or command == .simulate_versioned_instructions or command == .simulate_program_invoke or command == .simulate_versioned_program_invoke;
+    const is_simulate_command = command == .simulate_transaction or command == .simulate_instructions or command == .simulate_versioned_instructions or command == .simulate_program_invoke or command == .simulate_versioned_program_invoke or command == .simulate_idl_invoke;
     if ((simulate_sig_verify or simulate_replace_recent_blockhash) and !is_simulate_command) {
-        reportInvalidCliMessage("error: --sig-verify and --replace-recent-blockhash require simulate-transaction, simulate-instructions, simulate-versioned-instructions, simulate-program-invoke, or simulate-versioned-program-invoke\n", .{});
+        reportInvalidCliMessage("error: --sig-verify and --replace-recent-blockhash require simulate-transaction, simulate-instructions, simulate-versioned-instructions, simulate-program-invoke, simulate-versioned-program-invoke, or simulate-idl-invoke\n", .{});
         return error.InvalidCli;
     }
 
@@ -842,7 +888,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         !is_simulate_command)
     {
         reportInvalidCliMessage(
-            "error: simulation query options require simulate-transaction, simulate-instructions, simulate-versioned-instructions, simulate-program-invoke, or simulate-versioned-program-invoke\n",
+            "error: simulation query options require simulate-transaction, simulate-instructions, simulate-versioned-instructions, simulate-program-invoke, simulate-versioned-program-invoke, or simulate-idl-invoke\n",
             .{},
         );
         return error.InvalidCli;
@@ -2086,6 +2132,88 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 loaded.payer,
                 loaded.owned_instructions.instructions,
                 loaded.address_lookup_tables,
+                loaded.signers,
+                build_options,
+                options,
+            );
+            defer freeSimulatedTransaction(allocator, simulation);
+
+            printSimulationResult(simulation);
+        },
+
+        .simulate_idl_invoke => {
+            const idl_arg = idl_spec_arg orelse {
+                reportInvalidCliMessage("error: simulate-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
+                return error.InvalidCli;
+            };
+            const instruction_name = idl_instruction_arg orelse {
+                reportInvalidCliMessage("error: simulate-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
+                return error.InvalidCli;
+            };
+
+            var loaded = loadAnchorIdlInvokeInstructionSpec(
+                allocator,
+                idl_arg,
+                instruction_name,
+                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+            ) catch {
+                reportInvalidCliMessage("error: simulate-idl-invoke currently supports zero-account zero-arg Anchor instructions\n", .{});
+                return error.InvalidCli;
+            };
+            defer loaded.deinit(allocator);
+
+            const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
+                parseAccountEncoding(value) orelse return error.InvalidCli
+            else
+                null;
+            const simulation_min_context_slot = if (simulation_min_context_slot_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const simulation_accounts_options = if (simulation_accounts.items.len > 0)
+                client.SimulationAccountsOptions{
+                    .addresses = simulation_accounts.items,
+                    .encoding = simulation_account_encoding,
+                }
+            else
+                null;
+            const options = if (simulate_sig_verify or
+                simulate_replace_recent_blockhash or
+                simulate_inner_instructions or
+                commitment != null or
+                simulation_min_context_slot != null or
+                simulation_accounts_options != null)
+                client.SimulateTransactionOptions{
+                    .sig_verify = simulate_sig_verify,
+                    .replace_recent_blockhash = simulate_replace_recent_blockhash,
+                    .commitment = commitment,
+                    .min_context_slot = simulation_min_context_slot,
+                    .inner_instructions = simulate_inner_instructions,
+                    .accounts = simulation_accounts_options,
+                }
+            else
+                null;
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                recent_blockhash_arg,
+                commitment,
+            ) catch {
+                reportInvalidCliMessage("error: simulate-idl-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            const build_options = if (build_context.recent_blockhash != null or build_context.blockhash_commitment != null or build_context.blockhash_query != null or build_context.nonce_authority != null)
+                client.LegacyInstructionsBuildOptions{
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
+                }
+            else
+                null;
+
+            const simulation = try rpc.simulateLegacyInstructionsWithOptions(
+                loaded.payer,
+                loaded.owned_instructions.instructions,
                 loaded.signers,
                 build_options,
                 options,
@@ -7380,6 +7508,75 @@ test "runCommand send-versioned-program-invoke sends versioned instruction built
         "signature: Sig141414141414141414141414141414141414141414141414141414141414141414\n",
         captured,
     );
+}
+
+test "runCommand simulate-idl-invoke simulates zero-account anchor instruction" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var latest_blockhash_bytes: [32]u8 = undefined;
+    for (&latest_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 101);
+    const latest_blockhash = try client.encodeBase58(allocator, &latest_blockhash_bytes);
+    defer allocator.free(latest_blockhash);
+    try sender_context.sender.pushLatestBlockhashResponse(
+        57,
+        latest_blockhash,
+        99,
+    );
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":19},"value":{"accounts":[],"err":null,"fee":88,"unitsConsumed":12,"logs":["Program log: idl-ok"]}}
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://simulate-idl-invoke" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{49} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-simulate-idl-invoke-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-idl-invoke",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: idl-ok") != null);
 }
 
 test "runCommand send-versioned-program-invoke supports nonce authority keypair" {

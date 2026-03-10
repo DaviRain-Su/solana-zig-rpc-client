@@ -57,6 +57,7 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] simulate-versioned-instructions [--recent-blockhash <base58>] <instruction-spec-json|@path>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-program-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]\n" ++
     "  solana_client_zig [--rpc <url>] simulate-versioned-program-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]\n" ++
+    "  solana_client_zig [--rpc <url>] simulate-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] <idl-json|@path> <instruction-name>\n" ++
     "  solana_client_zig [--rpc <url>] raw-rpc <method> [params-json]\n" ++
     "  solana_client_zig [--rpc <url>] slot\n" ++
     "  solana_client_zig [--rpc <url>] block-height\n" ++
@@ -350,6 +351,8 @@ pub const ParsedArgs = struct {
     program_invoke_lookup_tables_arg: ?[]const u8,
     program_invoke_nonce_account_arg: ?[]const u8,
     program_invoke_nonce_authority_keypair_path_arg: ?[]const u8,
+    idl_spec_arg: ?[]const u8,
+    idl_instruction_arg: ?[]const u8,
     raw_rpc_method_arg: ?[]const u8,
     raw_rpc_params_arg: ?[]const u8,
     slot_leaders_limit_arg: ?[]const u8,
@@ -446,6 +449,8 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .program_invoke_lookup_tables_arg = null,
         .program_invoke_nonce_account_arg = null,
         .program_invoke_nonce_authority_keypair_path_arg = null,
+        .idl_spec_arg = null,
+        .idl_instruction_arg = null,
         .raw_rpc_method_arg = null,
         .raw_rpc_params_arg = null,
         .slot_leaders_limit_arg = null,
@@ -955,6 +960,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "simulate-idl-invoke")) {
+                parsed.command = .simulate_idl_invoke;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "raw-rpc")) {
                 parsed.command = .raw_rpc;
                 parsed.has_command = true;
@@ -1363,6 +1374,14 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 return error.InvalidCli;
             },
 
+            .simulate_idl_invoke => if (parsed.idl_spec_arg == null) {
+                parsed.idl_spec_arg = arg;
+            } else if (parsed.idl_instruction_arg == null) {
+                parsed.idl_instruction_arg = arg;
+            } else {
+                return error.InvalidCli;
+            },
+
             .send_program_invoke,
             .send_program_invoke_and_confirm,
             .simulate_program_invoke,
@@ -1568,6 +1587,7 @@ pub const Command = enum {
     simulate_versioned_instructions,
     simulate_program_invoke,
     simulate_versioned_program_invoke,
+    simulate_idl_invoke,
     raw_rpc,
     slot,
     block_height,
@@ -1679,6 +1699,7 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-instructions [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-program-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-program-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] <idl-json|@path> <instruction-name>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "raw-rpc <method> [params-json]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "poll-balance <account>") != null);
@@ -1979,6 +2000,25 @@ test "cli.parseCliArgs parses simulate-versioned-instructions spec" {
         "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
         parsed.instructions_spec_arg orelse "",
     );
+}
+
+test "cli.parseCliArgs parses simulate-idl-invoke args" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "simulate-idl-invoke",
+        "--sender-keypair",
+        "/tmp/test-idl-invoke.json",
+        "--recent-blockhash",
+        "Recent111111111111111111111111111111111111111111",
+        "@target/idl/hello_world.json",
+        "initialize",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.simulate_idl_invoke, parsed.command);
+    try std.testing.expectEqualStrings("/tmp/test-idl-invoke.json", parsed.sender_keypair_path_arg orelse "");
+    try std.testing.expectEqualStrings("Recent111111111111111111111111111111111111111111", parsed.recent_blockhash_arg orelse "");
+    try std.testing.expectEqualStrings("@target/idl/hello_world.json", parsed.idl_spec_arg orelse "");
+    try std.testing.expectEqualStrings("initialize", parsed.idl_instruction_arg orelse "");
 }
 
 test "cli.parseCliArgs parses send-program-invoke args" {
