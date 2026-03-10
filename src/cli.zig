@@ -43,6 +43,8 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] signature-statuses <signature-1> [signature-2 ...]\n" ++
     "  solana_client_zig [--rpc <url>] send-transaction <signed-tx-base64>\n" ++
     "  solana_client_zig [--rpc <url>] send-transaction-and-confirm <signed-tx-base64>\n" ++
+    "  solana_client_zig [--rpc <url>] send-instructions <instruction-spec-json>\n" ++
+    "  solana_client_zig [--rpc <url>] send-instructions-and-confirm <instruction-spec-json>\n" ++
     "  solana_client_zig [--rpc <url>] transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-transaction <signed-tx-base64>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-instructions <instruction-spec-json>\n" ++
@@ -821,6 +823,18 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "send-instructions")) {
+                parsed.command = .send_instructions;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "send-instructions-and-confirm")) {
+                parsed.command = .send_instructions_and_confirm;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "transfer")) {
                 parsed.command = .transfer;
                 parsed.has_command = true;
@@ -1235,7 +1249,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 return error.InvalidCli;
             },
 
-            .simulate_instructions => if (parsed.instructions_spec_arg == null) {
+            .send_instructions, .send_instructions_and_confirm, .simulate_instructions => if (parsed.instructions_spec_arg == null) {
                 parsed.instructions_spec_arg = arg;
             } else {
                 return error.InvalidCli;
@@ -1410,6 +1424,8 @@ pub const Command = enum {
     signature_statuses,
     send_transaction,
     send_transaction_and_confirm,
+    send_instructions,
+    send_instructions_and_confirm,
     transfer,
     simulate_transaction,
     simulate_instructions,
@@ -1512,6 +1528,8 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "inflation-reward <address-1> [address-2 ...] [--epoch <epoch>]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transaction <signature>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-transaction <signed-tx-base64>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions <instruction-spec-json>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions-and-confirm <instruction-spec-json>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-instructions <instruction-spec-json>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "raw-rpc <method> [params-json]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>") != null);
@@ -1781,6 +1799,20 @@ test "cli.parseCliArgs parses simulate-instructions spec" {
     defer parsed.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(Command.simulate_instructions, parsed.command);
+    try std.testing.expectEqualStrings(
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+        parsed.instructions_spec_arg orelse "",
+    );
+}
+
+test "cli.parseCliArgs parses send-instructions spec" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "send-instructions",
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.send_instructions, parsed.command);
     try std.testing.expectEqualStrings(
         "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
         parsed.instructions_spec_arg orelse "",

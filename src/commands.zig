@@ -413,7 +413,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const send_preflight_commitment = toClientCommitment(args.send_preflight_commitment);
 
     const is_balance_wait_command = command == .poll_balance or command == .wait_for_balance;
-    const is_send_command = command == .send_transaction or command == .send_transaction_and_confirm or command == .transfer;
+    const is_send_command = command == .send_transaction or
+        command == .send_transaction_and_confirm or
+        command == .send_instructions or
+        command == .send_instructions_and_confirm or
+        command == .transfer;
     const is_account_min_context_command = command == .account_data or
         command == .account_info or
         command == .ui_account or
@@ -448,7 +452,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         status_poll_ms;
     if ((send_skip_preflight or send_max_retries != null or send_preflight_commitment != null) and !is_send_command) {
         reportInvalidCliMessage(
-            "error: send options (--skip-preflight, --max-retries, --preflight-commitment) require send-transaction, send-transaction-and-confirm, or transfer\n",
+            "error: send options (--skip-preflight, --max-retries, --preflight-commitment) require send-transaction, send-transaction-and-confirm, send-instructions, send-instructions-and-confirm, or transfer\n",
             .{},
         );
         return error.InvalidCli;
@@ -469,8 +473,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    if ((timeout_ms_overridden or poll_ms_overridden) and command != .status and command != .poll_balance and command != .wait_for_balance and command != .send_transaction_and_confirm and command != .poll_for_signature_confirmation and command != .transfer) {
-        reportInvalidCliMessage("error: wait options (--timeout-ms, --poll-ms) require status, poll-balance, wait-for-balance, poll-for-signature-confirmation, send-transaction-and-confirm, or transfer\n", .{});
+    if ((timeout_ms_overridden or poll_ms_overridden) and command != .status and command != .poll_balance and command != .wait_for_balance and command != .send_transaction_and_confirm and command != .send_instructions_and_confirm and command != .poll_for_signature_confirmation and command != .transfer) {
+        reportInvalidCliMessage("error: wait options (--timeout-ms, --poll-ms) require status, poll-balance, wait-for-balance, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, or transfer\n", .{});
         return error.InvalidCli;
     }
 
@@ -482,10 +486,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .blocks_since_signature_confirmation and
         command != .poll_for_signature_confirmation and
         command != .send_transaction_and_confirm and
+        command != .send_instructions_and_confirm and
         command != .transfer)
     {
         reportInvalidCliMessage(
-            "error: --search-transaction-history requires status, confirm-transaction, signature-status, signature-statuses, blocks-since-signature-confirmation, poll-for-signature-confirmation, send-transaction-and-confirm, or transfer\n",
+            "error: --search-transaction-history requires status, confirm-transaction, signature-status, signature-statuses, blocks-since-signature-confirmation, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, or transfer\n",
             .{},
         );
         return error.InvalidCli;
@@ -826,6 +831,80 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 search_transaction_history,
                 status_timeout_ms,
                 status_poll_ms,
+            );
+            defer allocator.free(tx_signature);
+
+            std.debug.print("confirmed signature: {s}\n", .{tx_signature});
+        },
+
+        .send_instructions => {
+            const spec_arg = instructions_spec_arg orelse {
+                reportInvalidCliMessage("error: send-instructions requires <instruction-spec-json>\n", .{});
+                return error.InvalidCli;
+            };
+
+            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_arg, .{
+                .ignore_unknown_fields = true,
+            }) catch {
+                reportInvalidCliMessage("error: send-instructions spec must be valid JSON\n", .{});
+                return error.InvalidCli;
+            };
+            defer parsed_spec.deinit();
+
+            var loaded = loadCliInstructionSpec(allocator, &parsed_spec.value) catch {
+                reportInvalidCliMessage("error: send-instructions spec is invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer loaded.deinit(allocator);
+
+            const tx_signature = try rpc.sendLegacyInstructionsWithOptions(
+                loaded.payer,
+                loaded.owned_instructions.instructions,
+                loaded.signers,
+                .{
+                    .recent_blockhash = parsed_spec.value.recent_blockhash,
+                    .blockhash_commitment = if (parsed_spec.value.recent_blockhash == null) commitment orelse send_preflight_commitment else null,
+                    .send_transaction_options = send_transaction_options,
+                },
+            );
+            defer allocator.free(tx_signature);
+
+            std.debug.print("signature: {s}\n", .{tx_signature});
+        },
+
+        .send_instructions_and_confirm => {
+            const spec_arg = instructions_spec_arg orelse {
+                reportInvalidCliMessage("error: send-instructions-and-confirm requires <instruction-spec-json>\n", .{});
+                return error.InvalidCli;
+            };
+
+            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_arg, .{
+                .ignore_unknown_fields = true,
+            }) catch {
+                reportInvalidCliMessage("error: send-instructions-and-confirm spec must be valid JSON\n", .{});
+                return error.InvalidCli;
+            };
+            defer parsed_spec.deinit();
+
+            var loaded = loadCliInstructionSpec(allocator, &parsed_spec.value) catch {
+                reportInvalidCliMessage("error: send-instructions-and-confirm spec is invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer loaded.deinit(allocator);
+
+            const tx_signature = try rpc.sendAndConfirmLegacyInstructionsWithOptions(
+                loaded.payer,
+                loaded.owned_instructions.instructions,
+                loaded.signers,
+                .{
+                    .recent_blockhash = parsed_spec.value.recent_blockhash,
+                    .blockhash_commitment = if (parsed_spec.value.recent_blockhash == null) commitment orelse send_preflight_commitment else null,
+                    .send_transaction_options = send_transaction_options,
+                    .commitment = commitment,
+                    .search_transaction_history = search_transaction_history,
+                    .timeout_ms = status_timeout_ms,
+                    .poll_interval_ms = status_poll_ms,
+                },
             );
             defer allocator.free(tx_signature);
 
@@ -5533,6 +5612,160 @@ test "runCommand simulate-instructions builds and simulates generic instruction 
     try std.testing.expect(std.mem.indexOf(u8, commandCapturedRequest(&sender_context), "\"innerInstructions\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "simulation: slot=10 err=null fee=120 units_consumed=42") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: ok") != null);
+}
+
+test "runCommand send-instructions sends generic instruction spec" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson("\"Sig777777777777777777777777777777777777777777777777777777777777777777\"");
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-instructions" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 65);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","recent_blockhash":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"70696e67","data_encoding":"hex"}}]}}
+        ,
+        .{ payer_secret_key_base58, recent_blockhash, payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-instructions",
+        "--skip-preflight",
+        "--max-retries",
+        "2",
+        "--preflight-commitment",
+        "confirmed",
+        spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, commandCapturedRequest(&sender_context), "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, commandCapturedRequest(&sender_context), "\"maxRetries\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, commandCapturedRequest(&sender_context), "\"preflightCommitment\":\"confirmed\"") != null);
+    try std.testing.expectEqualStrings(
+        "signature: Sig777777777777777777777777777777777777777777777777777777777777777777\n",
+        captured,
+    );
+}
+
+test "runCommand send-instructions-and-confirm confirms generic instruction spec" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushSendAndSignatureStatusPollFlow(
+        "Sig888888888888888888888888888888888888888888888888888888888888888888",
+        &.{
+            .{ .context_slot = 91, .status = .{
+                .slot = 91,
+                .confirmations = 1,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-instructions-and-confirm" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 65);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","recent_blockhash":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"ping","data_encoding":"utf8"}}]}}
+        ,
+        .{ payer_secret_key_base58, recent_blockhash, payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-instructions-and-confirm",
+        "--commitment",
+        "confirmed",
+        spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "confirmed signature: Sig888888888888888888888888888888888888888888888888888888888888888888\n",
+        captured,
+    );
 }
 
 test "runCommand ui-account prints parsed account details" {
