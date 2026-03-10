@@ -257,6 +257,49 @@ fn freeRecentPrioritizationFees(allocator: std.mem.Allocator, fees: []client.Rec
     allocator.free(fees);
 }
 
+fn freeSimulatedTransaction(allocator: std.mem.Allocator, simulation: client.SimulatedTransaction) void {
+    if (simulation.accounts) |accounts| {
+        for (accounts) |entry| {
+            if (entry) |account| freeAccountInfo(allocator, account);
+        }
+        allocator.free(accounts);
+    }
+    if (simulation.err_json) |value| allocator.free(value);
+    if (simulation.inner_instructions_json) |value| allocator.free(value);
+    if (simulation.logs) |logs| {
+        for (logs) |entry| allocator.free(entry);
+        allocator.free(logs);
+    }
+    if (simulation.replacement_blockhash) |value| allocator.free(value.blockhash);
+    if (simulation.return_data) |value| {
+        allocator.free(value.program_id);
+        if (value.data) |entry| allocator.free(entry);
+        if (value.data_encoding) |entry| allocator.free(entry);
+    }
+}
+
+fn freeSignatureStatus(allocator: std.mem.Allocator, status: client.SignatureStatus) void {
+    if (status.confirmation_status) |value| allocator.free(value);
+}
+
+fn freeSignatureStatuses(allocator: std.mem.Allocator, statuses: []?client.SignatureStatus) void {
+    for (statuses) |status| {
+        if (status) |value| freeSignatureStatus(allocator, value);
+    }
+    allocator.free(statuses);
+}
+
+fn freeSignatureForAddress(allocator: std.mem.Allocator, signature: client.SignatureForAddress) void {
+    allocator.free(signature.signature);
+    if (signature.confirmation_status) |value| allocator.free(value);
+    if (signature.memo) |value| allocator.free(value);
+}
+
+fn freeSignaturesForAddress(allocator: std.mem.Allocator, signatures: []client.SignatureForAddress) void {
+    for (signatures) |signature| freeSignatureForAddress(allocator, signature);
+    allocator.free(signatures);
+}
+
 test "root.NonblockingRpcClient constructors initialize endpoint and options" {
     const allocator = std.testing.allocator;
     const endpoint = "http://127.0.0.1:8899";
@@ -2365,5 +2408,236 @@ test "root.NonblockingRpcClient sendTypedAsync uses request method" {
     defer result.deinit();
 
     try std.testing.expectEqual(@as(u64, 333), result.value);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient sendTransactionAsync sends transaction and returns signature" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        "sendTransaction",
+        "skipPreflight\":true",
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":\"Sig111111111111111111111111111111111111\",\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.sendTransactionAsync(
+        "SignedTransactionBase64",
+        .{
+            .skip_preflight = true,
+            .max_retries = 7,
+            .preflight_commitment = .finalized,
+            .min_context_slot = 42,
+        },
+    );
+    try std.testing.expect(!task.isDone());
+
+    const signature = try task.wait();
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings("Sig111111111111111111111111111111111111", signature);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient simulateTransactionAsync returns owned simulation result" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        "simulateTransaction",
+        "SignedTransactionBase64",
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":321},\"value\":{\"accounts\":[{\"lamports\":99,\"owner\":\"Owner11111111111111111111111111111111\",\"executable\":false,\"rentEpoch\":7,\"space\":3,\"data\":[\"abc\",\"base64\"]}],\"err\":null,\"fee\":12,\"innerInstructions\":[{\"noop\":true}],\"logs\":[\"log-1\",\"log-2\"],\"loadedAccountsDataSize\":256,\"replacementBlockhash\":{\"blockhash\":\"replacement-blockhash\",\"lastValidBlockHeight\":999},\"returnData\":{\"programId\":\"Program11111111111111111111111111111111\",\"data\":[\"ZGF0YQ==\",\"base64\"]},\"unitsConsumed\":42}},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.simulateTransactionAsync(
+        "SignedTransactionBase64",
+        .{ .sig_verify = true },
+    );
+    try std.testing.expect(!task.isDone());
+
+    const simulation = try task.wait();
+    defer freeSimulatedTransaction(allocator, simulation);
+
+    try std.testing.expectEqual(@as(u64, 321), simulation.context_slot);
+    try std.testing.expectEqual(@as(u64, 12), simulation.fee.?);
+    try std.testing.expectEqual(@as(u64, 42), simulation.units_consumed.?);
+    try std.testing.expectEqual(@as(usize, 1), simulation.accounts.?.len);
+    const account = simulation.accounts.?[0].?;
+    try std.testing.expectEqual(@as(u64, 99), account.lamports);
+    try std.testing.expectEqualStrings("Owner11111111111111111111111111111111", account.owner);
+    try std.testing.expectEqual(@as(usize, 2), simulation.logs.?.len);
+    try std.testing.expectEqualStrings("log-1", simulation.logs.?[0]);
+    try std.testing.expectEqual(@as(u64, 256), simulation.loaded_accounts_data_size.?);
+    try std.testing.expectEqualStrings("replacement-blockhash", simulation.replacement_blockhash.?.blockhash);
+    try std.testing.expectEqual(@as(u64, 999), simulation.replacement_blockhash.?.last_valid_block_height);
+    try std.testing.expectEqualStrings("Program11111111111111111111111111111111", simulation.return_data.?.program_id);
+    try std.testing.expectEqual(@as(?[]const u8, "ZGF0YQ=="), simulation.return_data.?.data);
+    try std.testing.expectEqual(@as(?[]const u8, "base64"), simulation.return_data.?.data_encoding);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getSignatureStatusAsync returns parsed status" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        "getSignatureStatuses",
+        "SigStatus111111111111111111111111111111111111",
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":55},\"value\":[{\"slot\":55,\"confirmations\":9,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getSignatureStatusAsync("SigStatus111111111111111111111111111111111111", .confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const status = try task.wait();
+    defer freeSignatureStatus(allocator, status);
+
+    try std.testing.expectEqualStrings("confirmed", status.confirmation_status.?);
+    try std.testing.expectEqual(@as(u64, 55), status.slot.?);
+    try std.testing.expectEqual(@as(?u64, 9), status.confirmations);
+    try std.testing.expect(!status.has_error);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getSignatureStatusesAsync returns optional statuses" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        "\"Sig1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111\"",
+        "\"commitment\":\"finalized\"",
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":66},\"value\":[{\"slot\":11,\"confirmations\":4,\"confirmationStatus\":\"confirmed\",\"err\":null},{\"slot\":12,\"confirmations\":null,\"confirmationStatus\":\"processed\",\"err\":{\"code\":1}}],\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getSignatureStatusesAsync(
+        &.{ "Sig1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111", "Sig2BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB222222222222222222222222" },
+        .finalized,
+    );
+    try std.testing.expect(!task.isDone());
+
+    const statuses = try task.wait();
+    defer freeSignatureStatuses(allocator, statuses);
+
+    try std.testing.expectEqual(@as(usize, 2), statuses.len);
+    const first = statuses[0].?;
+    try std.testing.expectEqualStrings("confirmed", first.confirmation_status.?);
+    try std.testing.expectEqual(@as(u64, 11), first.slot.?);
+    try std.testing.expectEqual(@as(?u64, 4), first.confirmations);
+    try std.testing.expect(!first.has_error);
+    const second = statuses[1].?;
+    try std.testing.expectEqualStrings("processed", second.confirmation_status.?);
+    try std.testing.expectEqual(@as(u64, 12), second.slot.?);
+    try std.testing.expect(second.confirmations == null);
+    try std.testing.expect(second.has_error);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getSignaturesForAddressAsync returns signatures for address" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        "\"Address11111111111111111111111111111111\"",
+        "\"finalized\"",
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":[{\"signature\":\"Sig111111111111111111111111111111111111\",\"slot\":1001,\"err\":null,\"memo\":\"first\",\"confirmationStatus\":\"confirmed\",\"blockTime\":123},{\"signature\":\"Sig222222222222222222222222222222222222\",\"slot\":1002,\"err\":{\"code\":1},\"memo\":null,\"confirmationStatus\":\"processed\",\"blockTime\":124}],\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getSignaturesForAddressAsync(
+        "Address11111111111111111111111111111111",
+        "BeforeSignature",
+        "UntilSignature",
+        25,
+        .finalized,
+    );
+    try std.testing.expect(!task.isDone());
+
+    const signatures = try task.wait();
+    defer freeSignaturesForAddress(allocator, signatures);
+
+    try std.testing.expectEqual(@as(usize, 2), signatures.len);
+    try std.testing.expectEqualStrings("Sig111111111111111111111111111111111111", signatures[0].signature);
+    try std.testing.expectEqual(@as(u64, 1001), signatures[0].slot);
+    try std.testing.expectEqualStrings("confirmed", signatures[0].confirmation_status.?);
+    try std.testing.expectEqual(@as(i64, 123), signatures[0].block_time.?);
+    try std.testing.expect(signatures[0].memo != null);
+    try std.testing.expectEqualStrings("first", signatures[0].memo.?);
+    try std.testing.expect(!signatures[0].has_error);
+
+    try std.testing.expectEqualStrings("Sig222222222222222222222222222222222222", signatures[1].signature);
+    try std.testing.expectEqual(@as(u64, 1002), signatures[1].slot);
+    try std.testing.expectEqualStrings("processed", signatures[1].confirmation_status.?);
+    try std.testing.expectEqual(@as(i64, 124), signatures[1].block_time.?);
+    try std.testing.expect(signatures[1].memo == null);
+    try std.testing.expect(signatures[1].has_error);
     try std.testing.expect(matched);
 }

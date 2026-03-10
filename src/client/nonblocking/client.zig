@@ -31,6 +31,11 @@ const RecentPrioritizationFee = rpc_types.RecentPrioritizationFee;
 const RpcRequest = rpc_types.RpcRequest;
 const SnapshotSlots = rpc_types.SnapshotSlots;
 const Supply = rpc_types.Supply;
+const SendTransactionOptions = rpc_types.SendTransactionOptions;
+const SimulateTransactionOptions = rpc_types.SimulateTransactionOptions;
+const SignatureStatus = rpc_types.SignatureStatus;
+const SignatureForAddress = rpc_types.SignatureForAddress;
+const SimulatedTransaction = rpc_types.SimulatedTransaction;
 const TokenAmount = rpc_types.TokenAmount;
 const TokenAccountsFilter = rpc_types.TokenAccountsFilter;
 const TokenLargestAccount = rpc_types.TokenLargestAccount;
@@ -1334,6 +1339,114 @@ fn runGetGenesisHash(
     return try client.getGenesisHash();
 }
 
+fn runSendTransaction(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    signed_tx_base64: []const u8,
+    options: ?SendTransactionOptions,
+) ![]const u8 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.sendTransaction(signed_tx_base64, options);
+}
+
+fn runSimulateTransaction(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    signed_tx_base64: []const u8,
+    options: ?SimulateTransactionOptions,
+) !SimulatedTransaction {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.simulateTransaction(signed_tx_base64, options);
+}
+
+fn runGetSignatureStatus(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    signature: []const u8,
+    commitment: ?Commitment,
+) !SignatureStatus {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getSignatureStatus(signature, commitment);
+}
+
+fn runGetSignatureStatuses(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    signatures: []const []const u8,
+    commitment: ?Commitment,
+) ![]?SignatureStatus {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getSignatureStatuses(signatures, commitment);
+}
+
+fn runGetSignaturesForAddress(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    address: []const u8,
+    before: ?[]const u8,
+    until: ?[]const u8,
+    limit: ?u64,
+    commitment: ?Commitment,
+) ![]SignatureForAddress {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getSignaturesForAddress(address, before, until, limit, commitment);
+}
+
 fn AsyncTask(
     comptime ResultType: type,
     comptime work_fn: *const fn (
@@ -2301,6 +2414,272 @@ fn AsyncTaskWithStringListAndCommitment(
     };
 }
 
+fn AsyncTaskWithStringAndOptions(
+    comptime ResultType: type,
+    comptime OptionsType: type,
+    comptime work_fn: *const fn (
+        Allocator,
+        []const u8,
+        ?Commitment,
+        ?u64,
+        ?u64,
+        []const u8,
+        ?OptionsType,
+    ) anyerror!ResultType,
+) type {
+    return struct {
+        allocator: Allocator,
+        endpoint: []const u8,
+        default_commitment: ?Commitment,
+        request_timeout_ms: ?u64,
+        confirm_transaction_initial_timeout_ms: ?u64,
+        value: []const u8,
+        options: ?OptionsType,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+        done: bool = false,
+        result: ?Result = null,
+        thread: ?std.Thread = null,
+
+        const Self = @This();
+        const Result = union(enum) {
+            success: ResultType,
+            failure: anyerror,
+        };
+
+        pub fn start(
+            allocator: Allocator,
+            endpoint: []const u8,
+            default_commitment: ?Commitment,
+            request_timeout_ms: ?u64,
+            confirm_transaction_initial_timeout_ms: ?u64,
+            value: []const u8,
+            options: ?OptionsType,
+        ) !*Self {
+            const self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
+
+            self.* = .{
+                .allocator = allocator,
+                .endpoint = try allocator.dupe(u8, endpoint),
+                .default_commitment = default_commitment,
+                .request_timeout_ms = request_timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .value = try allocator.dupe(u8, value),
+                .options = options,
+            };
+            errdefer {
+                allocator.free(self.endpoint);
+                allocator.free(self.value);
+            }
+
+            self.thread = try std.Thread.spawn(.{}, Self.run, .{self});
+            return self;
+        }
+
+        fn run(self: *Self) void {
+            const value = work_fn(
+                self.allocator,
+                self.endpoint,
+                self.default_commitment,
+                self.request_timeout_ms,
+                self.confirm_transaction_initial_timeout_ms,
+                self.value,
+                self.options,
+            ) catch |err| {
+                self.complete(.{ .failure = err });
+                return;
+            };
+            self.complete(.{ .success = value });
+        }
+
+        fn complete(self: *Self, result: Result) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.result = result;
+            self.done = true;
+            self.cond.broadcast();
+        }
+
+        pub fn isDone(self: *const Self) bool {
+            const mutable_self: *Self = @constCast(self);
+            mutable_self.mutex.lock();
+            defer mutable_self.mutex.unlock();
+            return mutable_self.done;
+        }
+
+        pub fn wait(self: *Self) anyerror!ResultType {
+            self.mutex.lock();
+            while (!self.done) {
+                self.cond.wait(&self.mutex);
+            }
+            const result = self.result.?;
+            self.mutex.unlock();
+
+            if (self.thread) |thread| {
+                thread.join();
+                self.thread = null;
+            }
+
+            defer {
+                self.allocator.free(self.endpoint);
+                self.allocator.free(self.value);
+                self.allocator.destroy(self);
+            }
+
+            return switch (result) {
+                .success => |value| value,
+                .failure => |err| err,
+            };
+        }
+    };
+}
+
+fn AsyncTaskWithSignaturesForAddressAndCommitment(
+    comptime ResultType: type,
+    comptime work_fn: *const fn (
+        Allocator,
+        []const u8,
+        ?Commitment,
+        ?u64,
+        ?u64,
+        []const u8,
+        ?[]const u8,
+        ?[]const u8,
+        ?u64,
+        ?Commitment,
+    ) anyerror!ResultType,
+) type {
+    return struct {
+        allocator: Allocator,
+        endpoint: []const u8,
+        default_commitment: ?Commitment,
+        request_timeout_ms: ?u64,
+        confirm_transaction_initial_timeout_ms: ?u64,
+        address: []const u8,
+        before: ?[]const u8,
+        until: ?[]const u8,
+        limit: ?u64,
+        commitment: ?Commitment,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+        done: bool = false,
+        result: ?Result = null,
+        thread: ?std.Thread = null,
+
+        const Self = @This();
+        const Result = union(enum) {
+            success: ResultType,
+            failure: anyerror,
+        };
+
+        pub fn start(
+            allocator: Allocator,
+            endpoint: []const u8,
+            default_commitment: ?Commitment,
+            request_timeout_ms: ?u64,
+            confirm_transaction_initial_timeout_ms: ?u64,
+            address: []const u8,
+            before: ?[]const u8,
+            until: ?[]const u8,
+            limit: ?u64,
+            commitment: ?Commitment,
+        ) !*Self {
+            const self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
+
+            const copied_before = if (before) |value| try allocator.dupe(u8, value) else null;
+            errdefer if (copied_before) |value| allocator.free(value);
+
+            const copied_until = if (until) |value| try allocator.dupe(u8, value) else null;
+            errdefer if (copied_until) |value| allocator.free(value);
+
+            self.* = .{
+                .allocator = allocator,
+                .endpoint = try allocator.dupe(u8, endpoint),
+                .default_commitment = default_commitment,
+                .request_timeout_ms = request_timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .address = try allocator.dupe(u8, address),
+                .before = copied_before,
+                .until = copied_until,
+                .limit = limit,
+                .commitment = commitment,
+            };
+            errdefer {
+                allocator.free(self.endpoint);
+                allocator.free(self.address);
+                if (self.before) |value| allocator.free(value);
+                if (self.until) |value| allocator.free(value);
+            }
+
+            self.thread = try std.Thread.spawn(.{}, Self.run, .{self});
+            return self;
+        }
+
+        fn run(self: *Self) void {
+            const value = work_fn(
+                self.allocator,
+                self.endpoint,
+                self.default_commitment,
+                self.request_timeout_ms,
+                self.confirm_transaction_initial_timeout_ms,
+                self.address,
+                self.before,
+                self.until,
+                self.limit,
+                self.commitment,
+            ) catch |err| {
+                self.complete(.{ .failure = err });
+                return;
+            };
+            self.complete(.{ .success = value });
+        }
+
+        fn complete(self: *Self, result: Result) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.result = result;
+            self.done = true;
+            self.cond.broadcast();
+        }
+
+        pub fn isDone(self: *const Self) bool {
+            const mutable_self: *Self = @constCast(self);
+            mutable_self.mutex.lock();
+            defer mutable_self.mutex.unlock();
+            return mutable_self.done;
+        }
+
+        pub fn wait(self: *Self) anyerror!ResultType {
+            self.mutex.lock();
+            while (!self.done) {
+                self.cond.wait(&self.mutex);
+            }
+            const result = self.result.?;
+            self.mutex.unlock();
+
+            if (self.thread) |thread| {
+                thread.join();
+                self.thread = null;
+            }
+
+            defer {
+                self.allocator.free(self.endpoint);
+                self.allocator.free(self.address);
+                if (self.before) |value| self.allocator.free(value);
+                if (self.until) |value| self.allocator.free(value);
+                self.allocator.destroy(self);
+            }
+
+            return switch (result) {
+                .success => |value| value,
+                .failure => |err| err,
+            };
+        }
+    };
+}
+
 pub const NonblockingRpcClient = struct {
     allocator: Allocator,
     endpoint: []const u8,
@@ -2370,6 +2749,11 @@ pub const NonblockingRpcClient = struct {
     pub const LeaderScheduleTask = AsyncTask(?[]LeaderSchedule, runGetLeaderSchedule);
     pub const LeaderScheduleForSlotTask = AsyncTaskWithU64(?[]LeaderSchedule, runGetLeaderScheduleForSlot);
     pub const LeaderScheduleForIdentityTask = AsyncTaskWithStringAndCommitment(?[]LeaderSchedule, runGetLeaderScheduleForIdentity);
+    pub const SendTransactionTask = AsyncTaskWithStringAndOptions([]const u8, SendTransactionOptions, runSendTransaction);
+    pub const SimulateTransactionTask = AsyncTaskWithStringAndOptions(SimulatedTransaction, SimulateTransactionOptions, runSimulateTransaction);
+    pub const SignatureStatusTask = AsyncTaskWithStringAndCommitment(SignatureStatus, runGetSignatureStatus);
+    pub const SignatureStatusesTask = AsyncTaskWithStringListAndCommitment([]?SignatureStatus, runGetSignatureStatuses);
+    pub const SignaturesForAddressTask = AsyncTaskWithSignaturesForAddressAndCommitment([]SignatureForAddress, runGetSignaturesForAddress);
     pub const BlockProductionTask = AsyncTask(BlockProduction, runGetBlockProduction);
     pub const BlockhashValidityTask = AsyncTaskWithStringAndCommitment(bool, runIsBlockhashValid);
     pub const SlotLeadersTask = AsyncTaskWithU64Pair([][]const u8, runGetSlotLeaders);
@@ -2634,6 +3018,92 @@ pub const NonblockingRpcClient = struct {
         comptime ResultType: type,
     ) !*AsyncTaskWithMethodAndParamsJson(OwnedRpcResult(ResultType), SendJsonRpcRunner(ResultType).run) {
         return try self.sendJsonRpcAsync(request.method, params, ResultType);
+    }
+
+    pub fn sendTransactionAsync(
+        self: *const NonblockingRpcClient,
+        signed_tx_base64: []const u8,
+        options: ?SendTransactionOptions,
+    ) !*SendTransactionTask {
+        return SendTransactionTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            signed_tx_base64,
+            options,
+        );
+    }
+
+    pub fn simulateTransactionAsync(
+        self: *const NonblockingRpcClient,
+        signed_tx_base64: []const u8,
+        options: ?SimulateTransactionOptions,
+    ) !*SimulateTransactionTask {
+        return SimulateTransactionTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            signed_tx_base64,
+            options,
+        );
+    }
+
+    pub fn getSignatureStatusAsync(
+        self: *const NonblockingRpcClient,
+        signature: []const u8,
+        commitment: ?Commitment,
+    ) !*SignatureStatusTask {
+        return SignatureStatusTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            signature,
+            commitment,
+        );
+    }
+
+    pub fn getSignatureStatusesAsync(
+        self: *const NonblockingRpcClient,
+        signatures: []const []const u8,
+        commitment: ?Commitment,
+    ) !*SignatureStatusesTask {
+        return SignatureStatusesTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            signatures,
+            commitment,
+        );
+    }
+
+    pub fn getSignaturesForAddressAsync(
+        self: *const NonblockingRpcClient,
+        address: []const u8,
+        before: ?[]const u8,
+        until: ?[]const u8,
+        limit: ?u64,
+        commitment: ?Commitment,
+    ) !*SignaturesForAddressTask {
+        return SignaturesForAddressTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            address,
+            before,
+            until,
+            limit,
+            commitment,
+        );
     }
 
     pub fn getBalanceForAddressAsync(
