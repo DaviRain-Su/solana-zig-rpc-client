@@ -628,12 +628,50 @@ fn deriveAnchorIdlPda(
     return try findProgramAddress(allocator, seed_slices, pda_program);
 }
 
+fn parseCliRemainingAccountMeta(raw: []const u8) !CliInstructionAccountMeta {
+    var parts = std.mem.splitScalar(u8, raw, ',');
+    const pubkey = parts.next() orelse return error.InvalidCli;
+    if (pubkey.len == 0) return error.InvalidCli;
+
+    const signer_part = parts.next();
+    const writable_part = parts.next();
+    if (parts.next() != null) return error.InvalidCli;
+    if (signer_part == null and writable_part != null) return error.InvalidCli;
+
+    const is_signer = if (signer_part) |value|
+        if (std.mem.eql(u8, value, "true"))
+            true
+        else if (std.mem.eql(u8, value, "false"))
+            false
+        else
+            return error.InvalidCli
+    else
+        false;
+
+    const is_writable = if (writable_part) |value|
+        if (std.mem.eql(u8, value, "true"))
+            true
+        else if (std.mem.eql(u8, value, "false"))
+            false
+        else
+            return error.InvalidCli
+    else
+        false;
+
+    return .{
+        .pubkey = pubkey,
+        .is_signer = is_signer,
+        .is_writable = is_writable,
+    };
+}
+
 fn loadAnchorIdlInvokeInstructionSpec(
     allocator: Allocator,
     idl_arg: []const u8,
     instruction_name: []const u8,
     args_json_arg: ?[]const u8,
     account_bindings: []const []const u8,
+    remaining_accounts: []const []const u8,
     payer_keypair_path_arg: ?[]const u8,
 ) !LoadedCliInstructionSpec {
     const idl_source = loadInstructionSpecSource(allocator, idl_arg) catch return error.InvalidCli;
@@ -669,7 +707,7 @@ fn loadAnchorIdlInvokeInstructionSpec(
 
     const program_id_pubkey = try client.Pubkey.fromBase58(allocator, program_id);
     const leaf_account_count = try countAnchorIdlLeafAccounts(instruction.accounts);
-    const cli_accounts = try allocator.alloc(CliInstructionAccountMeta, leaf_account_count);
+    const cli_accounts = try allocator.alloc(CliInstructionAccountMeta, leaf_account_count + remaining_accounts.len);
     defer allocator.free(cli_accounts);
     var owned_resolved_account_pubkeys: std.ArrayListUnmanaged([]u8) = .{};
     defer {
@@ -690,6 +728,9 @@ fn loadAnchorIdlInvokeInstructionSpec(
         null,
     );
     if (next_index != leaf_account_count) return error.InvalidCli;
+    for (remaining_accounts, 0..) |raw_remaining_account, index| {
+        cli_accounts[next_index + index] = try parseCliRemainingAccountMeta(raw_remaining_account);
+    }
 
     const discriminator_hex = try allocator.alloc(u8, encoded_data.len * 2);
     defer allocator.free(discriminator_hex);
@@ -1191,6 +1232,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const idl_instruction_arg = args.idl_instruction_arg;
     const idl_args_json_arg = args.idl_args_json_arg;
     const idl_account_bindings = args.idl_account_bindings;
+    const idl_remaining_accounts = args.idl_remaining_accounts;
     const raw_rpc_method_arg = args.raw_rpc_method_arg;
     const raw_rpc_params_arg = args.raw_rpc_params_arg;
     const slot_leaders_limit_arg = args.slot_leaders_limit_arg;
@@ -2193,6 +2235,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 instruction_name,
                 idl_args_json_arg,
                 idl_account_bindings.items,
+                idl_remaining_accounts.items,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-idl-invoke currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
@@ -2241,6 +2284,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 instruction_name,
                 idl_args_json_arg,
                 idl_account_bindings.items,
+                idl_remaining_accounts.items,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-idl-invoke-and-confirm currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
@@ -2798,6 +2842,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 instruction_name,
                 idl_args_json_arg,
                 idl_account_bindings.items,
+                idl_remaining_accounts.items,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: simulate-idl-invoke currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
@@ -8420,6 +8465,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from const and arg seeds" {
         "init",
         args_json,
         &.{},
+        &.{},
         payer_keypair_realpath,
     );
     defer loaded.deinit(allocator);
@@ -8483,6 +8529,7 @@ test "loadAnchorIdlInvokeInstructionSpec flattens nested anchor account groups" 
         "init",
         null,
         &.{ state_binding, authority_binding },
+        &.{},
         payer_keypair_realpath,
     );
     defer loaded.deinit(allocator);
@@ -8534,6 +8581,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from const and account seed
         "init",
         null,
         &.{authority_binding},
+        &.{},
         payer_keypair_realpath,
     );
     defer loaded.deinit(allocator);
@@ -8592,6 +8640,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from account seed key path"
         "init",
         null,
         &.{authority_binding},
+        &.{},
         payer_keypair_realpath,
     );
     defer loaded.deinit(allocator);
@@ -8644,6 +8693,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA with pda program override" 
         idl_json,
         "init",
         null,
+        &.{},
         &.{},
         payer_keypair_realpath,
     );
@@ -8699,6 +8749,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA with pda program account ov
         "init",
         null,
         &.{program_binding},
+        &.{},
         payer_keypair_realpath,
     );
     defer loaded.deinit(allocator);
@@ -8713,6 +8764,49 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA with pda program account ov
     try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(pda_program_id));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec appends remaining accounts" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{60} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-remaining-accounts-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const extra = client.Pubkey.fromBytes(.{39} ** 32);
+    const extra_base58 = try extra.toBase58(allocator);
+    defer allocator.free(extra_base58);
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[7,7,7,7,7,7,7,7],"accounts":[],"args":[]}]}
+    ;
+    const remaining_account = try std.fmt.allocPrint(allocator, "{s},true,true", .{extra_base58});
+    defer allocator.free(remaining_account);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        &.{},
+        &.{remaining_account},
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(extra));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
 }
 
 test "runCommand send-idl-invoke sends zero-account anchor instruction" {
