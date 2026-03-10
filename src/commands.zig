@@ -135,6 +135,7 @@ const CliInstructionSpec = struct {
     program_id: []const u8,
     accounts: []const CliInstructionAccountMeta = &.{},
     data: ?[]const u8 = null,
+    data_path: ?[]const u8 = null,
     data_encoding: InstructionDataEncoding = .base64,
 };
 
@@ -198,6 +199,30 @@ fn decodeCliInstructionData(
             break :blk decoded;
         },
     };
+}
+
+fn loadCliInstructionData(
+    allocator: Allocator,
+    instruction_spec: CliInstructionSpec,
+) ![]u8 {
+    if (instruction_spec.data != null and instruction_spec.data_path != null) {
+        return error.InvalidCli;
+    }
+
+    if (instruction_spec.data_path) |path| {
+        const home_dir = std.process.getEnvVarOwned(allocator, "HOME") catch |err| switch (err) {
+            error.EnvironmentVariableNotFound => null,
+            else => return err,
+        };
+        defer if (home_dir) |value| allocator.free(value);
+
+        const expanded_path = try expandUserPathForHome(allocator, path, home_dir);
+        defer allocator.free(expanded_path);
+
+        return try std.fs.cwd().readFileAlloc(allocator, expanded_path, 1 << 20);
+    }
+
+    return try decodeCliInstructionData(allocator, instruction_spec.data, instruction_spec.data_encoding);
 }
 
 fn loadInstructionSpecSource(allocator: Allocator, arg: []const u8) ![]u8 {
@@ -325,7 +350,7 @@ fn loadCliInstructionSpec(
         instructions[index] = .{
             .program_id = try client.Pubkey.fromBase58(allocator, instruction_spec.program_id),
             .accounts = accounts,
-            .data = try decodeCliInstructionData(allocator, instruction_spec.data, instruction_spec.data_encoding),
+            .data = try loadCliInstructionData(allocator, instruction_spec),
         };
     }
 
@@ -6205,6 +6230,55 @@ test "runCommand send-instructions loads additional signer from keypair path" {
         "signature: Sig121212121212121212121212121212121212121212121212121212121212121212\n",
         captured,
     );
+}
+
+test "loadCliInstructionSpec loads instruction data from path" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_bytes = payer_raw.public_key.toBytes();
+    const payer_pubkey_base58 = try client.encodeBase58(allocator, &payer_pubkey_bytes);
+    defer allocator.free(payer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{3} ** 32);
+    const destination_pubkey_bytes = destination_raw.public_key.toBytes();
+    const destination_pubkey_base58 = try client.encodeBase58(allocator, &destination_pubkey_bytes);
+    defer allocator.free(destination_pubkey_base58);
+
+    const instruction_data = [_]u8{ 0, 1, 2, 3, 0xfa, 0xff };
+    const data_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-instruction-data-{d}.bin",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(data_path);
+    defer std.fs.cwd().deleteFile(data_path) catch {};
+    try std.fs.cwd().writeFile(.{ .sub_path = data_path, .data = &instruction_data });
+
+    const account_specs = [_]CliInstructionAccountMeta{
+        .{ .pubkey = payer_pubkey_base58, .is_signer = true, .is_writable = true },
+        .{ .pubkey = destination_pubkey_base58, .is_signer = false, .is_writable = true },
+    };
+    const instruction_specs = [_]CliInstructionSpec{
+        .{
+            .program_id = "11111111111111111111111111111111",
+            .accounts = &account_specs,
+            .data_path = data_path,
+        },
+    };
+    const spec = CliSimulateInstructionsSpec{
+        .payer_secret_key = payer_secret_key_base58,
+        .instructions = &instruction_specs,
+    };
+
+    var loaded = try loadCliInstructionSpec(allocator, &spec);
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqualSlices(u8, &instruction_data, loaded.owned_instructions.instructions[0].data);
 }
 
 test "runCommand simulate-versioned-instructions simulates with lookup tables" {
