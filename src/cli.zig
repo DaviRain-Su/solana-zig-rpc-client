@@ -45,6 +45,7 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] send-transaction-and-confirm <signed-tx-base64>\n" ++
     "  solana_client_zig [--rpc <url>] transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-transaction <signed-tx-base64>\n" ++
+    "  solana_client_zig [--rpc <url>] simulate-instructions <instruction-spec-json>\n" ++
     "  solana_client_zig [--rpc <url>] raw-rpc <method> [params-json]\n" ++
     "  solana_client_zig [--rpc <url>] slot\n" ++
     "  solana_client_zig [--rpc <url>] block-height\n" ++
@@ -328,6 +329,7 @@ pub const ParsedArgs = struct {
     blocks_end_slot_arg: ?[]const u8,
     blocks_limit_arg: ?[]const u8,
     message_arg: ?[]const u8,
+    instructions_spec_arg: ?[]const u8,
     raw_rpc_method_arg: ?[]const u8,
     raw_rpc_params_arg: ?[]const u8,
     slot_leaders_limit_arg: ?[]const u8,
@@ -414,6 +416,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .blocks_end_slot_arg = null,
         .blocks_limit_arg = null,
         .message_arg = null,
+        .instructions_spec_arg = null,
         .raw_rpc_method_arg = null,
         .raw_rpc_params_arg = null,
         .slot_leaders_limit_arg = null,
@@ -830,6 +833,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "simulate-instructions")) {
+                parsed.command = .simulate_instructions;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "raw-rpc")) {
                 parsed.command = .raw_rpc;
                 parsed.has_command = true;
@@ -1226,6 +1235,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 return error.InvalidCli;
             },
 
+            .simulate_instructions => if (parsed.instructions_spec_arg == null) {
+                parsed.instructions_spec_arg = arg;
+            } else {
+                return error.InvalidCli;
+            },
+
             .raw_rpc => if (parsed.raw_rpc_method_arg == null) {
                 parsed.raw_rpc_method_arg = arg;
             } else if (parsed.raw_rpc_params_arg == null) {
@@ -1397,6 +1412,7 @@ pub const Command = enum {
     send_transaction_and_confirm,
     transfer,
     simulate_transaction,
+    simulate_instructions,
     raw_rpc,
     slot,
     block_height,
@@ -1496,6 +1512,7 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "inflation-reward <address-1> [address-2 ...] [--epoch <epoch>]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transaction <signature>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-transaction <signed-tx-base64>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-instructions <instruction-spec-json>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "raw-rpc <method> [params-json]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "poll-balance <account>") != null);
@@ -1754,6 +1771,20 @@ test "cli.parseCliArgs parses raw-rpc without params json" {
     try std.testing.expectEqual(Command.raw_rpc, parsed.command);
     try std.testing.expectEqualStrings("getHealth", parsed.raw_rpc_method_arg orelse "");
     try std.testing.expect(parsed.raw_rpc_params_arg == null);
+}
+
+test "cli.parseCliArgs parses simulate-instructions spec" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "simulate-instructions",
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.simulate_instructions, parsed.command);
+    try std.testing.expectEqualStrings(
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+        parsed.instructions_spec_arg orelse "",
+    );
 }
 
 test "cli.parseCliArgs parses new-latest-blockhash" {

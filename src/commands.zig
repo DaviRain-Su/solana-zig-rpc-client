@@ -119,6 +119,224 @@ fn resolveTransferSenderSecretKey(
     return try client.encodeBase58(allocator, sender_secret_key_bytes);
 }
 
+const InstructionDataEncoding = enum {
+    base64,
+    hex,
+    utf8,
+};
+
+const CliInstructionAccountMeta = struct {
+    pubkey: []const u8,
+    is_signer: bool = false,
+    is_writable: bool = false,
+};
+
+const CliInstructionSpec = struct {
+    program_id: []const u8,
+    accounts: []const CliInstructionAccountMeta = &.{},
+    data: ?[]const u8 = null,
+    data_encoding: InstructionDataEncoding = .base64,
+};
+
+const CliSimulateInstructionsSpec = struct {
+    payer_secret_key: ?[]const u8 = null,
+    payer_keypair_path: ?[]const u8 = null,
+    additional_signer_secret_keys: []const []const u8 = &.{},
+    instructions: []const CliInstructionSpec = &.{},
+    recent_blockhash: ?[]const u8 = null,
+};
+
+const LoadedCliInstructionSpec = struct {
+    payer: client.Pubkey,
+    signers: []client.Keypair,
+    owned_instructions: client.OwnedInstructions,
+
+    fn deinit(self: *LoadedCliInstructionSpec, allocator: Allocator) void {
+        allocator.free(self.signers);
+        self.owned_instructions.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
+fn decodeCliInstructionData(
+    allocator: Allocator,
+    encoded: ?[]const u8,
+    encoding: InstructionDataEncoding,
+) ![]u8 {
+    const value = encoded orelse return try allocator.alloc(u8, 0);
+
+    return switch (encoding) {
+        .utf8 => try allocator.dupe(u8, value),
+        .base64 => blk: {
+            const decoded_len = try std.base64.standard.Decoder.calcSizeForSlice(value);
+            const decoded = try allocator.alloc(u8, decoded_len);
+            errdefer allocator.free(decoded);
+            try std.base64.standard.Decoder.decode(decoded, value);
+            break :blk decoded;
+        },
+        .hex => blk: {
+            const hex_value = if (std.mem.startsWith(u8, value, "0x") or std.mem.startsWith(u8, value, "0X"))
+                value[2..]
+            else
+                value;
+            if (hex_value.len % 2 != 0) return error.InvalidHexData;
+            const decoded = try allocator.alloc(u8, hex_value.len / 2);
+            errdefer allocator.free(decoded);
+            _ = try std.fmt.hexToBytes(decoded, hex_value);
+            break :blk decoded;
+        },
+    };
+}
+
+fn resolveInstructionPayerKeypair(
+    allocator: Allocator,
+    spec: *const CliSimulateInstructionsSpec,
+) !client.Keypair {
+    if (spec.payer_secret_key != null and spec.payer_keypair_path != null) {
+        return error.InvalidCli;
+    }
+
+    if (spec.payer_secret_key) |secret_key| {
+        return try client.Keypair.fromBase58SecretKey(allocator, secret_key);
+    }
+
+    if (spec.payer_keypair_path) |path| {
+        const home_dir = std.process.getEnvVarOwned(allocator, "HOME") catch |err| switch (err) {
+            error.EnvironmentVariableNotFound => null,
+            else => return err,
+        };
+        defer if (home_dir) |value| allocator.free(value);
+
+        const expanded_path = try expandUserPathForHome(allocator, path, home_dir);
+        defer allocator.free(expanded_path);
+
+        const secret_key_bytes = try loadSecretKeyFromKeypairFile(allocator, expanded_path);
+        defer allocator.free(secret_key_bytes);
+
+        return try client.Keypair.fromSecretKeySlice(secret_key_bytes);
+    }
+
+    return error.InvalidCli;
+}
+
+fn loadCliInstructionSpec(
+    allocator: Allocator,
+    spec: *const CliSimulateInstructionsSpec,
+) !LoadedCliInstructionSpec {
+    if (spec.instructions.len == 0) return error.InvalidCli;
+
+    var loaded = LoadedCliInstructionSpec{
+        .payer = undefined,
+        .signers = undefined,
+        .owned_instructions = .{ .instructions = undefined },
+    };
+    errdefer loaded.deinit(allocator);
+
+    const payer_keypair = try resolveInstructionPayerKeypair(allocator, spec);
+    loaded.payer = payer_keypair.public_key;
+
+    loaded.signers = try allocator.alloc(client.Keypair, 1 + spec.additional_signer_secret_keys.len);
+    loaded.signers[0] = payer_keypair;
+    for (spec.additional_signer_secret_keys, 0..) |secret_key, index| {
+        loaded.signers[index + 1] = try client.Keypair.fromBase58SecretKey(allocator, secret_key);
+    }
+
+    const instructions = try allocator.alloc(client.Instruction, spec.instructions.len);
+    errdefer {
+        for (instructions[0..spec.instructions.len]) |instruction| {
+            allocator.free(instruction.accounts);
+            allocator.free(instruction.data);
+        }
+        allocator.free(instructions);
+    }
+
+    for (spec.instructions, 0..) |instruction_spec, index| {
+        const accounts = try allocator.alloc(client.AccountMeta, instruction_spec.accounts.len);
+        errdefer allocator.free(accounts);
+        for (instruction_spec.accounts, 0..) |account_spec, account_index| {
+            accounts[account_index] = client.AccountMeta.init(
+                try client.Pubkey.fromBase58(allocator, account_spec.pubkey),
+                account_spec.is_signer,
+                account_spec.is_writable,
+            );
+        }
+
+        instructions[index] = .{
+            .program_id = try client.Pubkey.fromBase58(allocator, instruction_spec.program_id),
+            .accounts = accounts,
+            .data = try decodeCliInstructionData(allocator, instruction_spec.data, instruction_spec.data_encoding),
+        };
+    }
+
+    loaded.owned_instructions = .{ .instructions = instructions };
+    return loaded;
+}
+
+fn printSimulationResult(simulation: client.SimulatedTransaction) void {
+    std.debug.print(
+        "simulation: slot={} err={s} fee={?d} units_consumed={?d} loaded_accounts_data_size={?d}\n",
+        .{
+            simulation.context_slot,
+            if (simulation.err_json) |value| value else "null",
+            simulation.fee,
+            simulation.units_consumed,
+            simulation.loaded_accounts_data_size,
+        },
+    );
+
+    if (simulation.replacement_blockhash) |value| {
+        std.debug.print(
+            "replacement blockhash: {s} last_valid_block_height={}\n",
+            .{ value.blockhash, value.last_valid_block_height },
+        );
+    }
+
+    if (simulation.logs) |logs| {
+        std.debug.print("logs: {}\n", .{logs.len});
+        for (logs, 0..) |entry, index| {
+            std.debug.print("  [{}] {s}\n", .{ index, entry });
+        }
+    } else {
+        std.debug.print("logs: 0\n", .{});
+    }
+
+    if (simulation.accounts) |accounts| {
+        std.debug.print("accounts: {}\n", .{accounts.len});
+        for (accounts, 0..) |maybe_info, index| {
+            if (maybe_info) |info| {
+                std.debug.print(
+                    "  [{}] lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
+                    .{ index, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
+                );
+                if (info.data) |value| {
+                    std.debug.print("      data({s}) size={}\n", .{ info.data_encoding orelse "unknown", value.len });
+                } else {
+                    std.debug.print("      data: unavailable\n", .{});
+                }
+            } else {
+                std.debug.print("  [{}] not found\n", .{index});
+            }
+        }
+    } else {
+        std.debug.print("accounts: 0\n", .{});
+    }
+
+    if (simulation.return_data) |value| {
+        std.debug.print(
+            "return data: program_id={s} encoding={s} size={}\n",
+            .{ value.program_id, value.data_encoding orelse "unknown", if (value.data) |data| data.len else @as(usize, 0) },
+        );
+    } else {
+        std.debug.print("return data: unavailable\n", .{});
+    }
+
+    if (simulation.inner_instructions_json) |value| {
+        std.debug.print("inner instructions: {s}\n", .{value});
+    } else {
+        std.debug.print("inner instructions: unavailable\n", .{});
+    }
+}
+
 pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli.ParsedArgs) !void {
     const command = args.command;
     const signature = args.signature;
@@ -155,6 +373,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const slot_arg = args.slot_arg;
     const blocks_end_slot_arg = args.blocks_end_slot_arg;
     const message_arg = args.message_arg;
+    const instructions_spec_arg = args.instructions_spec_arg;
     const raw_rpc_method_arg = args.raw_rpc_method_arg;
     const raw_rpc_params_arg = args.raw_rpc_params_arg;
     const slot_leaders_limit_arg = args.slot_leaders_limit_arg;
@@ -287,16 +506,17 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    if ((simulate_sig_verify or simulate_replace_recent_blockhash) and command != .simulate_transaction) {
-        reportInvalidCliMessage("error: --sig-verify and --replace-recent-blockhash require simulate-transaction\n", .{});
+    const is_simulate_command = command == .simulate_transaction or command == .simulate_instructions;
+    if ((simulate_sig_verify or simulate_replace_recent_blockhash) and !is_simulate_command) {
+        reportInvalidCliMessage("error: --sig-verify and --replace-recent-blockhash require simulate-transaction or simulate-instructions\n", .{});
         return error.InvalidCli;
     }
 
     if ((simulate_inner_instructions or simulation_account_encoding_arg != null or simulation_min_context_slot_arg != null or simulation_accounts.items.len > 0) and
-        command != .simulate_transaction)
+        !is_simulate_command)
     {
         reportInvalidCliMessage(
-            "error: simulation query options require simulate-transaction\n",
+            "error: simulation query options require simulate-transaction or simulate-instructions\n",
             .{},
         );
         return error.InvalidCli;
@@ -762,68 +982,78 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             const simulation = try rpc.simulateTransaction(tx, options);
             defer freeSimulatedTransaction(allocator, simulation);
 
-            std.debug.print(
-                "simulation: slot={} err={s} fee={?d} units_consumed={?d} loaded_accounts_data_size={?d}\n",
-                .{
-                    simulation.context_slot,
-                    if (simulation.err_json) |value| value else "null",
-                    simulation.fee,
-                    simulation.units_consumed,
-                    simulation.loaded_accounts_data_size,
-                },
+            printSimulationResult(simulation);
+        },
+
+        .simulate_instructions => {
+            const spec_arg = instructions_spec_arg orelse {
+                reportInvalidCliMessage("error: simulate-instructions requires <instruction-spec-json>\n", .{});
+                return error.InvalidCli;
+            };
+
+            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_arg, .{
+                .ignore_unknown_fields = true,
+            }) catch {
+                reportInvalidCliMessage("error: simulate-instructions spec must be valid JSON\n", .{});
+                return error.InvalidCli;
+            };
+            defer parsed_spec.deinit();
+
+            var loaded = loadCliInstructionSpec(allocator, &parsed_spec.value) catch {
+                reportInvalidCliMessage("error: simulate-instructions spec is invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer loaded.deinit(allocator);
+
+            const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
+                parseAccountEncoding(value) orelse return error.InvalidCli
+            else
+                null;
+            const simulation_min_context_slot = if (simulation_min_context_slot_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const simulation_accounts_options = if (simulation_accounts.items.len > 0)
+                client.SimulationAccountsOptions{
+                    .addresses = simulation_accounts.items,
+                    .encoding = simulation_account_encoding,
+                }
+            else
+                null;
+            const options = if (simulate_sig_verify or
+                simulate_replace_recent_blockhash or
+                simulate_inner_instructions or
+                commitment != null or
+                simulation_min_context_slot != null or
+                simulation_accounts_options != null)
+                client.SimulateTransactionOptions{
+                    .sig_verify = simulate_sig_verify,
+                    .replace_recent_blockhash = simulate_replace_recent_blockhash,
+                    .commitment = commitment,
+                    .min_context_slot = simulation_min_context_slot,
+                    .inner_instructions = simulate_inner_instructions,
+                    .accounts = simulation_accounts_options,
+                }
+            else
+                null;
+            const build_options = if (parsed_spec.value.recent_blockhash != null or commitment != null)
+                client.LegacyInstructionsBuildOptions{
+                    .recent_blockhash = parsed_spec.value.recent_blockhash,
+                    .blockhash_commitment = if (parsed_spec.value.recent_blockhash == null) commitment else null,
+                }
+            else
+                null;
+
+            const simulation = try rpc.simulateLegacyInstructionsWithOptions(
+                loaded.payer,
+                loaded.owned_instructions.instructions,
+                loaded.signers,
+                build_options,
+                options,
             );
+            defer freeSimulatedTransaction(allocator, simulation);
 
-            if (simulation.replacement_blockhash) |value| {
-                std.debug.print(
-                    "replacement blockhash: {s} last_valid_block_height={}\n",
-                    .{ value.blockhash, value.last_valid_block_height },
-                );
-            }
-
-            if (simulation.logs) |logs| {
-                std.debug.print("logs: {}\n", .{logs.len});
-                for (logs, 0..) |entry, index| {
-                    std.debug.print("  [{}] {s}\n", .{ index, entry });
-                }
-            } else {
-                std.debug.print("logs: 0\n", .{});
-            }
-
-            if (simulation.accounts) |accounts| {
-                std.debug.print("accounts: {}\n", .{accounts.len});
-                for (accounts, 0..) |maybe_info, index| {
-                    if (maybe_info) |info| {
-                        std.debug.print(
-                            "  [{}] lamports={} executable={s} owner={s} rent_epoch={?d} space={?d}\n",
-                            .{ index, info.lamports, if (info.executable) "true" else "false", info.owner, info.rent_epoch, info.space },
-                        );
-                        if (info.data) |value| {
-                            std.debug.print("      data({s}) size={}\n", .{ info.data_encoding orelse "unknown", value.len });
-                        } else {
-                            std.debug.print("      data: unavailable\n", .{});
-                        }
-                    } else {
-                        std.debug.print("  [{}] not found\n", .{index});
-                    }
-                }
-            } else {
-                std.debug.print("accounts: 0\n", .{});
-            }
-
-            if (simulation.return_data) |value| {
-                std.debug.print(
-                    "return data: program_id={s} encoding={s} size={}\n",
-                    .{ value.program_id, value.data_encoding orelse "unknown", if (value.data) |data| data.len else @as(usize, 0) },
-                );
-            } else {
-                std.debug.print("return data: unavailable\n", .{});
-            }
-
-            if (simulation.inner_instructions_json) |value| {
-                std.debug.print("inner instructions: {s}\n", .{value});
-            } else {
-                std.debug.print("inner instructions: unavailable\n", .{});
-            }
+            printSimulationResult(simulation);
         },
 
         .slot => {
@@ -5232,6 +5462,77 @@ test "runCommand raw-rpc defaults params to empty array" {
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, commandCapturedRequest(&sender_context), "\"params\":[]") != null);
     try std.testing.expectEqualStrings("{\"jsonrpc\":\"2.0\",\"result\":\"ok\",\"id\":1}\n", captured);
+}
+
+test "runCommand simulate-instructions builds and simulates generic instruction spec" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":10},"value":{"accounts":[],"err":null,"fee":120,"unitsConsumed":42,"logs":["Program log: ok"]}}
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://simulate-instructions" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 65);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","recent_blockhash":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"ping","data_encoding":"utf8"}}]}}
+        ,
+        .{ payer_secret_key_base58, recent_blockhash, payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-instructions",
+        "--sig-verify",
+        "--inner-instructions",
+        spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, commandCapturedRequest(&sender_context), "\"sigVerify\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, commandCapturedRequest(&sender_context), "\"innerInstructions\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "simulation: slot=10 err=null fee=120 units_consumed=42") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: ok") != null);
 }
 
 test "runCommand ui-account prints parsed account details" {
