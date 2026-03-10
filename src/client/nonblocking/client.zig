@@ -5,6 +5,7 @@ const rpc_types = @import("../rpc_types.zig");
 
 const Allocator = std.mem.Allocator;
 const BalanceResponse = rpc_types.BalanceResponse;
+const BlockProduction = rpc_types.BlockProduction;
 const ClusterNode = rpc_types.ClusterNode;
 const Commitment = rpc_types.Commitment;
 const EpochSchedule = rpc_types.EpochSchedule;
@@ -13,6 +14,7 @@ const InflationGovernor = rpc_types.InflationGovernor;
 const InflationRate = rpc_types.InflationRate;
 const LatestBlockhash = rpc_types.LatestBlockhash;
 const LatestBlockhashResponse = rpc_types.LatestBlockhashResponse;
+const LeaderSchedule = rpc_types.LeaderSchedule;
 const SnapshotSlots = rpc_types.SnapshotSlots;
 const Supply = rpc_types.Supply;
 const VoteAccounts = rpc_types.VoteAccounts;
@@ -546,6 +548,46 @@ fn runGetVoteAccounts(
     return try client.getVoteAccounts();
 }
 
+fn runGetLeaderSchedule(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !?[]LeaderSchedule {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getLeaderSchedule(null, null, commitment);
+}
+
+fn runGetBlockProduction(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !BlockProduction {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getBlockProduction(commitment);
+}
+
 fn runGetVersion(
     allocator: Allocator,
     endpoint: []const u8,
@@ -740,6 +782,8 @@ pub const NonblockingRpcClient = struct {
     pub const IdentityTask = AsyncTask([]const u8, runGetIdentity);
     pub const ClusterNodesTask = AsyncTask([]ClusterNode, runGetClusterNodes);
     pub const VoteAccountsTask = AsyncTask(VoteAccounts, runGetVoteAccounts);
+    pub const LeaderScheduleTask = AsyncTask(?[]LeaderSchedule, runGetLeaderSchedule);
+    pub const BlockProductionTask = AsyncTask(BlockProduction, runGetBlockProduction);
     pub const VersionTask = AsyncTask([]const u8, runGetVersion);
     pub const GenesisHashTask = AsyncTask([]const u8, runGetGenesisHash);
 
@@ -1137,6 +1181,34 @@ pub const NonblockingRpcClient = struct {
             self.request_timeout_ms,
             self.confirm_transaction_initial_timeout_ms,
             null,
+        );
+    }
+
+    pub fn getLeaderScheduleAsync(
+        self: *const NonblockingRpcClient,
+        commitment: ?Commitment,
+    ) !*LeaderScheduleTask {
+        return LeaderScheduleTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn getBlockProductionAsync(
+        self: *const NonblockingRpcClient,
+        commitment: ?Commitment,
+    ) !*BlockProductionTask {
+        return BlockProductionTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            commitment,
         );
     }
 

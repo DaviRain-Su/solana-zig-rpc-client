@@ -76,6 +76,21 @@ fn freeVoteAccounts(allocator: std.mem.Allocator, vote_accounts: client.VoteAcco
     allocator.free(vote_accounts.delinquent);
 }
 
+fn freeLeaderSchedule(allocator: std.mem.Allocator, schedule: []client.LeaderSchedule) void {
+    for (schedule) |entry| {
+        allocator.free(entry.identity);
+        allocator.free(entry.slots);
+    }
+    allocator.free(schedule);
+}
+
+fn freeBlockProduction(allocator: std.mem.Allocator, production: client.BlockProduction) void {
+    for (production.by_identity) |entry| {
+        allocator.free(entry.identity);
+    }
+    allocator.free(production.by_identity);
+}
+
 test "root.NonblockingRpcClient constructors initialize endpoint and options" {
     const allocator = std.testing.allocator;
     const endpoint = "http://127.0.0.1:8899";
@@ -742,6 +757,74 @@ test "root.NonblockingRpcClient getVoteAccountsAsync returns waitable vote accou
     try std.testing.expectEqual(@as(u64, 456), vote_accounts.delinquent[0].activated_stake);
     try std.testing.expect(!vote_accounts.delinquent[0].epoch_vote_account);
     try std.testing.expect(vote_accounts.delinquent[0].epoch_credits == null);
+}
+
+test "root.NonblockingRpcClient getLeaderScheduleAsync returns waitable leader schedule" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"Leader111111111111111111111111111111111111\":[10,20,30]},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getLeaderScheduleAsync(.processed);
+    try std.testing.expect(!task.isDone());
+
+    const leader_schedule = try task.wait();
+    defer if (leader_schedule) |value| freeLeaderSchedule(allocator, value);
+
+    try std.testing.expect(leader_schedule != null);
+    try std.testing.expectEqual(@as(usize, 1), leader_schedule.?.len);
+    try std.testing.expectEqualStrings("Leader111111111111111111111111111111111111", leader_schedule.?[0].identity);
+    try std.testing.expectEqual(@as(usize, 3), leader_schedule.?[0].slots.len);
+    try std.testing.expectEqual(@as(u64, 10), leader_schedule.?[0].slots[0]);
+    try std.testing.expectEqual(@as(u64, 30), leader_schedule.?[0].slots[2]);
+}
+
+test "root.NonblockingRpcClient getBlockProductionAsync returns waitable block production" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"byIdentity\":{\"BlockProducer1111111111111111111111111111111\":[12,9]},\"range\":{\"firstSlot\":100,\"lastSlot\":120}},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getBlockProductionAsync(.confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const block_production = try task.wait();
+    defer freeBlockProduction(allocator, block_production);
+
+    try std.testing.expectEqual(@as(u64, 100), block_production.first_slot);
+    try std.testing.expectEqual(@as(u64, 120), block_production.last_slot);
+    try std.testing.expectEqual(@as(usize, 1), block_production.by_identity.len);
+    try std.testing.expectEqualStrings("BlockProducer1111111111111111111111111111111", block_production.by_identity[0].identity);
+    try std.testing.expectEqual(@as(u64, 12), block_production.by_identity[0].leader_slots);
+    try std.testing.expectEqual(@as(u64, 9), block_production.by_identity[0].blocks);
 }
 
 test "root.NonblockingRpcClient getHighestSnapshotSlotAsync returns waitable snapshot slots" {
