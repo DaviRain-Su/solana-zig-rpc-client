@@ -650,6 +650,27 @@ fn runGetLeaderScheduleForSlot(
     return try client.getLeaderSchedule(slot, null, null);
 }
 
+fn runGetLeaderScheduleForIdentity(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    identity: []const u8,
+    commitment: ?Commitment,
+) !?[]LeaderSchedule {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getLeaderSchedule(null, identity, commitment);
+}
+
 fn runGetBlockProduction(
     allocator: Allocator,
     endpoint: []const u8,
@@ -668,6 +689,27 @@ fn runGetBlockProduction(
     );
     defer client.deinit();
     return try client.getBlockProduction(commitment);
+}
+
+fn runIsBlockhashValid(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    blockhash: []const u8,
+    commitment: ?Commitment,
+) !bool {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.isBlockhashValid(blockhash, commitment);
 }
 
 fn runGetSlotLeaders(
@@ -1237,7 +1279,9 @@ pub const NonblockingRpcClient = struct {
     pub const VoteAccountsTask = AsyncTask(VoteAccounts, runGetVoteAccounts);
     pub const LeaderScheduleTask = AsyncTask(?[]LeaderSchedule, runGetLeaderSchedule);
     pub const LeaderScheduleForSlotTask = AsyncTaskWithU64(?[]LeaderSchedule, runGetLeaderScheduleForSlot);
+    pub const LeaderScheduleForIdentityTask = AsyncTaskWithStringAndCommitment(?[]LeaderSchedule, runGetLeaderScheduleForIdentity);
     pub const BlockProductionTask = AsyncTask(BlockProduction, runGetBlockProduction);
+    pub const BlockhashValidityTask = AsyncTaskWithStringAndCommitment(bool, runIsBlockhashValid);
     pub const SlotLeadersTask = AsyncTaskWithU64Pair([][]const u8, runGetSlotLeaders);
     pub const VersionTask = AsyncTask([]const u8, runGetVersion);
     pub const GenesisHashTask = AsyncTask([]const u8, runGetGenesisHash);
@@ -1713,6 +1757,22 @@ pub const NonblockingRpcClient = struct {
         );
     }
 
+    pub fn getLeaderScheduleForIdentityAsync(
+        self: *const NonblockingRpcClient,
+        identity: []const u8,
+        commitment: ?Commitment,
+    ) !*LeaderScheduleForIdentityTask {
+        return LeaderScheduleForIdentityTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            identity,
+            commitment,
+        );
+    }
+
     pub fn getBlockProductionAsync(
         self: *const NonblockingRpcClient,
         commitment: ?Commitment,
@@ -1723,6 +1783,22 @@ pub const NonblockingRpcClient = struct {
             self.default_commitment,
             self.request_timeout_ms,
             self.confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn isBlockhashValidAsync(
+        self: *const NonblockingRpcClient,
+        blockhash: []const u8,
+        commitment: ?Commitment,
+    ) !*BlockhashValidityTask {
+        return BlockhashValidityTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            blockhash,
             commitment,
         );
     }

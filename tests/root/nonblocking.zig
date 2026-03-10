@@ -927,6 +927,43 @@ test "root.NonblockingRpcClient getLeaderScheduleForSlotAsync sends requested sl
     try std.testing.expect(matched);
 }
 
+test "root.NonblockingRpcClient getLeaderScheduleForIdentityAsync sends requested identity" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const identity = "LeaderIdentity55555555555555555555555555555555";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        identity,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"LeaderIdentity55555555555555555555555555555555\":[55,56]},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getLeaderScheduleForIdentityAsync(identity, .finalized);
+    try std.testing.expect(!task.isDone());
+
+    const leader_schedule = try task.wait();
+    defer if (leader_schedule) |value| freeLeaderSchedule(allocator, value);
+
+    try std.testing.expect(leader_schedule != null);
+    try std.testing.expectEqual(@as(usize, 1), leader_schedule.?.len);
+    try std.testing.expectEqualStrings(identity, leader_schedule.?[0].identity);
+    try std.testing.expectEqual(@as(u64, 55), leader_schedule.?[0].slots[0]);
+    try std.testing.expect(matched);
+}
+
 test "root.NonblockingRpcClient getBlockProductionAsync returns waitable block production" {
     const allocator = std.testing.allocator;
     var listener = try createListener();
@@ -959,6 +996,38 @@ test "root.NonblockingRpcClient getBlockProductionAsync returns waitable block p
     try std.testing.expectEqualStrings("BlockProducer1111111111111111111111111111111", block_production.by_identity[0].identity);
     try std.testing.expectEqual(@as(u64, 12), block_production.by_identity[0].leader_slots);
     try std.testing.expectEqual(@as(u64, 9), block_production.by_identity[0].blocks);
+}
+
+test "root.NonblockingRpcClient isBlockhashValidAsync sends requested blockhash" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const blockhash = "CustomBlockhash66666666666666666666666666666666";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        blockhash,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":true,\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.isBlockhashValidAsync(blockhash, .processed);
+    try std.testing.expect(!task.isDone());
+
+    const is_valid = try task.wait();
+    try std.testing.expect(is_valid);
+    try std.testing.expect(matched);
 }
 
 test "root.NonblockingRpcClient getSlotLeadersAsync sends requested range" {
