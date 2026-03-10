@@ -328,6 +328,19 @@ fn findProgramAddress(allocator: Allocator, seeds: []const []const u8, program_i
     return error.InvalidCli;
 }
 
+fn computeAnchorInstructionDiscriminator(
+    allocator: Allocator,
+    instruction_name: []const u8,
+) ![]u8 {
+    const preimage = try std.fmt.allocPrint(allocator, "global:{s}", .{instruction_name});
+    defer allocator.free(preimage);
+
+    var digest: [32]u8 = undefined;
+    Sha256.hash(preimage, &digest, .{});
+
+    return try allocator.dupe(u8, digest[0..8]);
+}
+
 fn pubkeyFromAnchorSeedBytes(seed_bytes: []const u8) !client.Pubkey {
     if (seed_bytes.len != 32) return error.InvalidCli;
     var bytes: [32]u8 = undefined;
@@ -817,8 +830,13 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
     defer parsed_idl.deinit();
 
     const program_id = parsed_idl.value.address orelse program_id_override_arg orelse return error.InvalidCli;
-    const instruction = anchor_idl.findInstruction(&parsed_idl.value, instruction_name) orelse return error.InvalidCli;
-    if (instruction.discriminator.len == 0) return error.InvalidCli;
+    var instruction = anchor_idl.findInstruction(&parsed_idl.value, instruction_name) orelse return error.InvalidCli;
+    var owned_instruction_discriminator: ?[]u8 = null;
+    defer if (owned_instruction_discriminator) |value| allocator.free(value);
+    if (instruction.discriminator.len == 0) {
+        owned_instruction_discriminator = try computeAnchorInstructionDiscriminator(allocator, instruction_name);
+        instruction.discriminator = owned_instruction_discriminator.?;
+    }
 
     const args_json_source = if (args_json_arg) |value|
         loadInstructionSpecSource(allocator, value) catch return error.InvalidCli
@@ -9960,6 +9978,54 @@ test "loadAnchorIdlInvokeInstructionSpec supports legacy isOptional account flag
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(program_id));
     try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_signer);
     try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec computes missing instruction discriminator" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{80} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-missing-discriminator-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{59} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","accounts":[],"args":[]}}]}}
+        ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_discriminator = try computeAnchorInstructionDiscriminator(allocator, "initialize");
+    defer allocator.free(expected_discriminator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqualSlices(u8, expected_discriminator, loaded.owned_instructions.instructions[0].data);
 }
 
 test "runCommand send-idl-invoke sends zero-account anchor instruction" {
