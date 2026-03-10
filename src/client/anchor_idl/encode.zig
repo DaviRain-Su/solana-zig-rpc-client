@@ -271,7 +271,7 @@ pub fn encodeInstructionData(
 
     for (instruction.args) |arg| {
         const arg_value = parsed_args.value.object.get(arg.name) orelse return error.MissingAnchorIdlArg;
-        try encodeArgValue(allocator, &bytes, idl, arg.@"type", arg_value);
+        try encodeArgValue(allocator, &bytes, idl, arg.type, arg_value);
     }
 
     return try allocator.dupe(u8, bytes.items);
@@ -283,9 +283,9 @@ test "anchor idl encodeInstructionData encodes scalar args" {
         .name = "setConfig",
         .discriminator = &.{ 1, 2, 3, 4, 5, 6, 7, 8 },
         .args = &.{
-            .{ .name = "enabled", .@"type" = .{ .string = "bool" } },
-            .{ .name = "count", .@"type" = .{ .string = "u16" } },
-            .{ .name = "label", .@"type" = .{ .string = "string" } },
+            .{ .name = "enabled", .type = .{ .string = "bool" } },
+            .{ .name = "count", .type = .{ .string = "u16" } },
+            .{ .name = "label", .type = .{ .string = "string" } },
         },
     };
     const idl = idl_types.Idl{
@@ -301,11 +301,9 @@ test "anchor idl encodeInstructionData encodes scalar args" {
     defer allocator.free(encoded);
 
     const expected = [_]u8{
-        1, 2, 3, 4, 5, 6, 7, 8,
-        1,
-        0x01, 0x02,
-        0x02, 0x00, 0x00, 0x00,
-        'h', 'i',
+        1,   2,    3,    4,    5,    6,    7,    8,
+        1,   0x01, 0x02, 0x02, 0x00, 0x00, 0x00, 'h',
+        'i',
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
@@ -322,7 +320,7 @@ test "anchor idl encodeInstructionData encodes pubkey args" {
         .name = "setAuthority",
         .discriminator = &.{ 9, 8, 7, 6, 5, 4, 3, 2 },
         .args = &.{
-            .{ .name = "authority", .@"type" = .{ .string = "pubkey" } },
+            .{ .name = "authority", .type = .{ .string = "pubkey" } },
         },
     };
     const idl = idl_types.Idl{
@@ -344,8 +342,8 @@ test "anchor idl encodeInstructionData encodes option and vec args" {
     defer vec_type.deinit();
 
     const args = [_]idl_types.IdlArg{
-        .{ .name = "label", .@"type" = option_type.value },
-        .{ .name = "counts", .@"type" = vec_type.value },
+        .{ .name = "label", .type = option_type.value },
+        .{ .name = "counts", .type = vec_type.value },
     };
     const instruction = idl_types.Instruction{
         .name = "setValues",
@@ -365,13 +363,9 @@ test "anchor idl encodeInstructionData encodes option and vec args" {
     defer allocator.free(encoded);
 
     const expected = [_]u8{
-        7, 7, 7, 7, 7, 7, 7, 7,
-        1,
-        0x02, 0x00, 0x00, 0x00,
-        'h', 'i',
-        0x02, 0x00, 0x00, 0x00,
-        0x01, 0x00,
-        0x01, 0x02,
+        7,    7,    7,    7,    7,    7,    7,    7,
+        1,    0x02, 0x00, 0x00, 0x00, 'h',  'i',  0x02,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x02,
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
@@ -381,7 +375,7 @@ test "anchor idl encodeInstructionData encodes fixed array args" {
     const array_type = try std.json.parseFromSlice(std.json.Value, allocator, "[\"u16\", 3]", .{});
     defer array_type.deinit();
     const args = [_]idl_types.IdlArg{
-        .{ .name = "weights", .@"type" = array_type.value },
+        .{ .name = "weights", .type = array_type.value },
     };
     const instruction = idl_types.Instruction{
         .name = "setWeights",
@@ -401,10 +395,8 @@ test "anchor idl encodeInstructionData encodes fixed array args" {
     defer allocator.free(encoded);
 
     const expected = [_]u8{
-        2, 2, 2, 2, 2, 2, 2, 2,
-        0x0a, 0x00,
-        0x0b, 0x00,
-        0x0c, 0x00,
+        2,    2,    2,    2,    2,    2,    2, 2,
+        0x0a, 0x00, 0x0b, 0x00, 0x0c, 0x00,
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
@@ -415,7 +407,7 @@ test "anchor idl encodeInstructionData encodes bytes args" {
         .name = "setBytes",
         .discriminator = &.{ 3, 3, 3, 3, 3, 3, 3, 3 },
         .args = &.{
-            .{ .name = "payload", .@"type" = .{ .string = "bytes" } },
+            .{ .name = "payload", .type = .{ .string = "bytes" } },
         },
     };
     const idl = idl_types.Idl{
@@ -431,9 +423,8 @@ test "anchor idl encodeInstructionData encodes bytes args" {
     defer allocator.free(encoded);
 
     const expected = [_]u8{
-        3, 3, 3, 3, 3, 3, 3, 3,
-        0x03, 0x00, 0x00, 0x00,
-        0x01, 0x02, 0x03,
+        3,    3,    3,    3,    3,    3,    3,    3,
+        0x03, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03,
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
@@ -444,7 +435,7 @@ test "anchor idl encodeInstructionData encodes null option args" {
     defer option_type.deinit();
 
     const args = [_]idl_types.IdlArg{
-        .{ .name = "maybe_amount", .@"type" = option_type.value },
+        .{ .name = "maybe_amount", .type = option_type.value },
     };
     const instruction = idl_types.Instruction{
         .name = "setAmount",
@@ -491,9 +482,8 @@ test "anchor idl encodeInstructionData encodes defined struct args" {
     defer allocator.free(encoded);
 
     const expected = [_]u8{
-        6, 6, 6, 6, 6, 6, 6, 6,
-        1,
-        0x01, 0x02,
+        6, 6,    6,    6, 6, 6, 6, 6,
+        1, 0x01, 0x02,
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
@@ -519,13 +509,8 @@ test "anchor idl encodeInstructionData encodes defined enum args" {
     defer allocator.free(encoded);
 
     const expected = [_]u8{
-        8, 8, 8, 8, 8, 8, 8, 8,
-        1,
-        0,
-        0x01, 0x02,
-        0,
-        7,
-        0x01, 0x04,
+        8, 8, 8,    8,    8, 8, 8,    8,
+        1, 0, 0x01, 0x02, 0, 7, 0x01, 0x04,
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
