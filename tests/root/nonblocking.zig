@@ -2832,3 +2832,238 @@ test "root.NonblockingRpcClient getSignaturesForAddressAsync returns signatures 
     try std.testing.expect(signatures[1].has_error);
     try std.testing.expect(matched);
 }
+
+test "root.NonblockingRpcClient pollForSignatureAsync returns once signature observed" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
+        &listener,
+        allocator,
+        200,
+        &.{ "SigPoll111111111111111111111111111111111111" },
+        &.{"{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":33},\"value\":[{\"slot\":33,\"confirmations\":null,\"confirmationStatus\":\"processed\",\"err\":null}],\"id\":1}"},
+        &matched,
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.pollForSignatureAsync(
+        "SigPoll111111111111111111111111111111111111",
+        .processed,
+        false,
+    );
+    try std.testing.expect(!task.isDone());
+
+    try task.wait();
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient pollForSignatureConfirmationAsync waits for minimum confirmations" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = [_]bool{false, false, false};
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
+        &listener,
+        allocator,
+        200,
+        &.{
+            "SigPoll111111111111111111111111111111111111",
+            "SigPoll111111111111111111111111111111111111",
+            "SigPoll111111111111111111111111111111111111",
+        },
+        &.{
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":11},\"value\":[{\"slot\":11,\"confirmations\":2,\"confirmationStatus\":\"processed\",\"err\":null}],\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":[{\"slot\":12,\"confirmations\":5,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":13},\"value\":[{\"slot\":13,\"confirmations\":10,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
+        },
+        &matched,
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.pollForSignatureConfirmationAsync(
+        "SigPoll111111111111111111111111111111111111",
+        10,
+        false,
+    );
+    try std.testing.expect(!task.isDone());
+
+    const confirmed_blocks = try task.wait();
+    try std.testing.expectEqual(@as(u64, 10), confirmed_blocks);
+    try std.testing.expect(matched[0]);
+    try std.testing.expect(matched[1]);
+    try std.testing.expect(matched[2]);
+}
+
+test "root.NonblockingRpcClient pollForSignatureConfirmationWithTimeoutsAsync returns partial lockout on timeout" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
+        &listener,
+        allocator,
+        200,
+        &.{
+            "SigPoll111111111111111111111111111111111111",
+        },
+        &.{
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":21},\"value\":[{\"slot\":21,\"confirmations\":3,\"confirmationStatus\":\"processed\",\"err\":null}],\"id\":1}",
+        },
+        &matched,
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.pollForSignatureConfirmationWithTimeoutsAsync(
+        "SigPoll111111111111111111111111111111111111",
+        10,
+        false,
+        100,
+        10,
+    );
+    try std.testing.expect(!task.isDone());
+
+    const confirmed_blocks = try task.wait();
+    try std.testing.expectEqual(@as(u64, 3), confirmed_blocks);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient pollForSignatureConfirmationWithCommitmentAndTimeoutsAsync passes commitment" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = [_]bool{false, false};
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
+        &listener,
+        allocator,
+        200,
+        &.{
+            "\"SigPoll111111111111111111111111111111111111\"",
+            "\"commitment\":\"finalized\"",
+        },
+        &.{
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":31},\"value\":[{\"slot\":31,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":32},\"value\":[{\"slot\":32,\"confirmations\":10,\"confirmationStatus\":\"finalized\",\"err\":null}],\"id\":1}",
+        },
+        &matched,
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.pollForSignatureConfirmationWithCommitmentAndTimeoutsAsync(
+        "SigPoll111111111111111111111111111111111111",
+        10,
+        .finalized,
+        false,
+        500,
+        10,
+    );
+    try std.testing.expect(!task.isDone());
+
+    const confirmed_blocks = try task.wait();
+    try std.testing.expectEqual(@as(u64, 10), confirmed_blocks);
+    try std.testing.expect(matched[0]);
+    try std.testing.expect(matched[1]);
+}
+
+test "root.NonblockingRpcClient getNumBlocksSinceSignatureConfirmationAsync returns lockout fallback" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        "SigPoll111111111111111111111111111111111111",
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":31},\"value\":[{\"slot\":31,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getNumBlocksSinceSignatureConfirmationAsync(
+        "SigPoll111111111111111111111111111111111111",
+        false,
+    );
+    try std.testing.expect(!task.isDone());
+
+    const blocks = try task.wait();
+    try std.testing.expectEqual(@as(u64, client.max_lockout_history + 1), blocks);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getNumBlocksSinceSignatureConfirmationWithCommitmentAsync passes commitment" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        "SigPoll111111111111111111111111111111111111",
+        "\"commitment\":\"confirmed\"",
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":33},\"value\":[{\"slot\":33,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getNumBlocksSinceSignatureConfirmationWithCommitmentAsync(
+        "SigPoll111111111111111111111111111111111111",
+        .confirmed,
+        false,
+    );
+    try std.testing.expect(!task.isDone());
+
+    const blocks = try task.wait();
+    try std.testing.expectEqual(@as(u64, client.max_lockout_history + 1), blocks);
+    try std.testing.expect(matched);
+}

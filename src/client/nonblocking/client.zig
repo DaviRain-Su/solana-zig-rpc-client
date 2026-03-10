@@ -1487,6 +1487,130 @@ fn runSendAndConfirmTransactionWithCommitmentAndConfig(
     return try client.sendAndConfirmTransactionWithCommitmentAndConfig(signed_tx_base64, commitment, options);
 }
 
+fn runPollForSignature(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    signature: []const u8,
+    commitment: ?Commitment,
+    search_transaction_history: bool,
+) !void {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.pollForSignature(signature, commitment, search_transaction_history);
+}
+
+fn runPollForSignatureConfirmation(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    signature: []const u8,
+    min_confirmed_blocks: u64,
+    search_transaction_history: bool,
+) !u64 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.pollForSignatureConfirmation(signature, min_confirmed_blocks, search_transaction_history);
+}
+
+fn runPollForSignatureConfirmationWithTimeouts(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    signature: []const u8,
+    min_confirmed_blocks: u64,
+    commitment: ?Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) !u64 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.pollForSignatureConfirmationWithCommitmentAndTimeouts(
+        signature,
+        min_confirmed_blocks,
+        commitment,
+        search_transaction_history,
+        timeout_ms,
+        poll_interval_ms,
+    );
+}
+
+fn runGetNumBlocksSinceSignatureConfirmation(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    signature: []const u8,
+    search_transaction_history: bool,
+) !u64 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getNumBlocksSinceSignatureConfirmation(signature, search_transaction_history);
+}
+
+fn runGetNumBlocksSinceSignatureConfirmationWithCommitment(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    signature: []const u8,
+    commitment: ?Commitment,
+    search_transaction_history: bool,
+) !u64 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    const resolved_commitment = commitment orelse unreachable;
+    return try client.getNumBlocksSinceSignatureConfirmationWithCommitment(
+        signature,
+        resolved_commitment,
+        search_transaction_history,
+    );
+}
+
 fn runGetSignatureStatus(
     allocator: Allocator,
     endpoint: []const u8,
@@ -1962,6 +2086,396 @@ fn AsyncTaskWithStringAndCommitment(
                 self.confirm_transaction_initial_timeout_ms,
                 self.value,
                 self.commitment,
+            ) catch |err| {
+                self.complete(.{ .failure = err });
+                return;
+            };
+            self.complete(.{ .success = value });
+        }
+
+        fn complete(self: *Self, result: Result) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.result = result;
+            self.done = true;
+            self.cond.broadcast();
+        }
+
+        pub fn isDone(self: *const Self) bool {
+            const mutable_self: *Self = @constCast(self);
+            mutable_self.mutex.lock();
+            defer mutable_self.mutex.unlock();
+            return mutable_self.done;
+        }
+
+        pub fn wait(self: *Self) anyerror!ResultType {
+            self.mutex.lock();
+            while (!self.done) {
+                self.cond.wait(&self.mutex);
+            }
+            const result = self.result.?;
+            self.mutex.unlock();
+
+            if (self.thread) |thread| {
+                thread.join();
+                self.thread = null;
+            }
+
+            defer {
+                self.allocator.free(self.endpoint);
+                self.allocator.free(self.value);
+                self.allocator.destroy(self);
+            }
+
+            return switch (result) {
+                .success => |value| value,
+                .failure => |err| err,
+            };
+        }
+    };
+}
+
+fn AsyncTaskWithStringAndCommitmentAndBool(
+    comptime ResultType: type,
+    comptime work_fn: *const fn (
+        Allocator,
+        []const u8,
+        ?Commitment,
+        ?u64,
+        ?u64,
+        []const u8,
+        ?Commitment,
+        bool,
+    ) anyerror!ResultType,
+) type {
+    return struct {
+        allocator: Allocator,
+        endpoint: []const u8,
+        default_commitment: ?Commitment,
+        request_timeout_ms: ?u64,
+        confirm_transaction_initial_timeout_ms: ?u64,
+        value: []const u8,
+        commitment: ?Commitment,
+        search_transaction_history: bool,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+        done: bool = false,
+        result: ?Result = null,
+        thread: ?std.Thread = null,
+
+        const Self = @This();
+        const Result = union(enum) {
+            success: ResultType,
+            failure: anyerror,
+        };
+
+        pub fn start(
+            allocator: Allocator,
+            endpoint: []const u8,
+            default_commitment: ?Commitment,
+            request_timeout_ms: ?u64,
+            confirm_transaction_initial_timeout_ms: ?u64,
+            value: []const u8,
+            commitment: ?Commitment,
+            search_transaction_history: bool,
+        ) !*Self {
+            const self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
+
+            self.* = .{
+                .allocator = allocator,
+                .endpoint = try allocator.dupe(u8, endpoint),
+                .default_commitment = default_commitment,
+                .request_timeout_ms = request_timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .value = try allocator.dupe(u8, value),
+                .commitment = commitment,
+                .search_transaction_history = search_transaction_history,
+            };
+            errdefer {
+                allocator.free(self.endpoint);
+                allocator.free(self.value);
+            }
+
+            self.thread = try std.Thread.spawn(.{}, Self.run, .{self});
+            return self;
+        }
+
+        fn run(self: *Self) void {
+            const value = work_fn(
+                self.allocator,
+                self.endpoint,
+                self.default_commitment,
+                self.request_timeout_ms,
+                self.confirm_transaction_initial_timeout_ms,
+                self.value,
+                self.commitment,
+                self.search_transaction_history,
+            ) catch |err| {
+                self.complete(.{ .failure = err });
+                return;
+            };
+            self.complete(.{ .success = value });
+        }
+
+        fn complete(self: *Self, result: Result) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.result = result;
+            self.done = true;
+            self.cond.broadcast();
+        }
+
+        pub fn isDone(self: *const Self) bool {
+            const mutable_self: *Self = @constCast(self);
+            mutable_self.mutex.lock();
+            defer mutable_self.mutex.unlock();
+            return mutable_self.done;
+        }
+
+        pub fn wait(self: *Self) anyerror!ResultType {
+            self.mutex.lock();
+            while (!self.done) {
+                self.cond.wait(&self.mutex);
+            }
+            const result = self.result.?;
+            self.mutex.unlock();
+
+            if (self.thread) |thread| {
+                thread.join();
+                self.thread = null;
+            }
+
+            defer {
+                self.allocator.free(self.endpoint);
+                self.allocator.free(self.value);
+                self.allocator.destroy(self);
+            }
+
+            return switch (result) {
+                .success => |value| value,
+                .failure => |err| err,
+            };
+        }
+    };
+}
+
+fn AsyncTaskWithStringAndU64AndBool(
+    comptime ResultType: type,
+    comptime work_fn: *const fn (
+        Allocator,
+        []const u8,
+        ?Commitment,
+        ?u64,
+        ?u64,
+        []const u8,
+        u64,
+        bool,
+    ) anyerror!ResultType,
+) type {
+    return struct {
+        allocator: Allocator,
+        endpoint: []const u8,
+        default_commitment: ?Commitment,
+        request_timeout_ms: ?u64,
+        confirm_transaction_initial_timeout_ms: ?u64,
+        value: []const u8,
+        min_confirmed_blocks: u64,
+        search_transaction_history: bool,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+        done: bool = false,
+        result: ?Result = null,
+        thread: ?std.Thread = null,
+
+        const Self = @This();
+        const Result = union(enum) {
+            success: ResultType,
+            failure: anyerror,
+        };
+
+        pub fn start(
+            allocator: Allocator,
+            endpoint: []const u8,
+            default_commitment: ?Commitment,
+            request_timeout_ms: ?u64,
+            confirm_transaction_initial_timeout_ms: ?u64,
+            value: []const u8,
+            min_confirmed_blocks: u64,
+            search_transaction_history: bool,
+        ) !*Self {
+            const self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
+
+            self.* = .{
+                .allocator = allocator,
+                .endpoint = try allocator.dupe(u8, endpoint),
+                .default_commitment = default_commitment,
+                .request_timeout_ms = request_timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .value = try allocator.dupe(u8, value),
+                .min_confirmed_blocks = min_confirmed_blocks,
+                .search_transaction_history = search_transaction_history,
+            };
+            errdefer {
+                allocator.free(self.endpoint);
+                allocator.free(self.value);
+            }
+
+            self.thread = try std.Thread.spawn(.{}, Self.run, .{self});
+            return self;
+        }
+
+        fn run(self: *Self) void {
+            const value = work_fn(
+                self.allocator,
+                self.endpoint,
+                self.default_commitment,
+                self.request_timeout_ms,
+                self.confirm_transaction_initial_timeout_ms,
+                self.value,
+                self.min_confirmed_blocks,
+                self.search_transaction_history,
+            ) catch |err| {
+                self.complete(.{ .failure = err });
+                return;
+            };
+            self.complete(.{ .success = value });
+        }
+
+        fn complete(self: *Self, result: Result) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.result = result;
+            self.done = true;
+            self.cond.broadcast();
+        }
+
+        pub fn isDone(self: *const Self) bool {
+            const mutable_self: *Self = @constCast(self);
+            mutable_self.mutex.lock();
+            defer mutable_self.mutex.unlock();
+            return mutable_self.done;
+        }
+
+        pub fn wait(self: *Self) anyerror!ResultType {
+            self.mutex.lock();
+            while (!self.done) {
+                self.cond.wait(&self.mutex);
+            }
+            const result = self.result.?;
+            self.mutex.unlock();
+
+            if (self.thread) |thread| {
+                thread.join();
+                self.thread = null;
+            }
+
+            defer {
+                self.allocator.free(self.endpoint);
+                self.allocator.free(self.value);
+                self.allocator.destroy(self);
+            }
+
+            return switch (result) {
+                .success => |value| value,
+                .failure => |err| err,
+            };
+        }
+    };
+}
+
+fn AsyncTaskWithStringAndU64AndCommitmentAndBoolAndTimeouts(
+    comptime ResultType: type,
+    comptime work_fn: *const fn (
+        Allocator,
+        []const u8,
+        ?Commitment,
+        ?u64,
+        ?u64,
+        []const u8,
+        u64,
+        ?Commitment,
+        bool,
+        u64,
+        u64,
+    ) anyerror!ResultType,
+) type {
+    return struct {
+        allocator: Allocator,
+        endpoint: []const u8,
+        default_commitment: ?Commitment,
+        request_timeout_ms: ?u64,
+        confirm_transaction_initial_timeout_ms: ?u64,
+        value: []const u8,
+        min_confirmed_blocks: u64,
+        commitment: ?Commitment,
+        search_transaction_history: bool,
+        timeout_ms: u64,
+        poll_interval_ms: u64,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+        done: bool = false,
+        result: ?Result = null,
+        thread: ?std.Thread = null,
+
+        const Self = @This();
+        const Result = union(enum) {
+            success: ResultType,
+            failure: anyerror,
+        };
+
+        pub fn start(
+            allocator: Allocator,
+            endpoint: []const u8,
+            default_commitment: ?Commitment,
+            request_timeout_ms: ?u64,
+            confirm_transaction_initial_timeout_ms: ?u64,
+            value: []const u8,
+            min_confirmed_blocks: u64,
+            commitment: ?Commitment,
+            search_transaction_history: bool,
+            timeout_ms: u64,
+            poll_interval_ms: u64,
+        ) !*Self {
+            const self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
+
+            self.* = .{
+                .allocator = allocator,
+                .endpoint = try allocator.dupe(u8, endpoint),
+                .default_commitment = default_commitment,
+                .request_timeout_ms = request_timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .value = try allocator.dupe(u8, value),
+                .min_confirmed_blocks = min_confirmed_blocks,
+                .commitment = commitment,
+                .search_transaction_history = search_transaction_history,
+                .timeout_ms = timeout_ms,
+                .poll_interval_ms = poll_interval_ms,
+            };
+            errdefer {
+                allocator.free(self.endpoint);
+                allocator.free(self.value);
+            }
+
+            self.thread = try std.Thread.spawn(.{}, Self.run, .{self});
+            return self;
+        }
+
+        fn run(self: *Self) void {
+            const value = work_fn(
+                self.allocator,
+                self.endpoint,
+                self.default_commitment,
+                self.request_timeout_ms,
+                self.confirm_transaction_initial_timeout_ms,
+                self.value,
+                self.min_confirmed_blocks,
+                self.commitment,
+                self.search_transaction_history,
+                self.timeout_ms,
+                self.poll_interval_ms,
             ) catch |err| {
                 self.complete(.{ .failure = err });
                 return;
@@ -2999,6 +3513,24 @@ pub const NonblockingRpcClient = struct {
         SendTransactionOptions,
         runSendAndConfirmTransactionWithCommitmentAndConfig,
     );
+    pub const PollForSignatureTask = AsyncTaskWithStringAndCommitmentAndBool(void, runPollForSignature);
+    pub const PollForSignatureConfirmationTask = AsyncTaskWithStringAndU64AndBool(u64, runPollForSignatureConfirmation);
+    pub const PollForSignatureConfirmationWithTimeoutsTask = AsyncTaskWithStringAndU64AndCommitmentAndBoolAndTimeouts(
+        u64,
+        runPollForSignatureConfirmationWithTimeouts,
+    );
+    pub const PollForSignatureConfirmationWithCommitmentAndTimeoutsTask = AsyncTaskWithStringAndU64AndCommitmentAndBoolAndTimeouts(
+        u64,
+        runPollForSignatureConfirmationWithTimeouts,
+    );
+    pub const GetNumBlocksSinceSignatureConfirmationTask = AsyncTaskWithStringAndCommitmentAndBool(
+        u64,
+        runGetNumBlocksSinceSignatureConfirmation,
+    );
+    pub const GetNumBlocksSinceSignatureConfirmationWithCommitmentTask = AsyncTaskWithStringAndCommitmentAndBool(
+        u64,
+        runGetNumBlocksSinceSignatureConfirmationWithCommitment,
+    );
     pub const SignatureStatusTask = AsyncTaskWithStringAndCommitment(SignatureStatus, runGetSignatureStatus);
     pub const SignatureStatusesTask = AsyncTaskWithStringListAndCommitment([]?SignatureStatus, runGetSignatureStatuses);
     pub const SignaturesForAddressTask = AsyncTaskWithSignaturesForAddressAndCommitment([]SignatureForAddress, runGetSignaturesForAddress);
@@ -3379,6 +3911,124 @@ pub const NonblockingRpcClient = struct {
             signed_tx_base64,
             commitment,
             options,
+        );
+    }
+
+    pub fn pollForSignatureAsync(
+        self: *const NonblockingRpcClient,
+        signature: []const u8,
+        commitment: ?Commitment,
+        search_transaction_history: bool,
+    ) !*PollForSignatureTask {
+        return PollForSignatureTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            signature,
+            commitment,
+            search_transaction_history,
+        );
+    }
+
+    pub fn pollForSignatureConfirmationAsync(
+        self: *const NonblockingRpcClient,
+        signature: []const u8,
+        min_confirmed_blocks: u64,
+        search_transaction_history: bool,
+    ) !*PollForSignatureConfirmationTask {
+        return PollForSignatureConfirmationTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            signature,
+            min_confirmed_blocks,
+            search_transaction_history,
+        );
+    }
+
+    pub fn pollForSignatureConfirmationWithTimeoutsAsync(
+        self: *const NonblockingRpcClient,
+        signature: []const u8,
+        min_confirmed_blocks: u64,
+        search_transaction_history: bool,
+        timeout_ms: u64,
+        poll_interval_ms: u64,
+    ) !*PollForSignatureConfirmationWithTimeoutsTask {
+        return PollForSignatureConfirmationWithTimeoutsTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            signature,
+            min_confirmed_blocks,
+            null,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+        );
+    }
+
+    pub fn pollForSignatureConfirmationWithCommitmentAndTimeoutsAsync(
+        self: *const NonblockingRpcClient,
+        signature: []const u8,
+        min_confirmed_blocks: u64,
+        commitment: Commitment,
+        search_transaction_history: bool,
+        timeout_ms: u64,
+        poll_interval_ms: u64,
+    ) !*PollForSignatureConfirmationWithCommitmentAndTimeoutsTask {
+        return PollForSignatureConfirmationWithCommitmentAndTimeoutsTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            signature,
+            min_confirmed_blocks,
+            commitment,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+        );
+    }
+
+    pub fn getNumBlocksSinceSignatureConfirmationAsync(
+        self: *const NonblockingRpcClient,
+        signature: []const u8,
+        search_transaction_history: bool,
+    ) !*GetNumBlocksSinceSignatureConfirmationTask {
+        return GetNumBlocksSinceSignatureConfirmationTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            signature,
+            null,
+            search_transaction_history,
+        );
+    }
+
+    pub fn getNumBlocksSinceSignatureConfirmationWithCommitmentAsync(
+        self: *const NonblockingRpcClient,
+        signature: []const u8,
+        commitment: Commitment,
+        search_transaction_history: bool,
+    ) !*GetNumBlocksSinceSignatureConfirmationWithCommitmentTask {
+        return GetNumBlocksSinceSignatureConfirmationWithCommitmentTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            signature,
+            commitment,
+            search_transaction_history,
         );
     }
 
