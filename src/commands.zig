@@ -697,6 +697,36 @@ fn loadAnchorIdlInvokeInstructionSpec(
     remaining_accounts_json_arg: ?[]const u8,
     payer_keypair_path_arg: ?[]const u8,
 ) !LoadedCliInstructionSpec {
+    return loadAnchorIdlInvokeInstructionSpecWithOptions(
+        allocator,
+        idl_arg,
+        instruction_name,
+        args_json_arg,
+        accounts_json_arg,
+        account_bindings,
+        remaining_accounts,
+        remaining_accounts_json_arg,
+        payer_keypair_path_arg,
+        null,
+        null,
+        null,
+    );
+}
+
+fn loadAnchorIdlInvokeInstructionSpecWithOptions(
+    allocator: Allocator,
+    idl_arg: []const u8,
+    instruction_name: []const u8,
+    args_json_arg: ?[]const u8,
+    accounts_json_arg: ?[]const u8,
+    account_bindings: []const []const u8,
+    remaining_accounts: []const []const u8,
+    remaining_accounts_json_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+) !LoadedCliInstructionSpec {
     const idl_source = loadInstructionSpecSource(allocator, idl_arg) catch return error.InvalidCli;
     defer allocator.free(idl_source);
 
@@ -744,6 +774,15 @@ fn loadAnchorIdlInvokeInstructionSpec(
     else
         null;
     defer if (parsed_remaining_accounts) |*value| value.deinit();
+    var parsed_signer_keypair_paths: ?std.json.Parsed([]const []const u8) = null;
+    defer if (parsed_signer_keypair_paths) |*value| value.deinit();
+
+    if (signer_keypair_paths_arg) |value| {
+        const signer_paths_source = loadInstructionSpecSource(allocator, value) catch return error.InvalidCli;
+        defer allocator.free(signer_paths_source);
+
+        parsed_signer_keypair_paths = std.json.parseFromSlice([]const []const u8, allocator, signer_paths_source, .{}) catch return error.InvalidCli;
+    }
 
     const encoded_data = anchor_idl_encode.encodeInstructionData(
         allocator,
@@ -804,6 +843,9 @@ fn loadAnchorIdlInvokeInstructionSpec(
     };
     const spec = CliSimulateInstructionsSpec{
         .payer_keypair_path = payer_keypair_path_arg,
+        .nonce_account = nonce_account_arg,
+        .nonce_authority_keypair_path = nonce_authority_keypair_path_arg,
+        .additional_signer_keypair_paths = if (parsed_signer_keypair_paths) |value| value.value else &.{},
         .instructions = &instruction_specs,
     };
     return try loadCliInstructionSpec(allocator, &spec);
@@ -1451,9 +1493,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .simulate_program_invoke and
         command != .send_versioned_program_invoke and
         command != .send_versioned_program_invoke_and_confirm and
-        command != .simulate_versioned_program_invoke)
+        command != .simulate_versioned_program_invoke and
+        command != .simulate_idl_invoke and
+        command != .send_idl_invoke and
+        command != .send_idl_invoke_and_confirm)
     {
-        reportInvalidCliMessage("error: --nonce-account requires program-invoke commands\n", .{});
+        reportInvalidCliMessage("error: --nonce-account requires program-invoke or idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
@@ -1463,9 +1508,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .simulate_program_invoke and
         command != .send_versioned_program_invoke and
         command != .send_versioned_program_invoke_and_confirm and
-        command != .simulate_versioned_program_invoke)
+        command != .simulate_versioned_program_invoke and
+        command != .simulate_idl_invoke and
+        command != .send_idl_invoke and
+        command != .send_idl_invoke_and_confirm)
     {
-        reportInvalidCliMessage("error: --nonce-authority-keypair requires program-invoke commands\n", .{});
+        reportInvalidCliMessage("error: --nonce-authority-keypair requires program-invoke or idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
@@ -2284,7 +2332,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadAnchorIdlInvokeInstructionSpec(
+            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptions(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -2294,6 +2342,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_remaining_accounts.items,
                 args.idl_remaining_accounts_json_arg,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                program_invoke_signer_keypair_paths_arg,
+                program_invoke_nonce_account_arg,
+                program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-idl-invoke currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
                 return error.InvalidCli;
@@ -2335,7 +2386,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadAnchorIdlInvokeInstructionSpec(
+            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptions(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -2345,6 +2396,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_remaining_accounts.items,
                 args.idl_remaining_accounts_json_arg,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                program_invoke_signer_keypair_paths_arg,
+                program_invoke_nonce_account_arg,
+                program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-idl-invoke-and-confirm currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
                 return error.InvalidCli;
@@ -2895,7 +2949,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadAnchorIdlInvokeInstructionSpec(
+            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptions(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -2905,6 +2959,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_remaining_accounts.items,
                 args.idl_remaining_accounts_json_arg,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                program_invoke_signer_keypair_paths_arg,
+                program_invoke_nonce_account_arg,
+                program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
                 reportInvalidCliMessage("error: simulate-idl-invoke currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
                 return error.InvalidCli;
@@ -8992,6 +9049,103 @@ test "loadAnchorIdlInvokeInstructionSpec appends json remaining accounts" {
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
 }
 
+test "loadAnchorIdlInvokeInstructionSpec supports nonce authority and additional signer keypair paths" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{64} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-options-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const signer_raw = try Ed25519.KeyPair.generateDeterministic(.{65} ** 32);
+    const signer_secret_key = signer_raw.secret_key.toBytes();
+    const signer = try client.Keypair.fromSecretKeyBytes(signer_secret_key);
+    const signer_pubkey_base58 = try signer.public_key.toBase58(allocator);
+    defer allocator.free(signer_pubkey_base58);
+    const signer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-options-signer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(signer_keypair_path);
+    defer std.fs.cwd().deleteFile(signer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, signer_keypair_path, &signer_secret_key);
+    const signer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, signer_keypair_path);
+    defer allocator.free(signer_keypair_realpath);
+
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{66} ** 32);
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const nonce_authority = try client.Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+    const nonce_authority_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-options-nonce-authority-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(nonce_authority_keypair_path);
+    defer std.fs.cwd().deleteFile(nonce_authority_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, nonce_authority_keypair_path, &nonce_authority_secret_key);
+    const nonce_authority_realpath = try std.fs.cwd().realpathAlloc(allocator, nonce_authority_keypair_path);
+    defer allocator.free(nonce_authority_realpath);
+
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{67} ** 32);
+    const nonce_account_pubkey = try client.encodeBase58(allocator, &nonce_account_raw.public_key.toBytes());
+    defer allocator.free(nonce_account_pubkey);
+
+    const program_id = client.Pubkey.fromBytes(.{41} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"approve","discriminator":[7,7,7,7,7,7,7,7],"accounts":[{{"name":"delegate","signer":true}}],"args":[]}}]}}
+        ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const delegate_binding = try std.fmt.allocPrint(allocator, "delegate={s}", .{signer_pubkey_base58});
+    defer allocator.free(delegate_binding);
+    const signer_paths_json = try std.fmt.allocPrint(allocator, "[\"{s}\"]", .{signer_keypair_realpath});
+    defer allocator.free(signer_paths_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpecWithOptions(
+        allocator,
+        idl_json,
+        "approve",
+        null,
+        null,
+        &.{delegate_binding},
+        &.{},
+        null,
+        payer_keypair_realpath,
+        signer_paths_json,
+        nonce_account_pubkey,
+        nonce_authority_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expect(loaded.payer.eql(payer.public_key));
+    try std.testing.expectEqualStrings(nonce_account_pubkey, loaded.nonce_account orelse "");
+    try std.testing.expect(loaded.nonce_authority != null);
+    try std.testing.expect(loaded.nonce_authority.?.eql(nonce_authority.public_key));
+    try std.testing.expectEqual(@as(usize, 3), loaded.signers.len);
+    try std.testing.expect(loaded.signers[1].public_key.eql(signer.public_key));
+    try std.testing.expect(loaded.signers[2].public_key.eql(nonce_authority.public_key));
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(signer.public_key));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+}
+
 test "runCommand send-idl-invoke sends zero-account anchor instruction" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
@@ -9058,6 +9212,108 @@ test "runCommand send-idl-invoke sends zero-account anchor instruction" {
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature: SigIdl1111111111111111111111111111111111111111111111111111111111111111\n",
+        captured,
+    );
+}
+
+test "runCommand send-idl-invoke supports nonce account" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{68} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-send-idl-invoke-nonce-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{69} ** 32);
+    const nonce_account_pubkey = try client.encodeBase58(allocator, &nonce_account_raw.public_key.toBytes());
+    defer allocator.free(nonce_account_pubkey);
+
+    var nonce_blockhash_bytes: [32]u8 = undefined;
+    for (&nonce_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 221);
+    const nonce_blockhash = try client.encodeBase58(allocator, &nonce_blockhash_bytes);
+    defer allocator.free(nonce_blockhash);
+
+    const nonce_data_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"program":"system","parsed":{{"type":"nonce","info":{{"authority":"{s}","blockhash":"{s}"}}}}}}
+        ,
+        .{ payer_pubkey_base58, nonce_blockhash },
+    );
+    defer allocator.free(nonce_data_json);
+
+    try sender_context.sender.pushUiAccountResponse(63, .{
+        .data_json = nonce_data_json,
+        .executable = false,
+        .lamports = 1,
+        .owner = "11111111111111111111111111111111",
+        .rent_epoch = 0,
+        .space = 80,
+    });
+    try sender_context.sender.pushResultJson(
+        "\"SigIdlNonce11111111111111111111111111111111111111111111111111111111111111\"",
+    );
+
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-idl-invoke-nonce" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-idl-invoke",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        "--nonce-account",
+        nonce_account_pubkey,
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectGetUiAccountRequest(
+        allocator,
+        commandCapturedRequestAt(&sender_context, 0),
+        nonce_account_pubkey,
+        null,
+        null,
+    );
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "signature: SigIdlNonce11111111111111111111111111111111111111111111111111111111111111\n",
         captured,
     );
 }
