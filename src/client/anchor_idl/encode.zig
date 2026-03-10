@@ -61,18 +61,83 @@ fn encodeArgValue(
             const type_def = idl_types.findType(idl, defined_name) orelse return error.UnsupportedAnchorIdlType;
             if (type_def.type != .object) return error.UnsupportedAnchorIdlType;
             const kind_value = type_def.type.object.get("kind") orelse return error.UnsupportedAnchorIdlType;
-            if (kind_value != .string or !std.mem.eql(u8, kind_value.string, "struct")) return error.UnsupportedAnchorIdlType;
-            const fields_value = type_def.type.object.get("fields") orelse return error.UnsupportedAnchorIdlType;
-            if (fields_value != .array or value != .object) return error.InvalidAnchorIdlArgValue;
-            for (fields_value.array.items) |field_value| {
-                if (field_value != .object) return error.UnsupportedAnchorIdlType;
-                const field_name = field_value.object.get("name") orelse return error.UnsupportedAnchorIdlType;
-                const field_type = field_value.object.get("type") orelse return error.UnsupportedAnchorIdlType;
-                if (field_name != .string) return error.UnsupportedAnchorIdlType;
-                const field_arg_value = value.object.get(field_name.string) orelse return error.MissingAnchorIdlArg;
-                try encodeArgValue(allocator, bytes, idl, field_type, field_arg_value);
+            if (kind_value != .string) return error.UnsupportedAnchorIdlType;
+
+            if (std.mem.eql(u8, kind_value.string, "struct")) {
+                const fields_value = type_def.type.object.get("fields") orelse return error.UnsupportedAnchorIdlType;
+                if (fields_value != .array or value != .object) return error.InvalidAnchorIdlArgValue;
+                for (fields_value.array.items) |field_value| {
+                    if (field_value != .object) return error.UnsupportedAnchorIdlType;
+                    const field_name = field_value.object.get("name") orelse return error.UnsupportedAnchorIdlType;
+                    const field_type = field_value.object.get("type") orelse return error.UnsupportedAnchorIdlType;
+                    if (field_name != .string) return error.UnsupportedAnchorIdlType;
+                    const field_arg_value = value.object.get(field_name.string) orelse return error.MissingAnchorIdlArg;
+                    try encodeArgValue(allocator, bytes, idl, field_type, field_arg_value);
+                }
+                return;
             }
-            return;
+
+            if (std.mem.eql(u8, kind_value.string, "enum")) {
+                const variants_value = type_def.type.object.get("variants") orelse return error.UnsupportedAnchorIdlType;
+                if (variants_value != .array) return error.UnsupportedAnchorIdlType;
+
+                var selected_variant_name: []const u8 = undefined;
+                var selected_variant_payload: ?std.json.Value = null;
+                switch (value) {
+                    .string => selected_variant_name = value.string,
+                    .object => {
+                        var iterator = value.object.iterator();
+                        const entry = iterator.next() orelse return error.InvalidAnchorIdlArgValue;
+                        if (iterator.next() != null) return error.InvalidAnchorIdlArgValue;
+                        selected_variant_name = entry.key_ptr.*;
+                        selected_variant_payload = entry.value_ptr.*;
+                    },
+                    else => return error.InvalidAnchorIdlArgValue,
+                }
+
+                for (variants_value.array.items, 0..) |variant_value, index| {
+                    if (variant_value != .object) return error.UnsupportedAnchorIdlType;
+                    const variant_name = variant_value.object.get("name") orelse return error.UnsupportedAnchorIdlType;
+                    if (variant_name != .string) return error.UnsupportedAnchorIdlType;
+                    if (!std.mem.eql(u8, variant_name.string, selected_variant_name)) continue;
+
+                    if (index > std.math.maxInt(u8)) return error.UnsupportedAnchorIdlType;
+                    try bytes.append(allocator, @intCast(index));
+
+                    const fields_value = variant_value.object.get("fields") orelse return;
+                    if (fields_value == .null) return;
+                    if (fields_value != .array) return error.UnsupportedAnchorIdlType;
+
+                    const payload = selected_variant_payload orelse return error.InvalidAnchorIdlArgValue;
+                    if (fields_value.array.items.len == 0) return;
+
+                    const first_field = fields_value.array.items[0];
+                    if (first_field == .object and first_field.object.get("name") != null) {
+                        if (payload != .object) return error.InvalidAnchorIdlArgValue;
+                        for (fields_value.array.items) |field_value| {
+                            if (field_value != .object) return error.UnsupportedAnchorIdlType;
+                            const field_name = field_value.object.get("name") orelse return error.UnsupportedAnchorIdlType;
+                            const field_type = field_value.object.get("type") orelse return error.UnsupportedAnchorIdlType;
+                            if (field_name != .string) return error.UnsupportedAnchorIdlType;
+                            const field_arg_value = payload.object.get(field_name.string) orelse return error.MissingAnchorIdlArg;
+                            try encodeArgValue(allocator, bytes, idl, field_type, field_arg_value);
+                        }
+                        return;
+                    }
+
+                    if (payload != .array or payload.array.items.len != fields_value.array.items.len) {
+                        return error.InvalidAnchorIdlArgValue;
+                    }
+                    for (fields_value.array.items, payload.array.items) |field_type, payload_value| {
+                        try encodeArgValue(allocator, bytes, idl, field_type, payload_value);
+                    }
+                    return;
+                }
+
+                return error.InvalidAnchorIdlArgValue;
+            }
+
+            return error.UnsupportedAnchorIdlType;
         }
     }
 
@@ -320,6 +385,38 @@ test "anchor idl encodeInstructionData encodes defined struct args" {
         6, 6, 6, 6, 6, 6, 6, 6,
         1,
         0x01, 0x02,
+    };
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "anchor idl encodeInstructionData encodes defined enum args" {
+    const allocator = std.testing.allocator;
+    const parsed_idl = try std.json.parseFromSlice(
+        idl_types.Idl,
+        allocator,
+        \\{"instructions":[{"name":"setMode","discriminator":[8,8,8,8,8,8,8,8],"args":[{"name":"state","type":{"defined":{"name":"State"}}},{"name":"threshold","type":{"defined":{"name":"Threshold"}}},{"name":"pair","type":{"defined":{"name":"Pair"}}}]}],"types":[{"name":"State","type":{"kind":"enum","variants":[{"name":"Ready"},{"name":"Paused"}]}},{"name":"Threshold","type":{"kind":"enum","variants":[{"name":"Fixed","fields":[{"name":"value","type":"u16"}]},{"name":"Open"}]}},{"name":"Pair","type":{"kind":"enum","variants":[{"name":"Values","fields":["u8","u16"]}]}}]}
+    ,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_idl.deinit();
+
+    const instruction = idl_types.findInstruction(&parsed_idl.value, "setMode").?;
+    const encoded = try encodeInstructionData(
+        allocator,
+        &parsed_idl.value,
+        &instruction,
+        "{\"state\":\"Paused\",\"threshold\":{\"Fixed\":{\"value\":513}},\"pair\":{\"Values\":[7,1025]}}",
+    );
+    defer allocator.free(encoded);
+
+    const expected = [_]u8{
+        8, 8, 8, 8, 8, 8, 8, 8,
+        1,
+        0,
+        0x01, 0x02,
+        0,
+        7,
+        0x01, 0x04,
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
