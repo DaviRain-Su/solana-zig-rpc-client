@@ -29,6 +29,7 @@ const ProgramAccountsQueryOptions = rpc_types.ProgramAccountsQueryOptions;
 const SnapshotSlots = rpc_types.SnapshotSlots;
 const Supply = rpc_types.Supply;
 const TokenAmount = rpc_types.TokenAmount;
+const TokenAccountsFilter = rpc_types.TokenAccountsFilter;
 const TokenLargestAccount = rpc_types.TokenLargestAccount;
 const UiAccountResponse = rpc_types.UiAccountResponse;
 const VoteAccounts = rpc_types.VoteAccounts;
@@ -538,6 +539,50 @@ fn runGetProgramUiAccounts(
     );
     defer client.deinit();
     return try client.getProgramUiAccounts(program_id, commitment);
+}
+
+fn runGetTokenAccountsByOwner(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    owner: []const u8,
+    filter: TokenAccountsFilter,
+    commitment: ?Commitment,
+) ![]JsonParsedProgramAccount {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getTokenAccountsByOwner(owner, filter, commitment);
+}
+
+fn runGetTokenAccountsByDelegate(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    delegate: []const u8,
+    filter: TokenAccountsFilter,
+    commitment: ?Commitment,
+) ![]JsonParsedProgramAccount {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getTokenAccountsByDelegate(delegate, filter, commitment);
 }
 
 fn runGetTokenAccountBalance(
@@ -1632,6 +1677,142 @@ fn AsyncTaskWithStringAndCommitment(
     };
 }
 
+fn AsyncTaskWithStringAndTokenAccountsFilterAndCommitment(
+    comptime ResultType: type,
+    comptime work_fn: *const fn (
+        Allocator,
+        []const u8,
+        ?Commitment,
+        ?u64,
+        ?u64,
+        []const u8,
+        TokenAccountsFilter,
+        ?Commitment,
+    ) anyerror!ResultType,
+) type {
+    return struct {
+        allocator: Allocator,
+        endpoint: []const u8,
+        default_commitment: ?Commitment,
+        request_timeout_ms: ?u64,
+        confirm_transaction_initial_timeout_ms: ?u64,
+        value: []const u8,
+        filter: TokenAccountsFilter,
+        commitment: ?Commitment,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+        done: bool = false,
+        result: ?Result = null,
+        thread: ?std.Thread = null,
+
+        const Self = @This();
+        const Result = union(enum) {
+            success: ResultType,
+            failure: anyerror,
+        };
+
+        pub fn start(
+            allocator: Allocator,
+            endpoint: []const u8,
+            default_commitment: ?Commitment,
+            request_timeout_ms: ?u64,
+            confirm_transaction_initial_timeout_ms: ?u64,
+            value: []const u8,
+            filter: TokenAccountsFilter,
+            commitment: ?Commitment,
+        ) !*Self {
+            const self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
+
+            self.* = .{
+                .allocator = allocator,
+                .endpoint = try allocator.dupe(u8, endpoint),
+                .default_commitment = default_commitment,
+                .request_timeout_ms = request_timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .value = try allocator.dupe(u8, value),
+                .filter = switch (filter) {
+                    .mint => |entry| .{ .mint = try allocator.dupe(u8, entry) },
+                    .program_id => |entry| .{ .program_id = try allocator.dupe(u8, entry) },
+                },
+                .commitment = commitment,
+            };
+            errdefer {
+                allocator.free(self.endpoint);
+                allocator.free(self.value);
+                switch (self.filter) {
+                    .mint => |entry| allocator.free(entry),
+                    .program_id => |entry| allocator.free(entry),
+                }
+            }
+
+            self.thread = try std.Thread.spawn(.{}, Self.run, .{self});
+            return self;
+        }
+
+        fn run(self: *Self) void {
+            const value = work_fn(
+                self.allocator,
+                self.endpoint,
+                self.default_commitment,
+                self.request_timeout_ms,
+                self.confirm_transaction_initial_timeout_ms,
+                self.value,
+                self.filter,
+                self.commitment,
+            ) catch |err| {
+                self.complete(.{ .failure = err });
+                return;
+            };
+            self.complete(.{ .success = value });
+        }
+
+        fn complete(self: *Self, result: Result) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.result = result;
+            self.done = true;
+            self.cond.broadcast();
+        }
+
+        pub fn isDone(self: *const Self) bool {
+            const mutable_self: *Self = @constCast(self);
+            mutable_self.mutex.lock();
+            defer mutable_self.mutex.unlock();
+            return mutable_self.done;
+        }
+
+        pub fn wait(self: *Self) anyerror!ResultType {
+            self.mutex.lock();
+            while (!self.done) {
+                self.cond.wait(&self.mutex);
+            }
+            const result = self.result.?;
+            self.mutex.unlock();
+
+            if (self.thread) |thread| {
+                thread.join();
+                self.thread = null;
+            }
+
+            defer {
+                self.allocator.free(self.endpoint);
+                self.allocator.free(self.value);
+                switch (self.filter) {
+                    .mint => |entry| self.allocator.free(entry),
+                    .program_id => |entry| self.allocator.free(entry),
+                }
+                self.allocator.destroy(self);
+            }
+
+            return switch (result) {
+                .success => |value| value,
+                .failure => |err| err,
+            };
+        }
+    };
+}
+
 fn AsyncTaskWithStringListAndCommitment(
     comptime ResultType: type,
     comptime work_fn: *const fn (
@@ -1805,6 +1986,8 @@ pub const NonblockingRpcClient = struct {
     pub const ProgramAccountsTask = AsyncTaskWithStringAndCommitment([]ProgramAccount, runGetProgramAccounts);
     pub const ProgramUiAccountsResponseTask = AsyncTaskWithStringAndCommitment(JsonParsedProgramAccountsResponse, runGetProgramUiAccountsResponse);
     pub const ProgramUiAccountsTask = AsyncTaskWithStringAndCommitment([]JsonParsedProgramAccount, runGetProgramUiAccounts);
+    pub const TokenAccountsByOwnerTask = AsyncTaskWithStringAndTokenAccountsFilterAndCommitment([]JsonParsedProgramAccount, runGetTokenAccountsByOwner);
+    pub const TokenAccountsByDelegateTask = AsyncTaskWithStringAndTokenAccountsFilterAndCommitment([]JsonParsedProgramAccount, runGetTokenAccountsByDelegate);
     pub const TokenAccountBalanceTask = AsyncTaskWithStringAndCommitment(TokenAmount, runGetTokenAccountBalance);
     pub const TokenSupplyTask = AsyncTaskWithStringAndCommitment(TokenAmount, runGetTokenSupply);
     pub const TokenLargestAccountsTask = AsyncTaskWithStringAndCommitment([]TokenLargestAccount, runGetTokenLargestAccounts);
@@ -2287,6 +2470,42 @@ pub const NonblockingRpcClient = struct {
             self.request_timeout_ms,
             self.confirm_transaction_initial_timeout_ms,
             program_id,
+            commitment,
+        );
+    }
+
+    pub fn getTokenAccountsByOwnerAsync(
+        self: *const NonblockingRpcClient,
+        owner: []const u8,
+        filter: TokenAccountsFilter,
+        commitment: ?Commitment,
+    ) !*TokenAccountsByOwnerTask {
+        return TokenAccountsByOwnerTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            owner,
+            filter,
+            commitment,
+        );
+    }
+
+    pub fn getTokenAccountsByDelegateAsync(
+        self: *const NonblockingRpcClient,
+        delegate: []const u8,
+        filter: TokenAccountsFilter,
+        commitment: ?Commitment,
+    ) !*TokenAccountsByDelegateTask {
+        return TokenAccountsByDelegateTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            delegate,
+            filter,
             commitment,
         );
     }

@@ -1009,6 +1009,84 @@ test "root.NonblockingRpcClient getProgramUiAccountsAsync returns parsed program
     try std.testing.expect(matched);
 }
 
+test "root.NonblockingRpcClient getTokenAccountsByOwnerAsync sends owner and filter" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const owner = "OwnerToken1111111111111111111111111111111111";
+    const mint = "MintToken11111111111111111111111111111111111";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        owner,
+        mint,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":1001},\"value\":[{\"pubkey\":\"TokenAcctByOwner111111111111111111111111111\",\"account\":{\"data\":{\"program\":\"spl-token\",\"parsed\":{\"type\":\"account\"}},\"executable\":false,\"lamports\":555,\"owner\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\",\"rentEpoch\":8,\"space\":165}}]},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getTokenAccountsByOwnerAsync(owner, .{ .mint = mint }, .confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const accounts = try task.wait();
+    defer freeJsonParsedProgramAccounts(allocator, accounts);
+
+    try std.testing.expectEqual(@as(usize, 1), accounts.len);
+    try std.testing.expectEqualStrings("TokenAcctByOwner111111111111111111111111111", accounts[0].pubkey);
+    try std.testing.expectEqual(@as(u64, 555), accounts[0].account.lamports);
+    try std.testing.expect(std.mem.indexOf(u8, accounts[0].account.data_json, "spl-token") != null);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getTokenAccountsByDelegateAsync sends delegate and filter" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const delegate = "DelegateToken11111111111111111111111111111111";
+    const token_program_id = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        delegate,
+        token_program_id,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":1002},\"value\":[{\"pubkey\":\"TokenAcctByDelegate1111111111111111111111111\",\"account\":{\"data\":{\"program\":\"spl-token\",\"parsed\":{\"type\":\"account\"}},\"executable\":false,\"lamports\":666,\"owner\":\"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\",\"rentEpoch\":9,\"space\":165}}]},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getTokenAccountsByDelegateAsync(delegate, .{ .program_id = token_program_id }, .processed);
+    try std.testing.expect(!task.isDone());
+
+    const accounts = try task.wait();
+    defer freeJsonParsedProgramAccounts(allocator, accounts);
+
+    try std.testing.expectEqual(@as(usize, 1), accounts.len);
+    try std.testing.expectEqualStrings("TokenAcctByDelegate1111111111111111111111111", accounts[0].pubkey);
+    try std.testing.expectEqual(@as(u64, 666), accounts[0].account.lamports);
+    try std.testing.expect(std.mem.indexOf(u8, accounts[0].account.data_json, "spl-token") != null);
+    try std.testing.expect(matched);
+}
+
 test "root.NonblockingRpcClient getTokenAccountBalanceAsync sends requested token account" {
     const allocator = std.testing.allocator;
     var listener = try createListener();
