@@ -2,8 +2,13 @@ const std = @import("std");
 
 pub const Idl = struct {
     address: ?[]const u8 = null,
+    metadata: ?IdlMetadata = null,
     instructions: []const Instruction = &.{},
     types: []const TypeDef = &.{},
+};
+
+pub const IdlMetadata = struct {
+    address: ?[]const u8 = null,
 };
 
 pub const TypeDef = struct {
@@ -30,6 +35,14 @@ pub const Instruction = struct {
 pub fn findInstruction(idl: *const Idl, name: []const u8) ?Instruction {
     for (idl.instructions) |instruction| {
         if (std.mem.eql(u8, instruction.name, name)) return instruction;
+    }
+    return null;
+}
+
+pub fn programAddress(idl: *const Idl) ?[]const u8 {
+    if (idl.address) |value| return value;
+    if (idl.metadata) |metadata| {
+        if (metadata.address) |value| return value;
     }
     return null;
 }

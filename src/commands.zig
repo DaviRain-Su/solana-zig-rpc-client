@@ -829,7 +829,7 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
     }) catch return error.InvalidCli;
     defer parsed_idl.deinit();
 
-    const program_id = parsed_idl.value.address orelse program_id_override_arg orelse return error.InvalidCli;
+    const program_id = anchor_idl.programAddress(&parsed_idl.value) orelse program_id_override_arg orelse return error.InvalidCli;
     var instruction = anchor_idl.findInstruction(&parsed_idl.value, instruction_name) orelse return error.InvalidCli;
     var owned_instruction_discriminator: ?[]u8 = null;
     defer if (owned_instruction_discriminator) |value| allocator.free(value);
@@ -10026,6 +10026,51 @@ test "loadAnchorIdlInvokeInstructionSpec computes missing instruction discrimina
 
     try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
     try std.testing.expectEqualSlices(u8, expected_discriminator, loaded.owned_instructions.instructions[0].data);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec accepts metadata address as program id" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{81} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-metadata-address-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{60} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"metadata":{{"address":"{s}"}},"instructions":[{{"name":"initialize","discriminator":[12,12,12,12,12,12,12,12],"accounts":[],"args":[]}}]}}
+        ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].program_id.eql(program_id));
 }
 
 test "runCommand send-idl-invoke sends zero-account anchor instruction" {
