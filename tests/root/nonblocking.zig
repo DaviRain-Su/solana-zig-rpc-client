@@ -345,3 +345,90 @@ test "root.NonblockingRpcClient getStakeMinimumDelegationAsync returns waitable 
     const stake_minimum_delegation = try task.wait();
     try std.testing.expectEqual(@as(u64, 999), stake_minimum_delegation);
 }
+
+test "root.NonblockingRpcClient getEpochInfoAsync returns waitable epoch info" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":11},\"value\":{\"absoluteSlot\":101,\"blockHeight\":202,\"epoch\":3,\"slotIndex\":4,\"slotsInEpoch\":5}},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getEpochInfoAsync(.processed);
+    try std.testing.expect(!task.isDone());
+
+    const epoch_info = try task.wait();
+    try std.testing.expectEqual(@as(?u64, 101), epoch_info.absolute_slot);
+    try std.testing.expectEqual(@as(?u64, 202), epoch_info.block_height);
+    try std.testing.expectEqual(@as(?u64, 3), epoch_info.epoch);
+    try std.testing.expectEqual(@as(?u64, 4), epoch_info.slot_index);
+    try std.testing.expectEqual(@as(?u64, 5), epoch_info.slots_in_epoch);
+}
+
+test "root.NonblockingRpcClient getSlotLeaderAsync returns owned leader" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":\"Leader11111111111111111111111111111111111\",\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getSlotLeaderAsync(.confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const slot_leader = try task.wait();
+    defer allocator.free(slot_leader);
+    try std.testing.expectEqualStrings("Leader11111111111111111111111111111111111", slot_leader);
+}
+
+test "root.NonblockingRpcClient getVersionAsync returns owned version string" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"solana-core\":\"2.1.0\"},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getVersionAsync();
+    try std.testing.expect(!task.isDone());
+
+    const version = try task.wait();
+    defer allocator.free(version);
+    try std.testing.expectEqualStrings("2.1.0", version);
+}

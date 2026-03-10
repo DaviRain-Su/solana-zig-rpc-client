@@ -6,6 +6,7 @@ const rpc_types = @import("../rpc_types.zig");
 const Allocator = std.mem.Allocator;
 const BalanceResponse = rpc_types.BalanceResponse;
 const Commitment = rpc_types.Commitment;
+const EpochInfo = rpc_types.EpochInfo;
 const LatestBlockhash = rpc_types.LatestBlockhash;
 
 fn runGetSlot(
@@ -128,6 +129,26 @@ fn runGetBalance(
     return try client.getBalanceResponse("Balance111111111111111111111111111111111111", commitment);
 }
 
+fn runGetEpochInfo(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !EpochInfo {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getEpochInfo(commitment);
+}
+
 fn runGetBlockTime(
     allocator: Allocator,
     endpoint: []const u8,
@@ -170,6 +191,26 @@ fn runGetLatestBlockhash(
     return try client.getLatestBlockhash(commitment);
 }
 
+fn runGetSlotLeader(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) ![]const u8 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getSlotLeader(commitment);
+}
+
 fn runGetHealth(
     allocator: Allocator,
     endpoint: []const u8,
@@ -190,6 +231,28 @@ fn runGetHealth(
     );
     defer client.deinit();
     return try client.getHealth();
+}
+
+fn runGetVersion(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) ![]const u8 {
+    _ = commitment;
+
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getVersion();
 }
 
 fn runGetGenesisHash(
@@ -345,9 +408,12 @@ pub const NonblockingRpcClient = struct {
     pub const FirstAvailableBlockTask = AsyncTask(u64, runGetFirstAvailableBlock);
     pub const StakeMinimumDelegationTask = AsyncTask(u64, runGetStakeMinimumDelegation);
     pub const BalanceTask = AsyncTask(BalanceResponse, runGetBalance);
+    pub const EpochInfoTask = AsyncTask(EpochInfo, runGetEpochInfo);
     pub const BlockTimeTask = AsyncTask(?i64, runGetBlockTime);
     pub const LatestBlockhashTask = AsyncTask(LatestBlockhash, runGetLatestBlockhash);
+    pub const SlotLeaderTask = AsyncTask([]const u8, runGetSlotLeader);
     pub const HealthTask = AsyncTask([]const u8, runGetHealth);
+    pub const VersionTask = AsyncTask([]const u8, runGetVersion);
     pub const GenesisHashTask = AsyncTask([]const u8, runGetGenesisHash);
 
     pub fn init(allocator: Allocator, endpoint: []const u8) !NonblockingRpcClient {
@@ -532,6 +598,17 @@ pub const NonblockingRpcClient = struct {
         );
     }
 
+    pub fn getEpochInfoAsync(self: *const NonblockingRpcClient, commitment: ?Commitment) !*EpochInfoTask {
+        return EpochInfoTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
     pub fn getBlockTimeAsync(self: *const NonblockingRpcClient) !*BlockTimeTask {
         return BlockTimeTask.start(
             self.allocator,
@@ -554,8 +631,30 @@ pub const NonblockingRpcClient = struct {
         );
     }
 
+    pub fn getSlotLeaderAsync(self: *const NonblockingRpcClient, commitment: ?Commitment) !*SlotLeaderTask {
+        return SlotLeaderTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
     pub fn getHealthAsync(self: *const NonblockingRpcClient) !*HealthTask {
         return HealthTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            null,
+        );
+    }
+
+    pub fn getVersionAsync(self: *const NonblockingRpcClient) !*VersionTask {
+        return VersionTask.start(
             self.allocator,
             self.endpoint,
             self.default_commitment,
