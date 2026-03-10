@@ -366,17 +366,23 @@ fn findCliAccountBinding(
 ) AnchorCliAccountBinding {
     for (account_bindings) |binding| {
         const equals_index = std.mem.indexOfScalar(u8, binding, '=') orelse continue;
-        if (equals_index == 0 or equals_index + 1 >= binding.len) continue;
+        if (equals_index == 0) continue;
         if (std.mem.eql(u8, binding[0..equals_index], full_name)) {
-            return .{ .pubkey = binding[equals_index + 1 ..] };
+            const value = binding[equals_index + 1 ..];
+            if (std.mem.eql(u8, value, "null")) return .explicit_null;
+            if (value.len == 0) continue;
+            return .{ .pubkey = value };
         }
     }
     if (!std.mem.eql(u8, full_name, leaf_name)) {
         for (account_bindings) |binding| {
             const equals_index = std.mem.indexOfScalar(u8, binding, '=') orelse continue;
-            if (equals_index == 0 or equals_index + 1 >= binding.len) continue;
+            if (equals_index == 0) continue;
             if (std.mem.eql(u8, binding[0..equals_index], leaf_name)) {
-                return .{ .pubkey = binding[equals_index + 1 ..] };
+                const value = binding[equals_index + 1 ..];
+                if (std.mem.eql(u8, value, "null")) return .explicit_null;
+                if (value.len == 0) continue;
+                return .{ .pubkey = value };
             }
         }
     }
@@ -9768,6 +9774,57 @@ test "loadAnchorIdlInvokeInstructionSpec treats nested json null optional accoun
         null,
         accounts_json,
         &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(program_id));
+    try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+    try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec treats cli null optional account binding as missing" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{77} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-cli-optional-null-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{54} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const default_account = client.Pubkey.fromBytes(.{55} ** 32);
+    const default_account_base58 = try default_account.toBase58(allocator);
+    defer allocator.free(default_account_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[9,9,9,9,9,9,9,9],"accounts":[{{"name":"maybeAuthority","optional":true,"address":"{s}","signer":true,"writable":true}}],"args":[]}}]}}
+        ,
+        .{ program_id_base58, default_account_base58 },
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{"maybeAuthority=null"},
         &.{},
         null,
         payer_keypair_realpath,
