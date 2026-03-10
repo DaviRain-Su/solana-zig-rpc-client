@@ -12,6 +12,7 @@ const EpochSchedule = rpc_types.EpochSchedule;
 const EpochInfo = rpc_types.EpochInfo;
 const InflationGovernor = rpc_types.InflationGovernor;
 const InflationRate = rpc_types.InflationRate;
+const LargestAccount = rpc_types.LargestAccount;
 const LatestBlockhash = rpc_types.LatestBlockhash;
 const LatestBlockhashResponse = rpc_types.LatestBlockhashResponse;
 const LeaderSchedule = rpc_types.LeaderSchedule;
@@ -287,6 +288,26 @@ fn runGetSupply(
     );
     defer client.deinit();
     return try client.getSupply(commitment);
+}
+
+fn runGetLargestAccounts(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) ![]LargestAccount {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getLargestAccounts(commitment);
 }
 
 fn runGetEpochInfo(
@@ -1305,6 +1326,7 @@ pub const NonblockingRpcClient = struct {
     pub const TokenAccountBalanceTask = AsyncTaskWithStringAndCommitment(TokenAmount, runGetTokenAccountBalance);
     pub const TokenSupplyTask = AsyncTaskWithStringAndCommitment(TokenAmount, runGetTokenSupply);
     pub const SupplyTask = AsyncTask(Supply, runGetSupply);
+    pub const LargestAccountsTask = AsyncTask([]LargestAccount, runGetLargestAccounts);
     pub const EpochInfoTask = AsyncTask(EpochInfo, runGetEpochInfo);
     pub const EpochScheduleTask = AsyncTask(EpochSchedule, runGetEpochSchedule);
     pub const FeatureActivationSlotTask = AsyncTask(?u64, runGetFeatureActivationSlot);
@@ -1596,6 +1618,20 @@ pub const NonblockingRpcClient = struct {
 
     pub fn getSupplyAsync(self: *const NonblockingRpcClient, commitment: ?Commitment) !*SupplyTask {
         return SupplyTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn getLargestAccountsAsync(
+        self: *const NonblockingRpcClient,
+        commitment: ?Commitment,
+    ) !*LargestAccountsTask {
+        return LargestAccountsTask.start(
             self.allocator,
             self.endpoint,
             self.default_commitment,

@@ -79,6 +79,11 @@ fn freeSupply(allocator: std.mem.Allocator, supply: client.Supply) void {
     }
 }
 
+fn freeLargestAccounts(allocator: std.mem.Allocator, accounts: []client.LargestAccount) void {
+    for (accounts) |account| allocator.free(account.address);
+    allocator.free(accounts);
+}
+
 fn freeTokenAmount(allocator: std.mem.Allocator, amount: client.TokenAmount) void {
     allocator.free(amount.amount);
     allocator.free(amount.ui_amount_string);
@@ -437,6 +442,43 @@ test "root.NonblockingRpcClient getSupplyAsync returns waitable supply" {
     try std.testing.expectEqual(@as(u64, 300), supply.non_circulating);
     try std.testing.expectEqual(@as(usize, 2), supply.non_circulating_accounts.?.len);
     try std.testing.expectEqualStrings("SupplyAcct1111111111111111111111111111111", supply.non_circulating_accounts.?[0]);
+}
+
+test "root.NonblockingRpcClient getLargestAccountsAsync returns waitable largest accounts" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        "getLargestAccounts",
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":123},\"value\":[{\"address\":\"Largest11111111111111111111111111111111111\",\"lamports\":999},{\"address\":\"Largest22222222222222222222222222222222222\",\"lamports\":555}]},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getLargestAccountsAsync(.confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const largest_accounts = try task.wait();
+    defer freeLargestAccounts(allocator, largest_accounts);
+
+    try std.testing.expectEqual(@as(usize, 2), largest_accounts.len);
+    try std.testing.expectEqualStrings("Largest11111111111111111111111111111111111", largest_accounts[0].address);
+    try std.testing.expectEqual(@as(u64, 999), largest_accounts[0].lamports);
+    try std.testing.expectEqualStrings("Largest22222222222222222222222222222222222", largest_accounts[1].address);
+    try std.testing.expectEqual(@as(u64, 555), largest_accounts[1].lamports);
+    try std.testing.expect(matched);
 }
 
 test "root.NonblockingRpcClient getBlockTimeAsync returns waitable block time" {
