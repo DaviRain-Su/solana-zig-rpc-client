@@ -474,6 +474,35 @@ fn isAnchorIdlOptionalAccount(account_value: std.json.Value) !bool {
     return optional_value.bool;
 }
 
+fn parseAnchorIdlAccountBoolFlag(
+    account_value: std.json.Value,
+    primary_field: []const u8,
+    alias_field: []const u8,
+) !bool {
+    if (account_value != .object) return error.InvalidCli;
+    if (account_value.object.get(primary_field)) |value| {
+        if (value != .bool) return error.InvalidCli;
+        return value.bool;
+    }
+    if (account_value.object.get(alias_field)) |value| {
+        if (value != .bool) return error.InvalidCli;
+        return value.bool;
+    }
+    return false;
+}
+
+fn isAnchorIdlAccountWritable(account_value: std.json.Value) !bool {
+    return parseAnchorIdlAccountBoolFlag(account_value, "writable", "isMut");
+}
+
+fn isAnchorIdlAccountSigner(account_value: std.json.Value) !bool {
+    return parseAnchorIdlAccountBoolFlag(account_value, "signer", "isSigner");
+}
+
+fn isAnchorIdlOptionalAccountCompat(account_value: std.json.Value) !bool {
+    return parseAnchorIdlAccountBoolFlag(account_value, "optional", "isOptional");
+}
+
 fn countAnchorIdlLeafAccounts(accounts: []const std.json.Value) !usize {
     var count: usize = 0;
     for (accounts) |account_value| {
@@ -560,16 +589,10 @@ fn populateAnchorIdlCliAccounts(
                 pubkey_value = resolved_pubkey_base58;
             }
         }
-        const is_optional = try isAnchorIdlOptionalAccount(account_value);
+        const is_optional = try isAnchorIdlOptionalAccountCompat(account_value);
         var is_missing_optional_account = false;
-        const is_signer = if (account_value.object.get("signer")) |signer_value|
-            if (signer_value == .bool) signer_value.bool else return error.InvalidCli
-        else
-            false;
-        const is_writable = if (account_value.object.get("writable")) |writable_value|
-            if (writable_value == .bool) writable_value.bool else return error.InvalidCli
-        else
-            false;
+        const is_signer = try isAnchorIdlAccountSigner(account_value);
+        const is_writable = try isAnchorIdlAccountWritable(account_value);
         if (pubkey_value == null and is_optional) {
             const program_id_base58 = try program_id.toBase58(allocator);
             try owned_resolved_account_pubkeys.append(allocator, program_id_base58);
@@ -9825,6 +9848,107 @@ test "loadAnchorIdlInvokeInstructionSpec treats cli null optional account bindin
         null,
         null,
         &.{"maybeAuthority=null"},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(program_id));
+    try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+    try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec supports legacy isMut and isSigner account flags" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{78} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-legacy-flags-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{56} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const authority = client.Pubkey.fromBytes(.{57} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const authority_binding = try std.fmt.allocPrint(allocator, "authority={s}", .{authority_base58});
+    defer allocator.free(authority_binding);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[10,10,10,10,10,10,10,10],"accounts":[{{"name":"authority","isMut":true,"isSigner":true}}],"args":[]}}]}}
+        ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{authority_binding},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(authority));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec supports legacy isOptional account flag" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{79} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-legacy-optional-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{58} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[11,11,11,11,11,11,11,11],"accounts":[{{"name":"maybeAuthority","isOptional":true,"isMut":true,"isSigner":true}}],"args":[]}}]}}
+        ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{},
         &.{},
         null,
         payer_keypair_realpath,
