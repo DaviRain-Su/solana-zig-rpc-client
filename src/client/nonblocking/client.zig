@@ -4035,6 +4035,173 @@ fn AsyncTaskWithLegacyInstructions(
     };
 }
 
+fn AsyncTaskWithVersionedInstructionsWithBuildAndSimOptions(
+    comptime ResultType: type,
+    comptime BuildOptionsType: type,
+    comptime SimulateOptionsType: type,
+    comptime clone_build_options: *const fn (Allocator, ?BuildOptionsType) anyerror!?BuildOptionsType,
+    comptime free_build_options: *const fn (Allocator, ?BuildOptionsType) void,
+    comptime clone_simulate_options: *const fn (Allocator, ?SimulateOptionsType) anyerror!?SimulateOptionsType,
+    comptime free_simulate_options: *const fn (Allocator, ?SimulateOptionsType) void,
+    comptime work_fn: *const fn (
+        Allocator,
+        []const u8,
+        ?Commitment,
+        ?u64,
+        ?u64,
+        Pubkey,
+        []const Instruction,
+        []const AddressLookupTableAccount,
+        []const Keypair,
+        ?BuildOptionsType,
+        ?SimulateOptionsType,
+    ) anyerror!ResultType,
+) type {
+    return struct {
+        allocator: Allocator,
+        endpoint: []const u8,
+        default_commitment: ?Commitment,
+        request_timeout_ms: ?u64,
+        confirm_transaction_initial_timeout_ms: ?u64,
+        payer: Pubkey,
+        instructions: OwnedInstructions,
+        address_lookup_tables: []AddressLookupTableAccount,
+        signers: []Keypair,
+        build_options: ?BuildOptionsType,
+        simulate_options: ?SimulateOptionsType,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+        done: bool = false,
+        result: ?Result = null,
+        thread: ?std.Thread = null,
+
+        const Self = @This();
+        const Result = union(enum) {
+            success: ResultType,
+            failure: anyerror,
+        };
+
+        pub fn start(
+            allocator: Allocator,
+            endpoint: []const u8,
+            default_commitment: ?Commitment,
+            request_timeout_ms: ?u64,
+            confirm_transaction_initial_timeout_ms: ?u64,
+            payer: Pubkey,
+            instructions: []const Instruction,
+            address_lookup_tables: []const AddressLookupTableAccount,
+            signers: []const Keypair,
+            build_options: ?BuildOptionsType,
+            simulate_options: ?SimulateOptionsType,
+        ) !*Self {
+            const owned_instructions = try cloneInstructions(allocator, instructions);
+            errdefer owned_instructions.deinit(allocator);
+
+            const cloned_signers = try cloneSigners(allocator, signers);
+            errdefer allocator.free(cloned_signers);
+
+            const cloned_build_options = try clone_build_options(allocator, build_options);
+            errdefer free_build_options(allocator, cloned_build_options);
+
+            const cloned_simulate_options = try clone_simulate_options(allocator, simulate_options);
+            errdefer free_simulate_options(allocator, cloned_simulate_options);
+
+            const cloned_address_lookup_tables = try cloneAddressLookupTables(
+                allocator,
+                address_lookup_tables,
+            );
+            errdefer freeAddressLookupTables(
+                allocator,
+                cloned_address_lookup_tables,
+            );
+
+            const self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
+
+            self.* = .{
+                .allocator = allocator,
+                .endpoint = try allocator.dupe(u8, endpoint),
+                .default_commitment = default_commitment,
+                .request_timeout_ms = request_timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .payer = payer,
+                .instructions = owned_instructions,
+                .address_lookup_tables = cloned_address_lookup_tables,
+                .signers = cloned_signers,
+                .build_options = cloned_build_options,
+                .simulate_options = cloned_simulate_options,
+            };
+
+            self.thread = try std.Thread.spawn(.{}, Self.run, .{self});
+            return self;
+        }
+
+        fn run(self: *Self) void {
+            const value = work_fn(
+                self.allocator,
+                self.endpoint,
+                self.default_commitment,
+                self.request_timeout_ms,
+                self.confirm_transaction_initial_timeout_ms,
+                self.payer,
+                self.instructions.instructions,
+                self.address_lookup_tables,
+                self.signers,
+                self.build_options,
+                self.simulate_options,
+            ) catch |err| {
+                self.complete(.{ .failure = err });
+                return;
+            };
+            self.complete(.{ .success = value });
+        }
+
+        fn complete(self: *Self, result: Result) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.result = result;
+            self.done = true;
+            self.cond.broadcast();
+        }
+
+        pub fn isDone(self: *const Self) bool {
+            const mutable_self: *Self = @constCast(self);
+            mutable_self.mutex.lock();
+            defer mutable_self.mutex.unlock();
+            return mutable_self.done;
+        }
+
+        pub fn wait(self: *Self) anyerror!ResultType {
+            self.mutex.lock();
+            while (!self.done) {
+                self.cond.wait(&self.mutex);
+            }
+            const result = self.result.?;
+            self.mutex.unlock();
+
+            if (self.thread) |thread| {
+                thread.join();
+                self.thread = null;
+            }
+
+            defer {
+                self.instructions.deinit(self.allocator);
+                freeAddressLookupTables(self.allocator, self.address_lookup_tables);
+                self.allocator.free(self.signers);
+                free_build_options(self.allocator, self.build_options);
+                free_simulate_options(self.allocator, self.simulate_options);
+                self.allocator.free(self.endpoint);
+                self.allocator.destroy(self);
+            }
+
+            return switch (result) {
+                .success => |value| value,
+                .failure => |err| err,
+            };
+        }
+    };
+}
+
 fn AsyncTaskWithVersionedInstructions(
     comptime ResultType: type,
     comptime OptionsType: type,
@@ -4406,6 +4573,54 @@ pub const NonblockingRpcClient = struct {
     pub const LeaderScheduleForIdentityTask = AsyncTaskWithStringAndCommitment(?[]LeaderSchedule, runGetLeaderScheduleForIdentity);
     pub const SendTransactionTask = AsyncTaskWithStringAndOptions([]const u8, SendTransactionOptions, runSendTransaction);
     pub const SimulateTransactionTask = AsyncTaskWithStringAndOptions(SimulatedTransaction, SimulateTransactionOptions, runSimulateTransaction);
+    pub const SimulateLegacyInstructionsTask = AsyncTaskWithLegacyInstructionsWithBuildAndSimOptions(
+        SimulatedTransaction,
+        LegacyInstructionsBuildOptions,
+        SimulateTransactionOptions,
+        cloneLegacyInstructionsBuildOptions,
+        freeLegacyInstructionsBuildOptions,
+        cloneSimulateTransactionOptions,
+        freeSimulateTransactionOptions,
+        runSimulateLegacyInstructionsWithOptions,
+    );
+    pub const SendLegacyInstructionsTask = AsyncTaskWithLegacyInstructions(
+        []const u8,
+        SendLegacyInstructionsOptions,
+        cloneSendLegacyInstructionsOptions,
+        freeSendLegacyInstructionsOptions,
+        runSendLegacyInstructionsWithOptions,
+    );
+    pub const SendAndConfirmLegacyInstructionsTask = AsyncTaskWithLegacyInstructions(
+        []const u8,
+        LegacyInstructionsOptions,
+        cloneLegacyInstructionsOptions,
+        freeLegacyInstructionsOptions,
+        runSendAndConfirmLegacyInstructionsWithOptions,
+    );
+    pub const SimulateVersionedInstructionsTask = AsyncTaskWithVersionedInstructionsWithBuildAndSimOptions(
+        SimulatedTransaction,
+        VersionedInstructionsBuildOptions,
+        SimulateTransactionOptions,
+        cloneVersionedInstructionsBuildOptions,
+        freeVersionedInstructionsBuildOptions,
+        cloneSimulateTransactionOptions,
+        freeSimulateTransactionOptions,
+        runSimulateVersionedInstructionsWithOptions,
+    );
+    pub const SendVersionedInstructionsTask = AsyncTaskWithVersionedInstructions(
+        []const u8,
+        SendVersionedInstructionsOptions,
+        cloneSendVersionedInstructionsOptions,
+        freeSendVersionedInstructionsOptions,
+        runSendVersionedInstructionsWithOptions,
+    );
+    pub const SendAndConfirmVersionedInstructionsTask = AsyncTaskWithVersionedInstructions(
+        []const u8,
+        VersionedInstructionsOptions,
+        cloneVersionedInstructionsOptions,
+        freeVersionedInstructionsOptions,
+        runSendAndConfirmVersionedInstructionsWithOptions,
+    );
     pub const ConfirmTransactionTask = AsyncTaskWithStringAndCommitment(bool, runConfirmTransaction);
     pub const SendAndConfirmTransactionTask = AsyncTaskWithStringAndOptions([]const u8, SendTransactionOptions, runSendAndConfirmTransaction);
     pub const SendAndConfirmTransactionWithCommitmentTask = AsyncTaskWithStringAndCommitment(
@@ -4737,6 +4952,136 @@ pub const NonblockingRpcClient = struct {
             self.request_timeout_ms,
             self.confirm_transaction_initial_timeout_ms,
             signed_tx_base64,
+            options,
+        );
+    }
+
+    pub fn simulateLegacyInstructionsWithOptionsAsync(
+        self: *const NonblockingRpcClient,
+        payer: Pubkey,
+        instructions: []const Instruction,
+        signers: []const Keypair,
+        build_options: ?LegacyInstructionsBuildOptions,
+        simulate_options: ?SimulateTransactionOptions,
+    ) !*SimulateLegacyInstructionsTask {
+        return SimulateLegacyInstructionsTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            payer,
+            instructions,
+            signers,
+            build_options,
+            simulate_options,
+        );
+    }
+
+    pub fn sendLegacyInstructionsWithOptionsAsync(
+        self: *const NonblockingRpcClient,
+        payer: Pubkey,
+        instructions: []const Instruction,
+        signers: []const Keypair,
+        options: ?SendLegacyInstructionsOptions,
+    ) !*SendLegacyInstructionsTask {
+        return SendLegacyInstructionsTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            payer,
+            instructions,
+            signers,
+            options,
+        );
+    }
+
+    pub fn sendAndConfirmLegacyInstructionsWithOptionsAsync(
+        self: *const NonblockingRpcClient,
+        payer: Pubkey,
+        instructions: []const Instruction,
+        signers: []const Keypair,
+        options: ?LegacyInstructionsOptions,
+    ) !*SendAndConfirmLegacyInstructionsTask {
+        return SendAndConfirmLegacyInstructionsTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            payer,
+            instructions,
+            signers,
+            options,
+        );
+    }
+
+    pub fn simulateVersionedInstructionsWithOptionsAsync(
+        self: *const NonblockingRpcClient,
+        payer: Pubkey,
+        instructions: []const Instruction,
+        address_lookup_tables: []const AddressLookupTableAccount,
+        signers: []const Keypair,
+        build_options: ?VersionedInstructionsBuildOptions,
+        simulate_options: ?SimulateTransactionOptions,
+    ) !*SimulateVersionedInstructionsTask {
+        return SimulateVersionedInstructionsTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            payer,
+            instructions,
+            address_lookup_tables,
+            signers,
+            build_options,
+            simulate_options,
+        );
+    }
+
+    pub fn sendVersionedInstructionsWithOptionsAsync(
+        self: *const NonblockingRpcClient,
+        payer: Pubkey,
+        instructions: []const Instruction,
+        address_lookup_tables: []const AddressLookupTableAccount,
+        signers: []const Keypair,
+        options: ?SendVersionedInstructionsOptions,
+    ) !*SendVersionedInstructionsTask {
+        return SendVersionedInstructionsTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            payer,
+            instructions,
+            address_lookup_tables,
+            signers,
+            options,
+        );
+    }
+
+    pub fn sendAndConfirmVersionedInstructionsWithOptionsAsync(
+        self: *const NonblockingRpcClient,
+        payer: Pubkey,
+        instructions: []const Instruction,
+        address_lookup_tables: []const AddressLookupTableAccount,
+        signers: []const Keypair,
+        options: ?VersionedInstructionsOptions,
+    ) !*SendAndConfirmVersionedInstructionsTask {
+        return SendAndConfirmVersionedInstructionsTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            payer,
+            instructions,
+            address_lookup_tables,
+            signers,
             options,
         );
     }

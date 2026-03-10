@@ -1,9 +1,32 @@
 const std = @import("std");
+const Ed25519 = std.crypto.sign.Ed25519;
 const client = @import("solana_client_zig");
 
 pub const std_options = struct {
     pub const log_level = std.log.Level.err;
 };
+
+const test_recent_blockhash_base58 = "11111111111111111111111111111111";
+const simulated_transaction_response_body =
+    "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":321},\"value\":{\"accounts\":[{\"lamports\":99,\"owner\":\"Owner11111111111111111111111111111111\",\"executable\":false,\"rentEpoch\":7,\"space\":3,\"data\":[\"abc\",\"base64\"]}],\"err\":null,\"fee\":12,\"innerInstructions\":[{\"noop\":true}],\"logs\":[\"log-1\",\"log-2\"],\"loadedAccountsDataSize\":256,\"replacementBlockhash\":{\"blockhash\":\"replacement-blockhash\",\"lastValidBlockHeight\":999},\"returnData\":{\"programId\":\"Program11111111111111111111111111111111\",\"data\":[\"ZGF0YQ==\",\"base64\"]},\"unitsConsumed\":42}},\"id\":1}";
+
+fn makeDeterministicKeypair(seed_byte: u8) !client.Keypair {
+    const raw = try Ed25519.KeyPair.generateDeterministic(.{seed_byte} ** 32);
+    return try client.Keypair.fromSecretKeyBytes(raw.secret_key.toBytes());
+}
+
+fn makeDeterministicPubkey(seed_byte: u8) !client.Pubkey {
+    const raw = try Ed25519.KeyPair.generateDeterministic(.{seed_byte} ** 32);
+    return client.Pubkey.fromBytes(raw.public_key.toBytes());
+}
+
+fn makeTransferInstruction(
+    payer: client.Pubkey,
+    destination: client.Pubkey,
+    lamports: u64,
+) client.Instruction {
+    return client.SystemProgram.transfer(payer, destination, lamports).instruction();
+}
 
 fn runDelayedRootServer(
     listener: *std.net.Server,
@@ -2693,6 +2716,331 @@ test "root.NonblockingRpcClient simulateTransactionAsync returns owned simulatio
     try std.testing.expectEqual(@as(?[]const u8, "ZGF0YQ=="), simulation.return_data.?.data);
     try std.testing.expectEqual(@as(?[]const u8, "base64"), simulation.return_data.?.data_encoding);
     try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient simulateLegacyInstructionsWithOptionsAsync returns owned simulation result" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        "simulateTransaction",
+        "\"sigVerify\":true",
+        &matched,
+        simulated_transaction_response_body,
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const payer = try makeDeterministicKeypair(7);
+    const destination = try makeDeterministicPubkey(1);
+    const instructions = [_]client.Instruction{
+        makeTransferInstruction(payer.public_key, destination, 500),
+    };
+    const signers = [_]client.Keypair{payer};
+
+    const task = try rpc.simulateLegacyInstructionsWithOptionsAsync(
+        payer.public_key,
+        instructions[0..],
+        signers[0..],
+        .{ .recent_blockhash = test_recent_blockhash_base58 },
+        .{ .sig_verify = true },
+    );
+    try std.testing.expect(!task.isDone());
+
+    const simulation = try task.wait();
+    defer freeSimulatedTransaction(allocator, simulation);
+
+    try std.testing.expectEqual(@as(u64, 321), simulation.context_slot);
+    try std.testing.expectEqual(@as(u64, 12), simulation.fee.?);
+    try std.testing.expectEqual(@as(u64, 42), simulation.units_consumed.?);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient sendLegacyInstructionsWithOptionsAsync sends transaction and returns signature" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        "sendTransaction",
+        "\"skipPreflight\":true",
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":\"SigLegacyAsync111111111111111111111111111111111111\",\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const payer = try makeDeterministicKeypair(7);
+    const destination = try makeDeterministicPubkey(1);
+    const instructions = [_]client.Instruction{
+        makeTransferInstruction(payer.public_key, destination, 750),
+    };
+    const signers = [_]client.Keypair{payer};
+
+    const task = try rpc.sendLegacyInstructionsWithOptionsAsync(
+        payer.public_key,
+        instructions[0..],
+        signers[0..],
+        .{
+            .recent_blockhash = test_recent_blockhash_base58,
+            .send_transaction_options = .{
+                .skip_preflight = true,
+                .max_retries = 7,
+                .preflight_commitment = .finalized,
+                .min_context_slot = 42,
+            },
+        },
+    );
+    try std.testing.expect(!task.isDone());
+
+    const signature = try task.wait();
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings("SigLegacyAsync111111111111111111111111111111111111", signature);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient sendAndConfirmLegacyInstructionsWithOptionsAsync sends and waits for status" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = [_]bool{false, false};
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
+        &listener,
+        allocator,
+        200,
+        &.{ "\"skipPreflight\":true", "\"searchTransactionHistory\":true" },
+        &.{
+            "{\"jsonrpc\":\"2.0\",\"result\":\"SigLegacyConfirmAsync111111111111111111111111111111\",\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":[{\"slot\":44,\"confirmations\":3,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}",
+        },
+        &matched,
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const payer = try makeDeterministicKeypair(7);
+    const destination = try makeDeterministicPubkey(1);
+    const instructions = [_]client.Instruction{
+        makeTransferInstruction(payer.public_key, destination, 900),
+    };
+    const signers = [_]client.Keypair{payer};
+
+    const task = try rpc.sendAndConfirmLegacyInstructionsWithOptionsAsync(
+        payer.public_key,
+        instructions[0..],
+        signers[0..],
+        .{
+            .recent_blockhash = test_recent_blockhash_base58,
+            .send_transaction_options = .{
+                .skip_preflight = true,
+                .max_retries = 2,
+            },
+            .commitment = .confirmed,
+            .search_transaction_history = true,
+            .timeout_ms = 200,
+            .poll_interval_ms = 0,
+        },
+    );
+    try std.testing.expect(!task.isDone());
+
+    const signature = try task.wait();
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings("SigLegacyConfirmAsync111111111111111111111111111111", signature);
+    try std.testing.expect(matched[0]);
+    try std.testing.expect(matched[1]);
+}
+
+test "root.NonblockingRpcClient simulateVersionedInstructionsWithOptionsAsync returns owned simulation result" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        "simulateTransaction",
+        "\"sigVerify\":true",
+        &matched,
+        simulated_transaction_response_body,
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const payer = try makeDeterministicKeypair(7);
+    const destination = try makeDeterministicPubkey(1);
+    const instructions = [_]client.Instruction{
+        makeTransferInstruction(payer.public_key, destination, 1200),
+    };
+    const signers = [_]client.Keypair{payer};
+
+    const task = try rpc.simulateVersionedInstructionsWithOptionsAsync(
+        payer.public_key,
+        instructions[0..],
+        &.{},
+        signers[0..],
+        .{ .recent_blockhash = test_recent_blockhash_base58 },
+        .{ .sig_verify = true },
+    );
+    try std.testing.expect(!task.isDone());
+
+    const simulation = try task.wait();
+    defer freeSimulatedTransaction(allocator, simulation);
+
+    try std.testing.expectEqual(@as(u64, 321), simulation.context_slot);
+    try std.testing.expectEqual(@as(u64, 12), simulation.fee.?);
+    try std.testing.expectEqual(@as(u64, 42), simulation.units_consumed.?);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient sendVersionedInstructionsWithOptionsAsync sends transaction and returns signature" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        "sendTransaction",
+        "\"skipPreflight\":true",
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":\"SigVersionedAsync1111111111111111111111111111111111\",\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const payer = try makeDeterministicKeypair(7);
+    const destination = try makeDeterministicPubkey(1);
+    const instructions = [_]client.Instruction{
+        makeTransferInstruction(payer.public_key, destination, 1500),
+    };
+    const signers = [_]client.Keypair{payer};
+
+    const task = try rpc.sendVersionedInstructionsWithOptionsAsync(
+        payer.public_key,
+        instructions[0..],
+        &.{},
+        signers[0..],
+        .{
+            .recent_blockhash = test_recent_blockhash_base58,
+            .send_transaction_options = .{
+                .skip_preflight = true,
+                .max_retries = 3,
+            },
+        },
+    );
+    try std.testing.expect(!task.isDone());
+
+    const signature = try task.wait();
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings("SigVersionedAsync1111111111111111111111111111111111", signature);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient sendAndConfirmVersionedInstructionsWithOptionsAsync sends and waits for status" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = [_]bool{false, false};
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
+        &listener,
+        allocator,
+        200,
+        &.{ "\"skipPreflight\":true", "\"searchTransactionHistory\":true" },
+        &.{
+            "{\"jsonrpc\":\"2.0\",\"result\":\"SigVersionedConfirmAsync1111111111111111111111111111\",\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":[{\"slot\":44,\"confirmations\":9,\"confirmationStatus\":\"finalized\",\"err\":null}]},\"id\":1}",
+        },
+        &matched,
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const payer = try makeDeterministicKeypair(7);
+    const destination = try makeDeterministicPubkey(1);
+    const instructions = [_]client.Instruction{
+        makeTransferInstruction(payer.public_key, destination, 1800),
+    };
+    const signers = [_]client.Keypair{payer};
+
+    const task = try rpc.sendAndConfirmVersionedInstructionsWithOptionsAsync(
+        payer.public_key,
+        instructions[0..],
+        &.{},
+        signers[0..],
+        .{
+            .recent_blockhash = test_recent_blockhash_base58,
+            .send_transaction_options = .{
+                .skip_preflight = true,
+                .max_retries = 1,
+            },
+            .commitment = .finalized,
+            .search_transaction_history = true,
+            .timeout_ms = 200,
+            .poll_interval_ms = 0,
+        },
+    );
+    try std.testing.expect(!task.isDone());
+
+    const signature = try task.wait();
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings("SigVersionedConfirmAsync1111111111111111111111111111", signature);
+    try std.testing.expect(matched[0]);
+    try std.testing.expect(matched[1]);
 }
 
 test "root.NonblockingRpcClient getSignatureStatusAsync returns parsed status" {
