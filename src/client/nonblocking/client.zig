@@ -5,6 +5,7 @@ const rpc_types = @import("../rpc_types.zig");
 
 const Allocator = std.mem.Allocator;
 const BalanceResponse = rpc_types.BalanceResponse;
+const ClusterNode = rpc_types.ClusterNode;
 const Commitment = rpc_types.Commitment;
 const EpochSchedule = rpc_types.EpochSchedule;
 const EpochInfo = rpc_types.EpochInfo;
@@ -13,6 +14,8 @@ const InflationRate = rpc_types.InflationRate;
 const LatestBlockhash = rpc_types.LatestBlockhash;
 const LatestBlockhashResponse = rpc_types.LatestBlockhashResponse;
 const SnapshotSlots = rpc_types.SnapshotSlots;
+const Supply = rpc_types.Supply;
+const VoteAccounts = rpc_types.VoteAccounts;
 
 fn runGetSlot(
     allocator: Allocator,
@@ -198,6 +201,26 @@ fn runGetBalance(
     );
     defer client.deinit();
     return try client.getBalanceResponse("Balance111111111111111111111111111111111111", commitment);
+}
+
+fn runGetSupply(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !Supply {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getSupply(commitment);
 }
 
 fn runGetEpochInfo(
@@ -479,6 +502,50 @@ fn runGetIdentity(
     return try client.getIdentity();
 }
 
+fn runGetClusterNodes(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) ![]ClusterNode {
+    _ = commitment;
+
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getClusterNodes();
+}
+
+fn runGetVoteAccounts(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !VoteAccounts {
+    _ = commitment;
+
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getVoteAccounts();
+}
+
 fn runGetVersion(
     allocator: Allocator,
     endpoint: []const u8,
@@ -657,6 +724,7 @@ pub const NonblockingRpcClient = struct {
     pub const MaxRetransmitSlotTask = AsyncTask(u64, runGetMaxRetransmitSlot);
     pub const MaxShredInsertSlotTask = AsyncTask(u64, runGetMaxShredInsertSlot);
     pub const BalanceTask = AsyncTask(BalanceResponse, runGetBalance);
+    pub const SupplyTask = AsyncTask(Supply, runGetSupply);
     pub const EpochInfoTask = AsyncTask(EpochInfo, runGetEpochInfo);
     pub const EpochScheduleTask = AsyncTask(EpochSchedule, runGetEpochSchedule);
     pub const FeatureActivationSlotTask = AsyncTask(?u64, runGetFeatureActivationSlot);
@@ -670,6 +738,8 @@ pub const NonblockingRpcClient = struct {
     pub const SlotLeaderTask = AsyncTask([]const u8, runGetSlotLeader);
     pub const HealthTask = AsyncTask([]const u8, runGetHealth);
     pub const IdentityTask = AsyncTask([]const u8, runGetIdentity);
+    pub const ClusterNodesTask = AsyncTask([]ClusterNode, runGetClusterNodes);
+    pub const VoteAccountsTask = AsyncTask(VoteAccounts, runGetVoteAccounts);
     pub const VersionTask = AsyncTask([]const u8, runGetVersion);
     pub const GenesisHashTask = AsyncTask([]const u8, runGetGenesisHash);
 
@@ -888,6 +958,17 @@ pub const NonblockingRpcClient = struct {
         );
     }
 
+    pub fn getSupplyAsync(self: *const NonblockingRpcClient, commitment: ?Commitment) !*SupplyTask {
+        return SupplyTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
     pub fn getEpochInfoAsync(self: *const NonblockingRpcClient, commitment: ?Commitment) !*EpochInfoTask {
         return EpochInfoTask.start(
             self.allocator,
@@ -1028,6 +1109,28 @@ pub const NonblockingRpcClient = struct {
 
     pub fn getIdentityAsync(self: *const NonblockingRpcClient) !*IdentityTask {
         return IdentityTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            null,
+        );
+    }
+
+    pub fn getClusterNodesAsync(self: *const NonblockingRpcClient) !*ClusterNodesTask {
+        return ClusterNodesTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            null,
+        );
+    }
+
+    pub fn getVoteAccountsAsync(self: *const NonblockingRpcClient) !*VoteAccountsTask {
+        return VoteAccountsTask.start(
             self.allocator,
             self.endpoint,
             self.default_commitment,

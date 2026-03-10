@@ -42,6 +42,40 @@ fn createListener() !std.net.Server {
     return server_listener;
 }
 
+fn freeSupply(allocator: std.mem.Allocator, supply: client.Supply) void {
+    if (supply.non_circulating_accounts) |accounts| {
+        for (accounts) |account| allocator.free(account);
+        allocator.free(accounts);
+    }
+}
+
+fn freeClusterNodes(allocator: std.mem.Allocator, nodes: []client.ClusterNode) void {
+    for (nodes) |node| {
+        if (node.gossip) |value| allocator.free(value);
+        allocator.free(node.pubkey);
+        if (node.rpc) |value| allocator.free(value);
+        if (node.tpu) |value| allocator.free(value);
+        if (node.version) |value| allocator.free(value);
+    }
+    allocator.free(nodes);
+}
+
+fn freeVoteAccounts(allocator: std.mem.Allocator, vote_accounts: client.VoteAccounts) void {
+    for (vote_accounts.current) |account| {
+        allocator.free(account.vote_pubkey);
+        allocator.free(account.node_pubkey);
+        if (account.epoch_credits) |credits| allocator.free(credits);
+    }
+    allocator.free(vote_accounts.current);
+
+    for (vote_accounts.delinquent) |account| {
+        allocator.free(account.vote_pubkey);
+        allocator.free(account.node_pubkey);
+        if (account.epoch_credits) |credits| allocator.free(credits);
+    }
+    allocator.free(vote_accounts.delinquent);
+}
+
 test "root.NonblockingRpcClient constructors initialize endpoint and options" {
     const allocator = std.testing.allocator;
     const endpoint = "http://127.0.0.1:8899";
@@ -208,6 +242,39 @@ test "root.NonblockingRpcClient getBalanceAsync returns waitable balance respons
     const balance = try task.wait();
     try std.testing.expectEqual(@as(u64, 55), balance.context_slot);
     try std.testing.expectEqual(@as(u64, 444), balance.value);
+}
+
+test "root.NonblockingRpcClient getSupplyAsync returns waitable supply" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":99},\"value\":{\"total\":1000,\"circulating\":700,\"nonCirculating\":300,\"nonCirculatingAccounts\":[\"SupplyAcct1111111111111111111111111111111\",\"SupplyAcct2222222222222222222222222222222\"]}},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getSupplyAsync(.confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const supply = try task.wait();
+    defer freeSupply(allocator, supply);
+
+    try std.testing.expectEqual(@as(u64, 1000), supply.total);
+    try std.testing.expectEqual(@as(u64, 700), supply.circulating);
+    try std.testing.expectEqual(@as(u64, 300), supply.non_circulating);
+    try std.testing.expectEqual(@as(usize, 2), supply.non_circulating_accounts.?.len);
+    try std.testing.expectEqualStrings("SupplyAcct1111111111111111111111111111111", supply.non_circulating_accounts.?[0]);
 }
 
 test "root.NonblockingRpcClient getBlockTimeAsync returns waitable block time" {
@@ -601,6 +668,80 @@ test "root.NonblockingRpcClient getIdentityAsync returns owned identity string" 
     const identity = try task.wait();
     defer allocator.free(identity);
     try std.testing.expectEqualStrings("Identity1111111111111111111111111111111111", identity);
+}
+
+test "root.NonblockingRpcClient getClusterNodesAsync returns waitable cluster nodes" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":[{\"featureSet\":1,\"gossip\":\"127.0.0.1:1234\",\"pubkey\":\"Node1111111111111111111111111111111111111\",\"rpc\":\"127.0.0.1:8899\",\"shredVersion\":2,\"tpu\":\"127.0.0.1:9000\",\"version\":\"1.18.0\"}],\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getClusterNodesAsync();
+    try std.testing.expect(!task.isDone());
+
+    const cluster_nodes = try task.wait();
+    defer freeClusterNodes(allocator, cluster_nodes);
+
+    try std.testing.expectEqual(@as(usize, 1), cluster_nodes.len);
+    try std.testing.expectEqual(@as(u64, 1), cluster_nodes[0].feature_set);
+    try std.testing.expectEqualStrings("Node1111111111111111111111111111111111111", cluster_nodes[0].pubkey);
+    try std.testing.expectEqualStrings("127.0.0.1:1234", cluster_nodes[0].gossip.?);
+    try std.testing.expectEqualStrings("127.0.0.1:8899", cluster_nodes[0].rpc.?);
+    try std.testing.expectEqualStrings("127.0.0.1:9000", cluster_nodes[0].tpu.?);
+    try std.testing.expectEqualStrings("1.18.0", cluster_nodes[0].version.?);
+}
+
+test "root.NonblockingRpcClient getVoteAccountsAsync returns waitable vote accounts" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"current\":[{\"votePubkey\":\"Vote1111111111111111111111111111111111111\",\"nodePubkey\":\"NodeVote1111111111111111111111111111111111\",\"activatedStake\":123,\"commission\":5,\"epochCredits\":[[1,2,3]],\"lastVote\":9,\"epochVoteAccount\":true,\"rootSlot\":7}],\"delinquent\":[{\"votePubkey\":\"Vote2222222222222222222222222222222222222\",\"nodePubkey\":\"NodeVote2222222222222222222222222222222222\",\"activatedStake\":456,\"commission\":8,\"epochCredits\":null,\"lastVote\":11,\"epochVoteAccount\":false,\"rootSlot\":null}]},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getVoteAccountsAsync();
+    try std.testing.expect(!task.isDone());
+
+    const vote_accounts = try task.wait();
+    defer freeVoteAccounts(allocator, vote_accounts);
+
+    try std.testing.expectEqual(@as(usize, 1), vote_accounts.current.len);
+    try std.testing.expectEqual(@as(usize, 1), vote_accounts.delinquent.len);
+    try std.testing.expectEqualStrings("Vote1111111111111111111111111111111111111", vote_accounts.current[0].vote_pubkey);
+    try std.testing.expectEqual(@as(u64, 123), vote_accounts.current[0].activated_stake);
+    try std.testing.expect(vote_accounts.current[0].epoch_vote_account);
+    try std.testing.expectEqual(@as(usize, 1), vote_accounts.current[0].epoch_credits.?.len);
+    try std.testing.expectEqual(@as(u64, 1), vote_accounts.current[0].epoch_credits.?[0].epoch);
+    try std.testing.expectEqualStrings("Vote2222222222222222222222222222222222222", vote_accounts.delinquent[0].vote_pubkey);
+    try std.testing.expectEqual(@as(u64, 456), vote_accounts.delinquent[0].activated_stake);
+    try std.testing.expect(!vote_accounts.delinquent[0].epoch_vote_account);
+    try std.testing.expect(vote_accounts.delinquent[0].epoch_credits == null);
 }
 
 test "root.NonblockingRpcClient getHighestSnapshotSlotAsync returns waitable snapshot slots" {
