@@ -62,7 +62,7 @@ fn runDelayedRootServerAndCheckBodyContains(
     matched: *bool,
     response_body: []const u8,
 ) void {
-    var connection = listener.accept() catch return;
+    var connection = acceptWithTimeout(listener, 2_000) orelse return;
     defer connection.stream.close();
 
     var receive_buffer: [4096]u8 = undefined;
@@ -93,7 +93,7 @@ fn runDelayedRootServerAndCheckBodyContainsBoth(
     matched: *bool,
     response_body: []const u8,
 ) void {
-    var connection = listener.accept() catch return;
+    var connection = acceptWithTimeout(listener, 2_000) orelse return;
     defer connection.stream.close();
 
     var receive_buffer: [4096]u8 = undefined;
@@ -122,11 +122,11 @@ fn runDelayedRootServerWithResponsePlan(
     delay_ms: u64,
     expected_fragments: []const []const u8,
     response_bodies: []const []const u8,
-    matched: []bool,
+    matched: anytype,
 ) void {
     var index: usize = 0;
-    while (index < response_bodies.len) : (index += 1) {
-        var connection = listener.accept() catch return;
+    while (index < response_bodies.len) {
+        var connection = acceptWithTimeout(listener, 2_000) orelse return;
         defer connection.stream.close();
 
         var receive_buffer: [4096]u8 = undefined;
@@ -136,19 +136,49 @@ fn runDelayedRootServerWithResponsePlan(
         var connection_writer = connection.stream.writer(&send_buffer);
         var http_server = std.http.Server.init(connection_reader.interface(), &connection_writer.interface);
 
-        var request = http_server.receiveHead() catch return;
-        const body_length = request.head.content_length orelse 0;
-        const request_body_reader = request.readerExpectNone(&request_body_buffer);
-        const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
-        defer allocator.free(request_body);
+        while (index < response_bodies.len) {
+            var request = http_server.receiveHead() catch break;
+            const body_length = request.head.content_length orelse 0;
+            const request_body_reader = request.readerExpectNone(&request_body_buffer);
+            const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch break;
+            defer allocator.free(request_body);
 
-        if (index < expected_fragments.len) {
-            matched[index] = std.mem.indexOf(u8, request_body, expected_fragments[index]) != null;
+            if (index < expected_fragments.len) {
+                const did_match = std.mem.indexOf(u8, request_body, expected_fragments[index]) != null;
+                switch (@typeInfo(@TypeOf(matched))) {
+                    .pointer => |pointer| switch (pointer.size) {
+                        .one => {
+                            if (pointer.child == bool) {
+                                matched.* = did_match;
+                            } else switch (@typeInfo(pointer.child)) {
+                                .array => matched.*[index] = did_match,
+                                else => @compileError("unsupported matched pointer child type"),
+                            }
+                        },
+                        .slice => matched[index] = did_match,
+                        else => @compileError("unsupported matched pointer type"),
+                    },
+                    else => @compileError("unsupported matched type"),
+                }
+            }
+
+            std.Thread.sleep(delay_ms * std.time.ns_per_ms);
+            request.respond(response_bodies[index], .{}) catch return;
+            index += 1;
         }
-
-        std.Thread.sleep(delay_ms * std.time.ns_per_ms);
-        request.respond(response_bodies[index], .{}) catch return;
     }
+}
+
+fn acceptWithTimeout(listener: *std.net.Server, timeout_ms: i32) ?std.net.Server.Connection {
+    var poll_fds = [_]std.posix.pollfd{.{
+        .fd = listener.stream.handle,
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    }};
+    const ready = std.posix.poll(&poll_fds, timeout_ms) catch return null;
+    if (ready == 0) return null;
+    if (poll_fds[0].revents & std.posix.POLL.IN == 0) return null;
+    return listener.accept() catch null;
 }
 
 fn createListener() !std.net.Server {
@@ -2525,8 +2555,8 @@ test "root.NonblockingRpcClient confirmTransactionAsync confirms signature statu
         &listener,
         allocator,
         200,
-        &.{ "Sig111111111111111111111111111111111111" },
-        &.{"{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":33},\"value\":[{\"slot\":33,\"confirmations\":3,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}"},
+        &.{"Sig111111111111111111111111111111111111"},
+        &.{"{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":33},\"value\":[{\"slot\":33,\"confirmations\":3,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}"},
         &matched,
     });
     defer server_thread.join();
@@ -2551,7 +2581,7 @@ test "root.NonblockingRpcClient sendAndConfirmTransactionAsync sends and waits f
     const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
     defer allocator.free(endpoint);
 
-    var matched = [_]bool{false, false};
+    var matched = [_]bool{ false, false };
     var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
         &listener,
         allocator,
@@ -2559,7 +2589,7 @@ test "root.NonblockingRpcClient sendAndConfirmTransactionAsync sends and waits f
         &.{ "sendTransaction", "\"getSignatureStatuses\"" },
         &.{
             "{\"jsonrpc\":\"2.0\",\"result\":\"Sig111111111111111111111111111111111111\",\"id\":1}",
-            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":[{\"slot\":44,\"confirmations\":3,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":[{\"slot\":44,\"confirmations\":3,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}",
         },
         &matched,
     });
@@ -2594,7 +2624,7 @@ test "root.NonblockingRpcClient sendAndConfirmTransactionWithCommitmentAsync con
     const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
     defer allocator.free(endpoint);
 
-    var matched = [_]bool{false, false};
+    var matched = [_]bool{ false, false };
     var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
         &listener,
         allocator,
@@ -2602,7 +2632,7 @@ test "root.NonblockingRpcClient sendAndConfirmTransactionWithCommitmentAsync con
         &.{ "sendTransaction", "\"commitment\":\"confirmed\"" },
         &.{
             "{\"jsonrpc\":\"2.0\",\"result\":\"Sig111111111111111111111111111111111111\",\"id\":1}",
-            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":[{\"slot\":44,\"confirmations\":3,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":[{\"slot\":44,\"confirmations\":3,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}",
         },
         &matched,
     });
@@ -2633,7 +2663,7 @@ test "root.NonblockingRpcClient sendAndConfirmTransactionWithCommitmentAndConfig
     const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
     defer allocator.free(endpoint);
 
-    var matched = [_]bool{false, false};
+    var matched = [_]bool{ false, false };
     var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
         &listener,
         allocator,
@@ -2641,7 +2671,7 @@ test "root.NonblockingRpcClient sendAndConfirmTransactionWithCommitmentAndConfig
         &.{ "\"skipPreflight\":true", "\"commitment\":\"finalized\"" },
         &.{
             "{\"jsonrpc\":\"2.0\",\"result\":\"Sig111111111111111111111111111111111111\",\"id\":1}",
-            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":[{\"slot\":44,\"confirmations\":9,\"confirmationStatus\":\"finalized\",\"err\":null}],\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":[{\"slot\":44,\"confirmations\":9,\"confirmationStatus\":\"finalized\",\"err\":null}]},\"id\":1}",
         },
         &matched,
     });
@@ -2713,8 +2743,8 @@ test "root.NonblockingRpcClient simulateTransactionAsync returns owned simulatio
     try std.testing.expectEqualStrings("replacement-blockhash", simulation.replacement_blockhash.?.blockhash);
     try std.testing.expectEqual(@as(u64, 999), simulation.replacement_blockhash.?.last_valid_block_height);
     try std.testing.expectEqualStrings("Program11111111111111111111111111111111", simulation.return_data.?.program_id);
-    try std.testing.expectEqual(@as(?[]const u8, "ZGF0YQ=="), simulation.return_data.?.data);
-    try std.testing.expectEqual(@as(?[]const u8, "base64"), simulation.return_data.?.data_encoding);
+    try std.testing.expectEqualStrings("ZGF0YQ==", simulation.return_data.?.data.?);
+    try std.testing.expectEqualStrings("base64", simulation.return_data.?.data_encoding.?);
     try std.testing.expect(matched);
 }
 
@@ -2830,7 +2860,7 @@ test "root.NonblockingRpcClient sendAndConfirmLegacyInstructionsWithOptionsAsync
     const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
     defer allocator.free(endpoint);
 
-    var matched = [_]bool{false, false};
+    var matched = [_]bool{ false, false };
     var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
         &listener,
         allocator,
@@ -2992,7 +3022,7 @@ test "root.NonblockingRpcClient sendAndConfirmVersionedInstructionsWithOptionsAs
     const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
     defer allocator.free(endpoint);
 
-    var matched = [_]bool{false, false};
+    var matched = [_]bool{ false, false };
     var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
         &listener,
         allocator,
@@ -3060,7 +3090,7 @@ test "root.NonblockingRpcClient getSignatureStatusAsync returns parsed status" {
         "getSignatureStatuses",
         "SigStatus111111111111111111111111111111111111",
         &matched,
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":55},\"value\":[{\"slot\":55,\"confirmations\":9,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":55},\"value\":[{\"slot\":55,\"confirmations\":9,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}",
     });
     defer server_thread.join();
 
@@ -3097,7 +3127,7 @@ test "root.NonblockingRpcClient getSignatureStatusesAsync returns optional statu
         "\"Sig1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111\"",
         "\"commitment\":\"finalized\"",
         &matched,
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":66},\"value\":[{\"slot\":11,\"confirmations\":4,\"confirmationStatus\":\"confirmed\",\"err\":null},{\"slot\":12,\"confirmations\":null,\"confirmationStatus\":\"processed\",\"err\":{\"code\":1}}],\"id\":1}",
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":66},\"value\":[{\"slot\":11,\"confirmations\":4,\"confirmationStatus\":\"confirmed\",\"err\":null},{\"slot\":12,\"confirmations\":null,\"confirmationStatus\":\"processed\",\"err\":{\"code\":1}}]},\"id\":1}",
     });
     defer server_thread.join();
 
@@ -3195,8 +3225,8 @@ test "root.NonblockingRpcClient pollForSignatureAsync returns once signature obs
         &listener,
         allocator,
         200,
-        &.{ "SigPoll111111111111111111111111111111111111" },
-        &.{"{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":33},\"value\":[{\"slot\":33,\"confirmations\":null,\"confirmationStatus\":\"processed\",\"err\":null}],\"id\":1}"},
+        &.{"SigPoll111111111111111111111111111111111111"},
+        &.{"{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":33},\"value\":[{\"slot\":33,\"confirmations\":null,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":1}"},
         &matched,
     });
     defer server_thread.join();
@@ -3224,7 +3254,7 @@ test "root.NonblockingRpcClient pollForSignatureConfirmationAsync waits for mini
     const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
     defer allocator.free(endpoint);
 
-    var matched = [_]bool{false, false, false};
+    var matched = [_]bool{ false, false, false };
     var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
         &listener,
         allocator,
@@ -3235,9 +3265,9 @@ test "root.NonblockingRpcClient pollForSignatureConfirmationAsync waits for mini
             "SigPoll111111111111111111111111111111111111",
         },
         &.{
-            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":11},\"value\":[{\"slot\":11,\"confirmations\":2,\"confirmationStatus\":\"processed\",\"err\":null}],\"id\":1}",
-            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":[{\"slot\":12,\"confirmations\":5,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
-            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":13},\"value\":[{\"slot\":13,\"confirmations\":10,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":11},\"value\":[{\"slot\":11,\"confirmations\":2,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":12},\"value\":[{\"slot\":12,\"confirmations\":5,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":13},\"value\":[{\"slot\":13,\"confirmations\":10,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}",
         },
         &matched,
     });
@@ -3278,7 +3308,7 @@ test "root.NonblockingRpcClient pollForSignatureConfirmationWithTimeoutsAsync re
             "SigPoll111111111111111111111111111111111111",
         },
         &.{
-            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":21},\"value\":[{\"slot\":21,\"confirmations\":3,\"confirmationStatus\":\"processed\",\"err\":null}],\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":21},\"value\":[{\"slot\":21,\"confirmations\":3,\"confirmationStatus\":\"processed\",\"err\":null}]},\"id\":1}",
         },
         &matched,
     });
@@ -3310,7 +3340,7 @@ test "root.NonblockingRpcClient pollForSignatureConfirmationWithCommitmentAndTim
     const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
     defer allocator.free(endpoint);
 
-    var matched = [_]bool{false, false};
+    var matched = [_]bool{ false, false };
     var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
         &listener,
         allocator,
@@ -3320,8 +3350,8 @@ test "root.NonblockingRpcClient pollForSignatureConfirmationWithCommitmentAndTim
             "\"commitment\":\"finalized\"",
         },
         &.{
-            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":31},\"value\":[{\"slot\":31,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
-            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":32},\"value\":[{\"slot\":32,\"confirmations\":10,\"confirmationStatus\":\"finalized\",\"err\":null}],\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":31},\"value\":[{\"slot\":31,\"confirmations\":2,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":32},\"value\":[{\"slot\":32,\"confirmations\":10,\"confirmationStatus\":\"finalized\",\"err\":null}]},\"id\":1}",
         },
         &matched,
     });
@@ -3362,7 +3392,7 @@ test "root.NonblockingRpcClient getNumBlocksSinceSignatureConfirmationAsync retu
         200,
         "SigPoll111111111111111111111111111111111111",
         &matched,
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":31},\"value\":[{\"slot\":31,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":31},\"value\":[{\"slot\":31,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}",
     });
     defer server_thread.join();
 
@@ -3397,7 +3427,7 @@ test "root.NonblockingRpcClient getNumBlocksSinceSignatureConfirmationWithCommit
         "SigPoll111111111111111111111111111111111111",
         "\"commitment\":\"confirmed\"",
         &matched,
-        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":33},\"value\":[{\"slot\":33,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":33},\"value\":[{\"slot\":33,\"confirmationStatus\":\"confirmed\",\"err\":null}]},\"id\":1}",
     });
     defer server_thread.join();
 

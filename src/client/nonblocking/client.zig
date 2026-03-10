@@ -1701,7 +1701,7 @@ fn runSendAndConfirmTransaction(
         confirm_transaction_initial_timeout_ms,
     );
     defer client.deinit();
-    return try client.sendAndConfirmTransaction(signed_tx_base64, options);
+    return try client.sendAndConfirmTransactionWithConfig(signed_tx_base64, options);
 }
 
 fn runSendAndConfirmTransactionWithCommitment(
@@ -1711,7 +1711,7 @@ fn runSendAndConfirmTransactionWithCommitment(
     request_timeout_ms: ?u64,
     confirm_transaction_initial_timeout_ms: ?u64,
     signed_tx_base64: []const u8,
-    commitment: Commitment,
+    commitment: ?Commitment,
 ) ![]const u8 {
     var client = try lifecycle_methods.initClient(
         rpc_client.RpcClient,
@@ -1722,7 +1722,10 @@ fn runSendAndConfirmTransactionWithCommitment(
         confirm_transaction_initial_timeout_ms,
     );
     defer client.deinit();
-    return try client.sendAndConfirmTransactionWithCommitment(signed_tx_base64, commitment);
+    if (commitment) |resolved_commitment| {
+        return try client.sendAndConfirmTransactionWithCommitment(signed_tx_base64, resolved_commitment);
+    }
+    return try client.sendAndConfirmTransaction(signed_tx_base64);
 }
 
 fn runSendAndConfirmTransactionWithConfig(
@@ -2029,6 +2032,7 @@ fn runGetNumBlocksSinceSignatureConfirmation(
     request_timeout_ms: ?u64,
     confirm_transaction_initial_timeout_ms: ?u64,
     signature: []const u8,
+    commitment: ?Commitment,
     search_transaction_history: bool,
 ) !u64 {
     var client = try lifecycle_methods.initClient(
@@ -2040,7 +2044,7 @@ fn runGetNumBlocksSinceSignatureConfirmation(
         confirm_transaction_initial_timeout_ms,
     );
     defer client.deinit();
-    return try client.getNumBlocksSinceSignatureConfirmation(signature, search_transaction_history);
+    return try client.getNumBlocksSinceSignatureConfirmationWithCommitment(signature, commitment, search_transaction_history);
 }
 
 fn runGetNumBlocksSinceSignatureConfirmationWithCommitment(
@@ -3796,7 +3800,7 @@ fn AsyncTaskWithLegacyInstructionsWithBuildAndSimOptions(
             build_options: ?BuildOptionsType,
             simulate_options: ?SimulateOptionsType,
         ) !*Self {
-            const owned_instructions = try cloneInstructions(allocator, instructions);
+            var owned_instructions = try cloneInstructions(allocator, instructions);
             errdefer owned_instructions.deinit(allocator);
 
             const cloned_signers = try cloneSigners(allocator, signers);
@@ -3945,7 +3949,7 @@ fn AsyncTaskWithLegacyInstructions(
             signers: []const Keypair,
             options: ?OptionsType,
         ) !*Self {
-            const owned_instructions = try cloneInstructions(allocator, instructions);
+            var owned_instructions = try cloneInstructions(allocator, instructions);
             errdefer owned_instructions.deinit(allocator);
 
             const cloned_signers = try cloneSigners(allocator, signers);
@@ -4094,7 +4098,7 @@ fn AsyncTaskWithVersionedInstructionsWithBuildAndSimOptions(
             build_options: ?BuildOptionsType,
             simulate_options: ?SimulateOptionsType,
         ) !*Self {
-            const owned_instructions = try cloneInstructions(allocator, instructions);
+            var owned_instructions = try cloneInstructions(allocator, instructions);
             errdefer owned_instructions.deinit(allocator);
 
             const cloned_signers = try cloneSigners(allocator, signers);
@@ -4255,7 +4259,7 @@ fn AsyncTaskWithVersionedInstructions(
             signers: []const Keypair,
             options: ?OptionsType,
         ) !*Self {
-            const owned_instructions = try cloneInstructions(allocator, instructions);
+            var owned_instructions = try cloneInstructions(allocator, instructions);
             errdefer owned_instructions.deinit(allocator);
 
             const cloned_signers = try cloneSigners(allocator, signers);

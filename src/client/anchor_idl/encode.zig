@@ -147,14 +147,14 @@ fn encodeArgValue(
                     const element_type = items.items[0];
                     const len_value = items.items[1];
                     if (len_value != .integer or len_value.integer < 0) return error.InvalidAnchorIdlArgValue;
-                    const len = @intCast(len_value.integer);
+                    const len: usize = @intCast(len_value.integer);
                     break :blk .{ element_type, len };
                 },
                 .object => |object_value| blk: {
                     const element_type = object_value.get("type") orelse return error.UnsupportedAnchorIdlType;
                     const len_value = object_value.get("len") orelse return error.UnsupportedAnchorIdlType;
                     if (len_value != .integer or len_value.integer < 0) return error.InvalidAnchorIdlArgValue;
-                    break :blk .{ element_type, @intCast(len_value.integer) };
+                    break :blk .{ element_type, @as(usize, @intCast(len_value.integer)) };
                 },
                 else => return error.UnsupportedAnchorIdlType,
             };

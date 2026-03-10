@@ -19,7 +19,6 @@ const command_test_support = if (builtin.is_test) @import("command_test_support"
     pub fn commandCapturedRequestAt(_: *const SenderType, _: usize) []const u8 {
         unreachable;
     }
-
 };
 const mock_sender_assertions = if (builtin.is_test) @import("mock_sender_assertions") else struct {
     pub fn expectMockSenderLastCapturedRequestMethod(_: *const client.MockSender, _: []const u8) !void {
@@ -281,7 +280,7 @@ fn encodeAnchorPdaArgSeed(
     var arg_type: ?std.json.Value = null;
     for (instruction.args) |arg| {
         if (std.mem.eql(u8, arg.name, path)) {
-            arg_type = arg.@"type";
+            arg_type = arg.type;
             break;
         }
     }
@@ -898,7 +897,9 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
         const signer_paths_source = loadInstructionSpecSource(allocator, value) catch return error.InvalidCli;
         defer allocator.free(signer_paths_source);
 
-        parsed_signer_keypair_paths = std.json.parseFromSlice([]const []const u8, allocator, signer_paths_source, .{}) catch return error.InvalidCli;
+        parsed_signer_keypair_paths = std.json.parseFromSlice([]const []const u8, allocator, signer_paths_source, .{
+            .allocate = .alloc_always,
+        }) catch return error.InvalidCli;
     }
 
     var parsed_lookup_tables: ?std.json.Parsed([]CliAddressLookupTableSpec) = null;
@@ -909,6 +910,7 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
         defer allocator.free(lookup_tables_source);
 
         parsed_lookup_tables = std.json.parseFromSlice([]CliAddressLookupTableSpec, allocator, lookup_tables_source, .{
+            .allocate = .alloc_always,
             .ignore_unknown_fields = true,
         }) catch return error.InvalidCli;
     }
@@ -988,10 +990,11 @@ const LoadedCliInstructionSpec = struct {
     signers: []client.Keypair,
     owned_instructions: client.OwnedInstructions,
     address_lookup_tables: []client.AddressLookupTableAccount,
+    address_lookup_table_count: usize = 0,
 
     fn deinit(self: *LoadedCliInstructionSpec, allocator: Allocator) void {
         if (self.nonce_account) |value| allocator.free(value);
-        for (self.address_lookup_tables) |table| {
+        for (self.address_lookup_tables[0..self.address_lookup_table_count]) |table| {
             allocator.free(table.addresses);
         }
         allocator.free(self.address_lookup_tables);
@@ -1178,6 +1181,7 @@ fn loadCliInstructionSpec(
         .signers = &.{},
         .owned_instructions = .{ .instructions = &.{} },
         .address_lookup_tables = &.{},
+        .address_lookup_table_count = 0,
     };
     errdefer loaded.deinit(allocator);
 
@@ -1244,7 +1248,6 @@ fn loadCliInstructionSpec(
 
     loaded.owned_instructions = .{ .instructions = instructions };
     loaded.address_lookup_tables = try allocator.alloc(client.AddressLookupTableAccount, spec.address_lookup_tables.len);
-    errdefer allocator.free(loaded.address_lookup_tables);
     for (spec.address_lookup_tables, 0..) |table_spec, index| {
         const addresses = try allocator.alloc(client.Pubkey, table_spec.addresses.len);
         errdefer allocator.free(addresses);
@@ -1255,6 +1258,7 @@ fn loadCliInstructionSpec(
             .account_key = try client.Pubkey.fromBase58(allocator, table_spec.account_key),
             .addresses = addresses,
         };
+        loaded.address_lookup_table_count = index + 1;
     }
     return loaded;
 }
@@ -1295,7 +1299,9 @@ fn loadProgramInvokeInstructionSpec(
         const signer_paths_source = loadInstructionSpecSource(allocator, value) catch return error.InvalidCli;
         defer allocator.free(signer_paths_source);
 
-        parsed_signer_keypair_paths = std.json.parseFromSlice([]const []const u8, allocator, signer_paths_source, .{}) catch return error.InvalidCli;
+        parsed_signer_keypair_paths = std.json.parseFromSlice([]const []const u8, allocator, signer_paths_source, .{
+            .allocate = .alloc_always,
+        }) catch return error.InvalidCli;
     }
 
     var parsed_lookup_tables: ?std.json.Parsed([]CliAddressLookupTableSpec) = null;
@@ -1306,6 +1312,7 @@ fn loadProgramInvokeInstructionSpec(
         defer allocator.free(lookup_tables_source);
 
         parsed_lookup_tables = std.json.parseFromSlice([]CliAddressLookupTableSpec, allocator, lookup_tables_source, .{
+            .allocate = .alloc_always,
             .ignore_unknown_fields = true,
         }) catch return error.InvalidCli;
     }
@@ -7953,7 +7960,7 @@ test "runCommand simulate-instructions builds and simulates generic instruction 
     const spec_json = try std.fmt.allocPrint(
         allocator,
         \\{{"payer_secret_key":"{s}","recent_blockhash":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"ping","data_encoding":"utf8"}}]}}
-        ,
+    ,
         .{ payer_secret_key_base58, recent_blockhash, payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(spec_json);
@@ -8032,7 +8039,7 @@ test "runCommand send-instructions sends generic instruction spec" {
     const spec_json = try std.fmt.allocPrint(
         allocator,
         \\{{"payer_secret_key":"{s}","recent_blockhash":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"70696e67","data_encoding":"hex"}}]}}
-        ,
+    ,
         .{ payer_secret_key_base58, recent_blockhash, payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(spec_json);
@@ -8117,7 +8124,7 @@ test "runCommand send-instructions-and-confirm confirms generic instruction spec
     const spec_json = try std.fmt.allocPrint(
         allocator,
         \\{{"payer_secret_key":"{s}","recent_blockhash":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"ping","data_encoding":"utf8"}}]}}
-        ,
+    ,
         .{ payer_secret_key_base58, recent_blockhash, payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(spec_json);
@@ -8201,7 +8208,7 @@ test "runCommand send-instructions loads additional signer from keypair path" {
     const spec_json = try std.fmt.allocPrint(
         allocator,
         \\{{"payer_secret_key":"{s}","additional_signer_keypair_paths":["{s}"],"recent_blockhash":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":true,"is_writable":false}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"ping","data_encoding":"utf8"}}]}}
-        ,
+    ,
         .{ payer_secret_key_base58, extra_keypair_path, recent_blockhash, payer_pubkey_base58, extra_signer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(spec_json);
@@ -8292,7 +8299,7 @@ test "runCommand send-program-invoke sends instruction built from args" {
     const accounts_json = try std.fmt.allocPrint(
         allocator,
         \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
-        ,
+    ,
         .{ payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(accounts_json);
@@ -8389,7 +8396,7 @@ test "runCommand simulate-program-invoke simulates instruction built from args" 
     const accounts_json = try std.fmt.allocPrint(
         allocator,
         \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
-        ,
+    ,
         .{ payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(accounts_json);
@@ -8541,7 +8548,7 @@ test "runCommand send-program-invoke supports nonce account" {
     const nonce_data_json = try std.fmt.allocPrint(
         allocator,
         \\{{"program":"system","parsed":{{"type":"nonce","info":{{"authority":"{s}","blockhash":"{s}"}}}}}}
-        ,
+    ,
         .{ payer_pubkey_base58, nonce_blockhash },
     );
     defer allocator.free(nonce_data_json);
@@ -8574,7 +8581,7 @@ test "runCommand send-program-invoke supports nonce account" {
     const accounts_json = try std.fmt.allocPrint(
         allocator,
         \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
-        ,
+    ,
         .{ payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(accounts_json);
@@ -8659,7 +8666,7 @@ test "runCommand send-versioned-program-invoke sends versioned instruction built
     const accounts_json = try std.fmt.allocPrint(
         allocator,
         \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
-        ,
+    ,
         .{ payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(accounts_json);
@@ -8950,7 +8957,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from const and arg seeds" {
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[1,1,1,1,1,1,1,1],"accounts":[{{"name":"state","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[115,116,97,116,101]}},{{"kind":"arg","path":"authority"}}]}}}}],"args":[{{"name":"authority","type":"pubkey"}}]}}]}}
-        ,
+    ,
         .{program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -9019,7 +9026,7 @@ test "loadAnchorIdlInvokeInstructionSpec flattens nested anchor account groups" 
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[3,3,3,3,3,3,3,3],"accounts":[{{"name":"authority_group","accounts":[{{"name":"state","writable":true}},{{"name":"authority","signer":true}}]}}],"args":[]}}]}}
-        ,
+    ,
         .{program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -9074,7 +9081,7 @@ test "loadAnchorIdlInvokeInstructionSpec binds accounts from accounts json" {
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[9,9,9,9,9,9,9,9],"accounts":[{{"name":"state","writable":true}},{{"name":"authority","signer":true}}],"args":[]}}]}}
-        ,
+    ,
         .{program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -9132,7 +9139,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from const and account seed
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[2,2,2,2,2,2,2,2],"accounts":[{{"name":"state","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[115,116,97,116,101]}},{{"kind":"account","path":"authority"}}]}}}},{{"name":"authority","signer":true}}],"args":[]}}]}}
-        ,
+    ,
         .{program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -9193,7 +9200,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from account seed key path"
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[5,5,5,5,5,5,5,5],"accounts":[{{"name":"state","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[115,116,97,116,101]}},{{"kind":"account","path":"authority.key"}}]}}}},{{"name":"authority","signer":true}}],"args":[]}}]}}
-        ,
+    ,
         .{program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -9249,7 +9256,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA with pda program override" 
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[4,4,4,4,4,4,4,4],"accounts":[{{"name":"state","writable":true,"pda":{{"program":"{s}","seeds":[{{"kind":"const","value":[115,116,97,116,101]}}]}}}}],"args":[]}}]}}
-        ,
+    ,
         .{ base_program_id_base58, pda_program_id_base58 },
     );
     defer allocator.free(idl_json);
@@ -9306,7 +9313,7 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA with pda program account ov
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[6,6,6,6,6,6,6,6],"accounts":[{{"name":"state","writable":true,"pda":{{"program":{{"kind":"account","path":"program_authority"}},"seeds":[{{"kind":"const","value":[115,116,97,116,101]}}]}}}},{{"name":"program_authority","signer":true}}],"args":[]}}]}}
-        ,
+    ,
         .{base_program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -9488,7 +9495,7 @@ test "loadAnchorIdlInvokeInstructionSpec supports nonce authority and additional
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"approve","discriminator":[7,7,7,7,7,7,7,7],"accounts":[{{"name":"delegate","signer":true}}],"args":[]}}]}}
-        ,
+    ,
         .{program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -9604,7 +9611,7 @@ test "loadAnchorIdlInvokeInstructionSpecWithOptions loads address lookup tables"
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[3,3,3,3,3,3,3,3],"accounts":[],"args":[]}}]}}
-        ,
+    ,
         .{program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -9661,7 +9668,7 @@ test "loadAnchorIdlInvokeInstructionSpec defaults missing optional account to pr
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[4,4,4,4,4,4,4,4],"accounts":[{{"name":"maybeAuthority","optional":true,"signer":true,"writable":true}}],"args":[]}}]}}
-        ,
+    ,
         .{program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -9712,7 +9719,7 @@ test "loadAnchorIdlInvokeInstructionSpec treats json null optional account as mi
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[6,6,6,6,6,6,6,6],"accounts":[{{"name":"maybeAuthority","optional":true,"address":"{s}","signer":true,"writable":true}}],"args":[]}}]}}
-        ,
+    ,
         .{ program_id_base58, default_account_base58 },
     );
     defer allocator.free(idl_json);
@@ -9763,7 +9770,7 @@ test "loadAnchorIdlInvokeInstructionSpec binds nested accounts from structured a
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[7,7,7,7,7,7,7,7],"accounts":[{{"name":"config","accounts":[{{"name":"state","writable":true}}]}}],"args":[]}}]}}
-        ,
+    ,
         .{program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -9819,7 +9826,7 @@ test "loadAnchorIdlInvokeInstructionSpec binds account from json address object"
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[14,14,14,14,14,14,14,14],"accounts":[{{"name":"authority","signer":true}}],"args":[]}}]}}
-        ,
+    ,
         .{program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -9875,7 +9882,7 @@ test "loadAnchorIdlInvokeInstructionSpec treats nested json null optional accoun
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[8,8,8,8,8,8,8,8],"accounts":[{{"name":"config","accounts":[{{"name":"state","optional":true,"address":"{s}","writable":true}}]}}],"args":[]}}]}}
-        ,
+    ,
         .{ program_id_base58, default_state_base58 },
     );
     defer allocator.free(idl_json);
@@ -9928,7 +9935,7 @@ test "loadAnchorIdlInvokeInstructionSpec treats json address object null optiona
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[15,15,15,15,15,15,15,15],"accounts":[{{"name":"maybeAuthority","optional":true,"address":"{s}","writable":true}}],"args":[]}}]}}
-        ,
+    ,
         .{ program_id_base58, default_account_base58 },
     );
     defer allocator.free(idl_json);
@@ -9981,7 +9988,7 @@ test "loadAnchorIdlInvokeInstructionSpec treats cli null optional account bindin
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[9,9,9,9,9,9,9,9],"accounts":[{{"name":"maybeAuthority","optional":true,"address":"{s}","signer":true,"writable":true}}],"args":[]}}]}}
-        ,
+    ,
         .{ program_id_base58, default_account_base58 },
     );
     defer allocator.free(idl_json);
@@ -10034,7 +10041,7 @@ test "loadAnchorIdlInvokeInstructionSpec supports legacy isMut and isSigner acco
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[10,10,10,10,10,10,10,10],"accounts":[{{"name":"authority","isMut":true,"isSigner":true}}],"args":[]}}]}}
-        ,
+    ,
         .{program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -10082,7 +10089,7 @@ test "loadAnchorIdlInvokeInstructionSpec supports legacy isOptional account flag
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[11,11,11,11,11,11,11,11],"accounts":[{{"name":"maybeAuthority","isOptional":true,"isMut":true,"isSigner":true}}],"args":[]}}]}}
-        ,
+    ,
         .{program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -10130,7 +10137,7 @@ test "loadAnchorIdlInvokeInstructionSpec computes missing instruction discrimina
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"initialize","accounts":[],"args":[]}}]}}
-        ,
+    ,
         .{program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -10178,7 +10185,7 @@ test "loadAnchorIdlInvokeInstructionSpec accepts metadata address as program id"
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"metadata":{{"address":"{s}"}},"instructions":[{{"name":"initialize","discriminator":[12,12,12,12,12,12,12,12],"accounts":[],"args":[]}}]}}
-        ,
+    ,
         .{program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -10226,7 +10233,7 @@ test "loadAnchorIdlInvokeInstructionSpecWithOptions prefers program id override 
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[13,13,13,13,13,13,13,13],"accounts":[],"args":[]}}]}}
-        ,
+    ,
         .{idl_program_id_base58},
     );
     defer allocator.free(idl_json);
@@ -10432,7 +10439,7 @@ test "runCommand send-idl-invoke supports nonce account" {
     const nonce_data_json = try std.fmt.allocPrint(
         allocator,
         \\{{"program":"system","parsed":{{"type":"nonce","info":{{"authority":"{s}","blockhash":"{s}"}}}}}}
-        ,
+    ,
         .{ payer_pubkey_base58, nonce_blockhash },
     );
     defer allocator.free(nonce_data_json);
@@ -10637,7 +10644,7 @@ test "runCommand send-versioned-program-invoke supports nonce authority keypair"
     const nonce_data_json = try std.fmt.allocPrint(
         allocator,
         \\{{"program":"system","parsed":{{"type":"nonce","info":{{"authority":"{s}","blockhash":"{s}"}}}}}}
-        ,
+    ,
         .{ nonce_authority_pubkey_base58, nonce_blockhash },
     );
     defer allocator.free(nonce_data_json);
@@ -10670,7 +10677,7 @@ test "runCommand send-versioned-program-invoke supports nonce authority keypair"
     const accounts_json = try std.fmt.allocPrint(
         allocator,
         \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
-        ,
+    ,
         .{ payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(accounts_json);
@@ -10768,7 +10775,7 @@ test "runCommand simulate-versioned-program-invoke simulates versioned instructi
     const accounts_json = try std.fmt.allocPrint(
         allocator,
         \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
-        ,
+    ,
         .{ payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(accounts_json);
@@ -10893,7 +10900,7 @@ test "runCommand simulate-versioned-instructions simulates with lookup tables" {
     const spec_json = try std.fmt.allocPrint(
         allocator,
         \\{{"payer_secret_key":"{s}","recent_blockhash":"{s}","address_lookup_tables":[{{"account_key":"{s}","addresses":["{s}"]}}],"instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"ping","data_encoding":"utf8"}}]}}
-        ,
+    ,
         .{ payer_secret_key_base58, recent_blockhash, lookup_account_pubkey, destination_pubkey_base58, payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(spec_json);
@@ -10974,7 +10981,7 @@ test "runCommand send-versioned-instructions-and-confirm confirms versioned inst
     const spec_json = try std.fmt.allocPrint(
         allocator,
         \\{{"payer_secret_key":"{s}","recent_blockhash":"{s}","address_lookup_tables":[{{"account_key":"{s}","addresses":["{s}"]}}],"instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"70696e67","data_encoding":"hex"}}]}}
-        ,
+    ,
         .{ payer_secret_key_base58, recent_blockhash, lookup_account_pubkey, destination_pubkey_base58, payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(spec_json);
@@ -11042,7 +11049,7 @@ test "runCommand simulate-instructions supports nonce account blockhash query" {
     const nonce_data_json = try std.fmt.allocPrint(
         allocator,
         \\{{"program":"system","parsed":{{"type":"nonce","info":{{"authority":"{s}","blockhash":"{s}"}}}}}}
-        ,
+    ,
         .{ payer_pubkey_base58, nonce_blockhash },
     );
     defer allocator.free(nonce_data_json);
@@ -11077,7 +11084,7 @@ test "runCommand simulate-instructions supports nonce account blockhash query" {
     const spec_json = try std.fmt.allocPrint(
         allocator,
         \\{{"payer_secret_key":"{s}","nonce_account":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"ping","data_encoding":"utf8"}}]}}
-        ,
+    ,
         .{ payer_secret_key_base58, nonce_account_pubkey, payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(spec_json);
@@ -11155,7 +11162,7 @@ test "runCommand send-versioned-instructions supports nonce account and nonce au
     const nonce_data_json = try std.fmt.allocPrint(
         allocator,
         \\{{"program":"system","parsed":{{"type":"nonce","info":{{"authority":"{s}","blockhash":"{s}"}}}}}}
-        ,
+    ,
         .{ nonce_authority_pubkey_base58, nonce_blockhash },
     );
     defer allocator.free(nonce_data_json);
@@ -11188,7 +11195,7 @@ test "runCommand send-versioned-instructions supports nonce account and nonce au
     const spec_json = try std.fmt.allocPrint(
         allocator,
         \\{{"payer_secret_key":"{s}","nonce_account":"{s}","nonce_authority_keypair_path":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"70696e67","data_encoding":"hex"}}]}}
-        ,
+    ,
         .{ payer_secret_key_base58, nonce_account_pubkey, nonce_authority_realpath, payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(spec_json);
