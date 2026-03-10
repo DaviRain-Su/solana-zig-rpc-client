@@ -14,15 +14,18 @@ const EpochSchedule = rpc_types.EpochSchedule;
 const EpochInfo = rpc_types.EpochInfo;
 const InflationGovernor = rpc_types.InflationGovernor;
 const InflationRate = rpc_types.InflationRate;
+const JsonParsedAccountInfo = rpc_types.JsonParsedAccountInfo;
 const LargestAccount = rpc_types.LargestAccount;
 const LatestBlockhash = rpc_types.LatestBlockhash;
 const LatestBlockhashResponse = rpc_types.LatestBlockhashResponse;
 const LeaderSchedule = rpc_types.LeaderSchedule;
 const MultipleAccountsResponse = rpc_types.MultipleAccountsResponse;
+const MultipleUiAccountsResponse = rpc_types.MultipleUiAccountsResponse;
 const SnapshotSlots = rpc_types.SnapshotSlots;
 const Supply = rpc_types.Supply;
 const TokenAmount = rpc_types.TokenAmount;
 const TokenLargestAccount = rpc_types.TokenLargestAccount;
+const UiAccountResponse = rpc_types.UiAccountResponse;
 const VoteAccounts = rpc_types.VoteAccounts;
 
 fn runGetSlot(
@@ -335,6 +338,111 @@ fn runGetMultipleAccounts(
     );
     defer client.deinit();
     return try client.getMultipleAccounts(accounts, commitment);
+}
+
+fn runGetUiAccountResponse(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    account: []const u8,
+    commitment: ?Commitment,
+) !UiAccountResponse {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getUiAccountResponse(account, commitment);
+}
+
+fn runGetUiAccount(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    account: []const u8,
+    commitment: ?Commitment,
+) !JsonParsedAccountInfo {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getUiAccount(account, commitment);
+}
+
+fn runGetUiAccountMaybe(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    account: []const u8,
+    commitment: ?Commitment,
+) !?JsonParsedAccountInfo {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getUiAccountMaybe(account, commitment);
+}
+
+fn runGetMultipleUiAccountsResponse(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    accounts: []const []const u8,
+    commitment: ?Commitment,
+) !MultipleUiAccountsResponse {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getMultipleUiAccountsResponse(accounts, commitment);
+}
+
+fn runGetMultipleUiAccounts(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    accounts: []const []const u8,
+    commitment: ?Commitment,
+) ![]?JsonParsedAccountInfo {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getMultipleUiAccounts(accounts, commitment);
 }
 
 fn runGetTokenAccountBalance(
@@ -1593,6 +1701,11 @@ pub const NonblockingRpcClient = struct {
     pub const MaybeAccountInfoTask = AsyncTaskWithStringAndCommitment(?AccountInfo, runGetAccountInfoMaybe);
     pub const MultipleAccountsResponseTask = AsyncTaskWithStringListAndCommitment(MultipleAccountsResponse, runGetMultipleAccountsResponse);
     pub const MultipleAccountsTask = AsyncTaskWithStringListAndCommitment([]?AccountInfo, runGetMultipleAccounts);
+    pub const UiAccountResponseTask = AsyncTaskWithStringAndCommitment(UiAccountResponse, runGetUiAccountResponse);
+    pub const UiAccountTask = AsyncTaskWithStringAndCommitment(JsonParsedAccountInfo, runGetUiAccount);
+    pub const MaybeUiAccountTask = AsyncTaskWithStringAndCommitment(?JsonParsedAccountInfo, runGetUiAccountMaybe);
+    pub const MultipleUiAccountsResponseTask = AsyncTaskWithStringListAndCommitment(MultipleUiAccountsResponse, runGetMultipleUiAccountsResponse);
+    pub const MultipleUiAccountsTask = AsyncTaskWithStringListAndCommitment([]?JsonParsedAccountInfo, runGetMultipleUiAccounts);
     pub const TokenAccountBalanceTask = AsyncTaskWithStringAndCommitment(TokenAmount, runGetTokenAccountBalance);
     pub const TokenSupplyTask = AsyncTaskWithStringAndCommitment(TokenAmount, runGetTokenSupply);
     pub const TokenLargestAccountsTask = AsyncTaskWithStringAndCommitment([]TokenLargestAccount, runGetTokenLargestAccounts);
@@ -1925,6 +2038,86 @@ pub const NonblockingRpcClient = struct {
         commitment: ?Commitment,
     ) !*MultipleAccountsTask {
         return MultipleAccountsTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            accounts,
+            commitment,
+        );
+    }
+
+    pub fn getUiAccountResponseAsync(
+        self: *const NonblockingRpcClient,
+        account: []const u8,
+        commitment: ?Commitment,
+    ) !*UiAccountResponseTask {
+        return UiAccountResponseTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            account,
+            commitment,
+        );
+    }
+
+    pub fn getUiAccountAsync(
+        self: *const NonblockingRpcClient,
+        account: []const u8,
+        commitment: ?Commitment,
+    ) !*UiAccountTask {
+        return UiAccountTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            account,
+            commitment,
+        );
+    }
+
+    pub fn getUiAccountMaybeAsync(
+        self: *const NonblockingRpcClient,
+        account: []const u8,
+        commitment: ?Commitment,
+    ) !*MaybeUiAccountTask {
+        return MaybeUiAccountTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            account,
+            commitment,
+        );
+    }
+
+    pub fn getMultipleUiAccountsResponseAsync(
+        self: *const NonblockingRpcClient,
+        accounts: []const []const u8,
+        commitment: ?Commitment,
+    ) !*MultipleUiAccountsResponseTask {
+        return MultipleUiAccountsResponseTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            accounts,
+            commitment,
+        );
+    }
+
+    pub fn getMultipleUiAccountsAsync(
+        self: *const NonblockingRpcClient,
+        accounts: []const []const u8,
+        commitment: ?Commitment,
+    ) !*MultipleUiAccountsTask {
+        return MultipleUiAccountsTask.start(
             self.allocator,
             self.endpoint,
             self.default_commitment,
