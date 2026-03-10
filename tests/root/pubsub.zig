@@ -1909,6 +1909,8 @@ test "root.PubsubClient exposes reconnect and policy configuration through gette
 
     try std.testing.expect(!pubsub.usesDefaultConfig());
     try std.testing.expect(pubsub.usesCustomConfig());
+    try std.testing.expect(!pubsub.hasDefaultConfig());
+    try std.testing.expect(pubsub.hasCustomConfig());
     try std.testing.expect(pubsub.isAutoReconnectEnabled());
     try std.testing.expect(!pubsub.usesDefaultAutoReconnect());
     try std.testing.expect(pubsub.usesCustomAutoReconnect());
@@ -2058,6 +2060,8 @@ test "root.PubsubClient mutable policy setters update runtime values" {
 
     try std.testing.expect(pubsub.usesDefaultConfig());
     try std.testing.expect(!pubsub.usesCustomConfig());
+    try std.testing.expect(pubsub.hasDefaultConfig());
+    try std.testing.expect(!pubsub.hasCustomConfig());
     try std.testing.expect(pubsub.usesDefaultAutoReconnect());
     try std.testing.expect(!pubsub.usesCustomAutoReconnect());
     try std.testing.expectEqual(@as(?u32, null), pubsub.getEffectiveHeartbeatTimeoutMs());
@@ -2139,6 +2143,8 @@ test "root.PubsubClient mutable policy setters update runtime values" {
 
     try std.testing.expect(!pubsub.usesDefaultConfig());
     try std.testing.expect(pubsub.usesCustomConfig());
+    try std.testing.expect(!pubsub.hasDefaultConfig());
+    try std.testing.expect(pubsub.hasCustomConfig());
     try std.testing.expect(!pubsub.isAutoReconnectEnabled());
     try std.testing.expect(pubsub.usesDefaultAutoReconnect());
     try std.testing.expect(!pubsub.usesCustomAutoReconnect());

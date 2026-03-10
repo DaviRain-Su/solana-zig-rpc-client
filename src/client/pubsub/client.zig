@@ -4878,8 +4878,16 @@ pub const PubsubClient = struct {
             self.usesDefaultTransportConfig();
     }
 
+    pub fn hasDefaultConfig(self: *const Self) bool {
+        return self.usesDefaultConfig();
+    }
+
     pub fn usesCustomConfig(self: *const Self) bool {
         return !self.usesDefaultConfig();
+    }
+
+    pub fn hasCustomConfig(self: *const Self) bool {
+        return self.usesCustomConfig();
     }
 
     pub fn setAutoReconnectEnabled(self: *Self, enabled: bool) void {
