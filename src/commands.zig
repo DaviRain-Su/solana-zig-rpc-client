@@ -525,6 +525,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const account = args.account;
     const expected_balance_arg = args.expected_balance_arg;
     const airdrop_recent_blockhash_arg = args.airdrop_recent_blockhash_arg;
+    const recent_blockhash_arg = args.recent_blockhash_arg;
     const account_data_slice_length_arg = args.account_data_slice_length_arg;
     const account_data_slice_offset_arg = args.account_data_slice_offset_arg;
     const account_encoding_arg = args.account_encoding_arg;
@@ -654,6 +655,24 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
     if (airdrop_recent_blockhash_arg != null and command != .request_airdrop) {
         reportInvalidCliMessage("error: --airdrop-recent-blockhash requires request-airdrop\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (recent_blockhash_arg != null and
+        command != .send_instructions and
+        command != .send_instructions_and_confirm and
+        command != .send_versioned_instructions and
+        command != .send_versioned_instructions_and_confirm and
+        command != .simulate_instructions and
+        command != .simulate_versioned_instructions and
+        command != .send_program_invoke and
+        command != .send_program_invoke_and_confirm and
+        command != .send_versioned_program_invoke and
+        command != .send_versioned_program_invoke_and_confirm and
+        command != .simulate_program_invoke and
+        command != .simulate_versioned_program_invoke)
+    {
+        reportInvalidCliMessage("error: --recent-blockhash requires instruction or program-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
@@ -1066,14 +1085,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
             defer loaded.deinit(allocator);
+            const recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
 
             const tx_signature = try rpc.sendLegacyInstructionsWithOptions(
                 loaded.payer,
                 loaded.owned_instructions.instructions,
                 loaded.signers,
                 .{
-                    .recent_blockhash = parsed_spec.value.recent_blockhash,
-                    .blockhash_commitment = if (parsed_spec.value.recent_blockhash == null) commitment orelse send_preflight_commitment else null,
+                    .recent_blockhash = recent_blockhash,
+                    .blockhash_commitment = if (recent_blockhash == null) commitment orelse send_preflight_commitment else null,
                     .send_transaction_options = send_transaction_options,
                 },
             );
@@ -1106,14 +1126,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
             defer loaded.deinit(allocator);
+            const recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
 
             const tx_signature = try rpc.sendAndConfirmLegacyInstructionsWithOptions(
                 loaded.payer,
                 loaded.owned_instructions.instructions,
                 loaded.signers,
                 .{
-                    .recent_blockhash = parsed_spec.value.recent_blockhash,
-                    .blockhash_commitment = if (parsed_spec.value.recent_blockhash == null) commitment orelse send_preflight_commitment else null,
+                    .recent_blockhash = recent_blockhash,
+                    .blockhash_commitment = if (recent_blockhash == null) commitment orelse send_preflight_commitment else null,
                     .send_transaction_options = send_transaction_options,
                     .commitment = commitment,
                     .search_transaction_history = search_transaction_history,
@@ -1150,6 +1171,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
             defer loaded.deinit(allocator);
+            const recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
 
             const tx_signature = try rpc.sendVersionedInstructionsWithOptions(
                 loaded.payer,
@@ -1157,8 +1179,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 loaded.address_lookup_tables,
                 loaded.signers,
                 .{
-                    .recent_blockhash = parsed_spec.value.recent_blockhash,
-                    .blockhash_commitment = if (parsed_spec.value.recent_blockhash == null) commitment orelse send_preflight_commitment else null,
+                    .recent_blockhash = recent_blockhash,
+                    .blockhash_commitment = if (recent_blockhash == null) commitment orelse send_preflight_commitment else null,
                     .send_transaction_options = send_transaction_options,
                 },
             );
@@ -1191,6 +1213,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
             defer loaded.deinit(allocator);
+            const recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
 
             const tx_signature = try rpc.sendAndConfirmVersionedInstructionsWithOptions(
                 loaded.payer,
@@ -1198,8 +1221,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 loaded.address_lookup_tables,
                 loaded.signers,
                 .{
-                    .recent_blockhash = parsed_spec.value.recent_blockhash,
-                    .blockhash_commitment = if (parsed_spec.value.recent_blockhash == null) commitment orelse send_preflight_commitment else null,
+                    .recent_blockhash = recent_blockhash,
+                    .blockhash_commitment = if (recent_blockhash == null) commitment orelse send_preflight_commitment else null,
                     .send_transaction_options = send_transaction_options,
                     .commitment = commitment,
                     .search_transaction_history = search_transaction_history,
@@ -1242,7 +1265,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 loaded.owned_instructions.instructions,
                 loaded.signers,
                 .{
-                    .blockhash_commitment = commitment orelse send_preflight_commitment,
+                    .recent_blockhash = recent_blockhash_arg,
+                    .blockhash_commitment = if (recent_blockhash_arg == null) commitment orelse send_preflight_commitment else null,
                     .send_transaction_options = send_transaction_options,
                 },
             );
@@ -1281,7 +1305,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 loaded.owned_instructions.instructions,
                 loaded.signers,
                 .{
-                    .blockhash_commitment = commitment orelse send_preflight_commitment,
+                    .recent_blockhash = recent_blockhash_arg,
+                    .blockhash_commitment = if (recent_blockhash_arg == null) commitment orelse send_preflight_commitment else null,
                     .send_transaction_options = send_transaction_options,
                     .commitment = commitment,
                     .search_transaction_history = search_transaction_history,
@@ -1325,7 +1350,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 loaded.address_lookup_tables,
                 loaded.signers,
                 .{
-                    .blockhash_commitment = commitment orelse send_preflight_commitment,
+                    .recent_blockhash = recent_blockhash_arg,
+                    .blockhash_commitment = if (recent_blockhash_arg == null) commitment orelse send_preflight_commitment else null,
                     .send_transaction_options = send_transaction_options,
                 },
             );
@@ -1365,7 +1391,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 loaded.address_lookup_tables,
                 loaded.signers,
                 .{
-                    .blockhash_commitment = commitment orelse send_preflight_commitment,
+                    .recent_blockhash = recent_blockhash_arg,
+                    .blockhash_commitment = if (recent_blockhash_arg == null) commitment orelse send_preflight_commitment else null,
                     .send_transaction_options = send_transaction_options,
                     .commitment = commitment,
                     .search_transaction_history = search_transaction_history,
@@ -1587,10 +1614,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             else
                 null;
-            const build_options = if (parsed_spec.value.recent_blockhash != null or commitment != null)
+            const effective_recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
+            const build_options = if (effective_recent_blockhash != null or commitment != null)
                 client.LegacyInstructionsBuildOptions{
-                    .recent_blockhash = parsed_spec.value.recent_blockhash,
-                    .blockhash_commitment = if (parsed_spec.value.recent_blockhash == null) commitment else null,
+                    .recent_blockhash = effective_recent_blockhash,
+                    .blockhash_commitment = if (effective_recent_blockhash == null) commitment else null,
                 }
             else
                 null;
@@ -1663,10 +1691,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             else
                 null;
-            const build_options = if (parsed_spec.value.recent_blockhash != null or commitment != null)
+            const effective_recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
+            const build_options = if (effective_recent_blockhash != null or commitment != null)
                 client.VersionedInstructionsBuildOptions{
-                    .recent_blockhash = parsed_spec.value.recent_blockhash,
-                    .blockhash_commitment = if (parsed_spec.value.recent_blockhash == null) commitment else null,
+                    .recent_blockhash = effective_recent_blockhash,
+                    .blockhash_commitment = if (effective_recent_blockhash == null) commitment else null,
                 }
             else
                 null;
@@ -1740,9 +1769,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             else
                 null;
-            const build_options = if (commitment != null)
+            const build_options = if (recent_blockhash_arg != null or commitment != null)
                 client.LegacyInstructionsBuildOptions{
-                    .blockhash_commitment = commitment,
+                    .recent_blockhash = recent_blockhash_arg,
+                    .blockhash_commitment = if (recent_blockhash_arg == null) commitment else null,
                 }
             else
                 null;
@@ -1815,9 +1845,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             else
                 null;
-            const build_options = if (commitment != null)
+            const build_options = if (recent_blockhash_arg != null or commitment != null)
                 client.VersionedInstructionsBuildOptions{
-                    .blockhash_commitment = commitment,
+                    .recent_blockhash = recent_blockhash_arg,
+                    .blockhash_commitment = if (recent_blockhash_arg == null) commitment else null,
                 }
             else
                 null;
@@ -6864,15 +6895,6 @@ test "runCommand send-versioned-program-invoke sends versioned instruction built
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
     defer sender_context.deinit();
-    var latest_blockhash_bytes: [32]u8 = undefined;
-    for (&latest_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 11);
-    const latest_blockhash = try client.encodeBase58(allocator, &latest_blockhash_bytes);
-    defer allocator.free(latest_blockhash);
-    try sender_context.sender.pushLatestBlockhashResponse(
-        51,
-        latest_blockhash,
-        91,
-    );
     try sender_context.sender.pushResultJson("\"Sig141414141414141414141414141414141414141414141414141414141414141414\"");
     var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
         allocator,
@@ -6919,8 +6941,15 @@ test "runCommand send-versioned-program-invoke sends versioned instruction built
     );
     defer allocator.free(accounts_json);
 
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 11);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
     var parsed = try cli.parseCliArgs(allocator, &.{
         "send-versioned-program-invoke",
+        "--recent-blockhash",
+        recent_blockhash,
         "--sender-keypair",
         payer_keypair_realpath,
         "11111111111111111111111111111111",
@@ -6936,7 +6965,7 @@ test "runCommand send-versioned-program-invoke sends versioned instruction built
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
     defer allocator.free(captured);
 
-    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
     try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
