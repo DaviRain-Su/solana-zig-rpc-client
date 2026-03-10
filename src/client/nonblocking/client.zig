@@ -48,6 +48,66 @@ fn runGetBlockHeight(
     return try client.getBlockHeight(commitment);
 }
 
+fn runGetTransactionCount(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !u64 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getTransactionCount(commitment);
+}
+
+fn runGetFirstAvailableBlock(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !u64 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getFirstAvailableBlock(commitment);
+}
+
+fn runGetStakeMinimumDelegation(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !u64 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getStakeMinimumDelegation(commitment);
+}
+
 fn runGetBalance(
     allocator: Allocator,
     endpoint: []const u8,
@@ -281,6 +341,9 @@ pub const NonblockingRpcClient = struct {
 
     pub const SlotTask = AsyncTask(u64, runGetSlot);
     pub const BlockHeightTask = AsyncTask(u64, runGetBlockHeight);
+    pub const TransactionCountTask = AsyncTask(u64, runGetTransactionCount);
+    pub const FirstAvailableBlockTask = AsyncTask(u64, runGetFirstAvailableBlock);
+    pub const StakeMinimumDelegationTask = AsyncTask(u64, runGetStakeMinimumDelegation);
     pub const BalanceTask = AsyncTask(BalanceResponse, runGetBalance);
     pub const BlockTimeTask = AsyncTask(?i64, runGetBlockTime);
     pub const LatestBlockhashTask = AsyncTask(LatestBlockhash, runGetLatestBlockhash);
@@ -407,6 +470,48 @@ pub const NonblockingRpcClient = struct {
 
     pub fn getBlockHeightAsync(self: *const NonblockingRpcClient, commitment: ?Commitment) !*BlockHeightTask {
         return BlockHeightTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn getTransactionCountAsync(
+        self: *const NonblockingRpcClient,
+        commitment: ?Commitment,
+    ) !*TransactionCountTask {
+        return TransactionCountTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn getFirstAvailableBlockAsync(
+        self: *const NonblockingRpcClient,
+        commitment: ?Commitment,
+    ) !*FirstAvailableBlockTask {
+        return FirstAvailableBlockTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn getStakeMinimumDelegationAsync(
+        self: *const NonblockingRpcClient,
+        commitment: ?Commitment,
+    ) !*StakeMinimumDelegationTask {
+        return StakeMinimumDelegationTask.start(
             self.allocator,
             self.endpoint,
             self.default_commitment,

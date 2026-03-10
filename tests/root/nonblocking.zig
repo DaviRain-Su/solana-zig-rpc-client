@@ -264,3 +264,84 @@ test "root.NonblockingRpcClient getHealthAsync returns owned health string" {
     defer allocator.free(health);
     try std.testing.expectEqualStrings("ok", health);
 }
+
+test "root.NonblockingRpcClient getTransactionCountAsync returns waitable count" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":777,\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getTransactionCountAsync(.processed);
+    try std.testing.expect(!task.isDone());
+
+    const transaction_count = try task.wait();
+    try std.testing.expectEqual(@as(u64, 777), transaction_count);
+}
+
+test "root.NonblockingRpcClient getFirstAvailableBlockAsync returns waitable slot" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":888,\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getFirstAvailableBlockAsync(.confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const first_available_block = try task.wait();
+    try std.testing.expectEqual(@as(u64, 888), first_available_block);
+}
+
+test "root.NonblockingRpcClient getStakeMinimumDelegationAsync returns waitable lamports" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":999,\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.newWithCommitment(allocator, endpoint, .finalized);
+    defer rpc.deinit();
+
+    const task = try rpc.getStakeMinimumDelegationAsync(null);
+    try std.testing.expect(!task.isDone());
+
+    const stake_minimum_delegation = try task.wait();
+    try std.testing.expectEqual(@as(u64, 999), stake_minimum_delegation);
+}
