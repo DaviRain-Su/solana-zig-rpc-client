@@ -126,3 +126,58 @@ test "root.NonblockingRpcClient getLatestBlockhashAsync returns owned blockhash"
     try std.testing.expectEqualStrings("abc", latest.blockhash);
     try std.testing.expectEqual(@as(u64, 999), latest.last_valid_block_height);
 }
+
+test "root.NonblockingRpcClient getBlockHeightAsync returns waitable result" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":654,\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.newWithCommitment(allocator, endpoint, .finalized);
+    defer rpc.deinit();
+
+    const task = try rpc.getBlockHeightAsync(null);
+    try std.testing.expect(!task.isDone());
+
+    const block_height = try task.wait();
+    try std.testing.expectEqual(@as(u64, 654), block_height);
+}
+
+test "root.NonblockingRpcClient getGenesisHashAsync returns owned hash" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":\"Genesis1111111111111111111111111111111111\",\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getGenesisHashAsync();
+    try std.testing.expect(!task.isDone());
+
+    const genesis_hash = try task.wait();
+    defer allocator.free(genesis_hash);
+    try std.testing.expectEqualStrings("Genesis1111111111111111111111111111111111", genesis_hash);
+}

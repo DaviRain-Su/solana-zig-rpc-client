@@ -27,6 +27,26 @@ fn runGetSlot(
     return try client.getSlot(commitment);
 }
 
+fn runGetBlockHeight(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !u64 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getBlockHeight(commitment);
+}
+
 fn runGetLatestBlockhash(
     allocator: Allocator,
     endpoint: []const u8,
@@ -45,6 +65,28 @@ fn runGetLatestBlockhash(
     );
     defer client.deinit();
     return try client.getLatestBlockhash(commitment);
+}
+
+fn runGetGenesisHash(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) ![]const u8 {
+    _ = commitment;
+
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getGenesisHash();
 }
 
 fn AsyncTask(
@@ -173,7 +215,9 @@ pub const NonblockingRpcClient = struct {
     };
 
     pub const SlotTask = AsyncTask(u64, runGetSlot);
+    pub const BlockHeightTask = AsyncTask(u64, runGetBlockHeight);
     pub const LatestBlockhashTask = AsyncTask(LatestBlockhash, runGetLatestBlockhash);
+    pub const GenesisHashTask = AsyncTask([]const u8, runGetGenesisHash);
 
     pub fn init(allocator: Allocator, endpoint: []const u8) !NonblockingRpcClient {
         return initWithOptions(allocator, .{ .endpoint = endpoint });
@@ -290,6 +334,28 @@ pub const NonblockingRpcClient = struct {
             self.request_timeout_ms,
             self.confirm_transaction_initial_timeout_ms,
             commitment,
+        );
+    }
+
+    pub fn getBlockHeightAsync(self: *const NonblockingRpcClient, commitment: ?Commitment) !*BlockHeightTask {
+        return BlockHeightTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn getGenesisHashAsync(self: *const NonblockingRpcClient) !*GenesisHashTask {
+        return GenesisHashTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            null,
         );
     }
 };
