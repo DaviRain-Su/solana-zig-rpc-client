@@ -7,6 +7,7 @@ const anchor_idl_encode = client.anchor_idl_encode;
 
 const Allocator = std.mem.Allocator;
 const Ed25519 = std.crypto.sign.Ed25519;
+const Sha256 = std.crypto.hash.sha2.Sha256;
 const default_solana_keypair_path = cli.default_solana_keypair_path;
 const command_test_support = if (builtin.is_test) @import("command_test_support") else struct {
     const SenderType = struct {};
@@ -159,11 +160,207 @@ const CliSimulateInstructionsSpec = struct {
     recent_blockhash: ?[]const u8 = null,
 };
 
+fn appendAnchorPdaScalarSeed(
+    allocator: Allocator,
+    bytes: *std.ArrayListUnmanaged(u8),
+    type_spec: std.json.Value,
+    value: std.json.Value,
+) !void {
+    if (type_spec != .string) return error.InvalidCli;
+
+    if (std.mem.eql(u8, type_spec.string, "bool")) {
+        if (value != .bool) return error.InvalidCli;
+        try bytes.append(allocator, if (value.bool) 1 else 0);
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "u8")) {
+        if (value != .integer or value.integer < 0 or value.integer > std.math.maxInt(u8)) return error.InvalidCli;
+        try bytes.append(allocator, @intCast(value.integer));
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "u16")) {
+        if (value != .integer or value.integer < 0 or value.integer > std.math.maxInt(u16)) return error.InvalidCli;
+        var encoded: [2]u8 = undefined;
+        std.mem.writeInt(u16, &encoded, @intCast(value.integer), .little);
+        try bytes.appendSlice(allocator, &encoded);
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "u32")) {
+        if (value != .integer or value.integer < 0 or value.integer > std.math.maxInt(u32)) return error.InvalidCli;
+        var encoded: [4]u8 = undefined;
+        std.mem.writeInt(u32, &encoded, @intCast(value.integer), .little);
+        try bytes.appendSlice(allocator, &encoded);
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "u64")) {
+        if (value != .integer or value.integer < 0) return error.InvalidCli;
+        var encoded: [8]u8 = undefined;
+        std.mem.writeInt(u64, &encoded, @intCast(value.integer), .little);
+        try bytes.appendSlice(allocator, &encoded);
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "i8")) {
+        if (value != .integer or value.integer < std.math.minInt(i8) or value.integer > std.math.maxInt(i8)) return error.InvalidCli;
+        var encoded: [1]u8 = undefined;
+        std.mem.writeInt(i8, &encoded, @intCast(value.integer), .little);
+        try bytes.appendSlice(allocator, &encoded);
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "i16")) {
+        if (value != .integer or value.integer < std.math.minInt(i16) or value.integer > std.math.maxInt(i16)) return error.InvalidCli;
+        var encoded: [2]u8 = undefined;
+        std.mem.writeInt(i16, &encoded, @intCast(value.integer), .little);
+        try bytes.appendSlice(allocator, &encoded);
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "i32")) {
+        if (value != .integer or value.integer < std.math.minInt(i32) or value.integer > std.math.maxInt(i32)) return error.InvalidCli;
+        var encoded: [4]u8 = undefined;
+        std.mem.writeInt(i32, &encoded, @intCast(value.integer), .little);
+        try bytes.appendSlice(allocator, &encoded);
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "i64")) {
+        if (value != .integer) return error.InvalidCli;
+        var encoded: [8]u8 = undefined;
+        std.mem.writeInt(i64, &encoded, @intCast(value.integer), .little);
+        try bytes.appendSlice(allocator, &encoded);
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "string")) {
+        if (value != .string) return error.InvalidCli;
+        try bytes.appendSlice(allocator, value.string);
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "pubkey")) {
+        if (value != .string) return error.InvalidCli;
+        const pubkey = client.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidCli;
+        try bytes.appendSlice(allocator, &pubkey.bytes);
+        return;
+    }
+
+    return error.InvalidCli;
+}
+
+fn encodeAnchorPdaArgSeed(
+    allocator: Allocator,
+    instruction: *const anchor_idl.Instruction,
+    parsed_args: ?*const std.json.Value,
+    path: []const u8,
+) ![]u8 {
+    const args_value = parsed_args orelse return error.InvalidCli;
+    if (args_value.* != .object) return error.InvalidCli;
+    const arg_value = args_value.object.get(path) orelse return error.InvalidCli;
+
+    var arg_type: ?std.json.Value = null;
+    for (instruction.args) |arg| {
+        if (std.mem.eql(u8, arg.name, path)) {
+            arg_type = arg.@"type";
+            break;
+        }
+    }
+    const type_spec = arg_type orelse return error.InvalidCli;
+
+    var bytes: std.ArrayListUnmanaged(u8) = .{};
+    defer bytes.deinit(allocator);
+    try appendAnchorPdaScalarSeed(allocator, &bytes, type_spec, arg_value);
+    return try allocator.dupe(u8, bytes.items);
+}
+
+fn createProgramAddress(seeds: []const []const u8, program_id: client.Pubkey) !client.Pubkey {
+    for (seeds) |seed| {
+        if (seed.len > 32) return error.InvalidCli;
+    }
+
+    var hasher = Sha256.init(.{});
+    for (seeds) |seed| hasher.update(seed);
+    hasher.update(&program_id.bytes);
+    hasher.update("ProgramDerivedAddress");
+
+    var hash: [32]u8 = undefined;
+    hasher.final(&hash);
+    if (std.crypto.ecc.Edwards25519.fromBytes(hash)) |_| {
+        return error.InvalidCli;
+    } else |_| {}
+    return client.Pubkey.fromBytes(hash);
+}
+
+fn findProgramAddress(allocator: Allocator, seeds: []const []const u8, program_id: client.Pubkey) !client.Pubkey {
+    const search_seeds = try allocator.alloc([]const u8, seeds.len + 1);
+    defer allocator.free(search_seeds);
+    @memcpy(search_seeds[0..seeds.len], seeds);
+
+    var bump_seed: [1]u8 = undefined;
+    search_seeds[seeds.len] = bump_seed[0..];
+
+    var bump: i16 = 255;
+    while (bump >= 0) : (bump -= 1) {
+        bump_seed[0] = @intCast(bump);
+        const candidate = createProgramAddress(search_seeds, program_id) catch continue;
+        return candidate;
+    }
+    return error.InvalidCli;
+}
+
+fn deriveAnchorIdlPda(
+    allocator: Allocator,
+    instruction: *const anchor_idl.Instruction,
+    pda_value: std.json.Value,
+    parsed_args: ?*const std.json.Value,
+    program_id: client.Pubkey,
+) !client.Pubkey {
+    if (pda_value != .object) return error.InvalidCli;
+    if (pda_value.object.get("program") != null) return error.InvalidCli;
+    const seeds_value = pda_value.object.get("seeds") orelse return error.InvalidCli;
+    if (seeds_value != .array) return error.InvalidCli;
+
+    const owned_seeds = try allocator.alloc([]u8, seeds_value.array.items.len);
+    defer {
+        for (owned_seeds) |seed| allocator.free(seed);
+        allocator.free(owned_seeds);
+    }
+    const seed_slices = try allocator.alloc([]const u8, seeds_value.array.items.len);
+    defer allocator.free(seed_slices);
+
+    for (seeds_value.array.items, 0..) |seed_value, index| {
+        if (seed_value != .object) return error.InvalidCli;
+        const kind_value = seed_value.object.get("kind") orelse return error.InvalidCli;
+        if (kind_value != .string) return error.InvalidCli;
+
+        if (std.mem.eql(u8, kind_value.string, "const")) {
+            const value = seed_value.object.get("value") orelse return error.InvalidCli;
+            if (value != .array) return error.InvalidCli;
+            const seed = try allocator.alloc(u8, value.array.items.len);
+            for (value.array.items, 0..) |item, byte_index| {
+                if (item != .integer or item.integer < 0 or item.integer > 255) return error.InvalidCli;
+                seed[byte_index] = @intCast(item.integer);
+            }
+            owned_seeds[index] = seed;
+            seed_slices[index] = seed;
+            continue;
+        }
+
+        if (std.mem.eql(u8, kind_value.string, "arg")) {
+            const path_value = seed_value.object.get("path") orelse return error.InvalidCli;
+            if (path_value != .string) return error.InvalidCli;
+            const seed = try encodeAnchorPdaArgSeed(allocator, instruction, parsed_args, path_value.string);
+            owned_seeds[index] = seed;
+            seed_slices[index] = seed;
+            continue;
+        }
+
+        return error.InvalidCli;
+    }
+
+    return try findProgramAddress(allocator, seed_slices, program_id);
+}
+
 fn loadAnchorIdlInvokeInstructionSpec(
     allocator: Allocator,
     idl_arg: []const u8,
     instruction_name: []const u8,
     args_json_arg: ?[]const u8,
+    account_bindings: []const []const u8,
     payer_keypair_path_arg: ?[]const u8,
 ) !LoadedCliInstructionSpec {
     const idl_source = loadInstructionSpecSource(allocator, idl_arg) catch return error.InvalidCli;
@@ -176,7 +373,6 @@ fn loadAnchorIdlInvokeInstructionSpec(
 
     const program_id = parsed_idl.value.address orelse return error.InvalidCli;
     const instruction = anchor_idl.findInstruction(&parsed_idl.value, instruction_name) orelse return error.InvalidCli;
-    if (instruction.accounts.len != 0) return error.InvalidCli;
     if (instruction.discriminator.len == 0) return error.InvalidCli;
 
     const args_json_source = if (args_json_arg) |value|
@@ -184,6 +380,11 @@ fn loadAnchorIdlInvokeInstructionSpec(
     else
         null;
     defer if (args_json_source) |value| allocator.free(value);
+    const parsed_args = if (args_json_source) |value|
+        std.json.parseFromSlice(std.json.Value, allocator, value, .{}) catch return error.InvalidCli
+    else
+        null;
+    defer if (parsed_args) |*value| value.deinit();
 
     const encoded_data = anchor_idl_encode.encodeInstructionData(
         allocator,
@@ -191,6 +392,64 @@ fn loadAnchorIdlInvokeInstructionSpec(
         args_json_source,
     ) catch return error.InvalidCli;
     defer allocator.free(encoded_data);
+
+    const cli_accounts = try allocator.alloc(CliInstructionAccountMeta, instruction.accounts.len);
+    defer allocator.free(cli_accounts);
+    var owned_resolved_account_pubkeys: std.ArrayListUnmanaged([]u8) = .{};
+    defer {
+        for (owned_resolved_account_pubkeys.items) |value| allocator.free(value);
+        owned_resolved_account_pubkeys.deinit(allocator);
+    }
+    for (instruction.accounts, 0..) |account_value, index| {
+        if (account_value != .object) return error.InvalidCli;
+        if (account_value.object.get("accounts") != null) return error.InvalidCli;
+        const name_value = account_value.object.get("name") orelse return error.InvalidCli;
+        if (name_value != .string) return error.InvalidCli;
+
+        var pubkey_value: ?[]const u8 = null;
+        for (account_bindings) |binding| {
+            const equals_index = std.mem.indexOfScalar(u8, binding, '=') orelse continue;
+            if (equals_index == 0 or equals_index + 1 >= binding.len) continue;
+            if (std.mem.eql(u8, binding[0..equals_index], name_value.string)) {
+                pubkey_value = binding[equals_index + 1 ..];
+                break;
+            }
+        }
+        if (pubkey_value == null) {
+            if (account_value.object.get("address")) |address_value| {
+                if (address_value != .string) return error.InvalidCli;
+                pubkey_value = address_value.string;
+            }
+        }
+        if (pubkey_value == null) {
+            if (account_value.object.get("pda")) |pda_value| {
+                const resolved_pubkey = try deriveAnchorIdlPda(
+                    allocator,
+                    &instruction,
+                    pda_value,
+                    if (parsed_args) |value| &value.value else null,
+                    try client.Pubkey.fromBase58(allocator, program_id),
+                );
+                const resolved_pubkey_base58 = try resolved_pubkey.toBase58(allocator);
+                try owned_resolved_account_pubkeys.append(allocator, resolved_pubkey_base58);
+                pubkey_value = resolved_pubkey_base58;
+            }
+        }
+        const is_signer = if (account_value.object.get("signer")) |signer_value|
+            if (signer_value == .bool) signer_value.bool else return error.InvalidCli
+        else
+            false;
+        const is_writable = if (account_value.object.get("writable")) |writable_value|
+            if (writable_value == .bool) writable_value.bool else return error.InvalidCli
+        else
+            false;
+
+        cli_accounts[index] = .{
+            .pubkey = pubkey_value orelse return error.InvalidCli,
+            .is_signer = is_signer,
+            .is_writable = is_writable,
+        };
+    }
 
     const discriminator_hex = try allocator.alloc(u8, encoded_data.len * 2);
     defer allocator.free(discriminator_hex);
@@ -202,7 +461,7 @@ fn loadAnchorIdlInvokeInstructionSpec(
     const instruction_specs = [_]CliInstructionSpec{
         .{
             .program_id = program_id,
-            .accounts = &.{},
+            .accounts = cli_accounts,
             .data = discriminator_hex,
             .data_encoding = .hex,
         },
@@ -691,6 +950,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const idl_spec_arg = args.idl_spec_arg;
     const idl_instruction_arg = args.idl_instruction_arg;
     const idl_args_json_arg = args.idl_args_json_arg;
+    const idl_account_bindings = args.idl_account_bindings;
     const raw_rpc_method_arg = args.raw_rpc_method_arg;
     const raw_rpc_params_arg = args.raw_rpc_params_arg;
     const slot_leaders_limit_arg = args.slot_leaders_limit_arg;
@@ -836,6 +1096,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_idl_invoke_and_confirm)
     {
         reportInvalidCliMessage("error: --idl-args-json requires idl-invoke commands\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (idl_account_bindings.items.len > 0 and
+        command != .simulate_idl_invoke and
+        command != .send_idl_invoke and
+        command != .send_idl_invoke_and_confirm)
+    {
+        reportInvalidCliMessage("error: --account requires idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
@@ -1683,9 +1952,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_arg,
                 instruction_name,
                 idl_args_json_arg,
+                idl_account_bindings.items,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
             ) catch {
-                reportInvalidCliMessage("error: send-idl-invoke currently supports zero-account Anchor instructions with scalar args\n", .{});
+                reportInvalidCliMessage("error: send-idl-invoke currently supports flat Anchor accounts and scalar args\n", .{});
                 return error.InvalidCli;
             };
             defer loaded.deinit(allocator);
@@ -1730,9 +2000,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_arg,
                 instruction_name,
                 idl_args_json_arg,
+                idl_account_bindings.items,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
             ) catch {
-                reportInvalidCliMessage("error: send-idl-invoke-and-confirm currently supports zero-account Anchor instructions with scalar args\n", .{});
+                reportInvalidCliMessage("error: send-idl-invoke-and-confirm currently supports flat Anchor accounts and scalar args\n", .{});
                 return error.InvalidCli;
             };
             defer loaded.deinit(allocator);
@@ -2286,9 +2557,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_arg,
                 instruction_name,
                 idl_args_json_arg,
+                idl_account_bindings.items,
                 sender_keypair_path_arg orelse default_sender_keypair_path_arg,
             ) catch {
-                reportInvalidCliMessage("error: simulate-idl-invoke currently supports zero-account Anchor instructions with scalar args\n", .{});
+                reportInvalidCliMessage("error: simulate-idl-invoke currently supports flat Anchor accounts and scalar args\n", .{});
                 return error.InvalidCli;
             };
             defer loaded.deinit(allocator);
@@ -7779,6 +8051,152 @@ test "runCommand simulate-idl-invoke encodes scalar anchor args" {
     try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: idl-args-ok") != null);
+}
+
+test "runCommand simulate-idl-invoke binds flat anchor accounts by name" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var latest_blockhash_bytes: [32]u8 = undefined;
+    for (&latest_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 121);
+    const latest_blockhash = try client.encodeBase58(allocator, &latest_blockhash_bytes);
+    defer allocator.free(latest_blockhash);
+    try sender_context.sender.pushLatestBlockhashResponse(
+        77,
+        latest_blockhash,
+        119,
+    );
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":39},"value":{"accounts":[],"err":null,"fee":109,"unitsConsumed":28,"logs":["Program log: idl-accounts-ok"]}}
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://simulate-idl-invoke-accounts" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{53} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-simulate-idl-invoke-accounts-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const state_pubkey = client.Pubkey.fromBytes(.{17} ** 32);
+    const state_pubkey_base58 = try state_pubkey.toBase58(allocator);
+    defer allocator.free(state_pubkey_base58);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"setFlag","discriminator":[9,8,7,6,5,4,3,2],"accounts":[{"name":"state","writable":true},{"name":"authority","signer":true}],"args":[{"name":"enabled","type":"bool"}]}]}
+    ;
+
+    const state_binding = try std.fmt.allocPrint(allocator, "state={s}", .{state_pubkey_base58});
+    defer allocator.free(state_binding);
+    const authority_binding = try std.fmt.allocPrint(allocator, "authority={s}", .{payer_pubkey_base58});
+    defer allocator.free(authority_binding);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-idl-invoke",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        "--idl-args-json",
+        "{\"enabled\":true}",
+        "--account",
+        state_binding,
+        "--account",
+        authority_binding,
+        idl_json,
+        "setFlag",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: idl-accounts-ok") != null);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from const and arg seeds" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{54} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const authority = client.Pubkey.fromBytes(.{21} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const program_id = client.Pubkey.fromBytes(.{31} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[1,1,1,1,1,1,1,1],"accounts":[{{"name":"state","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[115,116,97,116,101]}},{{"kind":"arg","path":"authority"}}]}}}}],"args":[{{"name":"authority","type":"pubkey"}}]}}]}}
+        ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const args_json = try std.fmt.allocPrint(allocator, "{{\"authority\":\"{s}\"}}", .{authority_base58});
+    defer allocator.free(args_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        args_json,
+        &.{},
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const seed_const = "state";
+    const seed_authority = try allocator.dupe(u8, &authority.bytes);
+    defer allocator.free(seed_authority);
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ seed_const, seed_authority },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
 }
 
 test "runCommand send-idl-invoke sends zero-account anchor instruction" {
