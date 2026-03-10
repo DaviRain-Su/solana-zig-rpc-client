@@ -508,9 +508,13 @@ fn deriveAnchorIdlPda(
     program_id: client.Pubkey,
 ) !client.Pubkey {
     if (pda_value != .object) return error.InvalidCli;
-    if (pda_value.object.get("program") != null) return error.InvalidCli;
     const seeds_value = pda_value.object.get("seeds") orelse return error.InvalidCli;
     if (seeds_value != .array) return error.InvalidCli;
+
+    const pda_program = if (pda_value.object.get("program")) |program_value| blk: {
+        if (program_value != .string) return error.InvalidCli;
+        break :blk client.Pubkey.fromBase58(allocator, program_value.string) catch return error.InvalidCli;
+    } else program_id;
 
     const owned_seeds = try allocator.alloc([]u8, seeds_value.array.items.len);
     defer {
@@ -568,7 +572,7 @@ fn deriveAnchorIdlPda(
         return error.InvalidCli;
     }
 
-    return try findProgramAddress(allocator, seed_slices, program_id);
+    return try findProgramAddress(allocator, seed_slices, pda_program);
 }
 
 fn loadAnchorIdlInvokeInstructionSpec(
@@ -8494,6 +8498,58 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from const and account seed
     try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(authority));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA with pda program override" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{57} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-program-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const base_program_id = client.Pubkey.fromBytes(.{34} ** 32);
+    const base_program_id_base58 = try base_program_id.toBase58(allocator);
+    defer allocator.free(base_program_id_base58);
+    const pda_program_id = client.Pubkey.fromBytes(.{35} ** 32);
+    const pda_program_id_base58 = try pda_program_id.toBase58(allocator);
+    defer allocator.free(pda_program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[4,4,4,4,4,4,4,4],"accounts":[{{"name":"state","writable":true,"pda":{{"program":"{s}","seeds":[{{"kind":"const","value":[115,116,97,116,101]}}]}}}}],"args":[]}}]}}
+        ,
+        .{ base_program_id_base58, pda_program_id_base58 },
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        null,
+        &.{},
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{"state"},
+        pda_program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
 }
 
 test "runCommand send-idl-invoke sends zero-account anchor instruction" {
