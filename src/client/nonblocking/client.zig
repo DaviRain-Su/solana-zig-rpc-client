@@ -15,12 +15,17 @@ const EpochInfo = rpc_types.EpochInfo;
 const InflationGovernor = rpc_types.InflationGovernor;
 const InflationRate = rpc_types.InflationRate;
 const JsonParsedAccountInfo = rpc_types.JsonParsedAccountInfo;
+const JsonParsedProgramAccount = rpc_types.JsonParsedProgramAccount;
+const JsonParsedProgramAccountsResponse = rpc_types.JsonParsedProgramAccountsResponse;
 const LargestAccount = rpc_types.LargestAccount;
 const LatestBlockhash = rpc_types.LatestBlockhash;
 const LatestBlockhashResponse = rpc_types.LatestBlockhashResponse;
 const LeaderSchedule = rpc_types.LeaderSchedule;
 const MultipleAccountsResponse = rpc_types.MultipleAccountsResponse;
 const MultipleUiAccountsResponse = rpc_types.MultipleUiAccountsResponse;
+const ProgramAccount = rpc_types.ProgramAccount;
+const ProgramAccountsResponse = rpc_types.ProgramAccountsResponse;
+const ProgramAccountsQueryOptions = rpc_types.ProgramAccountsQueryOptions;
 const SnapshotSlots = rpc_types.SnapshotSlots;
 const Supply = rpc_types.Supply;
 const TokenAmount = rpc_types.TokenAmount;
@@ -443,6 +448,96 @@ fn runGetMultipleUiAccounts(
     );
     defer client.deinit();
     return try client.getMultipleUiAccounts(accounts, commitment);
+}
+
+fn runGetProgramAccountsResponse(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    program_id: []const u8,
+    commitment: ?Commitment,
+) !ProgramAccountsResponse {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getProgramAccountsResponseWithOptions(
+        program_id,
+        if (commitment) |value| ProgramAccountsQueryOptions{ .commitment = value } else null,
+    );
+}
+
+fn runGetProgramAccounts(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    program_id: []const u8,
+    commitment: ?Commitment,
+) ![]ProgramAccount {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getProgramAccounts(program_id, commitment);
+}
+
+fn runGetProgramUiAccountsResponse(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    program_id: []const u8,
+    commitment: ?Commitment,
+) !JsonParsedProgramAccountsResponse {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getProgramUiAccountsResponseWithOptions(
+        program_id,
+        if (commitment) |value| ProgramAccountsQueryOptions{ .commitment = value } else null,
+    );
+}
+
+fn runGetProgramUiAccounts(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    program_id: []const u8,
+    commitment: ?Commitment,
+) ![]JsonParsedProgramAccount {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getProgramUiAccounts(program_id, commitment);
 }
 
 fn runGetTokenAccountBalance(
@@ -1706,6 +1801,10 @@ pub const NonblockingRpcClient = struct {
     pub const MaybeUiAccountTask = AsyncTaskWithStringAndCommitment(?JsonParsedAccountInfo, runGetUiAccountMaybe);
     pub const MultipleUiAccountsResponseTask = AsyncTaskWithStringListAndCommitment(MultipleUiAccountsResponse, runGetMultipleUiAccountsResponse);
     pub const MultipleUiAccountsTask = AsyncTaskWithStringListAndCommitment([]?JsonParsedAccountInfo, runGetMultipleUiAccounts);
+    pub const ProgramAccountsResponseTask = AsyncTaskWithStringAndCommitment(ProgramAccountsResponse, runGetProgramAccountsResponse);
+    pub const ProgramAccountsTask = AsyncTaskWithStringAndCommitment([]ProgramAccount, runGetProgramAccounts);
+    pub const ProgramUiAccountsResponseTask = AsyncTaskWithStringAndCommitment(JsonParsedProgramAccountsResponse, runGetProgramUiAccountsResponse);
+    pub const ProgramUiAccountsTask = AsyncTaskWithStringAndCommitment([]JsonParsedProgramAccount, runGetProgramUiAccounts);
     pub const TokenAccountBalanceTask = AsyncTaskWithStringAndCommitment(TokenAmount, runGetTokenAccountBalance);
     pub const TokenSupplyTask = AsyncTaskWithStringAndCommitment(TokenAmount, runGetTokenSupply);
     pub const TokenLargestAccountsTask = AsyncTaskWithStringAndCommitment([]TokenLargestAccount, runGetTokenLargestAccounts);
@@ -2124,6 +2223,70 @@ pub const NonblockingRpcClient = struct {
             self.request_timeout_ms,
             self.confirm_transaction_initial_timeout_ms,
             accounts,
+            commitment,
+        );
+    }
+
+    pub fn getProgramAccountsResponseAsync(
+        self: *const NonblockingRpcClient,
+        program_id: []const u8,
+        commitment: ?Commitment,
+    ) !*ProgramAccountsResponseTask {
+        return ProgramAccountsResponseTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            program_id,
+            commitment,
+        );
+    }
+
+    pub fn getProgramAccountsAsync(
+        self: *const NonblockingRpcClient,
+        program_id: []const u8,
+        commitment: ?Commitment,
+    ) !*ProgramAccountsTask {
+        return ProgramAccountsTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            program_id,
+            commitment,
+        );
+    }
+
+    pub fn getProgramUiAccountsResponseAsync(
+        self: *const NonblockingRpcClient,
+        program_id: []const u8,
+        commitment: ?Commitment,
+    ) !*ProgramUiAccountsResponseTask {
+        return ProgramUiAccountsResponseTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            program_id,
+            commitment,
+        );
+    }
+
+    pub fn getProgramUiAccountsAsync(
+        self: *const NonblockingRpcClient,
+        program_id: []const u8,
+        commitment: ?Commitment,
+    ) !*ProgramUiAccountsTask {
+        return ProgramUiAccountsTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            program_id,
             commitment,
         );
     }

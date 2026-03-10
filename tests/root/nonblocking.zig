@@ -165,6 +165,34 @@ fn freeMultipleUiAccountsResponse(allocator: std.mem.Allocator, response: client
     freeOptionalUiAccounts(allocator, response.accounts);
 }
 
+fn freeProgramAccount(allocator: std.mem.Allocator, account: client.ProgramAccount) void {
+    allocator.free(account.pubkey);
+    freeAccountInfo(allocator, account.account);
+}
+
+fn freeProgramAccounts(allocator: std.mem.Allocator, accounts: []client.ProgramAccount) void {
+    for (accounts) |account| freeProgramAccount(allocator, account);
+    allocator.free(accounts);
+}
+
+fn freeProgramAccountsResponse(allocator: std.mem.Allocator, response: client.ProgramAccountsResponse) void {
+    freeProgramAccounts(allocator, response.accounts);
+}
+
+fn freeJsonParsedProgramAccount(allocator: std.mem.Allocator, account: client.JsonParsedProgramAccount) void {
+    allocator.free(account.pubkey);
+    freeJsonParsedAccountInfo(allocator, account.account);
+}
+
+fn freeJsonParsedProgramAccounts(allocator: std.mem.Allocator, accounts: []client.JsonParsedProgramAccount) void {
+    for (accounts) |account| freeJsonParsedProgramAccount(allocator, account);
+    allocator.free(accounts);
+}
+
+fn freeJsonParsedProgramAccountsResponse(allocator: std.mem.Allocator, response: client.JsonParsedProgramAccountsResponse) void {
+    freeJsonParsedProgramAccounts(allocator, response.accounts);
+}
+
 fn freeTokenAmount(allocator: std.mem.Allocator, amount: client.TokenAmount) void {
     allocator.free(amount.amount);
     allocator.free(amount.ui_amount_string);
@@ -821,6 +849,163 @@ test "root.NonblockingRpcClient getMultipleUiAccountsAsync returns optional pars
     try std.testing.expectEqual(@as(u64, 111), result[1].?.lamports);
     try std.testing.expect(result[1].?.executable);
     try std.testing.expect(std.mem.indexOf(u8, result[1].?.data_json, "\"vote\"") != null);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getProgramAccountsResponseAsync sends requested program id" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const program_id = "Program111111111111111111111111111111111111";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        program_id,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":[{\"pubkey\":\"ProgAcct1111111111111111111111111111111111\",\"account\":{\"data\":[\"QUJDRA==\",\"base64\"],\"executable\":false,\"lamports\":121,\"owner\":\"Owner999999999999999999999999999999999999\",\"rentEpoch\":3,\"space\":4}}],\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getProgramAccountsResponseAsync(program_id, .confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const response = try task.wait();
+    defer freeProgramAccountsResponse(allocator, response);
+
+    try std.testing.expect(response.context_slot == null);
+    try std.testing.expectEqual(@as(usize, 1), response.accounts.len);
+    try std.testing.expectEqualStrings("ProgAcct1111111111111111111111111111111111", response.accounts[0].pubkey);
+    try std.testing.expectEqual(@as(u64, 121), response.accounts[0].account.lamports);
+    try std.testing.expectEqualStrings("Owner999999999999999999999999999999999999", response.accounts[0].account.owner);
+    try std.testing.expectEqualStrings("QUJDRA==", response.accounts[0].account.data.?);
+    try std.testing.expectEqualStrings("base64", response.accounts[0].account.data_encoding.?);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getProgramAccountsAsync returns program accounts" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const program_id = "Program222222222222222222222222222222222222";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        program_id,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":[{\"pubkey\":\"ProgAcct2222222222222222222222222222222222\",\"account\":{\"data\":[\"REVG\",\"base64\"],\"executable\":true,\"lamports\":222,\"owner\":\"OwnerAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"rentEpoch\":4,\"space\":3}}],\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getProgramAccountsAsync(program_id, .processed);
+    try std.testing.expect(!task.isDone());
+
+    const accounts = try task.wait();
+    defer freeProgramAccounts(allocator, accounts);
+
+    try std.testing.expectEqual(@as(usize, 1), accounts.len);
+    try std.testing.expectEqualStrings("ProgAcct2222222222222222222222222222222222", accounts[0].pubkey);
+    try std.testing.expectEqual(@as(u64, 222), accounts[0].account.lamports);
+    try std.testing.expect(accounts[0].account.executable);
+    try std.testing.expectEqualStrings("OwnerAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", accounts[0].account.owner);
+    try std.testing.expectEqualStrings("REVG", accounts[0].account.data.?);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getProgramUiAccountsResponseAsync sends requested program id" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const program_id = "ProgramUi11111111111111111111111111111111111";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        program_id,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":[{\"pubkey\":\"UiProgAcct11111111111111111111111111111111\",\"account\":{\"data\":{\"program\":\"spl-token\",\"parsed\":{\"type\":\"mint\"}},\"executable\":false,\"lamports\":333,\"owner\":\"OwnerBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\",\"rentEpoch\":5,\"space\":82}}],\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getProgramUiAccountsResponseAsync(program_id, .confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const response = try task.wait();
+    defer freeJsonParsedProgramAccountsResponse(allocator, response);
+
+    try std.testing.expect(response.context_slot == null);
+    try std.testing.expectEqual(@as(usize, 1), response.accounts.len);
+    try std.testing.expectEqualStrings("UiProgAcct11111111111111111111111111111111", response.accounts[0].pubkey);
+    try std.testing.expectEqual(@as(u64, 333), response.accounts[0].account.lamports);
+    try std.testing.expectEqualStrings("OwnerBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", response.accounts[0].account.owner);
+    try std.testing.expect(std.mem.indexOf(u8, response.accounts[0].account.data_json, "spl-token") != null);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getProgramUiAccountsAsync returns parsed program accounts" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const program_id = "ProgramUi22222222222222222222222222222222222";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        program_id,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":[{\"pubkey\":\"UiProgAcct22222222222222222222222222222222\",\"account\":{\"data\":{\"program\":\"vote\",\"parsed\":{\"type\":\"vote\"}},\"executable\":true,\"lamports\":444,\"owner\":\"OwnerCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC\",\"rentEpoch\":6,\"space\":120}}],\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getProgramUiAccountsAsync(program_id, .processed);
+    try std.testing.expect(!task.isDone());
+
+    const accounts = try task.wait();
+    defer freeJsonParsedProgramAccounts(allocator, accounts);
+
+    try std.testing.expectEqual(@as(usize, 1), accounts.len);
+    try std.testing.expectEqualStrings("UiProgAcct22222222222222222222222222222222", accounts[0].pubkey);
+    try std.testing.expectEqual(@as(u64, 444), accounts[0].account.lamports);
+    try std.testing.expect(accounts[0].account.executable);
+    try std.testing.expectEqualStrings("OwnerCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", accounts[0].account.owner);
+    try std.testing.expect(std.mem.indexOf(u8, accounts[0].account.data_json, "\"vote\"") != null);
     try std.testing.expect(matched);
 }
 
