@@ -2562,6 +2562,88 @@ test "root.NonblockingRpcClient sendAndConfirmTransactionAsync sends and waits f
     try std.testing.expect(matched[1]);
 }
 
+test "root.NonblockingRpcClient sendAndConfirmTransactionWithCommitmentAsync confirms at target commitment" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = [_]bool{false, false};
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
+        &listener,
+        allocator,
+        200,
+        &.{ "sendTransaction", "\"commitment\":\"confirmed\"" },
+        &.{
+            "{\"jsonrpc\":\"2.0\",\"result\":\"Sig111111111111111111111111111111111111\",\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":[{\"slot\":44,\"confirmations\":3,\"confirmationStatus\":\"confirmed\",\"err\":null}],\"id\":1}",
+        },
+        &matched,
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.sendAndConfirmTransactionWithCommitmentAsync(
+        "SignedTransactionBase64",
+        .confirmed,
+    );
+    try std.testing.expect(!task.isDone());
+
+    const signature = try task.wait();
+    defer allocator.free(signature);
+    try std.testing.expectEqualStrings("Sig111111111111111111111111111111111111", signature);
+    try std.testing.expect(matched[0]);
+    try std.testing.expect(matched[1]);
+}
+
+test "root.NonblockingRpcClient sendAndConfirmTransactionWithCommitmentAndConfigAsync sends options and waits for commitment status" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = [_]bool{false, false};
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerWithResponsePlan, .{
+        &listener,
+        allocator,
+        200,
+        &.{ "\"skipPreflight\":true", "\"commitment\":\"finalized\"" },
+        &.{
+            "{\"jsonrpc\":\"2.0\",\"result\":\"Sig111111111111111111111111111111111111\",\"id\":1}",
+            "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":44},\"value\":[{\"slot\":44,\"confirmations\":9,\"confirmationStatus\":\"finalized\",\"err\":null}],\"id\":1}",
+        },
+        &matched,
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.sendAndConfirmTransactionWithCommitmentAndConfigAsync(
+        "SignedTransactionBase64",
+        .finalized,
+        .{
+            .skip_preflight = true,
+            .max_retries = 1,
+        },
+    );
+    try std.testing.expect(!task.isDone());
+
+    const signature = try task.wait();
+    defer allocator.free(signature);
+    try std.testing.expectEqualStrings("Sig111111111111111111111111111111111111", signature);
+    try std.testing.expect(matched[0]);
+    try std.testing.expect(matched[1]);
+}
+
 test "root.NonblockingRpcClient simulateTransactionAsync returns owned simulation result" {
     const allocator = std.testing.allocator;
     var listener = try createListener();
