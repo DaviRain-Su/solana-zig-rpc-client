@@ -701,6 +701,7 @@ fn loadAnchorIdlInvokeInstructionSpec(
         allocator,
         idl_arg,
         instruction_name,
+        null,
         args_json_arg,
         accounts_json_arg,
         account_bindings,
@@ -717,6 +718,7 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
     allocator: Allocator,
     idl_arg: []const u8,
     instruction_name: []const u8,
+    program_id_override_arg: ?[]const u8,
     args_json_arg: ?[]const u8,
     accounts_json_arg: ?[]const u8,
     account_bindings: []const []const u8,
@@ -735,7 +737,7 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
     }) catch return error.InvalidCli;
     defer parsed_idl.deinit();
 
-    const program_id = parsed_idl.value.address orelse return error.InvalidCli;
+    const program_id = parsed_idl.value.address orelse program_id_override_arg orelse return error.InvalidCli;
     const instruction = anchor_idl.findInstruction(&parsed_idl.value, instruction_name) orelse return error.InvalidCli;
     if (instruction.discriminator.len == 0) return error.InvalidCli;
 
@@ -1325,6 +1327,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const program_invoke_lookup_tables_arg = args.program_invoke_lookup_tables_arg;
     const program_invoke_nonce_account_arg = args.program_invoke_nonce_account_arg;
     const program_invoke_nonce_authority_keypair_path_arg = args.program_invoke_nonce_authority_keypair_path_arg;
+    const idl_program_id_arg = args.idl_program_id_arg;
     const idl_spec_arg = args.idl_spec_arg;
     const idl_instruction_arg = args.idl_instruction_arg;
     const idl_args_json_arg = args.idl_args_json_arg;
@@ -1475,6 +1478,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_idl_invoke_and_confirm)
     {
         reportInvalidCliMessage("error: --idl-args-json requires idl-invoke commands\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (idl_program_id_arg != null and
+        command != .simulate_idl_invoke and
+        command != .send_idl_invoke and
+        command != .send_idl_invoke_and_confirm)
+    {
+        reportInvalidCliMessage("error: --program-id requires idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
@@ -2336,6 +2348,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 allocator,
                 idl_arg,
                 instruction_name,
+                idl_program_id_arg,
                 idl_args_json_arg,
                 args.idl_accounts_json_arg,
                 idl_account_bindings.items,
@@ -2390,6 +2403,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 allocator,
                 idl_arg,
                 instruction_name,
+                idl_program_id_arg,
                 idl_args_json_arg,
                 args.idl_accounts_json_arg,
                 idl_account_bindings.items,
@@ -2953,6 +2967,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 allocator,
                 idl_arg,
                 instruction_name,
+                idl_program_id_arg,
                 idl_args_json_arg,
                 args.idl_accounts_json_arg,
                 idl_account_bindings.items,
@@ -9123,6 +9138,7 @@ test "loadAnchorIdlInvokeInstructionSpec supports nonce authority and additional
         "approve",
         null,
         null,
+        null,
         &.{delegate_binding},
         &.{},
         null,
@@ -9144,6 +9160,51 @@ test "loadAnchorIdlInvokeInstructionSpec supports nonce authority and additional
     try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(signer.public_key));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+}
+
+test "loadAnchorIdlInvokeInstructionSpecWithOptions accepts program id override for address-less idl" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{70} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-program-id-override-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{42} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json =
+        \\{"instructions":[{"name":"initialize","discriminator":[9,9,9,9,9,9,9,9],"accounts":[],"args":[]}]}
+    ;
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpecWithOptions(
+        allocator,
+        idl_json,
+        "initialize",
+        program_id_base58,
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+        null,
+        null,
+        null,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].program_id.eql(program_id));
 }
 
 test "runCommand send-idl-invoke sends zero-account anchor instruction" {
@@ -9212,6 +9273,82 @@ test "runCommand send-idl-invoke sends zero-account anchor instruction" {
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature: SigIdl1111111111111111111111111111111111111111111111111111111111111111\n",
+        captured,
+    );
+}
+
+test "runCommand send-idl-invoke accepts program id override for address-less idl" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        "\"SigIdlOverride11111111111111111111111111111111111111111111111111111111111\"",
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-idl-invoke-override" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{71} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-send-idl-invoke-override-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 151);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{43} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json =
+        \\{"instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-idl-invoke",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--program-id",
+        program_id_base58,
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "signature: SigIdlOverride11111111111111111111111111111111111111111111111111111111111\n",
         captured,
     );
 }

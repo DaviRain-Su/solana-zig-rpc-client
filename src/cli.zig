@@ -57,9 +57,9 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] simulate-versioned-instructions [--recent-blockhash <base58>] <instruction-spec-json|@path>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-program-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]\n" ++
     "  solana_client_zig [--rpc <url>] simulate-versioned-program-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]\n" ++
-    "  solana_client_zig [--rpc <url>] simulate-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]\n" ++
-    "  solana_client_zig [--rpc <url>] send-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]\n" ++
-    "  solana_client_zig [--rpc <url>] send-idl-invoke-and-confirm [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]\n" ++
+    "  solana_client_zig [--rpc <url>] simulate-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]\n" ++
+    "  solana_client_zig [--rpc <url>] send-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]\n" ++
+    "  solana_client_zig [--rpc <url>] send-idl-invoke-and-confirm [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]\n" ++
     "  solana_client_zig [--rpc <url>] raw-rpc <method> [params-json]\n" ++
     "  solana_client_zig [--rpc <url>] slot\n" ++
     "  solana_client_zig [--rpc <url>] block-height\n" ++
@@ -353,6 +353,7 @@ pub const ParsedArgs = struct {
     program_invoke_lookup_tables_arg: ?[]const u8,
     program_invoke_nonce_account_arg: ?[]const u8,
     program_invoke_nonce_authority_keypair_path_arg: ?[]const u8,
+    idl_program_id_arg: ?[]const u8,
     idl_spec_arg: ?[]const u8,
     idl_instruction_arg: ?[]const u8,
     idl_args_json_arg: ?[]const u8,
@@ -458,6 +459,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .program_invoke_lookup_tables_arg = null,
         .program_invoke_nonce_account_arg = null,
         .program_invoke_nonce_authority_keypair_path_arg = null,
+        .idl_program_id_arg = null,
         .idl_spec_arg = null,
         .idl_instruction_arg = null,
         .idl_args_json_arg = null,
@@ -781,6 +783,13 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         if (std.mem.eql(u8, arg, "--sender-keypair")) {
             if (index >= args.len or parsed.sender_keypair_path_arg != null) return error.InvalidCli;
             parsed.sender_keypair_path_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--program-id")) {
+            if (index >= args.len or parsed.idl_program_id_arg != null) return error.InvalidCli;
+            parsed.idl_program_id_arg = args[index];
             index += 1;
             continue;
         }
@@ -1767,9 +1776,9 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-instructions [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-program-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-program-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke-and-confirm [--sender-keypair <path>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke-and-confirm [--sender-keypair <path>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "raw-rpc <method> [params-json]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "poll-balance <account>") != null);
@@ -2079,6 +2088,8 @@ test "cli.parseCliArgs parses simulate-idl-invoke args" {
         "/tmp/test-idl-invoke.json",
         "--recent-blockhash",
         "Recent111111111111111111111111111111111111111111",
+        "--program-id",
+        "Prog111111111111111111111111111111111111111111",
         "--nonce-account",
         "Nonce111111111111111111111111111111111111111111",
         "--nonce-authority-keypair",
@@ -2102,6 +2113,7 @@ test "cli.parseCliArgs parses simulate-idl-invoke args" {
     try std.testing.expectEqual(Command.simulate_idl_invoke, parsed.command);
     try std.testing.expectEqualStrings("/tmp/test-idl-invoke.json", parsed.sender_keypair_path_arg orelse "");
     try std.testing.expectEqualStrings("Recent111111111111111111111111111111111111111111", parsed.recent_blockhash_arg orelse "");
+    try std.testing.expectEqualStrings("Prog111111111111111111111111111111111111111111", parsed.idl_program_id_arg orelse "");
     try std.testing.expectEqualStrings("Nonce111111111111111111111111111111111111111111", parsed.program_invoke_nonce_account_arg orelse "");
     try std.testing.expectEqualStrings("/tmp/test-idl-nonce-authority.json", parsed.program_invoke_nonce_authority_keypair_path_arg orelse "");
     try std.testing.expectEqualStrings("{\"enabled\":true}", parsed.idl_args_json_arg orelse "");
@@ -2123,6 +2135,8 @@ test "cli.parseCliArgs parses send-idl-invoke-and-confirm args" {
         "/tmp/test-idl-send.json",
         "--recent-blockhash",
         "Recent111111111111111111111111111111111111111111",
+        "--program-id",
+        "Prog222222222222222222222222222222222222222222",
         "--nonce-account",
         "Nonce222222222222222222222222222222222222222222",
         "@target/idl/hello_world.json",
@@ -2133,6 +2147,7 @@ test "cli.parseCliArgs parses send-idl-invoke-and-confirm args" {
     try std.testing.expectEqual(Command.send_idl_invoke_and_confirm, parsed.command);
     try std.testing.expectEqualStrings("/tmp/test-idl-send.json", parsed.sender_keypair_path_arg orelse "");
     try std.testing.expectEqualStrings("Recent111111111111111111111111111111111111111111", parsed.recent_blockhash_arg orelse "");
+    try std.testing.expectEqualStrings("Prog222222222222222222222222222222222222222222", parsed.idl_program_id_arg orelse "");
     try std.testing.expectEqualStrings("Nonce222222222222222222222222222222222222222222", parsed.program_invoke_nonce_account_arg orelse "");
     try std.testing.expectEqualStrings("@target/idl/hello_world.json", parsed.idl_spec_arg orelse "");
     try std.testing.expectEqualStrings("initialize", parsed.idl_instruction_arg orelse "");
