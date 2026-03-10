@@ -4,6 +4,7 @@ const lifecycle_methods = @import("../rpc_client/lifecycle.zig");
 const rpc_types = @import("../rpc_types.zig");
 
 const Allocator = std.mem.Allocator;
+const BalanceResponse = rpc_types.BalanceResponse;
 const Commitment = rpc_types.Commitment;
 const LatestBlockhash = rpc_types.LatestBlockhash;
 
@@ -47,6 +48,48 @@ fn runGetBlockHeight(
     return try client.getBlockHeight(commitment);
 }
 
+fn runGetBalance(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !BalanceResponse {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getBalanceResponse("Balance111111111111111111111111111111111111", commitment);
+}
+
+fn runGetBlockTime(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !?i64 {
+    _ = commitment;
+
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getBlockTime(123);
+}
+
 fn runGetLatestBlockhash(
     allocator: Allocator,
     endpoint: []const u8,
@@ -65,6 +108,28 @@ fn runGetLatestBlockhash(
     );
     defer client.deinit();
     return try client.getLatestBlockhash(commitment);
+}
+
+fn runGetHealth(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) ![]const u8 {
+    _ = commitment;
+
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getHealth();
 }
 
 fn runGetGenesisHash(
@@ -216,7 +281,10 @@ pub const NonblockingRpcClient = struct {
 
     pub const SlotTask = AsyncTask(u64, runGetSlot);
     pub const BlockHeightTask = AsyncTask(u64, runGetBlockHeight);
+    pub const BalanceTask = AsyncTask(BalanceResponse, runGetBalance);
+    pub const BlockTimeTask = AsyncTask(?i64, runGetBlockTime);
     pub const LatestBlockhashTask = AsyncTask(LatestBlockhash, runGetLatestBlockhash);
+    pub const HealthTask = AsyncTask([]const u8, runGetHealth);
     pub const GenesisHashTask = AsyncTask([]const u8, runGetGenesisHash);
 
     pub fn init(allocator: Allocator, endpoint: []const u8) !NonblockingRpcClient {
@@ -348,8 +416,41 @@ pub const NonblockingRpcClient = struct {
         );
     }
 
+    pub fn getBalanceAsync(self: *const NonblockingRpcClient, commitment: ?Commitment) !*BalanceTask {
+        return BalanceTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            commitment,
+        );
+    }
+
+    pub fn getBlockTimeAsync(self: *const NonblockingRpcClient) !*BlockTimeTask {
+        return BlockTimeTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            null,
+        );
+    }
+
     pub fn getGenesisHashAsync(self: *const NonblockingRpcClient) !*GenesisHashTask {
         return GenesisHashTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            null,
+        );
+    }
+
+    pub fn getHealthAsync(self: *const NonblockingRpcClient) !*HealthTask {
+        return HealthTask.start(
             self.allocator,
             self.endpoint,
             self.default_commitment,

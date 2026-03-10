@@ -181,3 +181,86 @@ test "root.NonblockingRpcClient getGenesisHashAsync returns owned hash" {
     defer allocator.free(genesis_hash);
     try std.testing.expectEqualStrings("Genesis1111111111111111111111111111111111", genesis_hash);
 }
+
+test "root.NonblockingRpcClient getBalanceAsync returns waitable balance response" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":55},\"value\":444},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getBalanceAsync(.processed);
+    try std.testing.expect(!task.isDone());
+
+    const balance = try task.wait();
+    try std.testing.expectEqual(@as(u64, 55), balance.context_slot);
+    try std.testing.expectEqual(@as(u64, 444), balance.value);
+}
+
+test "root.NonblockingRpcClient getBlockTimeAsync returns waitable block time" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":123456789,\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getBlockTimeAsync();
+    try std.testing.expect(!task.isDone());
+
+    const block_time = try task.wait();
+    try std.testing.expectEqual(@as(?i64, 123456789), block_time);
+}
+
+test "root.NonblockingRpcClient getHealthAsync returns owned health string" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":\"ok\",\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getHealthAsync();
+    try std.testing.expect(!task.isDone());
+
+    const health = try task.wait();
+    defer allocator.free(health);
+    try std.testing.expectEqualStrings("ok", health);
+}
