@@ -61,6 +61,38 @@ fn runDelayedRootServerAndCheckBodyContains(
     request.respond(response_body, .{}) catch return;
 }
 
+fn runDelayedRootServerAndCheckBodyContainsBoth(
+    listener: *std.net.Server,
+    allocator: std.mem.Allocator,
+    delay_ms: u64,
+    first_fragment: []const u8,
+    second_fragment: []const u8,
+    matched: *bool,
+    response_body: []const u8,
+) void {
+    var connection = listener.accept() catch return;
+    defer connection.stream.close();
+
+    var receive_buffer: [4096]u8 = undefined;
+    var request_body_buffer: [4096]u8 = undefined;
+    var send_buffer: [4096]u8 = undefined;
+    var connection_reader = connection.stream.reader(&receive_buffer);
+    var connection_writer = connection.stream.writer(&send_buffer);
+    var http_server = std.http.Server.init(connection_reader.interface(), &connection_writer.interface);
+
+    var request = http_server.receiveHead() catch return;
+    const body_length = request.head.content_length orelse 0;
+    const request_body_reader = request.readerExpectNone(&request_body_buffer);
+    const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
+    defer allocator.free(request_body);
+
+    matched.* = std.mem.indexOf(u8, request_body, first_fragment) != null and
+        std.mem.indexOf(u8, request_body, second_fragment) != null;
+
+    std.Thread.sleep(delay_ms * std.time.ns_per_ms);
+    request.respond(response_body, .{}) catch return;
+}
+
 fn createListener() !std.net.Server {
     const endpoint = std.net.Address.parseIp("127.0.0.1", 0) catch |err| {
         return err;
@@ -96,6 +128,17 @@ fn freeAccountInfoResponse(allocator: std.mem.Allocator, response: client.Accoun
 
 fn freeMaybeAccountInfo(allocator: std.mem.Allocator, account: ?client.AccountInfo) void {
     if (account) |value| freeAccountInfo(allocator, value);
+}
+
+fn freeOptionalAccountInfos(allocator: std.mem.Allocator, accounts: []?client.AccountInfo) void {
+    for (accounts) |account| {
+        if (account) |value| freeAccountInfo(allocator, value);
+    }
+    allocator.free(accounts);
+}
+
+fn freeMultipleAccountsResponse(allocator: std.mem.Allocator, response: client.MultipleAccountsResponse) void {
+    freeOptionalAccountInfos(allocator, response.accounts);
 }
 
 fn freeTokenAmount(allocator: std.mem.Allocator, amount: client.TokenAmount) void {
@@ -471,6 +514,94 @@ test "root.NonblockingRpcClient getAccountInfoMaybeAsync returns null for missin
     defer freeMaybeAccountInfo(allocator, info);
 
     try std.testing.expect(info == null);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getMultipleAccountsResponseAsync sends requested accounts" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const accounts = [_][]const u8{
+        "MultiAcct11111111111111111111111111111111111",
+        "MultiAcct22222222222222222222222222222222222",
+    };
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        accounts[0],
+        accounts[1],
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":303},\"value\":[{\"data\":[\"QUJD\",\"base64\"],\"executable\":false,\"lamports\":10,\"owner\":\"Owner333333333333333333333333333333333333\",\"rentEpoch\":1,\"space\":3},null]},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getMultipleAccountsResponseAsync(&accounts, .confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const response = try task.wait();
+    defer freeMultipleAccountsResponse(allocator, response);
+
+    try std.testing.expectEqual(@as(u64, 303), response.context_slot);
+    try std.testing.expectEqual(@as(usize, 2), response.accounts.len);
+    try std.testing.expect(response.accounts[0] != null);
+    try std.testing.expectEqual(@as(u64, 10), response.accounts[0].?.lamports);
+    try std.testing.expectEqualStrings("Owner333333333333333333333333333333333333", response.accounts[0].?.owner);
+    try std.testing.expectEqualStrings("QUJD", response.accounts[0].?.data.?);
+    try std.testing.expect(response.accounts[1] == null);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getMultipleAccountsAsync returns optional account list" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const accounts = [_][]const u8{
+        "MultiDirect111111111111111111111111111111111",
+        "MultiDirect222222222222222222222222222222222",
+    };
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        accounts[0],
+        accounts[1],
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":404},\"value\":[null,{\"data\":[\"REVG\",\"base64\"],\"executable\":true,\"lamports\":20,\"owner\":\"Owner444444444444444444444444444444444444\",\"rentEpoch\":2,\"space\":6}]},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getMultipleAccountsAsync(&accounts, .processed);
+    try std.testing.expect(!task.isDone());
+
+    const result = try task.wait();
+    defer freeOptionalAccountInfos(allocator, result);
+
+    try std.testing.expectEqual(@as(usize, 2), result.len);
+    try std.testing.expect(result[0] == null);
+    try std.testing.expect(result[1] != null);
+    try std.testing.expectEqual(@as(u64, 20), result[1].?.lamports);
+    try std.testing.expect(result[1].?.executable);
+    try std.testing.expectEqualStrings("Owner444444444444444444444444444444444444", result[1].?.owner);
+    try std.testing.expectEqualStrings("REVG", result[1].?.data.?);
     try std.testing.expect(matched);
 }
 

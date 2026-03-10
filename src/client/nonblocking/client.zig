@@ -18,6 +18,7 @@ const LargestAccount = rpc_types.LargestAccount;
 const LatestBlockhash = rpc_types.LatestBlockhash;
 const LatestBlockhashResponse = rpc_types.LatestBlockhashResponse;
 const LeaderSchedule = rpc_types.LeaderSchedule;
+const MultipleAccountsResponse = rpc_types.MultipleAccountsResponse;
 const SnapshotSlots = rpc_types.SnapshotSlots;
 const Supply = rpc_types.Supply;
 const TokenAmount = rpc_types.TokenAmount;
@@ -292,6 +293,48 @@ fn runGetAccountInfoMaybe(
     );
     defer client.deinit();
     return try client.getAccountInfoMaybe(account, commitment);
+}
+
+fn runGetMultipleAccountsResponse(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    accounts: []const []const u8,
+    commitment: ?Commitment,
+) !MultipleAccountsResponse {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getMultipleAccountsResponse(accounts, commitment);
+}
+
+fn runGetMultipleAccounts(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    accounts: []const []const u8,
+    commitment: ?Commitment,
+) ![]?AccountInfo {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getMultipleAccounts(accounts, commitment);
 }
 
 fn runGetTokenAccountBalance(
@@ -1386,6 +1429,141 @@ fn AsyncTaskWithStringAndCommitment(
     };
 }
 
+fn AsyncTaskWithStringListAndCommitment(
+    comptime ResultType: type,
+    comptime work_fn: *const fn (
+        Allocator,
+        []const u8,
+        ?Commitment,
+        ?u64,
+        ?u64,
+        []const []const u8,
+        ?Commitment,
+    ) anyerror!ResultType,
+) type {
+    return struct {
+        allocator: Allocator,
+        endpoint: []const u8,
+        default_commitment: ?Commitment,
+        request_timeout_ms: ?u64,
+        confirm_transaction_initial_timeout_ms: ?u64,
+        values: []const []const u8,
+        commitment: ?Commitment,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+        done: bool = false,
+        result: ?Result = null,
+        thread: ?std.Thread = null,
+
+        const Self = @This();
+        const Result = union(enum) {
+            success: ResultType,
+            failure: anyerror,
+        };
+
+        pub fn start(
+            allocator: Allocator,
+            endpoint: []const u8,
+            default_commitment: ?Commitment,
+            request_timeout_ms: ?u64,
+            confirm_transaction_initial_timeout_ms: ?u64,
+            values: []const []const u8,
+            commitment: ?Commitment,
+        ) !*Self {
+            const self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
+
+            const copied_values = try allocator.alloc([]const u8, values.len);
+            errdefer allocator.free(copied_values);
+
+            var copied_count: usize = 0;
+            errdefer {
+                for (copied_values[0..copied_count]) |value| allocator.free(value);
+            }
+
+            for (values, 0..) |value, index| {
+                copied_values[index] = try allocator.dupe(u8, value);
+                copied_count += 1;
+            }
+
+            self.* = .{
+                .allocator = allocator,
+                .endpoint = try allocator.dupe(u8, endpoint),
+                .default_commitment = default_commitment,
+                .request_timeout_ms = request_timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .values = copied_values,
+                .commitment = commitment,
+            };
+            errdefer {
+                allocator.free(self.endpoint);
+                for (self.values) |value| allocator.free(value);
+                allocator.free(self.values);
+            }
+
+            self.thread = try std.Thread.spawn(.{}, Self.run, .{self});
+            return self;
+        }
+
+        fn run(self: *Self) void {
+            const value = work_fn(
+                self.allocator,
+                self.endpoint,
+                self.default_commitment,
+                self.request_timeout_ms,
+                self.confirm_transaction_initial_timeout_ms,
+                self.values,
+                self.commitment,
+            ) catch |err| {
+                self.complete(.{ .failure = err });
+                return;
+            };
+            self.complete(.{ .success = value });
+        }
+
+        fn complete(self: *Self, result: Result) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.result = result;
+            self.done = true;
+            self.cond.broadcast();
+        }
+
+        pub fn isDone(self: *const Self) bool {
+            const mutable_self: *Self = @constCast(self);
+            mutable_self.mutex.lock();
+            defer mutable_self.mutex.unlock();
+            return mutable_self.done;
+        }
+
+        pub fn wait(self: *Self) anyerror!ResultType {
+            self.mutex.lock();
+            while (!self.done) {
+                self.cond.wait(&self.mutex);
+            }
+            const result = self.result.?;
+            self.mutex.unlock();
+
+            if (self.thread) |thread| {
+                thread.join();
+                self.thread = null;
+            }
+
+            defer {
+                self.allocator.free(self.endpoint);
+                for (self.values) |value| self.allocator.free(value);
+                self.allocator.free(self.values);
+                self.allocator.destroy(self);
+            }
+
+            return switch (result) {
+                .success => |value| value,
+                .failure => |err| err,
+            };
+        }
+    };
+}
+
 pub const NonblockingRpcClient = struct {
     allocator: Allocator,
     endpoint: []const u8,
@@ -1413,6 +1591,8 @@ pub const NonblockingRpcClient = struct {
     pub const AccountInfoResponseTask = AsyncTaskWithStringAndCommitment(AccountInfoResponse, runGetAccountInfoResponse);
     pub const AccountInfoTask = AsyncTaskWithStringAndCommitment(AccountInfo, runGetAccountInfo);
     pub const MaybeAccountInfoTask = AsyncTaskWithStringAndCommitment(?AccountInfo, runGetAccountInfoMaybe);
+    pub const MultipleAccountsResponseTask = AsyncTaskWithStringListAndCommitment(MultipleAccountsResponse, runGetMultipleAccountsResponse);
+    pub const MultipleAccountsTask = AsyncTaskWithStringListAndCommitment([]?AccountInfo, runGetMultipleAccounts);
     pub const TokenAccountBalanceTask = AsyncTaskWithStringAndCommitment(TokenAmount, runGetTokenAccountBalance);
     pub const TokenSupplyTask = AsyncTaskWithStringAndCommitment(TokenAmount, runGetTokenSupply);
     pub const TokenLargestAccountsTask = AsyncTaskWithStringAndCommitment([]TokenLargestAccount, runGetTokenLargestAccounts);
@@ -1719,6 +1899,38 @@ pub const NonblockingRpcClient = struct {
             self.request_timeout_ms,
             self.confirm_transaction_initial_timeout_ms,
             account,
+            commitment,
+        );
+    }
+
+    pub fn getMultipleAccountsResponseAsync(
+        self: *const NonblockingRpcClient,
+        accounts: []const []const u8,
+        commitment: ?Commitment,
+    ) !*MultipleAccountsResponseTask {
+        return MultipleAccountsResponseTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            accounts,
+            commitment,
+        );
+    }
+
+    pub fn getMultipleAccountsAsync(
+        self: *const NonblockingRpcClient,
+        accounts: []const []const u8,
+        commitment: ?Commitment,
+    ) !*MultipleAccountsTask {
+        return MultipleAccountsTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            accounts,
             commitment,
         );
     }
