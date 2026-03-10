@@ -312,6 +312,26 @@ fn runGetBlockTime(
     return try client.getBlockTime(123);
 }
 
+fn runGetBlockTimeForSlot(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    slot: u64,
+) !?i64 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getBlockTime(slot);
+}
+
 fn runGetHighestSnapshotSlot(
     allocator: Allocator,
     endpoint: []const u8,
@@ -568,6 +588,26 @@ fn runGetLeaderSchedule(
     return try client.getLeaderSchedule(null, null, commitment);
 }
 
+fn runGetLeaderScheduleForSlot(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    slot: u64,
+) !?[]LeaderSchedule {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getLeaderSchedule(slot, null, null);
+}
+
 fn runGetBlockProduction(
     allocator: Allocator,
     endpoint: []const u8,
@@ -586,6 +626,27 @@ fn runGetBlockProduction(
     );
     defer client.deinit();
     return try client.getBlockProduction(commitment);
+}
+
+fn runGetSlotLeaders(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    start_slot: u64,
+    limit: u64,
+) ![][]const u8 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getSlotLeaders(start_slot, limit);
 }
 
 fn runGetVersion(
@@ -743,6 +804,233 @@ fn AsyncTask(
     };
 }
 
+fn AsyncTaskWithU64(
+    comptime ResultType: type,
+    comptime work_fn: *const fn (
+        Allocator,
+        []const u8,
+        ?Commitment,
+        ?u64,
+        ?u64,
+        u64,
+    ) anyerror!ResultType,
+) type {
+    return struct {
+        allocator: Allocator,
+        endpoint: []const u8,
+        default_commitment: ?Commitment,
+        request_timeout_ms: ?u64,
+        confirm_transaction_initial_timeout_ms: ?u64,
+        value: u64,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+        done: bool = false,
+        result: ?Result = null,
+        thread: ?std.Thread = null,
+
+        const Self = @This();
+        const Result = union(enum) {
+            success: ResultType,
+            failure: anyerror,
+        };
+
+        pub fn start(
+            allocator: Allocator,
+            endpoint: []const u8,
+            default_commitment: ?Commitment,
+            request_timeout_ms: ?u64,
+            confirm_transaction_initial_timeout_ms: ?u64,
+            value: u64,
+        ) !*Self {
+            const self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
+
+            self.* = .{
+                .allocator = allocator,
+                .endpoint = try allocator.dupe(u8, endpoint),
+                .default_commitment = default_commitment,
+                .request_timeout_ms = request_timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .value = value,
+            };
+            errdefer allocator.free(self.endpoint);
+
+            self.thread = try std.Thread.spawn(.{}, Self.run, .{self});
+            return self;
+        }
+
+        fn run(self: *Self) void {
+            const value = work_fn(
+                self.allocator,
+                self.endpoint,
+                self.default_commitment,
+                self.request_timeout_ms,
+                self.confirm_transaction_initial_timeout_ms,
+                self.value,
+            ) catch |err| {
+                self.complete(.{ .failure = err });
+                return;
+            };
+            self.complete(.{ .success = value });
+        }
+
+        fn complete(self: *Self, result: Result) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.result = result;
+            self.done = true;
+            self.cond.broadcast();
+        }
+
+        pub fn isDone(self: *const Self) bool {
+            const mutable_self: *Self = @constCast(self);
+            mutable_self.mutex.lock();
+            defer mutable_self.mutex.unlock();
+            return mutable_self.done;
+        }
+
+        pub fn wait(self: *Self) anyerror!ResultType {
+            self.mutex.lock();
+            while (!self.done) {
+                self.cond.wait(&self.mutex);
+            }
+            const result = self.result.?;
+            self.mutex.unlock();
+
+            if (self.thread) |thread| {
+                thread.join();
+                self.thread = null;
+            }
+
+            defer {
+                self.allocator.free(self.endpoint);
+                self.allocator.destroy(self);
+            }
+
+            return switch (result) {
+                .success => |value| value,
+                .failure => |err| err,
+            };
+        }
+    };
+}
+
+fn AsyncTaskWithU64Pair(
+    comptime ResultType: type,
+    comptime work_fn: *const fn (
+        Allocator,
+        []const u8,
+        ?Commitment,
+        ?u64,
+        ?u64,
+        u64,
+        u64,
+    ) anyerror!ResultType,
+) type {
+    return struct {
+        allocator: Allocator,
+        endpoint: []const u8,
+        default_commitment: ?Commitment,
+        request_timeout_ms: ?u64,
+        confirm_transaction_initial_timeout_ms: ?u64,
+        first: u64,
+        second: u64,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+        done: bool = false,
+        result: ?Result = null,
+        thread: ?std.Thread = null,
+
+        const Self = @This();
+        const Result = union(enum) {
+            success: ResultType,
+            failure: anyerror,
+        };
+
+        pub fn start(
+            allocator: Allocator,
+            endpoint: []const u8,
+            default_commitment: ?Commitment,
+            request_timeout_ms: ?u64,
+            confirm_transaction_initial_timeout_ms: ?u64,
+            first: u64,
+            second: u64,
+        ) !*Self {
+            const self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
+
+            self.* = .{
+                .allocator = allocator,
+                .endpoint = try allocator.dupe(u8, endpoint),
+                .default_commitment = default_commitment,
+                .request_timeout_ms = request_timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .first = first,
+                .second = second,
+            };
+            errdefer allocator.free(self.endpoint);
+
+            self.thread = try std.Thread.spawn(.{}, Self.run, .{self});
+            return self;
+        }
+
+        fn run(self: *Self) void {
+            const value = work_fn(
+                self.allocator,
+                self.endpoint,
+                self.default_commitment,
+                self.request_timeout_ms,
+                self.confirm_transaction_initial_timeout_ms,
+                self.first,
+                self.second,
+            ) catch |err| {
+                self.complete(.{ .failure = err });
+                return;
+            };
+            self.complete(.{ .success = value });
+        }
+
+        fn complete(self: *Self, result: Result) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.result = result;
+            self.done = true;
+            self.cond.broadcast();
+        }
+
+        pub fn isDone(self: *const Self) bool {
+            const mutable_self: *Self = @constCast(self);
+            mutable_self.mutex.lock();
+            defer mutable_self.mutex.unlock();
+            return mutable_self.done;
+        }
+
+        pub fn wait(self: *Self) anyerror!ResultType {
+            self.mutex.lock();
+            while (!self.done) {
+                self.cond.wait(&self.mutex);
+            }
+            const result = self.result.?;
+            self.mutex.unlock();
+
+            if (self.thread) |thread| {
+                thread.join();
+                self.thread = null;
+            }
+
+            defer {
+                self.allocator.free(self.endpoint);
+                self.allocator.destroy(self);
+            }
+
+            return switch (result) {
+                .success => |value| value,
+                .failure => |err| err,
+            };
+        }
+    };
+}
+
 pub const NonblockingRpcClient = struct {
     allocator: Allocator,
     endpoint: []const u8,
@@ -771,6 +1059,7 @@ pub const NonblockingRpcClient = struct {
     pub const EpochScheduleTask = AsyncTask(EpochSchedule, runGetEpochSchedule);
     pub const FeatureActivationSlotTask = AsyncTask(?u64, runGetFeatureActivationSlot);
     pub const BlockTimeTask = AsyncTask(?i64, runGetBlockTime);
+    pub const BlockTimeForSlotTask = AsyncTaskWithU64(?i64, runGetBlockTimeForSlot);
     pub const HighestSnapshotSlotTask = AsyncTask(SnapshotSlots, runGetHighestSnapshotSlot);
     pub const InflationRateTask = AsyncTask(InflationRate, runGetInflationRate);
     pub const InflationGovernorTask = AsyncTask(InflationGovernor, runGetInflationGovernor);
@@ -783,7 +1072,9 @@ pub const NonblockingRpcClient = struct {
     pub const ClusterNodesTask = AsyncTask([]ClusterNode, runGetClusterNodes);
     pub const VoteAccountsTask = AsyncTask(VoteAccounts, runGetVoteAccounts);
     pub const LeaderScheduleTask = AsyncTask(?[]LeaderSchedule, runGetLeaderSchedule);
+    pub const LeaderScheduleForSlotTask = AsyncTaskWithU64(?[]LeaderSchedule, runGetLeaderScheduleForSlot);
     pub const BlockProductionTask = AsyncTask(BlockProduction, runGetBlockProduction);
+    pub const SlotLeadersTask = AsyncTaskWithU64Pair([][]const u8, runGetSlotLeaders);
     pub const VersionTask = AsyncTask([]const u8, runGetVersion);
     pub const GenesisHashTask = AsyncTask([]const u8, runGetGenesisHash);
 
@@ -1060,6 +1351,20 @@ pub const NonblockingRpcClient = struct {
         );
     }
 
+    pub fn getBlockTimeForSlotAsync(
+        self: *const NonblockingRpcClient,
+        slot: u64,
+    ) !*BlockTimeForSlotTask {
+        return BlockTimeForSlotTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            slot,
+        );
+    }
+
     pub fn getHighestSnapshotSlotAsync(self: *const NonblockingRpcClient) !*HighestSnapshotSlotTask {
         return HighestSnapshotSlotTask.start(
             self.allocator,
@@ -1198,6 +1503,20 @@ pub const NonblockingRpcClient = struct {
         );
     }
 
+    pub fn getLeaderScheduleForSlotAsync(
+        self: *const NonblockingRpcClient,
+        slot: u64,
+    ) !*LeaderScheduleForSlotTask {
+        return LeaderScheduleForSlotTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            slot,
+        );
+    }
+
     pub fn getBlockProductionAsync(
         self: *const NonblockingRpcClient,
         commitment: ?Commitment,
@@ -1209,6 +1528,22 @@ pub const NonblockingRpcClient = struct {
             self.request_timeout_ms,
             self.confirm_transaction_initial_timeout_ms,
             commitment,
+        );
+    }
+
+    pub fn getSlotLeadersAsync(
+        self: *const NonblockingRpcClient,
+        start_slot: u64,
+        limit: u64,
+    ) !*SlotLeadersTask {
+        return SlotLeadersTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            start_slot,
+            limit,
         );
     }
 
