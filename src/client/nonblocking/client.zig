@@ -4,6 +4,7 @@ const lifecycle_methods = @import("../rpc_client/lifecycle.zig");
 const rpc_types = @import("../rpc_types.zig");
 
 const Allocator = std.mem.Allocator;
+const AccountInfoResponse = rpc_types.AccountInfoResponse;
 const BalanceResponse = rpc_types.BalanceResponse;
 const BlockProduction = rpc_types.BlockProduction;
 const ClusterNode = rpc_types.ClusterNode;
@@ -227,6 +228,27 @@ fn runGetBalanceForAddress(
     );
     defer client.deinit();
     return try client.getBalanceResponse(address, commitment);
+}
+
+fn runGetAccountInfoResponse(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    account: []const u8,
+    commitment: ?Commitment,
+) !AccountInfoResponse {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getAccountInfoResponse(account, commitment);
 }
 
 fn runGetTokenAccountBalance(
@@ -1345,6 +1367,7 @@ pub const NonblockingRpcClient = struct {
     pub const MaxShredInsertSlotTask = AsyncTask(u64, runGetMaxShredInsertSlot);
     pub const BalanceTask = AsyncTask(BalanceResponse, runGetBalance);
     pub const BalanceForAddressTask = AsyncTaskWithStringAndCommitment(BalanceResponse, runGetBalanceForAddress);
+    pub const AccountInfoResponseTask = AsyncTaskWithStringAndCommitment(AccountInfoResponse, runGetAccountInfoResponse);
     pub const TokenAccountBalanceTask = AsyncTaskWithStringAndCommitment(TokenAmount, runGetTokenAccountBalance);
     pub const TokenSupplyTask = AsyncTaskWithStringAndCommitment(TokenAmount, runGetTokenSupply);
     pub const TokenLargestAccountsTask = AsyncTaskWithStringAndCommitment([]TokenLargestAccount, runGetTokenLargestAccounts);
@@ -1603,6 +1626,22 @@ pub const NonblockingRpcClient = struct {
             self.request_timeout_ms,
             self.confirm_transaction_initial_timeout_ms,
             address,
+            commitment,
+        );
+    }
+
+    pub fn getAccountInfoResponseAsync(
+        self: *const NonblockingRpcClient,
+        account: []const u8,
+        commitment: ?Commitment,
+    ) !*AccountInfoResponseTask {
+        return AccountInfoResponseTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            account,
             commitment,
         );
     }

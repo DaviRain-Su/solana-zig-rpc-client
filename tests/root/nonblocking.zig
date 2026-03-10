@@ -84,6 +84,16 @@ fn freeLargestAccounts(allocator: std.mem.Allocator, accounts: []client.LargestA
     allocator.free(accounts);
 }
 
+fn freeAccountInfo(allocator: std.mem.Allocator, account: client.AccountInfo) void {
+    allocator.free(account.owner);
+    if (account.data) |data| allocator.free(data);
+    if (account.data_encoding) |encoding| allocator.free(encoding);
+}
+
+fn freeAccountInfoResponse(allocator: std.mem.Allocator, response: client.AccountInfoResponse) void {
+    if (response.account) |account| freeAccountInfo(allocator, account);
+}
+
 fn freeTokenAmount(allocator: std.mem.Allocator, amount: client.TokenAmount) void {
     allocator.free(amount.amount);
     allocator.free(amount.ui_amount_string);
@@ -342,6 +352,47 @@ test "root.NonblockingRpcClient getBalanceForAddressAsync sends requested addres
     const balance = try task.wait();
     try std.testing.expectEqual(@as(u64, 66), balance.context_slot);
     try std.testing.expectEqual(@as(u64, 777), balance.value);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getAccountInfoResponseAsync sends requested account" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const account = "AccountInfo9999999999999999999999999999999999";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        account,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":101},\"value\":{\"data\":[\"SGVsbG8=\",\"base64\"],\"executable\":false,\"lamports\":1234,\"owner\":\"Owner111111111111111111111111111111111111\",\"rentEpoch\":9,\"space\":5}},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getAccountInfoResponseAsync(account, .confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const response = try task.wait();
+    defer freeAccountInfoResponse(allocator, response);
+
+    try std.testing.expectEqual(@as(u64, 101), response.context_slot);
+    try std.testing.expect(response.account != null);
+    try std.testing.expectEqual(@as(u64, 1234), response.account.?.lamports);
+    try std.testing.expectEqualStrings("Owner111111111111111111111111111111111111", response.account.?.owner);
+    try std.testing.expectEqualStrings("SGVsbG8=", response.account.?.data.?);
+    try std.testing.expectEqualStrings("base64", response.account.?.data_encoding.?);
+    try std.testing.expectEqual(@as(?u64, 9), response.account.?.rent_epoch);
+    try std.testing.expectEqual(@as(?u64, 5), response.account.?.space);
     try std.testing.expect(matched);
 }
 
