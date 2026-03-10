@@ -253,6 +253,10 @@ fn freeStringList(allocator: std.mem.Allocator, values: [][]const u8) void {
     allocator.free(values);
 }
 
+fn freeRecentPrioritizationFees(allocator: std.mem.Allocator, fees: []client.RecentPrioritizationFee) void {
+    allocator.free(fees);
+}
+
 test "root.NonblockingRpcClient constructors initialize endpoint and options" {
     const allocator = std.testing.allocator;
     const endpoint = "http://127.0.0.1:8899";
@@ -451,6 +455,80 @@ test "root.NonblockingRpcClient getBalanceForAddressAsync sends requested addres
     const balance = try task.wait();
     try std.testing.expectEqual(@as(u64, 66), balance.context_slot);
     try std.testing.expectEqual(@as(u64, 777), balance.value);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getMinimumBalanceForRentExemptionAsync sends requested size" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        "getMinimumBalanceForRentExemption",
+        "[123,{\"commitment\":\"finalized\"}]",
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":4567,\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getMinimumBalanceForRentExemptionAsync(123, .finalized);
+    try std.testing.expect(!task.isDone());
+
+    const lamports = try task.wait();
+    try std.testing.expectEqual(@as(u64, 4567), lamports);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getRecentPrioritizationFeesAsync sends requested addresses" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const addresses = [_][]const u8{
+        "FeeAddr111111111111111111111111111111111111",
+        "FeeAddr222222222222222222222222222222222222",
+    };
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContainsBoth, .{
+        &listener,
+        allocator,
+        200,
+        addresses[0],
+        addresses[1],
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":[{\"slot\":100,\"prioritizationFee\":10},{\"slot\":101,\"prioritizationFee\":20}],\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getRecentPrioritizationFeesAsync(&addresses);
+    try std.testing.expect(!task.isDone());
+
+    const fees = try task.wait();
+    defer freeRecentPrioritizationFees(allocator, fees);
+
+    try std.testing.expectEqual(@as(usize, 2), fees.len);
+    try std.testing.expectEqual(@as(u64, 100), fees[0].slot);
+    try std.testing.expectEqual(@as(u64, 10), fees[0].prioritization_fee);
+    try std.testing.expectEqual(@as(u64, 101), fees[1].slot);
+    try std.testing.expectEqual(@as(u64, 20), fees[1].prioritization_fee);
     try std.testing.expect(matched);
 }
 

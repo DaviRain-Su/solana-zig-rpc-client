@@ -27,6 +27,7 @@ const OwnedRpcResult = rpc_types.OwnedRpcResult;
 const ProgramAccount = rpc_types.ProgramAccount;
 const ProgramAccountsResponse = rpc_types.ProgramAccountsResponse;
 const ProgramAccountsQueryOptions = rpc_types.ProgramAccountsQueryOptions;
+const RecentPrioritizationFee = rpc_types.RecentPrioritizationFee;
 const RpcRequest = rpc_types.RpcRequest;
 const SnapshotSlots = rpc_types.SnapshotSlots;
 const Supply = rpc_types.Supply;
@@ -243,6 +244,27 @@ fn runGetBalanceForAddress(
     return try client.getBalanceResponse(address, commitment);
 }
 
+fn runGetMinimumBalanceForRentExemption(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    data_length: u64,
+    commitment: ?Commitment,
+) !u64 {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.minimumBalanceForRentExemption(data_length, commitment);
+}
+
 fn runSendRaw(
     allocator: Allocator,
     endpoint: []const u8,
@@ -262,6 +284,29 @@ fn runSendRaw(
     );
     defer client.deinit();
     return try client.sendRequest(method, params_json);
+}
+
+fn runGetRecentPrioritizationFees(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    addresses: []const []const u8,
+    commitment: ?Commitment,
+) ![]RecentPrioritizationFee {
+    _ = commitment;
+
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getRecentPrioritizationFees(if (addresses.len == 0) null else addresses);
 }
 
 fn SendJsonRpcRunner(comptime ResultType: type) type {
@@ -1869,6 +1914,122 @@ fn AsyncTaskWithMethodAndParamsJson(
     };
 }
 
+fn AsyncTaskWithU64AndCommitment(
+    comptime ResultType: type,
+    comptime work_fn: *const fn (
+        Allocator,
+        []const u8,
+        ?Commitment,
+        ?u64,
+        ?u64,
+        u64,
+        ?Commitment,
+    ) anyerror!ResultType,
+) type {
+    return struct {
+        allocator: Allocator,
+        endpoint: []const u8,
+        default_commitment: ?Commitment,
+        request_timeout_ms: ?u64,
+        confirm_transaction_initial_timeout_ms: ?u64,
+        value: u64,
+        commitment: ?Commitment,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+        done: bool = false,
+        result: ?Result = null,
+        thread: ?std.Thread = null,
+
+        const Self = @This();
+        const Result = union(enum) {
+            success: ResultType,
+            failure: anyerror,
+        };
+
+        pub fn start(
+            allocator: Allocator,
+            endpoint: []const u8,
+            default_commitment: ?Commitment,
+            request_timeout_ms: ?u64,
+            confirm_transaction_initial_timeout_ms: ?u64,
+            value: u64,
+            commitment: ?Commitment,
+        ) !*Self {
+            const self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
+
+            self.* = .{
+                .allocator = allocator,
+                .endpoint = try allocator.dupe(u8, endpoint),
+                .default_commitment = default_commitment,
+                .request_timeout_ms = request_timeout_ms,
+                .confirm_transaction_initial_timeout_ms = confirm_transaction_initial_timeout_ms,
+                .value = value,
+                .commitment = commitment,
+            };
+            errdefer allocator.free(self.endpoint);
+
+            self.thread = try std.Thread.spawn(.{}, Self.run, .{self});
+            return self;
+        }
+
+        fn run(self: *Self) void {
+            const value = work_fn(
+                self.allocator,
+                self.endpoint,
+                self.default_commitment,
+                self.request_timeout_ms,
+                self.confirm_transaction_initial_timeout_ms,
+                self.value,
+                self.commitment,
+            ) catch |err| {
+                self.complete(.{ .failure = err });
+                return;
+            };
+            self.complete(.{ .success = value });
+        }
+
+        fn complete(self: *Self, result: Result) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.result = result;
+            self.done = true;
+            self.cond.broadcast();
+        }
+
+        pub fn isDone(self: *const Self) bool {
+            const mutable_self: *Self = @constCast(self);
+            mutable_self.mutex.lock();
+            defer mutable_self.mutex.unlock();
+            return mutable_self.done;
+        }
+
+        pub fn wait(self: *Self) anyerror!ResultType {
+            self.mutex.lock();
+            while (!self.done) {
+                self.cond.wait(&self.mutex);
+            }
+            const result = self.result.?;
+            self.mutex.unlock();
+
+            if (self.thread) |thread| {
+                thread.join();
+                self.thread = null;
+            }
+
+            defer {
+                self.allocator.free(self.endpoint);
+                self.allocator.destroy(self);
+            }
+
+            return switch (result) {
+                .success => |value| value,
+                .failure => |err| err,
+            };
+        }
+    };
+}
+
 fn AsyncTaskWithStringAndTokenAccountsFilterAndCommitment(
     comptime ResultType: type,
     comptime work_fn: *const fn (
@@ -2164,6 +2325,8 @@ pub const NonblockingRpcClient = struct {
     pub const MaxShredInsertSlotTask = AsyncTask(u64, runGetMaxShredInsertSlot);
     pub const BalanceTask = AsyncTask(BalanceResponse, runGetBalance);
     pub const BalanceForAddressTask = AsyncTaskWithStringAndCommitment(BalanceResponse, runGetBalanceForAddress);
+    pub const MinimumBalanceForRentExemptionTask = AsyncTaskWithU64AndCommitment(u64, runGetMinimumBalanceForRentExemption);
+    pub const RecentPrioritizationFeesTask = AsyncTaskWithStringListAndCommitment([]RecentPrioritizationFee, runGetRecentPrioritizationFees);
     pub const RawTask = AsyncTaskWithMethodAndParamsJson([]u8, runSendRaw);
     pub const AccountInfoResponseTask = AsyncTaskWithStringAndCommitment(AccountInfoResponse, runGetAccountInfoResponse);
     pub const AccountInfoTask = AsyncTaskWithStringAndCommitment(AccountInfo, runGetAccountInfo);
@@ -2486,6 +2649,37 @@ pub const NonblockingRpcClient = struct {
             self.confirm_transaction_initial_timeout_ms,
             address,
             commitment,
+        );
+    }
+
+    pub fn getMinimumBalanceForRentExemptionAsync(
+        self: *const NonblockingRpcClient,
+        data_length: u64,
+        commitment: ?Commitment,
+    ) !*MinimumBalanceForRentExemptionTask {
+        return MinimumBalanceForRentExemptionTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            data_length,
+            commitment,
+        );
+    }
+
+    pub fn getRecentPrioritizationFeesAsync(
+        self: *const NonblockingRpcClient,
+        addresses: []const []const u8,
+    ) !*RecentPrioritizationFeesTask {
+        return RecentPrioritizationFeesTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            addresses,
+            null,
         );
     }
 
