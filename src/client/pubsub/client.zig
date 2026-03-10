@@ -4465,8 +4465,16 @@ pub const PubsubClient = struct {
         return self.usesDefaultHeartbeatInterval() and self.usesDefaultHeartbeatTimeout();
     }
 
+    pub fn hasDefaultHeartbeatConfig(self: *const Self) bool {
+        return self.usesDefaultHeartbeatConfig();
+    }
+
     pub fn usesCustomHeartbeatConfig(self: *const Self) bool {
         return !self.usesDefaultHeartbeatConfig();
+    }
+
+    pub fn hasCustomHeartbeatConfig(self: *const Self) bool {
+        return self.usesCustomHeartbeatConfig();
     }
 
     pub fn hasHeartbeatConfig(self: *const Self) bool {
@@ -4596,8 +4604,16 @@ pub const PubsubClient = struct {
             self.usesDefaultReconnectMaxAttempts();
     }
 
+    pub fn hasDefaultReconnectConfig(self: *const Self) bool {
+        return self.usesDefaultReconnectConfig();
+    }
+
     pub fn usesCustomReconnectConfig(self: *const Self) bool {
         return !self.usesDefaultReconnectConfig();
+    }
+
+    pub fn hasCustomReconnectConfig(self: *const Self) bool {
+        return self.usesCustomReconnectConfig();
     }
 
     pub fn hasReconnectConfig(self: *const Self) bool {
@@ -4676,8 +4692,16 @@ pub const PubsubClient = struct {
         return self.usesDefaultSubscriptionQueueLimit() and self.usesDefaultQueueOverflowPolicy();
     }
 
+    pub fn hasDefaultQueueConfig(self: *const Self) bool {
+        return self.usesDefaultQueueConfig();
+    }
+
     pub fn usesCustomQueueConfig(self: *const Self) bool {
         return !self.usesDefaultQueueConfig();
+    }
+
+    pub fn hasCustomQueueConfig(self: *const Self) bool {
+        return self.usesCustomQueueConfig();
     }
 
     pub fn hasQueueConfig(self: *const Self) bool {
@@ -4863,8 +4887,16 @@ pub const PubsubClient = struct {
             self.usesDefaultBufferSize();
     }
 
+    pub fn hasDefaultTransportConfig(self: *const Self) bool {
+        return self.usesDefaultTransportConfig();
+    }
+
     pub fn usesCustomTransportConfig(self: *const Self) bool {
         return !self.usesDefaultTransportConfig();
+    }
+
+    pub fn hasCustomTransportConfig(self: *const Self) bool {
+        return self.usesCustomTransportConfig();
     }
 
     pub fn hasTransportConfig(self: *const Self) bool {
