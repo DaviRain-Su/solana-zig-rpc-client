@@ -723,6 +723,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command == .send_program_invoke or
         command == .send_program_invoke_and_confirm or
         command == .send_versioned_program_invoke or
+        command == .send_idl_invoke or
+        command == .send_idl_invoke_and_confirm or
         command == .send_versioned_program_invoke_and_confirm or
         command == .transfer;
     const is_account_min_context_command = command == .account_data or
@@ -759,7 +761,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         status_poll_ms;
     if ((send_skip_preflight or send_max_retries != null or send_preflight_commitment != null) and !is_send_command) {
         reportInvalidCliMessage(
-            "error: send options (--skip-preflight, --max-retries, --preflight-commitment) require send-transaction, send-transaction-and-confirm, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, send-program-invoke, send-program-invoke-and-confirm, or transfer\n",
+            "error: send options (--skip-preflight, --max-retries, --preflight-commitment) require send-transaction, send-transaction-and-confirm, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, send-program-invoke, send-program-invoke-and-confirm, send-idl-invoke, send-idl-invoke-and-confirm, or transfer\n",
             .{},
         );
         return error.InvalidCli;
@@ -781,6 +783,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_program_invoke_and_confirm and
         command != .send_versioned_program_invoke and
         command != .send_versioned_program_invoke_and_confirm and
+        command != .send_idl_invoke and
+        command != .send_idl_invoke_and_confirm and
         command != .simulate_program_invoke and
         command != .simulate_versioned_program_invoke and
         command != .simulate_idl_invoke)
@@ -802,9 +806,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_program_invoke and
         command != .send_versioned_program_invoke_and_confirm and
         command != .simulate_versioned_program_invoke and
-        command != .simulate_idl_invoke)
+        command != .simulate_idl_invoke and
+        command != .send_idl_invoke and
+        command != .send_idl_invoke_and_confirm)
     {
-        reportInvalidCliMessage("error: --sender-keypair requires transfer, program-invoke, or simulate-idl-invoke\n", .{});
+        reportInvalidCliMessage("error: --sender-keypair requires transfer, program-invoke, or idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
@@ -837,8 +843,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    if ((timeout_ms_overridden or poll_ms_overridden) and command != .status and command != .poll_balance and command != .wait_for_balance and command != .send_transaction_and_confirm and command != .send_instructions_and_confirm and command != .send_versioned_instructions_and_confirm and command != .send_program_invoke_and_confirm and command != .send_versioned_program_invoke_and_confirm and command != .poll_for_signature_confirmation and command != .transfer) {
-        reportInvalidCliMessage("error: wait options (--timeout-ms, --poll-ms) require status, poll-balance, wait-for-balance, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, send-versioned-instructions-and-confirm, send-program-invoke-and-confirm, send-versioned-program-invoke-and-confirm, or transfer\n", .{});
+    if ((timeout_ms_overridden or poll_ms_overridden) and command != .status and command != .poll_balance and command != .wait_for_balance and command != .send_transaction_and_confirm and command != .send_instructions_and_confirm and command != .send_versioned_instructions_and_confirm and command != .send_program_invoke_and_confirm and command != .send_versioned_program_invoke_and_confirm and command != .send_idl_invoke_and_confirm and command != .poll_for_signature_confirmation and command != .transfer) {
+        reportInvalidCliMessage("error: wait options (--timeout-ms, --poll-ms) require status, poll-balance, wait-for-balance, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, send-versioned-instructions-and-confirm, send-program-invoke-and-confirm, send-versioned-program-invoke-and-confirm, send-idl-invoke-and-confirm, or transfer\n", .{});
         return error.InvalidCli;
     }
 
@@ -853,11 +859,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_instructions_and_confirm and
         command != .send_program_invoke_and_confirm and
         command != .send_versioned_program_invoke_and_confirm and
+        command != .send_idl_invoke_and_confirm and
         command != .send_versioned_instructions_and_confirm and
         command != .transfer)
     {
         reportInvalidCliMessage(
-            "error: --search-transaction-history requires status, confirm-transaction, signature-status, signature-statuses, blocks-since-signature-confirmation, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, send-versioned-instructions-and-confirm, send-program-invoke-and-confirm, send-versioned-program-invoke-and-confirm, or transfer\n",
+            "error: --search-transaction-history requires status, confirm-transaction, signature-status, signature-statuses, blocks-since-signature-confirmation, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, send-versioned-instructions-and-confirm, send-program-invoke-and-confirm, send-versioned-program-invoke-and-confirm, send-idl-invoke-and-confirm, or transfer\n",
             .{},
         );
         return error.InvalidCli;
@@ -1618,6 +1625,102 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 loaded.payer,
                 loaded.owned_instructions.instructions,
                 loaded.address_lookup_tables,
+                loaded.signers,
+                .{
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
+                    .send_transaction_options = send_transaction_options,
+                    .commitment = commitment,
+                    .search_transaction_history = search_transaction_history,
+                    .timeout_ms = status_timeout_ms,
+                    .poll_interval_ms = status_poll_ms,
+                },
+            );
+            defer allocator.free(tx_signature);
+
+            std.debug.print("confirmed signature: {s}\n", .{tx_signature});
+        },
+
+        .send_idl_invoke => {
+            const idl_arg = idl_spec_arg orelse {
+                reportInvalidCliMessage("error: send-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
+                return error.InvalidCli;
+            };
+            const instruction_name = idl_instruction_arg orelse {
+                reportInvalidCliMessage("error: send-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
+                return error.InvalidCli;
+            };
+
+            var loaded = loadAnchorIdlInvokeInstructionSpec(
+                allocator,
+                idl_arg,
+                instruction_name,
+                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+            ) catch {
+                reportInvalidCliMessage("error: send-idl-invoke currently supports zero-account zero-arg Anchor instructions\n", .{});
+                return error.InvalidCli;
+            };
+            defer loaded.deinit(allocator);
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                recent_blockhash_arg,
+                commitment orelse send_preflight_commitment,
+            ) catch {
+                reportInvalidCliMessage("error: send-idl-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+
+            const tx_signature = try rpc.sendLegacyInstructionsWithOptions(
+                loaded.payer,
+                loaded.owned_instructions.instructions,
+                loaded.signers,
+                .{
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
+                    .send_transaction_options = send_transaction_options,
+                },
+            );
+            defer allocator.free(tx_signature);
+
+            std.debug.print("signature: {s}\n", .{tx_signature});
+        },
+
+        .send_idl_invoke_and_confirm => {
+            const idl_arg = idl_spec_arg orelse {
+                reportInvalidCliMessage("error: send-idl-invoke-and-confirm requires <idl-json|@path> <instruction-name>\n", .{});
+                return error.InvalidCli;
+            };
+            const instruction_name = idl_instruction_arg orelse {
+                reportInvalidCliMessage("error: send-idl-invoke-and-confirm requires <idl-json|@path> <instruction-name>\n", .{});
+                return error.InvalidCli;
+            };
+
+            var loaded = loadAnchorIdlInvokeInstructionSpec(
+                allocator,
+                idl_arg,
+                instruction_name,
+                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+            ) catch {
+                reportInvalidCliMessage("error: send-idl-invoke-and-confirm currently supports zero-account zero-arg Anchor instructions\n", .{});
+                return error.InvalidCli;
+            };
+            defer loaded.deinit(allocator);
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                recent_blockhash_arg,
+                commitment orelse send_preflight_commitment,
+            ) catch {
+                reportInvalidCliMessage("error: send-idl-invoke-and-confirm arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+
+            const tx_signature = try rpc.sendAndConfirmLegacyInstructionsWithOptions(
+                loaded.payer,
+                loaded.owned_instructions.instructions,
                 loaded.signers,
                 .{
                     .recent_blockhash = build_context.recent_blockhash,
@@ -7577,6 +7680,156 @@ test "runCommand simulate-idl-invoke simulates zero-account anchor instruction" 
     try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: idl-ok") != null);
+}
+
+test "runCommand send-idl-invoke sends zero-account anchor instruction" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        "\"SigIdl1111111111111111111111111111111111111111111111111111111111111111\"",
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-idl-invoke" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{50} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-send-idl-invoke-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 131);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-idl-invoke",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        "--recent-blockhash",
+        recent_blockhash,
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "signature: SigIdl1111111111111111111111111111111111111111111111111111111111111111\n",
+        captured,
+    );
+}
+
+test "runCommand send-idl-invoke-and-confirm confirms zero-account anchor instruction" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushSendAndSignatureStatusPollFlow(
+        "SigIdl2222222222222222222222222222222222222222222222222222222222222222",
+        &.{
+            .{ .context_slot = 145, .status = .{
+                .slot = 145,
+                .confirmations = 1,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-idl-invoke-and-confirm" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{51} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-send-idl-invoke-confirm-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 141);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-idl-invoke-and-confirm",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--commitment",
+        "confirmed",
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "confirmed signature: SigIdl2222222222222222222222222222222222222222222222222222222222222222\n",
+        captured,
+    );
 }
 
 test "runCommand send-versioned-program-invoke supports nonce authority keypair" {

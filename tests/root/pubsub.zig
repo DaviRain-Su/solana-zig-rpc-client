@@ -1556,7 +1556,11 @@ test "root.PubsubSubscription drops oldest notifications when queue limit is exc
     );
     defer subscription.deinit();
 
-    try waitForQueuedCount(subscription, 2, 1000);
+    const deadline = std.time.nanoTimestamp() + @as(i128, @intCast(1000 * std.time.ns_per_ms));
+    while (std.time.nanoTimestamp() < deadline) {
+        if (subscription.queuedCount() == 2 and subscription.droppedCount() == 2) break;
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
     try std.testing.expectEqual(@as(usize, 2), subscription.queuedCount());
     try std.testing.expectEqual(@as(usize, 2), subscription.droppedCount());
     try std.testing.expectEqual(client.PubsubCloseReason.none, subscription.closeReason());
