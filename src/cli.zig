@@ -45,6 +45,7 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] send-transaction-and-confirm <signed-tx-base64>\n" ++
     "  solana_client_zig [--rpc <url>] transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-transaction <signed-tx-base64>\n" ++
+    "  solana_client_zig [--rpc <url>] raw-rpc <method> [params-json]\n" ++
     "  solana_client_zig [--rpc <url>] slot\n" ++
     "  solana_client_zig [--rpc <url>] block-height\n" ++
     "  solana_client_zig [--rpc <url>] transaction-count\n" ++
@@ -327,6 +328,8 @@ pub const ParsedArgs = struct {
     blocks_end_slot_arg: ?[]const u8,
     blocks_limit_arg: ?[]const u8,
     message_arg: ?[]const u8,
+    raw_rpc_method_arg: ?[]const u8,
+    raw_rpc_params_arg: ?[]const u8,
     slot_leaders_limit_arg: ?[]const u8,
     performance_limit_arg: ?[]const u8,
     leader_schedule_slot_arg: ?[]const u8,
@@ -411,6 +414,8 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .blocks_end_slot_arg = null,
         .blocks_limit_arg = null,
         .message_arg = null,
+        .raw_rpc_method_arg = null,
+        .raw_rpc_params_arg = null,
         .slot_leaders_limit_arg = null,
         .performance_limit_arg = null,
         .leader_schedule_slot_arg = null,
@@ -825,6 +830,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "raw-rpc")) {
+                parsed.command = .raw_rpc;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "slot")) {
                 parsed.command = .slot;
                 parsed.has_command = true;
@@ -1215,6 +1226,14 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 return error.InvalidCli;
             },
 
+            .raw_rpc => if (parsed.raw_rpc_method_arg == null) {
+                parsed.raw_rpc_method_arg = arg;
+            } else if (parsed.raw_rpc_params_arg == null) {
+                parsed.raw_rpc_params_arg = arg;
+            } else {
+                return error.InvalidCli;
+            },
+
             .transfer => if (parsed.sender_keypair_path_arg == null and parsed.sender_secret_key_arg == null) {
                 parsed.sender_secret_key_arg = arg;
             } else if (parsed.account == null) {
@@ -1378,6 +1397,7 @@ pub const Command = enum {
     send_transaction_and_confirm,
     transfer,
     simulate_transaction,
+    raw_rpc,
     slot,
     block_height,
     transaction_count,
@@ -1476,6 +1496,7 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "inflation-reward <address-1> [address-2 ...] [--epoch <epoch>]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transaction <signature>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-transaction <signed-tx-base64>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "raw-rpc <method> [params-json]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "poll-balance <account>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "wait-for-balance <account> <expected-lamports>") != null);
@@ -1708,6 +1729,31 @@ test "cli.parseCliArgs parses send-transaction with preflight options" {
     try std.testing.expectEqual(@as(u32, 3), parsed.send_max_retries orelse 0);
     try std.testing.expectEqualStrings("123", parsed.min_context_slot_arg orelse "");
     try std.testing.expectEqual(Commitment.confirmed, parsed.send_preflight_commitment orelse .processed);
+}
+
+test "cli.parseCliArgs parses raw-rpc with params json" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "raw-rpc",
+        "getAccountInfo",
+        "[\"Address11111111111111111111111111111111\"]",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.raw_rpc, parsed.command);
+    try std.testing.expectEqualStrings("getAccountInfo", parsed.raw_rpc_method_arg orelse "");
+    try std.testing.expectEqualStrings("[\"Address11111111111111111111111111111111\"]", parsed.raw_rpc_params_arg orelse "");
+}
+
+test "cli.parseCliArgs parses raw-rpc without params json" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "raw-rpc",
+        "getHealth",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.raw_rpc, parsed.command);
+    try std.testing.expectEqualStrings("getHealth", parsed.raw_rpc_method_arg orelse "");
+    try std.testing.expect(parsed.raw_rpc_params_arg == null);
 }
 
 test "cli.parseCliArgs parses new-latest-blockhash" {

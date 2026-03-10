@@ -155,6 +155,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const slot_arg = args.slot_arg;
     const blocks_end_slot_arg = args.blocks_end_slot_arg;
     const message_arg = args.message_arg;
+    const raw_rpc_method_arg = args.raw_rpc_method_arg;
+    const raw_rpc_params_arg = args.raw_rpc_params_arg;
     const slot_leaders_limit_arg = args.slot_leaders_limit_arg;
     const performance_limit_arg = args.performance_limit_arg;
     const leader_schedule_slot_arg = args.leader_schedule_slot_arg;
@@ -608,6 +610,25 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             defer allocator.free(tx_signature);
 
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
+        },
+
+        .raw_rpc => {
+            const method = raw_rpc_method_arg orelse {
+                reportInvalidCliMessage("error: raw-rpc requires <method>\n", .{});
+                return error.InvalidCli;
+            };
+            const params_json = raw_rpc_params_arg orelse "[]";
+
+            const parsed_params = std.json.parseFromSlice(std.json.Value, allocator, params_json, .{}) catch {
+                reportInvalidCliMessage("error: raw-rpc params must be valid JSON\n", .{});
+                return error.InvalidCli;
+            };
+            parsed_params.deinit();
+
+            const response = try rpc.sendRequest(method, params_json);
+            defer allocator.free(response);
+
+            std.debug.print("{s}\n", .{response});
         },
 
         .transfer => {
@@ -5132,6 +5153,85 @@ test "runCommand account-data decodes base64 and prints hex" {
         "account data for Address11111111111111111111111111111111: 3 bytes\n010203\n",
         captured,
     );
+}
+
+test "runCommand raw-rpc prints raw json response" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson("{\"value\":123}");
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://raw-rpc" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "raw-rpc",
+        "customMethod",
+        "[\"CustomParam111\"]",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "customMethod");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, commandCapturedRequest(&sender_context), "CustomParam111") != null);
+    try std.testing.expectEqualStrings("{\"jsonrpc\":\"2.0\",\"result\":{\"value\":123},\"id\":1}\n", captured);
+}
+
+test "runCommand raw-rpc defaults params to empty array" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson("\"ok\"");
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://raw-rpc-default" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "raw-rpc",
+        "getHealth",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getHealth");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, commandCapturedRequest(&sender_context), "\"params\":[]") != null);
+    try std.testing.expectEqualStrings("{\"jsonrpc\":\"2.0\",\"result\":\"ok\",\"id\":1}\n", captured);
 }
 
 test "runCommand ui-account prints parsed account details" {
