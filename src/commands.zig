@@ -341,6 +341,23 @@ const AnchorCliAccountBinding = union(enum) {
     explicit_null,
 };
 
+fn findJsonBindingValue(
+    json_account_bindings: *const std.json.Value,
+    path: []const u8,
+) ?std.json.Value {
+    if (json_account_bindings.* != .object) return null;
+    if (json_account_bindings.object.get(path)) |binding| return binding;
+
+    if (std.mem.indexOfScalar(u8, path, '.')) |dot_index| {
+        const head = path[0..dot_index];
+        const tail = path[dot_index + 1 ..];
+        const nested_value = json_account_bindings.object.get(head) orelse return null;
+        return findJsonBindingValue(&nested_value, tail);
+    }
+
+    return null;
+}
+
 fn findCliAccountBinding(
     account_bindings: []const []const u8,
     json_account_bindings: ?*const std.json.Value,
@@ -366,12 +383,12 @@ fn findCliAccountBinding(
 
     if (json_account_bindings) |value| {
         if (value.* != .object) return .missing;
-        if (value.object.get(full_name)) |binding| {
+        if (findJsonBindingValue(value, full_name)) |binding| {
             if (binding == .string) return .{ .pubkey = binding.string };
             if (binding == .null) return .explicit_null;
         }
         if (!std.mem.eql(u8, full_name, leaf_name)) {
-            if (value.object.get(leaf_name)) |binding| {
+            if (findJsonBindingValue(value, leaf_name)) |binding| {
                 if (binding == .string) return .{ .pubkey = binding.string };
                 if (binding == .null) return .explicit_null;
             }
@@ -9641,6 +9658,115 @@ test "loadAnchorIdlInvokeInstructionSpec treats json null optional account as mi
         "initialize",
         null,
         "{\"maybeAuthority\":null}",
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(program_id));
+    try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+    try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec binds nested accounts from structured accounts json" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{75} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-nested-accounts-json-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{50} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const state = client.Pubkey.fromBytes(.{51} ** 32);
+    const state_base58 = try state.toBase58(allocator);
+    defer allocator.free(state_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[7,7,7,7,7,7,7,7],"accounts":[{{"name":"config","accounts":[{{"name":"state","writable":true}}]}}],"args":[]}}]}}
+        ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"config\":{{\"state\":\"{s}\"}}}}",
+        .{state_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(state));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec treats nested json null optional account as missing" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{76} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-nested-optional-null-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{52} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const default_state = client.Pubkey.fromBytes(.{53} ** 32);
+    const default_state_base58 = try default_state.toBase58(allocator);
+    defer allocator.free(default_state_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[8,8,8,8,8,8,8,8],"accounts":[{{"name":"config","accounts":[{{"name":"state","optional":true,"address":"{s}","writable":true}}]}}],"args":[]}}]}}
+        ,
+        .{ program_id_base58, default_state_base58 },
+    );
+    defer allocator.free(idl_json);
+    const accounts_json =
+        "{\"config\":{\"state\":null}}";
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        accounts_json,
         &.{},
         &.{},
         null,
