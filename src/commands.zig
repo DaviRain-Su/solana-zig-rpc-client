@@ -177,12 +177,12 @@ fn loadAnchorIdlInvokeInstructionSpec(
     if (!instruction.hasZeroAccountsAndArgs()) return error.InvalidCli;
     if (instruction.discriminator.len == 0) return error.InvalidCli;
 
-    const discriminator_hex = try std.fmt.allocPrint(
-        allocator,
-        "{s}",
-        .{std.fmt.fmtSliceHexLower(instruction.discriminator)},
-    );
+    const discriminator_hex = try allocator.alloc(u8, instruction.discriminator.len * 2);
     defer allocator.free(discriminator_hex);
+    for (instruction.discriminator, 0..) |byte, i| {
+        discriminator_hex[i * 2] = std.fmt.hex_charset[byte >> 4];
+        discriminator_hex[i * 2 + 1] = std.fmt.hex_charset[byte & 0x0f];
+    }
 
     const instruction_specs = [_]CliInstructionSpec{
         .{
