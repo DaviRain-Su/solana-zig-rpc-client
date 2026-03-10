@@ -89,6 +89,14 @@ fn freeTokenAmount(allocator: std.mem.Allocator, amount: client.TokenAmount) voi
     allocator.free(amount.ui_amount_string);
 }
 
+fn freeTokenLargestAccounts(allocator: std.mem.Allocator, accounts: []client.TokenLargestAccount) void {
+    for (accounts) |account| {
+        allocator.free(account.address);
+        freeTokenAmount(allocator, account.amount);
+    }
+    allocator.free(accounts);
+}
+
 fn freeClusterNodes(allocator: std.mem.Allocator, nodes: []client.ClusterNode) void {
     for (nodes) |node| {
         if (node.gossip) |value| allocator.free(value);
@@ -408,6 +416,48 @@ test "root.NonblockingRpcClient getTokenSupplyAsync sends requested mint" {
     try std.testing.expectEqual(@as(u8, 6), amount.decimals);
     try std.testing.expectEqual(@as(?f64, 5.0), amount.ui_amount);
     try std.testing.expectEqualStrings("5", amount.ui_amount_string);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getTokenLargestAccountsAsync sends requested mint" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const mint = "MintLargest9999999999999999999999999999999999";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        mint,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":99},\"value\":[{\"address\":\"LargestToken1111111111111111111111111111111\",\"amount\":\"1000\",\"decimals\":2,\"uiAmount\":10.0,\"uiAmountString\":\"10\"},{\"address\":\"LargestToken2222222222222222222222222222222\",\"amount\":\"2500\",\"decimals\":2,\"uiAmount\":25.0,\"uiAmountString\":\"25\"}]},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getTokenLargestAccountsAsync(mint, .confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const accounts = try task.wait();
+    defer freeTokenLargestAccounts(allocator, accounts);
+
+    try std.testing.expectEqual(@as(usize, 2), accounts.len);
+    try std.testing.expectEqualStrings("LargestToken1111111111111111111111111111111", accounts[0].address);
+    try std.testing.expectEqualStrings("1000", accounts[0].amount.amount);
+    try std.testing.expectEqual(@as(u8, 2), accounts[0].amount.decimals);
+    try std.testing.expectEqual(@as(?f64, 10.0), accounts[0].amount.ui_amount);
+    try std.testing.expectEqualStrings("10", accounts[0].amount.ui_amount_string);
+    try std.testing.expectEqualStrings("LargestToken2222222222222222222222222222222", accounts[1].address);
+    try std.testing.expectEqualStrings("2500", accounts[1].amount.amount);
+    try std.testing.expectEqual(@as(?f64, 25.0), accounts[1].amount.ui_amount);
     try std.testing.expect(matched);
 }
 
