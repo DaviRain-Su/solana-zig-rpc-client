@@ -147,6 +147,9 @@ const CliAddressLookupTableSpec = struct {
 const CliSimulateInstructionsSpec = struct {
     payer_secret_key: ?[]const u8 = null,
     payer_keypair_path: ?[]const u8 = null,
+    nonce_account: ?[]const u8 = null,
+    nonce_authority_secret_key: ?[]const u8 = null,
+    nonce_authority_keypair_path: ?[]const u8 = null,
     additional_signer_secret_keys: []const []const u8 = &.{},
     additional_signer_keypair_paths: []const []const u8 = &.{},
     instructions: []const CliInstructionSpec = &.{},
@@ -156,11 +159,14 @@ const CliSimulateInstructionsSpec = struct {
 
 const LoadedCliInstructionSpec = struct {
     payer: client.Pubkey,
+    nonce_account: ?[]const u8,
+    nonce_authority: ?client.Pubkey,
     signers: []client.Keypair,
     owned_instructions: client.OwnedInstructions,
     address_lookup_tables: []client.AddressLookupTableAccount,
 
     fn deinit(self: *LoadedCliInstructionSpec, allocator: Allocator) void {
+        if (self.nonce_account) |value| allocator.free(value);
         for (self.address_lookup_tables) |table| {
             allocator.free(table.addresses);
         }
@@ -295,14 +301,56 @@ fn loadInstructionKeypairFromPath(
     return try client.Keypair.fromSecretKeySlice(secret_key_bytes);
 }
 
+fn resolveOptionalInstructionKeypair(
+    allocator: Allocator,
+    secret_key: ?[]const u8,
+    keypair_path: ?[]const u8,
+) !?client.Keypair {
+    if (secret_key != null and keypair_path != null) return error.InvalidCli;
+    if (secret_key) |value| return try client.Keypair.fromBase58SecretKey(allocator, value);
+    if (keypair_path) |value| return try loadInstructionKeypairFromPath(allocator, value);
+    return null;
+}
+
+const CliInstructionBuildContext = struct {
+    recent_blockhash: ?[]const u8,
+    blockhash_commitment: ?client.Commitment,
+    blockhash_query: ?client.BlockhashQuery,
+    nonce_authority: ?client.Pubkey,
+};
+
+fn resolveCliInstructionBuildContext(
+    loaded: *const LoadedCliInstructionSpec,
+    recent_blockhash: ?[]const u8,
+    query_commitment: ?client.Commitment,
+) !CliInstructionBuildContext {
+    if (loaded.nonce_account != null and recent_blockhash != null) return error.InvalidCli;
+
+    return .{
+        .recent_blockhash = if (loaded.nonce_account == null) recent_blockhash else null,
+        .blockhash_commitment = if (loaded.nonce_account == null and recent_blockhash == null) query_commitment else null,
+        .blockhash_query = if (loaded.nonce_account) |value|
+            client.BlockhashQuery{ .nonce_account = .{ .pubkey = value, .commitment = query_commitment } }
+        else
+            null,
+        .nonce_authority = loaded.nonce_authority,
+    };
+}
+
 fn loadCliInstructionSpec(
     allocator: Allocator,
     spec: *const CliSimulateInstructionsSpec,
 ) !LoadedCliInstructionSpec {
     if (spec.instructions.len == 0) return error.InvalidCli;
+    if (spec.recent_blockhash != null and spec.nonce_account != null) return error.InvalidCli;
+    if (spec.nonce_account == null and (spec.nonce_authority_secret_key != null or spec.nonce_authority_keypair_path != null)) {
+        return error.InvalidCli;
+    }
 
     var loaded = LoadedCliInstructionSpec{
         .payer = undefined,
+        .nonce_account = null,
+        .nonce_authority = null,
         .signers = &.{},
         .owned_instructions = .{ .instructions = &.{} },
         .address_lookup_tables = &.{},
@@ -311,10 +359,23 @@ fn loadCliInstructionSpec(
 
     const payer_keypair = try resolveInstructionPayerKeypair(allocator, spec);
     loaded.payer = payer_keypair.public_key;
+    if (spec.nonce_account) |value| {
+        loaded.nonce_account = try allocator.dupe(u8, value);
+    }
+
+    const nonce_authority_keypair = try resolveOptionalInstructionKeypair(
+        allocator,
+        spec.nonce_authority_secret_key,
+        spec.nonce_authority_keypair_path,
+    );
+    loaded.nonce_authority = if (loaded.nonce_account != null)
+        if (nonce_authority_keypair) |value| value.public_key else payer_keypair.public_key
+    else
+        null;
 
     loaded.signers = try allocator.alloc(
         client.Keypair,
-        1 + spec.additional_signer_secret_keys.len + spec.additional_signer_keypair_paths.len,
+        1 + spec.additional_signer_secret_keys.len + spec.additional_signer_keypair_paths.len + if (nonce_authority_keypair != null) @as(usize, 1) else 0,
     );
     loaded.signers[0] = payer_keypair;
     for (spec.additional_signer_secret_keys, 0..) |secret_key, index| {
@@ -325,6 +386,9 @@ fn loadCliInstructionSpec(
             allocator,
             path,
         );
+    }
+    if (nonce_authority_keypair) |value| {
+        loaded.signers[1 + spec.additional_signer_secret_keys.len + spec.additional_signer_keypair_paths.len] = value;
     }
 
     const instructions = try allocator.alloc(client.Instruction, spec.instructions.len);
@@ -1086,14 +1150,24 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer loaded.deinit(allocator);
             const recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                recent_blockhash,
+                commitment orelse send_preflight_commitment,
+            ) catch {
+                reportInvalidCliMessage("error: send-instructions spec is invalid\n", .{});
+                return error.InvalidCli;
+            };
 
             const tx_signature = try rpc.sendLegacyInstructionsWithOptions(
                 loaded.payer,
                 loaded.owned_instructions.instructions,
                 loaded.signers,
                 .{
-                    .recent_blockhash = recent_blockhash,
-                    .blockhash_commitment = if (recent_blockhash == null) commitment orelse send_preflight_commitment else null,
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
                     .send_transaction_options = send_transaction_options,
                 },
             );
@@ -1127,14 +1201,24 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer loaded.deinit(allocator);
             const recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                recent_blockhash,
+                commitment orelse send_preflight_commitment,
+            ) catch {
+                reportInvalidCliMessage("error: send-instructions-and-confirm spec is invalid\n", .{});
+                return error.InvalidCli;
+            };
 
             const tx_signature = try rpc.sendAndConfirmLegacyInstructionsWithOptions(
                 loaded.payer,
                 loaded.owned_instructions.instructions,
                 loaded.signers,
                 .{
-                    .recent_blockhash = recent_blockhash,
-                    .blockhash_commitment = if (recent_blockhash == null) commitment orelse send_preflight_commitment else null,
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
                     .send_transaction_options = send_transaction_options,
                     .commitment = commitment,
                     .search_transaction_history = search_transaction_history,
@@ -1172,6 +1256,14 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer loaded.deinit(allocator);
             const recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                recent_blockhash,
+                commitment orelse send_preflight_commitment,
+            ) catch {
+                reportInvalidCliMessage("error: send-versioned-instructions spec is invalid\n", .{});
+                return error.InvalidCli;
+            };
 
             const tx_signature = try rpc.sendVersionedInstructionsWithOptions(
                 loaded.payer,
@@ -1179,8 +1271,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 loaded.address_lookup_tables,
                 loaded.signers,
                 .{
-                    .recent_blockhash = recent_blockhash,
-                    .blockhash_commitment = if (recent_blockhash == null) commitment orelse send_preflight_commitment else null,
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
                     .send_transaction_options = send_transaction_options,
                 },
             );
@@ -1214,6 +1308,14 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer loaded.deinit(allocator);
             const recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                recent_blockhash,
+                commitment orelse send_preflight_commitment,
+            ) catch {
+                reportInvalidCliMessage("error: send-versioned-instructions-and-confirm spec is invalid\n", .{});
+                return error.InvalidCli;
+            };
 
             const tx_signature = try rpc.sendAndConfirmVersionedInstructionsWithOptions(
                 loaded.payer,
@@ -1221,8 +1323,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 loaded.address_lookup_tables,
                 loaded.signers,
                 .{
-                    .recent_blockhash = recent_blockhash,
-                    .blockhash_commitment = if (recent_blockhash == null) commitment orelse send_preflight_commitment else null,
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
                     .send_transaction_options = send_transaction_options,
                     .commitment = commitment,
                     .search_transaction_history = search_transaction_history,
@@ -1615,10 +1719,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             else
                 null;
             const effective_recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
-            const build_options = if (effective_recent_blockhash != null or commitment != null)
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                effective_recent_blockhash,
+                commitment,
+            ) catch {
+                reportInvalidCliMessage("error: simulate-instructions spec is invalid\n", .{});
+                return error.InvalidCli;
+            };
+            const build_options = if (build_context.recent_blockhash != null or build_context.blockhash_commitment != null or build_context.blockhash_query != null or build_context.nonce_authority != null)
                 client.LegacyInstructionsBuildOptions{
-                    .recent_blockhash = effective_recent_blockhash,
-                    .blockhash_commitment = if (effective_recent_blockhash == null) commitment else null,
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
                 }
             else
                 null;
@@ -1692,10 +1806,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             else
                 null;
             const effective_recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
-            const build_options = if (effective_recent_blockhash != null or commitment != null)
+            const build_context = resolveCliInstructionBuildContext(
+                &loaded,
+                effective_recent_blockhash,
+                commitment,
+            ) catch {
+                reportInvalidCliMessage("error: simulate-versioned-instructions spec is invalid\n", .{});
+                return error.InvalidCli;
+            };
+            const build_options = if (build_context.recent_blockhash != null or build_context.blockhash_commitment != null or build_context.blockhash_query != null or build_context.nonce_authority != null)
                 client.VersionedInstructionsBuildOptions{
-                    .recent_blockhash = effective_recent_blockhash,
-                    .blockhash_commitment = if (effective_recent_blockhash == null) commitment else null,
+                    .recent_blockhash = build_context.recent_blockhash,
+                    .blockhash_commitment = build_context.blockhash_commitment,
+                    .blockhash_query = build_context.blockhash_query,
+                    .nonce_authority = build_context.nonce_authority,
                 }
             else
                 null;
@@ -7269,6 +7393,216 @@ test "runCommand send-versioned-instructions-and-confirm confirms versioned inst
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "confirmed signature: Sig999999999999999999999999999999999999999999999999999999999999999999\n",
+        captured,
+    );
+}
+
+test "runCommand simulate-instructions supports nonce account blockhash query" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{31} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{32} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{33} ** 32);
+    const nonce_account_pubkey_bytes = nonce_account_raw.public_key.toBytes();
+    const nonce_account_pubkey = try client.encodeBase58(allocator, &nonce_account_pubkey_bytes);
+    defer allocator.free(nonce_account_pubkey);
+
+    var nonce_blockhash_bytes: [32]u8 = undefined;
+    for (&nonce_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 201);
+    const nonce_blockhash = try client.encodeBase58(allocator, &nonce_blockhash_bytes);
+    defer allocator.free(nonce_blockhash);
+
+    const nonce_data_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"program":"system","parsed":{{"type":"nonce","info":{{"authority":"{s}","blockhash":"{s}"}}}}}}
+        ,
+        .{ payer_pubkey_base58, nonce_blockhash },
+    );
+    defer allocator.free(nonce_data_json);
+
+    try sender_context.sender.pushUiAccountResponse(61, .{
+        .data_json = nonce_data_json,
+        .executable = false,
+        .lamports = 1,
+        .owner = "11111111111111111111111111111111",
+        .rent_epoch = 0,
+        .space = 80,
+    });
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":13},"value":{"accounts":[],"err":null,"fee":123,"unitsConsumed":41,"logs":["Program log: nonce-legacy"]}}
+    );
+
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://simulate-instructions-nonce" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","nonce_account":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"ping","data_encoding":"utf8"}}]}}
+        ,
+        .{ payer_secret_key_base58, nonce_account_pubkey, payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-instructions",
+        spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectGetUiAccountRequest(
+        allocator,
+        commandCapturedRequestAt(&sender_context, 0),
+        nonce_account_pubkey,
+        null,
+        null,
+    );
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: nonce-legacy") != null);
+}
+
+test "runCommand send-versioned-instructions supports nonce account and nonce authority keypair" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{34} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{35} ** 32);
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const nonce_authority = try client.Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+    const nonce_authority_pubkey_base58 = try nonce_authority.public_key.toBase58(allocator);
+    defer allocator.free(nonce_authority_pubkey_base58);
+
+    const nonce_authority_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-send-versioned-instructions-nonce-authority-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(nonce_authority_keypair_path);
+    defer std.fs.cwd().deleteFile(nonce_authority_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, nonce_authority_keypair_path, &nonce_authority_secret_key);
+    const nonce_authority_realpath = try std.fs.cwd().realpathAlloc(allocator, nonce_authority_keypair_path);
+    defer allocator.free(nonce_authority_realpath);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{36} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{37} ** 32);
+    const nonce_account_pubkey_bytes = nonce_account_raw.public_key.toBytes();
+    const nonce_account_pubkey = try client.encodeBase58(allocator, &nonce_account_pubkey_bytes);
+    defer allocator.free(nonce_account_pubkey);
+
+    var nonce_blockhash_bytes: [32]u8 = undefined;
+    for (&nonce_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 211);
+    const nonce_blockhash = try client.encodeBase58(allocator, &nonce_blockhash_bytes);
+    defer allocator.free(nonce_blockhash);
+
+    const nonce_data_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"program":"system","parsed":{{"type":"nonce","info":{{"authority":"{s}","blockhash":"{s}"}}}}}}
+        ,
+        .{ nonce_authority_pubkey_base58, nonce_blockhash },
+    );
+    defer allocator.free(nonce_data_json);
+
+    try sender_context.sender.pushUiAccountResponse(62, .{
+        .data_json = nonce_data_json,
+        .executable = false,
+        .lamports = 1,
+        .owner = "11111111111111111111111111111111",
+        .rent_epoch = 0,
+        .space = 80,
+    });
+    try sender_context.sender.pushResultJson("\"Sig151515151515151515151515151515151515151515151515151515151515151515\"");
+
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-versioned-instructions-nonce" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","nonce_account":"{s}","nonce_authority_keypair_path":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"70696e67","data_encoding":"hex"}}]}}
+        ,
+        .{ payer_secret_key_base58, nonce_account_pubkey, nonce_authority_realpath, payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-versioned-instructions",
+        spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetUiAccountRequest(
+        allocator,
+        commandCapturedRequestAt(&sender_context, 0),
+        nonce_account_pubkey,
+        null,
+        null,
+    );
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "signature: Sig151515151515151515151515151515151515151515151515151515151515151515\n",
         captured,
     );
 }
