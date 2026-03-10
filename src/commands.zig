@@ -303,9 +303,9 @@ fn loadCliInstructionSpec(
 
     var loaded = LoadedCliInstructionSpec{
         .payer = undefined,
-        .signers = undefined,
-        .owned_instructions = .{ .instructions = undefined },
-        .address_lookup_tables = undefined,
+        .signers = &.{},
+        .owned_instructions = .{ .instructions = &.{} },
+        .address_lookup_tables = &.{},
     };
     errdefer loaded.deinit(allocator);
 
@@ -369,6 +369,75 @@ fn loadCliInstructionSpec(
         };
     }
     return loaded;
+}
+
+fn parseInstructionDataEncodingArg(value: ?[]const u8) !InstructionDataEncoding {
+    const raw = value orelse return .utf8;
+
+    if (std.mem.eql(u8, raw, "base64")) return .base64;
+    if (std.mem.eql(u8, raw, "hex")) return .hex;
+    if (std.mem.eql(u8, raw, "utf8")) return .utf8;
+    return error.InvalidCli;
+}
+
+fn loadProgramInvokeInstructionSpec(
+    allocator: Allocator,
+    program_id: []const u8,
+    accounts_arg: []const u8,
+    data_arg: ?[]const u8,
+    data_encoding_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+) !LoadedCliInstructionSpec {
+    const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch return error.InvalidCli;
+    defer allocator.free(accounts_source);
+
+    const parsed_accounts = std.json.parseFromSlice([]CliInstructionAccountMeta, allocator, accounts_source, .{
+        .ignore_unknown_fields = true,
+    }) catch return error.InvalidCli;
+    defer parsed_accounts.deinit();
+
+    if (parsed_accounts.value.len == 0) return error.InvalidCli;
+
+    var parsed_signer_keypair_paths: ?std.json.Parsed([]const []const u8) = null;
+    defer if (parsed_signer_keypair_paths) |*value| value.deinit();
+
+    if (signer_keypair_paths_arg) |value| {
+        const signer_paths_source = loadInstructionSpecSource(allocator, value) catch return error.InvalidCli;
+        defer allocator.free(signer_paths_source);
+
+        parsed_signer_keypair_paths = std.json.parseFromSlice([]const []const u8, allocator, signer_paths_source, .{}) catch return error.InvalidCli;
+    }
+
+    const data_encoding = try parseInstructionDataEncodingArg(data_encoding_arg);
+    const data_path = if (data_arg) |value|
+        if (std.mem.startsWith(u8, value, "@")) blk: {
+            if (value.len == 1) return error.InvalidCli;
+            break :blk value[1..];
+        } else null
+    else
+        null;
+    const instruction_data = if (data_arg) |value|
+        if (data_path == null) value else null
+    else
+        null;
+
+    const instruction_specs = [_]CliInstructionSpec{
+        .{
+            .program_id = program_id,
+            .accounts = parsed_accounts.value,
+            .data = instruction_data,
+            .data_path = data_path,
+            .data_encoding = data_encoding,
+        },
+    };
+    const spec = CliSimulateInstructionsSpec{
+        .payer_keypair_path = payer_keypair_path_arg,
+        .additional_signer_keypair_paths = if (parsed_signer_keypair_paths) |value| value.value else &.{},
+        .instructions = &instruction_specs,
+    };
+
+    return try loadCliInstructionSpec(allocator, &spec);
 }
 
 fn printSimulationResult(simulation: client.SimulatedTransaction) void {
@@ -473,6 +542,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const blocks_end_slot_arg = args.blocks_end_slot_arg;
     const message_arg = args.message_arg;
     const instructions_spec_arg = args.instructions_spec_arg;
+    const program_invoke_program_id_arg = args.program_invoke_program_id_arg;
+    const program_invoke_accounts_arg = args.program_invoke_accounts_arg;
+    const program_invoke_data_arg = args.program_invoke_data_arg;
+    const program_invoke_data_encoding_arg = args.program_invoke_data_encoding_arg;
+    const program_invoke_signer_keypair_paths_arg = args.program_invoke_signer_keypair_paths_arg;
     const raw_rpc_method_arg = args.raw_rpc_method_arg;
     const raw_rpc_params_arg = args.raw_rpc_params_arg;
     const slot_leaders_limit_arg = args.slot_leaders_limit_arg;
@@ -518,6 +592,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command == .send_instructions_and_confirm or
         command == .send_versioned_instructions or
         command == .send_versioned_instructions_and_confirm or
+        command == .send_program_invoke or
+        command == .send_program_invoke_and_confirm or
         command == .transfer;
     const is_account_min_context_command = command == .account_data or
         command == .account_info or
@@ -553,7 +629,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         status_poll_ms;
     if ((send_skip_preflight or send_max_retries != null or send_preflight_commitment != null) and !is_send_command) {
         reportInvalidCliMessage(
-            "error: send options (--skip-preflight, --max-retries, --preflight-commitment) require send-transaction, send-transaction-and-confirm, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, or transfer\n",
+            "error: send options (--skip-preflight, --max-retries, --preflight-commitment) require send-transaction, send-transaction-and-confirm, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, send-program-invoke, send-program-invoke-and-confirm, or transfer\n",
             .{},
         );
         return error.InvalidCli;
@@ -569,13 +645,18 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    if (sender_keypair_path_arg != null and command != .transfer) {
-        reportInvalidCliMessage("error: --sender-keypair requires transfer\n", .{});
+    if (sender_keypair_path_arg != null and
+        command != .transfer and
+        command != .send_program_invoke and
+        command != .send_program_invoke_and_confirm and
+        command != .simulate_program_invoke)
+    {
+        reportInvalidCliMessage("error: --sender-keypair requires transfer or program-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
-    if ((timeout_ms_overridden or poll_ms_overridden) and command != .status and command != .poll_balance and command != .wait_for_balance and command != .send_transaction_and_confirm and command != .send_instructions_and_confirm and command != .send_versioned_instructions_and_confirm and command != .poll_for_signature_confirmation and command != .transfer) {
-        reportInvalidCliMessage("error: wait options (--timeout-ms, --poll-ms) require status, poll-balance, wait-for-balance, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, send-versioned-instructions-and-confirm, or transfer\n", .{});
+    if ((timeout_ms_overridden or poll_ms_overridden) and command != .status and command != .poll_balance and command != .wait_for_balance and command != .send_transaction_and_confirm and command != .send_instructions_and_confirm and command != .send_versioned_instructions_and_confirm and command != .send_program_invoke_and_confirm and command != .poll_for_signature_confirmation and command != .transfer) {
+        reportInvalidCliMessage("error: wait options (--timeout-ms, --poll-ms) require status, poll-balance, wait-for-balance, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, send-versioned-instructions-and-confirm, send-program-invoke-and-confirm, or transfer\n", .{});
         return error.InvalidCli;
     }
 
@@ -588,11 +669,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .poll_for_signature_confirmation and
         command != .send_transaction_and_confirm and
         command != .send_instructions_and_confirm and
+        command != .send_program_invoke_and_confirm and
         command != .send_versioned_instructions_and_confirm and
         command != .transfer)
     {
         reportInvalidCliMessage(
-            "error: --search-transaction-history requires status, confirm-transaction, signature-status, signature-statuses, blocks-since-signature-confirmation, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, send-versioned-instructions-and-confirm, or transfer\n",
+            "error: --search-transaction-history requires status, confirm-transaction, signature-status, signature-statuses, blocks-since-signature-confirmation, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, send-versioned-instructions-and-confirm, send-program-invoke-and-confirm, or transfer\n",
             .{},
         );
         return error.InvalidCli;
@@ -613,9 +695,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    const is_simulate_command = command == .simulate_transaction or command == .simulate_instructions or command == .simulate_versioned_instructions;
+    const is_simulate_command = command == .simulate_transaction or command == .simulate_instructions or command == .simulate_versioned_instructions or command == .simulate_program_invoke;
     if ((simulate_sig_verify or simulate_replace_recent_blockhash) and !is_simulate_command) {
-        reportInvalidCliMessage("error: --sig-verify and --replace-recent-blockhash require simulate-transaction, simulate-instructions, or simulate-versioned-instructions\n", .{});
+        reportInvalidCliMessage("error: --sig-verify and --replace-recent-blockhash require simulate-transaction, simulate-instructions, simulate-versioned-instructions, or simulate-program-invoke\n", .{});
         return error.InvalidCli;
     }
 
@@ -623,7 +705,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         !is_simulate_command)
     {
         reportInvalidCliMessage(
-            "error: simulation query options require simulate-transaction, simulate-instructions, or simulate-versioned-instructions\n",
+            "error: simulation query options require simulate-transaction, simulate-instructions, simulate-versioned-instructions, or simulate-program-invoke\n",
             .{},
         );
         return error.InvalidCli;
@@ -1109,6 +1191,86 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
         },
 
+        .send_program_invoke => {
+            const program_id = program_invoke_program_id_arg orelse {
+                reportInvalidCliMessage("error: send-program-invoke requires <program-id> <accounts-json|@path>\n", .{});
+                return error.InvalidCli;
+            };
+            const accounts_arg = program_invoke_accounts_arg orelse {
+                reportInvalidCliMessage("error: send-program-invoke requires <program-id> <accounts-json|@path>\n", .{});
+                return error.InvalidCli;
+            };
+
+            var loaded = loadProgramInvokeInstructionSpec(
+                allocator,
+                program_id,
+                accounts_arg,
+                program_invoke_data_arg,
+                program_invoke_data_encoding_arg,
+                program_invoke_signer_keypair_paths_arg,
+                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+            ) catch {
+                reportInvalidCliMessage("error: send-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer loaded.deinit(allocator);
+
+            const tx_signature = try rpc.sendLegacyInstructionsWithOptions(
+                loaded.payer,
+                loaded.owned_instructions.instructions,
+                loaded.signers,
+                .{
+                    .blockhash_commitment = commitment orelse send_preflight_commitment,
+                    .send_transaction_options = send_transaction_options,
+                },
+            );
+            defer allocator.free(tx_signature);
+
+            std.debug.print("signature: {s}\n", .{tx_signature});
+        },
+
+        .send_program_invoke_and_confirm => {
+            const program_id = program_invoke_program_id_arg orelse {
+                reportInvalidCliMessage("error: send-program-invoke-and-confirm requires <program-id> <accounts-json|@path>\n", .{});
+                return error.InvalidCli;
+            };
+            const accounts_arg = program_invoke_accounts_arg orelse {
+                reportInvalidCliMessage("error: send-program-invoke-and-confirm requires <program-id> <accounts-json|@path>\n", .{});
+                return error.InvalidCli;
+            };
+
+            var loaded = loadProgramInvokeInstructionSpec(
+                allocator,
+                program_id,
+                accounts_arg,
+                program_invoke_data_arg,
+                program_invoke_data_encoding_arg,
+                program_invoke_signer_keypair_paths_arg,
+                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+            ) catch {
+                reportInvalidCliMessage("error: send-program-invoke-and-confirm arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer loaded.deinit(allocator);
+
+            const tx_signature = try rpc.sendAndConfirmLegacyInstructionsWithOptions(
+                loaded.payer,
+                loaded.owned_instructions.instructions,
+                loaded.signers,
+                .{
+                    .blockhash_commitment = commitment orelse send_preflight_commitment,
+                    .send_transaction_options = send_transaction_options,
+                    .commitment = commitment,
+                    .search_transaction_history = search_transaction_history,
+                    .timeout_ms = status_timeout_ms,
+                    .poll_interval_ms = status_poll_ms,
+                },
+            );
+            defer allocator.free(tx_signature);
+
+            std.debug.print("confirmed signature: {s}\n", .{tx_signature});
+        },
+
         .raw_rpc => {
             const method = raw_rpc_method_arg orelse {
                 reportInvalidCliMessage("error: raw-rpc requires <method>\n", .{});
@@ -1406,6 +1568,80 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 loaded.payer,
                 loaded.owned_instructions.instructions,
                 loaded.address_lookup_tables,
+                loaded.signers,
+                build_options,
+                options,
+            );
+            defer freeSimulatedTransaction(allocator, simulation);
+
+            printSimulationResult(simulation);
+        },
+
+        .simulate_program_invoke => {
+            const program_id = program_invoke_program_id_arg orelse {
+                reportInvalidCliMessage("error: simulate-program-invoke requires <program-id> <accounts-json|@path>\n", .{});
+                return error.InvalidCli;
+            };
+            const accounts_arg = program_invoke_accounts_arg orelse {
+                reportInvalidCliMessage("error: simulate-program-invoke requires <program-id> <accounts-json|@path>\n", .{});
+                return error.InvalidCli;
+            };
+
+            var loaded = loadProgramInvokeInstructionSpec(
+                allocator,
+                program_id,
+                accounts_arg,
+                program_invoke_data_arg,
+                program_invoke_data_encoding_arg,
+                program_invoke_signer_keypair_paths_arg,
+                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+            ) catch {
+                reportInvalidCliMessage("error: simulate-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer loaded.deinit(allocator);
+
+            const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
+                parseAccountEncoding(value) orelse return error.InvalidCli
+            else
+                null;
+            const simulation_min_context_slot = if (simulation_min_context_slot_arg) |value|
+                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+            else
+                null;
+            const simulation_accounts_options = if (simulation_accounts.items.len > 0)
+                client.SimulationAccountsOptions{
+                    .addresses = simulation_accounts.items,
+                    .encoding = simulation_account_encoding,
+                }
+            else
+                null;
+            const options = if (simulate_sig_verify or
+                simulate_replace_recent_blockhash or
+                simulate_inner_instructions or
+                commitment != null or
+                simulation_min_context_slot != null or
+                simulation_accounts_options != null)
+                client.SimulateTransactionOptions{
+                    .sig_verify = simulate_sig_verify,
+                    .replace_recent_blockhash = simulate_replace_recent_blockhash,
+                    .commitment = commitment,
+                    .min_context_slot = simulation_min_context_slot,
+                    .inner_instructions = simulate_inner_instructions,
+                    .accounts = simulation_accounts_options,
+                }
+            else
+                null;
+            const build_options = if (commitment != null)
+                client.LegacyInstructionsBuildOptions{
+                    .blockhash_commitment = commitment,
+                }
+            else
+                null;
+
+            const simulation = try rpc.simulateLegacyInstructionsWithOptions(
+                loaded.payer,
+                loaded.owned_instructions.instructions,
                 loaded.signers,
                 build_options,
                 options,
@@ -6230,6 +6466,214 @@ test "runCommand send-instructions loads additional signer from keypair path" {
         "signature: Sig121212121212121212121212121212121212121212121212121212121212121212\n",
         captured,
     );
+}
+
+test "runCommand send-program-invoke sends instruction built from args" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var latest_blockhash_bytes: [32]u8 = undefined;
+    for (&latest_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 33);
+    const latest_blockhash = try client.encodeBase58(allocator, &latest_blockhash_bytes);
+    defer allocator.free(latest_blockhash);
+    try sender_context.sender.pushLatestBlockhashResponse(
+        44,
+        latest_blockhash,
+        77,
+    );
+    try sender_context.sender.pushResultJson("\"Sig131313131313131313131313131313131313131313131313131313131313131313\"");
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-program-invoke" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{8} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-program-invoke-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    const data_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-program-invoke-data-{d}.bin",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(data_path);
+    defer std.fs.cwd().deleteFile(data_path) catch {};
+    try std.fs.cwd().writeFile(.{ .sub_path = data_path, .data = "ping" });
+    const data_realpath = try std.fs.cwd().realpathAlloc(allocator, data_path);
+    defer allocator.free(data_realpath);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
+        ,
+        .{ payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    const data_arg = try std.fmt.allocPrint(allocator, "@{s}", .{data_realpath});
+    defer allocator.free(data_arg);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-program-invoke",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        "11111111111111111111111111111111",
+        accounts_json,
+        data_arg,
+        "utf8",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "signature: Sig131313131313131313131313131313131313131313131313131313131313131313\n",
+        captured,
+    );
+}
+
+test "runCommand simulate-program-invoke simulates instruction built from args" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var latest_blockhash_bytes: [32]u8 = undefined;
+    for (&latest_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 97);
+    const latest_blockhash = try client.encodeBase58(allocator, &latest_blockhash_bytes);
+    defer allocator.free(latest_blockhash);
+    try sender_context.sender.pushLatestBlockhashResponse(
+        45,
+        latest_blockhash,
+        88,
+    );
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":11},"value":{"accounts":[],"err":null,"fee":99,"unitsConsumed":21,"logs":["Program log: invoke-ok"]}}
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://simulate-program-invoke" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{4} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-simulate-program-invoke-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    const accounts_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-simulate-program-invoke-accounts-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(accounts_path);
+    defer std.fs.cwd().deleteFile(accounts_path) catch {};
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
+        ,
+        .{ payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(accounts_json);
+    try std.fs.cwd().writeFile(.{ .sub_path = accounts_path, .data = accounts_json });
+    const accounts_realpath = try std.fs.cwd().realpathAlloc(allocator, accounts_path);
+    defer allocator.free(accounts_realpath);
+
+    const data_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-simulate-program-invoke-data-{d}.bin",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(data_path);
+    defer std.fs.cwd().deleteFile(data_path) catch {};
+    try std.fs.cwd().writeFile(.{ .sub_path = data_path, .data = "ping" });
+    const data_realpath = try std.fs.cwd().realpathAlloc(allocator, data_path);
+    defer allocator.free(data_realpath);
+
+    const accounts_arg = try std.fmt.allocPrint(allocator, "@{s}", .{accounts_realpath});
+    defer allocator.free(accounts_arg);
+    const data_arg = try std.fmt.allocPrint(allocator, "@{s}", .{data_realpath});
+    defer allocator.free(data_arg);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-program-invoke",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        "11111111111111111111111111111111",
+        accounts_arg,
+        data_arg,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: invoke-ok") != null);
 }
 
 test "loadCliInstructionSpec loads instruction data from path" {
