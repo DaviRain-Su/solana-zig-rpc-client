@@ -432,3 +432,84 @@ test "root.NonblockingRpcClient getVersionAsync returns owned version string" {
     defer allocator.free(version);
     try std.testing.expectEqualStrings("2.1.0", version);
 }
+
+test "root.NonblockingRpcClient getMinimumLedgerSlotAsync returns waitable slot" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":1001,\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getMinimumLedgerSlotAsync();
+    try std.testing.expect(!task.isDone());
+
+    const minimum_ledger_slot = try task.wait();
+    try std.testing.expectEqual(@as(u64, 1001), minimum_ledger_slot);
+}
+
+test "root.NonblockingRpcClient getMaxRetransmitSlotAsync returns waitable slot" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":1002,\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getMaxRetransmitSlotAsync();
+    try std.testing.expect(!task.isDone());
+
+    const max_retransmit_slot = try task.wait();
+    try std.testing.expectEqual(@as(u64, 1002), max_retransmit_slot);
+}
+
+test "root.NonblockingRpcClient getMaxShredInsertSlotAsync returns waitable slot" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServer, .{
+        &listener,
+        allocator,
+        200,
+        "{\"jsonrpc\":\"2.0\",\"result\":1003,\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getMaxShredInsertSlotAsync();
+    try std.testing.expect(!task.isDone());
+
+    const max_shred_insert_slot = try task.wait();
+    try std.testing.expectEqual(@as(u64, 1003), max_shred_insert_slot);
+}

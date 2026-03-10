@@ -109,6 +109,72 @@ fn runGetStakeMinimumDelegation(
     return try client.getStakeMinimumDelegation(commitment);
 }
 
+fn runGetMinimumLedgerSlot(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !u64 {
+    _ = commitment;
+
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getMinimumLedgerSlot();
+}
+
+fn runGetMaxRetransmitSlot(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !u64 {
+    _ = commitment;
+
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getMaxRetransmitSlot();
+}
+
+fn runGetMaxShredInsertSlot(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    commitment: ?Commitment,
+) !u64 {
+    _ = commitment;
+
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getMaxShredInsertSlot();
+}
+
 fn runGetBalance(
     allocator: Allocator,
     endpoint: []const u8,
@@ -407,6 +473,9 @@ pub const NonblockingRpcClient = struct {
     pub const TransactionCountTask = AsyncTask(u64, runGetTransactionCount);
     pub const FirstAvailableBlockTask = AsyncTask(u64, runGetFirstAvailableBlock);
     pub const StakeMinimumDelegationTask = AsyncTask(u64, runGetStakeMinimumDelegation);
+    pub const MinimumLedgerSlotTask = AsyncTask(u64, runGetMinimumLedgerSlot);
+    pub const MaxRetransmitSlotTask = AsyncTask(u64, runGetMaxRetransmitSlot);
+    pub const MaxShredInsertSlotTask = AsyncTask(u64, runGetMaxShredInsertSlot);
     pub const BalanceTask = AsyncTask(BalanceResponse, runGetBalance);
     pub const EpochInfoTask = AsyncTask(EpochInfo, runGetEpochInfo);
     pub const BlockTimeTask = AsyncTask(?i64, runGetBlockTime);
@@ -584,6 +653,39 @@ pub const NonblockingRpcClient = struct {
             self.request_timeout_ms,
             self.confirm_transaction_initial_timeout_ms,
             commitment,
+        );
+    }
+
+    pub fn getMinimumLedgerSlotAsync(self: *const NonblockingRpcClient) !*MinimumLedgerSlotTask {
+        return MinimumLedgerSlotTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            null,
+        );
+    }
+
+    pub fn getMaxRetransmitSlotAsync(self: *const NonblockingRpcClient) !*MaxRetransmitSlotTask {
+        return MaxRetransmitSlotTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            null,
+        );
+    }
+
+    pub fn getMaxShredInsertSlotAsync(self: *const NonblockingRpcClient) !*MaxShredInsertSlotTask {
+        return MaxShredInsertSlotTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            null,
         );
     }
 
