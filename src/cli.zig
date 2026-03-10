@@ -49,11 +49,14 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] send-versioned-instructions-and-confirm <instruction-spec-json|@path>\n" ++
     "  solana_client_zig [--rpc <url>] send-program-invoke [--sender-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]\n" ++
     "  solana_client_zig [--rpc <url>] send-program-invoke-and-confirm [--sender-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]\n" ++
+    "  solana_client_zig [--rpc <url>] send-versioned-program-invoke [--sender-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]\n" ++
+    "  solana_client_zig [--rpc <url>] send-versioned-program-invoke-and-confirm [--sender-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]\n" ++
     "  solana_client_zig [--rpc <url>] transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-transaction <signed-tx-base64>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-instructions <instruction-spec-json|@path>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-versioned-instructions <instruction-spec-json|@path>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-program-invoke [--sender-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]\n" ++
+    "  solana_client_zig [--rpc <url>] simulate-versioned-program-invoke [--sender-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]\n" ++
     "  solana_client_zig [--rpc <url>] raw-rpc <method> [params-json]\n" ++
     "  solana_client_zig [--rpc <url>] slot\n" ++
     "  solana_client_zig [--rpc <url>] block-height\n" ++
@@ -343,6 +346,7 @@ pub const ParsedArgs = struct {
     program_invoke_data_arg: ?[]const u8,
     program_invoke_data_encoding_arg: ?[]const u8,
     program_invoke_signer_keypair_paths_arg: ?[]const u8,
+    program_invoke_lookup_tables_arg: ?[]const u8,
     raw_rpc_method_arg: ?[]const u8,
     raw_rpc_params_arg: ?[]const u8,
     slot_leaders_limit_arg: ?[]const u8,
@@ -435,6 +439,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .program_invoke_data_arg = null,
         .program_invoke_data_encoding_arg = null,
         .program_invoke_signer_keypair_paths_arg = null,
+        .program_invoke_lookup_tables_arg = null,
         .raw_rpc_method_arg = null,
         .raw_rpc_params_arg = null,
         .slot_leaders_limit_arg = null,
@@ -875,6 +880,18 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 continue;
             }
 
+            if (std.mem.eql(u8, arg, "send-versioned-program-invoke")) {
+                parsed.command = .send_versioned_program_invoke;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "send-versioned-program-invoke-and-confirm")) {
+                parsed.command = .send_versioned_program_invoke_and_confirm;
+                parsed.has_command = true;
+                continue;
+            }
+
             if (std.mem.eql(u8, arg, "transfer")) {
                 parsed.command = .transfer;
                 parsed.has_command = true;
@@ -901,6 +918,12 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
 
             if (std.mem.eql(u8, arg, "simulate-program-invoke")) {
                 parsed.command = .simulate_program_invoke;
+                parsed.has_command = true;
+                continue;
+            }
+
+            if (std.mem.eql(u8, arg, "simulate-versioned-program-invoke")) {
+                parsed.command = .simulate_versioned_program_invoke;
                 parsed.has_command = true;
                 continue;
             }
@@ -1316,6 +1339,9 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
             .send_program_invoke,
             .send_program_invoke_and_confirm,
             .simulate_program_invoke,
+            .send_versioned_program_invoke,
+            .send_versioned_program_invoke_and_confirm,
+            .simulate_versioned_program_invoke,
             => if (parsed.program_invoke_program_id_arg == null) {
                 parsed.program_invoke_program_id_arg = arg;
             } else if (parsed.program_invoke_accounts_arg == null) {
@@ -1326,6 +1352,8 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 parsed.program_invoke_data_encoding_arg = arg;
             } else if (parsed.program_invoke_signer_keypair_paths_arg == null) {
                 parsed.program_invoke_signer_keypair_paths_arg = arg;
+            } else if (parsed.program_invoke_lookup_tables_arg == null) {
+                parsed.program_invoke_lookup_tables_arg = arg;
             } else {
                 return error.InvalidCli;
             },
@@ -1505,11 +1533,14 @@ pub const Command = enum {
     send_versioned_instructions_and_confirm,
     send_program_invoke,
     send_program_invoke_and_confirm,
+    send_versioned_program_invoke,
+    send_versioned_program_invoke_and_confirm,
     transfer,
     simulate_transaction,
     simulate_instructions,
     simulate_versioned_instructions,
     simulate_program_invoke,
+    simulate_versioned_program_invoke,
     raw_rpc,
     slot,
     block_height,
@@ -1615,9 +1646,12 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-instructions-and-confirm <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke [--sender-keypair <path>] <program-id> <accounts-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke-and-confirm [--sender-keypair <path>] <program-id> <accounts-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke [--sender-keypair <path>] <program-id> <accounts-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke-and-confirm [--sender-keypair <path>] <program-id> <accounts-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-instructions <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-instructions <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-program-invoke [--sender-keypair <path>] <program-id> <accounts-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-program-invoke [--sender-keypair <path>] <program-id> <accounts-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "raw-rpc <method> [params-json]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "poll-balance <account>") != null);
@@ -1940,6 +1974,30 @@ test "cli.parseCliArgs parses send-program-invoke args" {
     try std.testing.expectEqualStrings("@data.bin", parsed.program_invoke_data_arg orelse "");
     try std.testing.expectEqualStrings("hex", parsed.program_invoke_data_encoding_arg orelse "");
     try std.testing.expectEqualStrings("[\"/tmp/extra.json\"]", parsed.program_invoke_signer_keypair_paths_arg orelse "");
+}
+
+test "cli.parseCliArgs parses send-versioned-program-invoke args" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "send-versioned-program-invoke",
+        "--sender-keypair",
+        "/tmp/test-versioned-program-invoke.json",
+        "Program1111111111111111111111111111111111",
+        "[{\"pubkey\":\"Acct1111111111111111111111111111111111111\",\"is_signer\":true}]",
+        "@data.bin",
+        "base64",
+        "[\"/tmp/extra.json\"]",
+        "[{\"account_key\":\"Lookup111111111111111111111111111111111\",\"addresses\":[\"Addr1111111111111111111111111111111111111\"]}]",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.send_versioned_program_invoke, parsed.command);
+    try std.testing.expectEqualStrings("/tmp/test-versioned-program-invoke.json", parsed.sender_keypair_path_arg orelse "");
+    try std.testing.expectEqualStrings("Program1111111111111111111111111111111111", parsed.program_invoke_program_id_arg orelse "");
+    try std.testing.expectEqualStrings("[{\"pubkey\":\"Acct1111111111111111111111111111111111111\",\"is_signer\":true}]", parsed.program_invoke_accounts_arg orelse "");
+    try std.testing.expectEqualStrings("@data.bin", parsed.program_invoke_data_arg orelse "");
+    try std.testing.expectEqualStrings("base64", parsed.program_invoke_data_encoding_arg orelse "");
+    try std.testing.expectEqualStrings("[\"/tmp/extra.json\"]", parsed.program_invoke_signer_keypair_paths_arg orelse "");
+    try std.testing.expectEqualStrings("[{\"account_key\":\"Lookup111111111111111111111111111111111\",\"addresses\":[\"Addr1111111111111111111111111111111111111\"]}]", parsed.program_invoke_lookup_tables_arg orelse "");
 }
 
 test "cli.parseCliArgs parses new-latest-blockhash" {
