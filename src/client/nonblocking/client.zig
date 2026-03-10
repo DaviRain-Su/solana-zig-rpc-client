@@ -17,6 +17,7 @@ const LatestBlockhashResponse = rpc_types.LatestBlockhashResponse;
 const LeaderSchedule = rpc_types.LeaderSchedule;
 const SnapshotSlots = rpc_types.SnapshotSlots;
 const Supply = rpc_types.Supply;
+const TokenAmount = rpc_types.TokenAmount;
 const VoteAccounts = rpc_types.VoteAccounts;
 
 fn runGetSlot(
@@ -224,6 +225,48 @@ fn runGetBalanceForAddress(
     );
     defer client.deinit();
     return try client.getBalanceResponse(address, commitment);
+}
+
+fn runGetTokenAccountBalance(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    token_account: []const u8,
+    commitment: ?Commitment,
+) !TokenAmount {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getTokenAccountBalance(token_account, commitment);
+}
+
+fn runGetTokenSupply(
+    allocator: Allocator,
+    endpoint: []const u8,
+    default_commitment: ?Commitment,
+    request_timeout_ms: ?u64,
+    confirm_transaction_initial_timeout_ms: ?u64,
+    mint: []const u8,
+    commitment: ?Commitment,
+) !TokenAmount {
+    var client = try lifecycle_methods.initClient(
+        rpc_client.RpcClient,
+        allocator,
+        endpoint,
+        default_commitment,
+        request_timeout_ms,
+        confirm_transaction_initial_timeout_ms,
+    );
+    defer client.deinit();
+    return try client.getTokenSupply(mint, commitment);
 }
 
 fn runGetSupply(
@@ -1259,6 +1302,8 @@ pub const NonblockingRpcClient = struct {
     pub const MaxShredInsertSlotTask = AsyncTask(u64, runGetMaxShredInsertSlot);
     pub const BalanceTask = AsyncTask(BalanceResponse, runGetBalance);
     pub const BalanceForAddressTask = AsyncTaskWithStringAndCommitment(BalanceResponse, runGetBalanceForAddress);
+    pub const TokenAccountBalanceTask = AsyncTaskWithStringAndCommitment(TokenAmount, runGetTokenAccountBalance);
+    pub const TokenSupplyTask = AsyncTaskWithStringAndCommitment(TokenAmount, runGetTokenSupply);
     pub const SupplyTask = AsyncTask(Supply, runGetSupply);
     pub const EpochInfoTask = AsyncTask(EpochInfo, runGetEpochInfo);
     pub const EpochScheduleTask = AsyncTask(EpochSchedule, runGetEpochSchedule);
@@ -1513,6 +1558,38 @@ pub const NonblockingRpcClient = struct {
             self.request_timeout_ms,
             self.confirm_transaction_initial_timeout_ms,
             address,
+            commitment,
+        );
+    }
+
+    pub fn getTokenAccountBalanceAsync(
+        self: *const NonblockingRpcClient,
+        token_account: []const u8,
+        commitment: ?Commitment,
+    ) !*TokenAccountBalanceTask {
+        return TokenAccountBalanceTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            token_account,
+            commitment,
+        );
+    }
+
+    pub fn getTokenSupplyAsync(
+        self: *const NonblockingRpcClient,
+        mint: []const u8,
+        commitment: ?Commitment,
+    ) !*TokenSupplyTask {
+        return TokenSupplyTask.start(
+            self.allocator,
+            self.endpoint,
+            self.default_commitment,
+            self.request_timeout_ms,
+            self.confirm_transaction_initial_timeout_ms,
+            mint,
             commitment,
         );
     }

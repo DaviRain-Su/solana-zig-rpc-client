@@ -79,6 +79,11 @@ fn freeSupply(allocator: std.mem.Allocator, supply: client.Supply) void {
     }
 }
 
+fn freeTokenAmount(allocator: std.mem.Allocator, amount: client.TokenAmount) void {
+    allocator.free(amount.amount);
+    allocator.free(amount.ui_amount_string);
+}
+
 fn freeClusterNodes(allocator: std.mem.Allocator, nodes: []client.ClusterNode) void {
     for (nodes) |node| {
         if (node.gossip) |value| allocator.free(value);
@@ -324,6 +329,80 @@ test "root.NonblockingRpcClient getBalanceForAddressAsync sends requested addres
     const balance = try task.wait();
     try std.testing.expectEqual(@as(u64, 66), balance.context_slot);
     try std.testing.expectEqual(@as(u64, 777), balance.value);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getTokenAccountBalanceAsync sends requested token account" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const token_account = "TokenAcct77777777777777777777777777777777777";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        token_account,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":77},\"value\":{\"amount\":\"12345\",\"decimals\":6,\"uiAmount\":0.012345,\"uiAmountString\":\"0.012345\"}},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getTokenAccountBalanceAsync(token_account, .processed);
+    try std.testing.expect(!task.isDone());
+
+    const amount = try task.wait();
+    defer freeTokenAmount(allocator, amount);
+
+    try std.testing.expectEqualStrings("12345", amount.amount);
+    try std.testing.expectEqual(@as(u8, 6), amount.decimals);
+    try std.testing.expectEqual(@as(?f64, 0.012345), amount.ui_amount);
+    try std.testing.expectEqualStrings("0.012345", amount.ui_amount_string);
+    try std.testing.expect(matched);
+}
+
+test "root.NonblockingRpcClient getTokenSupplyAsync sends requested mint" {
+    const allocator = std.testing.allocator;
+    var listener = try createListener();
+    defer listener.deinit();
+
+    const port = listener.listen_address.getPort();
+    const endpoint = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}", .{port});
+    defer allocator.free(endpoint);
+
+    const mint = "Mint888888888888888888888888888888888888888";
+    var matched = false;
+    var server_thread = try std.Thread.spawn(.{}, runDelayedRootServerAndCheckBodyContains, .{
+        &listener,
+        allocator,
+        200,
+        mint,
+        &matched,
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":88},\"value\":{\"amount\":\"5000000\",\"decimals\":6,\"uiAmount\":5.0,\"uiAmountString\":\"5\"}},\"id\":1}",
+    });
+    defer server_thread.join();
+
+    var rpc = try client.NonblockingRpcClient.new(allocator, endpoint);
+    defer rpc.deinit();
+
+    const task = try rpc.getTokenSupplyAsync(mint, .confirmed);
+    try std.testing.expect(!task.isDone());
+
+    const amount = try task.wait();
+    defer freeTokenAmount(allocator, amount);
+
+    try std.testing.expectEqualStrings("5000000", amount.amount);
+    try std.testing.expectEqual(@as(u8, 6), amount.decimals);
+    try std.testing.expectEqual(@as(?f64, 5.0), amount.ui_amount);
+    try std.testing.expectEqualStrings("5", amount.ui_amount_string);
     try std.testing.expect(matched);
 }
 
