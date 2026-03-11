@@ -191,6 +191,25 @@ fn appendAnchorPdaScalarSeed(
     type_spec: std.json.Value,
     value: std.json.Value,
 ) !void {
+    const ParseUnsigned = struct {
+        fn parse(comptime T: type, parsed_value: std.json.Value) !T {
+            return switch (parsed_value) {
+                .integer => std.math.cast(T, parsed_value.integer) orelse error.InvalidCli,
+                .string => std.fmt.parseInt(T, parsed_value.string, 10) catch return error.InvalidCli,
+                else => error.InvalidCli,
+            };
+        }
+    };
+    const ParseSigned = struct {
+        fn parse(comptime T: type, parsed_value: std.json.Value) !T {
+            return switch (parsed_value) {
+                .integer => std.math.cast(T, parsed_value.integer) orelse error.InvalidCli,
+                .string => std.fmt.parseInt(T, parsed_value.string, 10) catch return error.InvalidCli,
+                else => error.InvalidCli,
+            };
+        }
+    };
+
     if (type_spec != .string) return error.InvalidCli;
 
     if (std.mem.eql(u8, type_spec.string, "bool")) {
@@ -199,56 +218,48 @@ fn appendAnchorPdaScalarSeed(
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "u8")) {
-        if (value != .integer or value.integer < 0 or value.integer > std.math.maxInt(u8)) return error.InvalidCli;
-        try bytes.append(allocator, @intCast(value.integer));
+        try bytes.append(allocator, try ParseUnsigned.parse(u8, value));
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "u16")) {
-        if (value != .integer or value.integer < 0 or value.integer > std.math.maxInt(u16)) return error.InvalidCli;
         var encoded: [2]u8 = undefined;
-        std.mem.writeInt(u16, &encoded, @intCast(value.integer), .little);
+        std.mem.writeInt(u16, &encoded, try ParseUnsigned.parse(u16, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "u32")) {
-        if (value != .integer or value.integer < 0 or value.integer > std.math.maxInt(u32)) return error.InvalidCli;
         var encoded: [4]u8 = undefined;
-        std.mem.writeInt(u32, &encoded, @intCast(value.integer), .little);
+        std.mem.writeInt(u32, &encoded, try ParseUnsigned.parse(u32, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "u64")) {
-        if (value != .integer or value.integer < 0) return error.InvalidCli;
         var encoded: [8]u8 = undefined;
-        std.mem.writeInt(u64, &encoded, @intCast(value.integer), .little);
+        std.mem.writeInt(u64, &encoded, try ParseUnsigned.parse(u64, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "i8")) {
-        if (value != .integer or value.integer < std.math.minInt(i8) or value.integer > std.math.maxInt(i8)) return error.InvalidCli;
         var encoded: [1]u8 = undefined;
-        std.mem.writeInt(i8, &encoded, @intCast(value.integer), .little);
+        std.mem.writeInt(i8, &encoded, try ParseSigned.parse(i8, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "i16")) {
-        if (value != .integer or value.integer < std.math.minInt(i16) or value.integer > std.math.maxInt(i16)) return error.InvalidCli;
         var encoded: [2]u8 = undefined;
-        std.mem.writeInt(i16, &encoded, @intCast(value.integer), .little);
+        std.mem.writeInt(i16, &encoded, try ParseSigned.parse(i16, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "i32")) {
-        if (value != .integer or value.integer < std.math.minInt(i32) or value.integer > std.math.maxInt(i32)) return error.InvalidCli;
         var encoded: [4]u8 = undefined;
-        std.mem.writeInt(i32, &encoded, @intCast(value.integer), .little);
+        std.mem.writeInt(i32, &encoded, try ParseSigned.parse(i32, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "i64")) {
-        if (value != .integer) return error.InvalidCli;
         var encoded: [8]u8 = undefined;
-        std.mem.writeInt(i64, &encoded, @intCast(value.integer), .little);
+        std.mem.writeInt(i64, &encoded, try ParseSigned.parse(i64, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
@@ -257,7 +268,7 @@ fn appendAnchorPdaScalarSeed(
         try bytes.appendSlice(allocator, value.string);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "pubkey")) {
+    if (std.mem.eql(u8, type_spec.string, "pubkey") or std.mem.eql(u8, type_spec.string, "publicKey")) {
         if (value != .string) return error.InvalidCli;
         const pubkey = client.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidCli;
         try bytes.appendSlice(allocator, &pubkey.bytes);
@@ -9119,6 +9130,126 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from const and arg seeds" {
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[1,1,1,1,1,1,1,1],"accounts":[{{"name":"state","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[115,116,97,116,101]}},{{"kind":"arg","path":"authority"}}]}}}}],"args":[{{"name":"authority","type":"pubkey"}}]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const args_json = try std.fmt.allocPrint(allocator, "{{\"authority\":\"{s}\"}}", .{authority_base58});
+    defer allocator.free(args_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        args_json,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const seed_const = "state";
+    const seed_authority = try allocator.dupe(u8, &authority.bytes);
+    defer allocator.free(seed_authority);
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ seed_const, seed_authority },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from string u64 arg seed" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{95} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-u64-string-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{96} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[26,26,26,26,26,26,26,26],"accounts":[{{"name":"state","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[115,116,97,116,101]}},{{"kind":"arg","path":"counter"}}]}}}}],"args":[{{"name":"counter","type":"u64"}}]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const args_json = "{\"counter\":\"18446744073709551615\"}";
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        args_json,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const seed_const = "state";
+    var counter_seed: [8]u8 = undefined;
+    std.mem.writeInt(u64, &counter_seed, std.math.maxInt(u64), .little);
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ seed_const, &counter_seed },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from publicKey arg seed" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{97} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-public-key-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const authority = client.Pubkey.fromBytes(.{98} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const program_id = client.Pubkey.fromBytes(.{99} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[27,27,27,27,27,27,27,27],"accounts":[{{"name":"state","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[115,116,97,116,101]}},{{"kind":"arg","path":"authority"}}]}}}}],"args":[{{"name":"authority","type":"publicKey"}}]}}]}}
     ,
         .{program_id_base58},
     );
