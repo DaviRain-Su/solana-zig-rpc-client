@@ -375,7 +375,7 @@ fn parseJsonCliAccountBinding(binding: std.json.Value) !AnchorCliAccountBinding 
         .string => return .{ .pubkey = binding.string },
         .null => return .explicit_null,
         .object => {
-            inline for (.{ "address", "pubkey", "key" }) |field_name| {
+            inline for (.{ "address", "pubkey", "publicKey", "key" }) |field_name| {
                 if (binding.object.get(field_name)) |field_value| {
                     switch (field_value) {
                         .string => return .{ .pubkey = field_value.string },
@@ -10127,6 +10127,62 @@ test "loadAnchorIdlInvokeInstructionSpec binds account from json address object"
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
 }
 
+test "loadAnchorIdlInvokeInstructionSpec binds account from json publicKey object" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{90} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-json-public-key-object-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{81} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const authority = client.Pubkey.fromBytes(.{82} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[22,22,22,22,22,22,22,22],"accounts":[{{"name":"authority","signer":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"authority\":{{\"publicKey\":\"{s}\"}}}}",
+        .{authority_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(authority));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+}
+
 test "loadAnchorIdlInvokeInstructionSpec resolves related account from flat json binding object" {
     const allocator = std.testing.allocator;
 
@@ -10460,6 +10516,59 @@ test "loadAnchorIdlInvokeInstructionSpec treats json address object null optiona
     defer allocator.free(idl_json);
     const accounts_json =
         "{\"maybeAuthority\":{\"address\":null}}";
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(program_id));
+    try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+    try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec treats json publicKey object null optional account as missing" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{91} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-json-public-key-object-null-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{83} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const default_authority = client.Pubkey.fromBytes(.{84} ** 32);
+    const default_authority_base58 = try default_authority.toBase58(allocator);
+    defer allocator.free(default_authority_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[23,23,23,23,23,23,23,23],"accounts":[{{"name":"maybeAuthority","optional":true,"publicKey":"{s}","signer":true,"writable":true}}],"args":[]}}]}}
+    ,
+        .{ program_id_base58, default_authority_base58 },
+    );
+    defer allocator.free(idl_json);
+    const accounts_json =
+        "{\"maybeAuthority\":{\"publicKey\":null}}";
 
     var loaded = try loadAnchorIdlInvokeInstructionSpec(
         allocator,
