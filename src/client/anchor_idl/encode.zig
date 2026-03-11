@@ -341,7 +341,7 @@ fn encodeArgValue(
         }
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "pubkey")) {
+    if (std.mem.eql(u8, type_spec.string, "pubkey") or std.mem.eql(u8, type_spec.string, "publicKey")) {
         if (value != .string) return error.InvalidAnchorIdlArgValue;
         const pubkey = sdk.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidAnchorIdlArgValue;
         try bytes.appendSlice(allocator, &pubkey.bytes);
@@ -420,6 +420,32 @@ test "anchor idl encodeInstructionData encodes pubkey args" {
         .discriminator = &.{ 9, 8, 7, 6, 5, 4, 3, 2 },
         .args = &.{
             .{ .name = "authority", .type = .{ .string = "pubkey" } },
+        },
+    };
+    const idl = idl_types.Idl{
+        .instructions = &.{instruction},
+    };
+
+    const encoded = try encodeInstructionData(allocator, &idl, &instruction, args_json);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, instruction.discriminator, encoded[0..8]);
+    try std.testing.expectEqualSlices(u8, &pubkey.bytes, encoded[8..]);
+}
+
+test "anchor idl encodeInstructionData encodes publicKey args" {
+    const allocator = std.testing.allocator;
+    const pubkey = sdk.Pubkey.fromBytes(.{10} ** 32);
+    const pubkey_base58 = try pubkey.toBase58(allocator);
+    defer allocator.free(pubkey_base58);
+    const args_json = try std.fmt.allocPrint(allocator, "{{\"authority\":\"{s}\"}}", .{pubkey_base58});
+    defer allocator.free(args_json);
+
+    const instruction = idl_types.Instruction{
+        .name = "setAuthority",
+        .discriminator = &.{ 19, 19, 19, 19, 19, 19, 19, 19 },
+        .args = &.{
+            .{ .name = "authority", .type = .{ .string = "publicKey" } },
         },
     };
     const idl = idl_types.Idl{
