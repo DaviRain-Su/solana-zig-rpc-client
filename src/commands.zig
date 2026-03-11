@@ -1333,7 +1333,7 @@ fn findAnchorIdlAccountValue(accounts: []const std.json.Value, path: []const u8)
             if (account_value != .object) continue;
             const name_value = account_value.object.get("name") orelse continue;
             if (name_value != .string) continue;
-            if (!std.mem.eql(u8, name_value.string, head)) continue;
+            if (!anchorIdlPathSegmentMatches(name_value.string, head)) continue;
             const nested_value = account_value.object.get("accounts") orelse return null;
             if (nested_value != .array) return null;
             return findAnchorIdlAccountValue(nested_value.array.items, tail);
@@ -1345,7 +1345,7 @@ fn findAnchorIdlAccountValue(accounts: []const std.json.Value, path: []const u8)
         if (account_value != .object) continue;
         const name_value = account_value.object.get("name") orelse continue;
         if (name_value != .string) continue;
-        if (std.mem.eql(u8, name_value.string, path)) return account_value;
+        if (anchorIdlPathSegmentMatches(name_value.string, path)) return account_value;
         if (account_value.object.get("accounts")) |nested_value| {
             if (nested_value != .array) continue;
             if (findAnchorIdlAccountValue(nested_value.array.items, path)) |found| return found;
@@ -17067,6 +17067,59 @@ test "loadAnchorIdlInvokeInstructionSpec resolves related account from nested js
     try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
     try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(state));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(authority));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec resolves relation group aliases" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{248} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-relation-group-alias-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{249} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const authority = client.Pubkey.fromBytes(.{250} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const authority_binding = try std.fmt.allocPrint(allocator, "authorityGroup.authority={s}", .{authority_base58});
+    defer allocator.free(authority_binding);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[97,97,97,97,97,97,97,97],"accounts":[{{"name":"authorityGroup","accounts":[{{"name":"authority","signer":true}}]}},{{"name":"authority","relations":["authority_group"]}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{authority_binding},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(authority));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(authority));
 }
 
