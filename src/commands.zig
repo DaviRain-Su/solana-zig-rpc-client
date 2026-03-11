@@ -1164,25 +1164,40 @@ fn isAnchorIdlEventCpiAccount(accounts: []const std.json.Value, account_index: u
 }
 
 fn resolveAnchorBuiltinAccountPubkey(allocator: Allocator, account_name: []const u8) !?client.Pubkey {
-    if (std.mem.eql(u8, account_name, "systemProgram")) {
+    if (std.mem.eql(u8, account_name, "systemProgram") or std.mem.eql(u8, account_name, "system_program")) {
         return try client.Pubkey.fromBase58(allocator, "11111111111111111111111111111111");
     }
-    if (std.mem.eql(u8, account_name, "tokenProgram")) {
+    if (std.mem.eql(u8, account_name, "tokenProgram") or std.mem.eql(u8, account_name, "token_program")) {
         return try client.Pubkey.fromBase58(allocator, "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
     }
-    if (std.mem.eql(u8, account_name, "associatedTokenProgram")) {
+    if (std.mem.eql(u8, account_name, "associatedTokenProgram") or std.mem.eql(u8, account_name, "associated_token_program")) {
         return try client.Pubkey.fromBase58(allocator, "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
     }
-    if (std.mem.eql(u8, account_name, "token2022Program")) {
+    if (std.mem.eql(u8, account_name, "token2022Program") or
+        std.mem.eql(u8, account_name, "token_2022_program") or
+        std.mem.eql(u8, account_name, "token2022_program") or
+        std.mem.eql(u8, account_name, "token_program_2022"))
+    {
         return try client.Pubkey.fromBase58(allocator, "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
     }
-    if (std.mem.eql(u8, account_name, "rent")) {
+    if (std.mem.eql(u8, account_name, "rent") or
+        std.mem.eql(u8, account_name, "rentSysvar") or
+        std.mem.eql(u8, account_name, "rent_sysvar"))
+    {
         return try client.Pubkey.fromBase58(allocator, "SysvarRent111111111111111111111111111111111");
     }
-    if (std.mem.eql(u8, account_name, "clock")) {
+    if (std.mem.eql(u8, account_name, "clock") or
+        std.mem.eql(u8, account_name, "clockSysvar") or
+        std.mem.eql(u8, account_name, "clock_sysvar"))
+    {
         return try client.Pubkey.fromBase58(allocator, "SysvarC1ock11111111111111111111111111111111");
     }
-    if (std.mem.eql(u8, account_name, "instructions")) {
+    if (std.mem.eql(u8, account_name, "instructions") or
+        std.mem.eql(u8, account_name, "instructionsSysvar") or
+        std.mem.eql(u8, account_name, "instructions_sysvar") or
+        std.mem.eql(u8, account_name, "instructionSysvar") or
+        std.mem.eql(u8, account_name, "instruction_sysvar"))
+    {
         return try client.Pubkey.fromBase58(allocator, "Sysvar1nstructions1111111111111111111111111");
     }
     return null;
@@ -12586,6 +12601,58 @@ test "loadAnchorIdlInvokeInstructionSpec resolves builtin accounts automatically
 
     const idl_json =
         \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[61,61,61,61,61,61,61,61],"accounts":[{"name":"systemProgram"},{"name":"tokenProgram"},{"name":"associatedTokenProgram"},{"name":"token2022Program"},{"name":"rent"},{"name":"clock"},{"name":"instructions"}],"args":[]}]}
+    ;
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_system_program = try client.Pubkey.fromBase58(allocator, "11111111111111111111111111111111");
+    const expected_token_program = try client.Pubkey.fromBase58(allocator, "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    const expected_associated_token_program = try client.Pubkey.fromBase58(allocator, "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+    const expected_token2022_program = try client.Pubkey.fromBase58(allocator, "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+    const expected_rent = try client.Pubkey.fromBase58(allocator, "SysvarRent111111111111111111111111111111111");
+    const expected_clock = try client.Pubkey.fromBase58(allocator, "SysvarC1ock11111111111111111111111111111111");
+    const expected_instructions = try client.Pubkey.fromBase58(allocator, "Sysvar1nstructions1111111111111111111111111");
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 7), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_system_program));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_token_program));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[2].pubkey.eql(expected_associated_token_program));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[3].pubkey.eql(expected_token2022_program));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[4].pubkey.eql(expected_rent));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[5].pubkey.eql(expected_clock));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[6].pubkey.eql(expected_instructions));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec resolves builtin account aliases automatically" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{214} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-builtin-aliases-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[68,68,68,68,68,68,68,68],"accounts":[{"name":"system_program"},{"name":"token_program"},{"name":"associated_token_program"},{"name":"token_program_2022"},{"name":"rent_sysvar"},{"name":"clockSysvar"},{"name":"instructions_sysvar"}],"args":[]}]}
     ;
 
     var loaded = try loadAnchorIdlInvokeInstructionSpec(
