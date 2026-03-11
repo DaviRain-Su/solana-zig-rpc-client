@@ -853,6 +853,33 @@ fn resolveAnchorIdlPdaAccountFieldType(
         return error.InvalidCli;
     }
 
+    if (std.mem.eql(u8, account_value.string, "multisig")) {
+        const field_name, const child_path = if (std.mem.indexOfScalar(u8, path, '.')) |dot_index|
+            .{ path[0..dot_index], path[dot_index + 1 ..] }
+        else
+            .{ path, "" };
+
+        if (std.mem.eql(u8, field_name, "m") or std.mem.eql(u8, field_name, "n")) {
+            if (child_path.len != 0) return error.InvalidCli;
+            return .{ .string = "u8" };
+        }
+        if (std.mem.eql(u8, field_name, "isInitialized") or std.mem.eql(u8, field_name, "is_initialized")) {
+            if (child_path.len != 0) return error.InvalidCli;
+            return .{ .string = "bool" };
+        }
+        if (std.mem.eql(u8, field_name, "signers")) {
+            if (child_path.len == 0) return error.InvalidCli;
+            const signer_index, const nested_child_path = if (std.mem.indexOfScalar(u8, child_path, '.')) |dot_index|
+                .{ child_path[0..dot_index], child_path[dot_index + 1 ..] }
+            else
+                .{ child_path, "" };
+            _ = try parseAnchorIdlPathIndex(signer_index);
+            if (nested_child_path.len != 0) return error.InvalidCli;
+            return .{ .string = "publicKey" };
+        }
+        return error.InvalidCli;
+    }
+
     const type_def = anchor_idl.findType(idl, account_value.string) orelse return error.InvalidCli;
     return try resolveAnchorIdlPdaSeedType(idl, type_def.type, path);
 }
@@ -11935,6 +11962,138 @@ test "loadAnchorIdlInvokeInstructionSpec infers mint freeze authority pda progra
     try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
     try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(mint));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec infers multisig signer indexed seed type" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{184} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-multisig-signer-seed-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const multisig = client.Pubkey.fromBytes(.{185} ** 32);
+    const multisig_base58 = try multisig.toBase58(allocator);
+    defer allocator.free(multisig_base58);
+    const signer_one = client.Pubkey.fromBytes(.{186} ** 32);
+    const signer_one_base58 = try signer_one.toBase58(allocator);
+    defer allocator.free(signer_one_base58);
+    const signer_two = client.Pubkey.fromBytes(.{187} ** 32);
+    const signer_two_base58 = try signer_two.toBase58(allocator);
+    defer allocator.free(signer_two_base58);
+    const program_id = client.Pubkey.fromBytes(.{188} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[56,56,56,56,56,56,56,56],"accounts":[{{"name":"multisig"}},{{"name":"vault","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[118,97,117,108,116]}},{{"kind":"account","path":"multisig.signers.1","account":"multisig"}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"multisig\":{{\"address\":\"{s}\",\"signers\":[\"{s}\",\"{s}\"]}}}}",
+        .{ multisig_base58, signer_one_base58, signer_two_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "vault", signer_two.bytes[0..] },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(multisig));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec infers multisig is initialized seed type" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{189} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-multisig-initialized-seed-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const multisig = client.Pubkey.fromBytes(.{190} ** 32);
+    const multisig_base58 = try multisig.toBase58(allocator);
+    defer allocator.free(multisig_base58);
+    const program_id = client.Pubkey.fromBytes(.{191} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[57,57,57,57,57,57,57,57],"accounts":[{{"name":"multisig"}},{{"name":"vault","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[118,97,117,108,116]}},{{"kind":"account","path":"multisig.is_initialized","account":"multisig"}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"multisig\":{{\"address\":\"{s}\",\"is_initialized\":true}}}}",
+        .{multisig_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "vault", &.{1} },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(multisig));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_pda));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].is_writable);
 }
