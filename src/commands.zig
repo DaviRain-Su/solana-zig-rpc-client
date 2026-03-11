@@ -2354,7 +2354,7 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
     var owned_instruction_discriminator: ?[]u8 = null;
     defer if (owned_instruction_discriminator) |value| allocator.free(value);
     if (instruction.discriminator.len == 0) {
-        owned_instruction_discriminator = try computeAnchorInstructionDiscriminator(allocator, instruction_name);
+        owned_instruction_discriminator = try computeAnchorInstructionDiscriminator(allocator, instruction.name);
         instruction.discriminator = owned_instruction_discriminator.?;
     }
 
@@ -17440,6 +17440,54 @@ test "loadAnchorIdlInvokeInstructionSpec computes missing instruction discrimina
     defer loaded.deinit(allocator);
 
     const expected_discriminator = try computeAnchorInstructionDiscriminator(allocator, "initialize");
+    defer allocator.free(expected_discriminator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqualSlices(u8, expected_discriminator, loaded.owned_instructions.instructions[0].data);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec matches snake case instruction name and canonical discriminator" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{242} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-instruction-name-alias-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{243} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initializeConfig","accounts":[],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize_config",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_discriminator = try computeAnchorInstructionDiscriminator(allocator, "initializeConfig");
     defer allocator.free(expected_discriminator);
 
     try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
