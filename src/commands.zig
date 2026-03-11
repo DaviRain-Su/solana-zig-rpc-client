@@ -1280,7 +1280,7 @@ fn findCliAccountBinding(
     for (account_bindings) |binding| {
         const equals_index = std.mem.indexOfScalar(u8, binding, '=') orelse continue;
         if (equals_index == 0) continue;
-        if (std.mem.eql(u8, binding[0..equals_index], full_name)) {
+        if (anchorIdlFullPathMatches(binding[0..equals_index], full_name)) {
             const value = binding[equals_index + 1 ..];
             if (std.mem.eql(u8, value, "null")) return .explicit_null;
             if (value.len == 0) continue;
@@ -1291,7 +1291,7 @@ fn findCliAccountBinding(
         for (account_bindings) |binding| {
             const equals_index = std.mem.indexOfScalar(u8, binding, '=') orelse continue;
             if (equals_index == 0) continue;
-            if (std.mem.eql(u8, binding[0..equals_index], leaf_name)) {
+            if (anchorIdlFullPathMatches(binding[0..equals_index], leaf_name)) {
                 const value = binding[equals_index + 1 ..];
                 if (std.mem.eql(u8, value, "null")) return .explicit_null;
                 if (value.len == 0) continue;
@@ -1360,6 +1360,60 @@ const AnchorIdlAccountContext = struct {
     account_index: usize,
 };
 
+fn anchorIdlPathSegmentMatches(expected_name: []const u8, provided_name: []const u8) bool {
+    if (std.mem.eql(u8, expected_name, provided_name)) return true;
+    if (expected_name.len == 0 or provided_name.len == 0) return false;
+
+    var expected_index: usize = 0;
+    var provided_index: usize = 0;
+    while (true) {
+        while (expected_index < expected_name.len and expected_name[expected_index] == '_') {
+            expected_index += 1;
+        }
+        while (provided_index < provided_name.len and provided_name[provided_index] == '_') {
+            provided_index += 1;
+        }
+
+        if (expected_index == expected_name.len or provided_index == provided_name.len) break;
+        if (std.ascii.toLower(expected_name[expected_index]) != std.ascii.toLower(provided_name[provided_index])) {
+            return false;
+        }
+
+        expected_index += 1;
+        provided_index += 1;
+    }
+
+    while (expected_index < expected_name.len and expected_name[expected_index] == '_') {
+        expected_index += 1;
+    }
+    while (provided_index < provided_name.len and provided_name[provided_index] == '_') {
+        provided_index += 1;
+    }
+
+    return expected_index == expected_name.len and provided_index == provided_name.len;
+}
+
+fn anchorIdlFullPathMatches(expected_path: []const u8, provided_path: []const u8) bool {
+    var expected_rest = expected_path;
+    var provided_rest = provided_path;
+
+    while (true) {
+        const expected_dot = std.mem.indexOfScalar(u8, expected_rest, '.');
+        const provided_dot = std.mem.indexOfScalar(u8, provided_rest, '.');
+
+        const expected_segment = expected_rest[0 .. expected_dot orelse expected_rest.len];
+        const provided_segment = provided_rest[0 .. provided_dot orelse provided_rest.len];
+        if (!anchorIdlPathSegmentMatches(expected_segment, provided_segment)) return false;
+
+        if (expected_dot == null or provided_dot == null) {
+            return expected_dot == null and provided_dot == null;
+        }
+
+        expected_rest = expected_rest[expected_dot.? + 1 ..];
+        provided_rest = provided_rest[provided_dot.? + 1 ..];
+    }
+}
+
 fn findAnchorIdlAccountContext(accounts: []const std.json.Value, path: []const u8) !?AnchorIdlAccountContext {
     if (std.mem.indexOfScalar(u8, path, '.')) |dot_index| {
         const head = path[0..dot_index];
@@ -1368,7 +1422,7 @@ fn findAnchorIdlAccountContext(accounts: []const std.json.Value, path: []const u
             if (account_value != .object) continue;
             const name_value = account_value.object.get("name") orelse continue;
             if (name_value != .string) continue;
-            if (!std.mem.eql(u8, name_value.string, head)) continue;
+            if (!anchorIdlPathSegmentMatches(name_value.string, head)) continue;
             const nested_value = account_value.object.get("accounts") orelse return null;
             if (nested_value != .array) return error.InvalidCli;
             return try findAnchorIdlAccountContext(nested_value.array.items, tail);
@@ -1380,7 +1434,7 @@ fn findAnchorIdlAccountContext(accounts: []const std.json.Value, path: []const u
         if (account_value != .object) continue;
         const name_value = account_value.object.get("name") orelse continue;
         if (name_value != .string) continue;
-        if (!std.mem.eql(u8, name_value.string, path)) continue;
+        if (!anchorIdlPathSegmentMatches(name_value.string, path)) continue;
         return .{
             .account_value = account_value,
             .siblings = accounts,
@@ -1403,13 +1457,13 @@ fn findAnchorIdlAccountFullPath(
             if (account_value != .object) continue;
             const name_value = account_value.object.get("name") orelse continue;
             if (name_value != .string) continue;
-            if (!std.mem.eql(u8, name_value.string, head)) continue;
+            if (!anchorIdlPathSegmentMatches(name_value.string, head)) continue;
             const nested_value = account_value.object.get("accounts") orelse return null;
             if (nested_value != .array) return error.InvalidCli;
             const full_name = if (parent_path) |value|
-                try std.fmt.allocPrint(allocator, "{s}.{s}", .{ value, head })
+                try std.fmt.allocPrint(allocator, "{s}.{s}", .{ value, name_value.string })
             else
-                try allocator.dupe(u8, head);
+                try allocator.dupe(u8, name_value.string);
             defer allocator.free(full_name);
             return try findAnchorIdlAccountFullPath(
                 allocator,
@@ -1425,11 +1479,11 @@ fn findAnchorIdlAccountFullPath(
         if (account_value != .object) continue;
         const name_value = account_value.object.get("name") orelse continue;
         if (name_value != .string) continue;
-        if (std.mem.eql(u8, name_value.string, path)) {
+        if (anchorIdlPathSegmentMatches(name_value.string, path)) {
             return if (parent_path) |value|
-                try std.fmt.allocPrint(allocator, "{s}.{s}", .{ value, path })
+                try std.fmt.allocPrint(allocator, "{s}.{s}", .{ value, name_value.string })
             else
-                try allocator.dupe(u8, path);
+                try allocator.dupe(u8, name_value.string);
         }
         if (account_value.object.get("accounts")) |nested_value| {
             if (nested_value != .array) return error.InvalidCli;
@@ -14499,6 +14553,65 @@ test "loadAnchorIdlInvokeInstructionSpec flattens nested anchor account groups" 
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(authority));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].is_signer);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec binds nested account group aliases from cli bindings" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{244} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-nested-account-aliases-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const source_state = client.Pubkey.fromBytes(.{245} ** 32);
+    const source_state_base58 = try source_state.toBase58(allocator);
+    defer allocator.free(source_state_base58);
+    const target_state = client.Pubkey.fromBytes(.{246} ** 32);
+    const target_state_base58 = try target_state.toBase58(allocator);
+    defer allocator.free(target_state_base58);
+    const source_binding = try std.fmt.allocPrint(allocator, "source_group.state={s}", .{source_state_base58});
+    defer allocator.free(source_binding);
+    const target_binding = try std.fmt.allocPrint(allocator, "target_group.state={s}", .{target_state_base58});
+    defer allocator.free(target_binding);
+    const program_id = client.Pubkey.fromBytes(.{247} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[95,95,95,95,95,95,95,95],"accounts":[{{"name":"sourceGroup","accounts":[{{"name":"state","writable":true}}]}},{{"name":"targetGroup","accounts":[{{"name":"state"}}]}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        null,
+        null,
+        &.{ source_binding, target_binding },
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(source_state));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(target_state));
+    try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[1].is_writable);
 }
 
 test "loadAnchorIdlInvokeInstructionSpec binds accounts from accounts json" {
