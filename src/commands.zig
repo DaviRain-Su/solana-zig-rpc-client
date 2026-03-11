@@ -1166,6 +1166,45 @@ fn findJsonBindingValue(
     path: []const u8,
 ) ?std.json.Value {
     const FindObjectValue = struct {
+        fn matches(candidate: []const u8, key: []const u8) bool {
+            if (std.mem.eql(u8, candidate, key)) return true;
+            if (key.len == 0) return false;
+
+            if (candidate.len == key.len and candidate.len != 0) {
+                if (std.ascii.toLower(candidate[0]) == std.ascii.toLower(key[0]) and
+                    std.mem.eql(u8, candidate[1..], key[1..]))
+                {
+                    return true;
+                }
+            }
+
+            var candidate_index: usize = 0;
+            var key_index: usize = 0;
+            while (true) {
+                while (candidate_index < candidate.len and candidate[candidate_index] == '_') {
+                    candidate_index += 1;
+                }
+                while (key_index < key.len and key[key_index] == '_') {
+                    key_index += 1;
+                }
+
+                if (candidate_index == candidate.len or key_index == key.len) break;
+                if (std.ascii.toLower(candidate[candidate_index]) != std.ascii.toLower(key[key_index])) return false;
+
+                candidate_index += 1;
+                key_index += 1;
+            }
+
+            while (candidate_index < candidate.len and candidate[candidate_index] == '_') {
+                candidate_index += 1;
+            }
+            while (key_index < key.len and key[key_index] == '_') {
+                key_index += 1;
+            }
+
+            return candidate_index == candidate.len and key_index == key.len;
+        }
+
         fn find(object: std.json.ObjectMap, key: []const u8) ?std.json.Value {
             if (object.get(key)) |binding| return binding;
             if (key.len == 0) return null;
@@ -1173,9 +1212,7 @@ fn findJsonBindingValue(
             var iterator = object.iterator();
             while (iterator.next()) |entry| {
                 const candidate = entry.key_ptr.*;
-                if (candidate.len != key.len or candidate.len == 0) continue;
-                if (std.ascii.toLower(candidate[0]) != std.ascii.toLower(key[0])) continue;
-                if (!std.mem.eql(u8, candidate[1..], key[1..])) continue;
+                if (!matches(candidate, key)) continue;
                 return entry.value_ptr.*;
             }
 
@@ -14269,6 +14306,132 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from PascalCase enum accoun
     const expected_pda = try findProgramAddress(
         allocator,
         &.{ "vault", &value_seed },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(state));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from snake case arg json key" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{235} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-snake-arg-json-key-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const authority = client.Pubkey.fromBytes(.{236} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const program_id = client.Pubkey.fromBytes(.{237} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.mem.concat(allocator, u8, &.{
+        "{\"address\":\"",
+        program_id_base58,
+        "\",\"instructions\":[{\"name\":\"init\",\"discriminator\":[93,93,93,93,93,93,93,93],\"accounts\":[{\"name\":\"state\",\"writable\":true,\"pda\":{\"seeds\":[{\"kind\":\"const\",\"value\":\"state\"},{\"kind\":\"arg\",\"path\":\"config.mintAuthority\"}]}}],\"args\":[{\"name\":\"config\",\"type\":{\"defined\":{\"name\":\"Config\"}}}]}],\"types\":[{\"name\":\"Config\",\"type\":{\"kind\":\"struct\",\"fields\":[{\"name\":\"mintAuthority\",\"type\":\"publicKey\"}]}}]}",
+    });
+    defer allocator.free(idl_json);
+    const args_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"config\":{{\"mint_authority\":\"{s}\"}}}}",
+        .{authority_base58},
+    );
+    defer allocator.free(args_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        args_json,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "state", authority.bytes[0..] },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from camel case account json key" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{238} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-camel-account-json-key-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const state = client.Pubkey.fromBytes(.{239} ** 32);
+    const state_base58 = try state.toBase58(allocator);
+    defer allocator.free(state_base58);
+    const authority = client.Pubkey.fromBytes(.{240} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const program_id = client.Pubkey.fromBytes(.{241} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.mem.concat(allocator, u8, &.{
+        "{\"address\":\"",
+        program_id_base58,
+        "\",\"instructions\":[{\"name\":\"init\",\"discriminator\":[94,94,94,94,94,94,94,94],\"accounts\":[{\"name\":\"state\"},{\"name\":\"vault\",\"writable\":true,\"pda\":{\"seeds\":[{\"kind\":\"const\",\"value\":\"vault\"},{\"kind\":\"account\",\"path\":\"state.mint_authority\",\"account\":\"State\"}]}}],\"args\":[]}],\"accounts\":[{\"name\":\"State\",\"type\":{\"kind\":\"struct\",\"fields\":[{\"name\":\"mint_authority\",\"type\":\"publicKey\"}]}}]}",
+    });
+    defer allocator.free(idl_json);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"state\":{{\"address\":\"{s}\",\"mintAuthority\":\"{s}\"}}}}",
+        .{ state_base58, authority_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "vault", authority.bytes[0..] },
         program_id,
     );
 

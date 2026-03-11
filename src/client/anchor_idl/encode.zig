@@ -63,6 +63,59 @@ fn parseAnchorIdlPubkeyValue(value: std.json.Value) ![]const u8 {
     }
 }
 
+fn anchorJsonFieldNameMatches(expected_name: []const u8, provided_name: []const u8) bool {
+    if (std.mem.eql(u8, expected_name, provided_name)) return true;
+    if (expected_name.len == 0 or provided_name.len == 0) return false;
+
+    if (expected_name.len == provided_name.len) {
+        if (std.ascii.toLower(expected_name[0]) == std.ascii.toLower(provided_name[0]) and
+            std.mem.eql(u8, expected_name[1..], provided_name[1..]))
+        {
+            return true;
+        }
+    }
+
+    var expected_index: usize = 0;
+    var provided_index: usize = 0;
+    while (true) {
+        while (expected_index < expected_name.len and expected_name[expected_index] == '_') {
+            expected_index += 1;
+        }
+        while (provided_index < provided_name.len and provided_name[provided_index] == '_') {
+            provided_index += 1;
+        }
+
+        if (expected_index == expected_name.len or provided_index == provided_name.len) break;
+        if (std.ascii.toLower(expected_name[expected_index]) != std.ascii.toLower(provided_name[provided_index])) {
+            return false;
+        }
+
+        expected_index += 1;
+        provided_index += 1;
+    }
+
+    while (expected_index < expected_name.len and expected_name[expected_index] == '_') {
+        expected_index += 1;
+    }
+    while (provided_index < provided_name.len and provided_name[provided_index] == '_') {
+        provided_index += 1;
+    }
+
+    return expected_index == expected_name.len and provided_index == provided_name.len;
+}
+
+fn findAnchorJsonObjectField(object: std.json.ObjectMap, field_name: []const u8) ?std.json.Value {
+    if (object.get(field_name)) |field_value| return field_value;
+
+    var iterator = object.iterator();
+    while (iterator.next()) |entry| {
+        if (!anchorJsonFieldNameMatches(field_name, entry.key_ptr.*)) continue;
+        return entry.value_ptr.*;
+    }
+
+    return null;
+}
+
 fn decodeAnchorIdlBytesString(allocator: Allocator, value: []const u8) !?[]u8 {
     if (std.mem.startsWith(u8, value, "hex:")) {
         const hex_value = value[4..];
@@ -216,7 +269,7 @@ fn encodeArgValue(
                     const field_name = field_value.object.get("name") orelse return error.UnsupportedAnchorIdlType;
                     const field_type = field_value.object.get("type") orelse return error.UnsupportedAnchorIdlType;
                     if (field_name != .string) return error.UnsupportedAnchorIdlType;
-                    const field_arg_value = value.object.get(field_name.string) orelse return error.MissingAnchorIdlArg;
+                    const field_arg_value = findAnchorJsonObjectField(value.object, field_name.string) orelse return error.MissingAnchorIdlArg;
                     try encodeArgValue(allocator, bytes, idl, field_type, field_arg_value);
                 }
                 return;
@@ -264,7 +317,7 @@ fn encodeArgValue(
                             const field_name = field_value.object.get("name") orelse return error.UnsupportedAnchorIdlType;
                             const field_type = field_value.object.get("type") orelse return error.UnsupportedAnchorIdlType;
                             if (field_name != .string) return error.UnsupportedAnchorIdlType;
-                            const field_arg_value = payload.object.get(field_name.string) orelse return error.MissingAnchorIdlArg;
+                            const field_arg_value = findAnchorJsonObjectField(payload.object, field_name.string) orelse return error.MissingAnchorIdlArg;
                             try encodeArgValue(allocator, bytes, idl, field_type, field_arg_value);
                         }
                         return;
@@ -459,7 +512,7 @@ pub fn encodeInstructionData(
     if (parsed_args.value != .object) return error.InvalidAnchorIdlArgsJson;
 
     for (instruction.args) |arg| {
-        const arg_value = parsed_args.value.object.get(arg.name) orelse return error.MissingAnchorIdlArg;
+        const arg_value = findAnchorJsonObjectField(parsed_args.value.object, arg.name) orelse return error.MissingAnchorIdlArg;
         try encodeArgValue(allocator, &bytes, idl, arg.type, arg_value);
     }
 
