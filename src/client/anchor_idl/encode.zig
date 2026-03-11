@@ -185,10 +185,35 @@ fn resolveAnchorIdlFieldType(field_value: std.json.Value) !std.json.Value {
 
 fn anchorEnumVariantNameMatches(idl_variant_name: []const u8, selected_variant_name: []const u8) bool {
     if (std.mem.eql(u8, idl_variant_name, selected_variant_name)) return true;
-    if (idl_variant_name.len != selected_variant_name.len or idl_variant_name.len == 0) return false;
+    if (idl_variant_name.len == 0 or selected_variant_name.len == 0) return false;
 
-    if (std.ascii.toLower(idl_variant_name[0]) != selected_variant_name[0]) return false;
-    return std.mem.eql(u8, idl_variant_name[1..], selected_variant_name[1..]);
+    var idl_index: usize = 0;
+    var selected_index: usize = 0;
+    while (true) {
+        while (idl_index < idl_variant_name.len and idl_variant_name[idl_index] == '_') {
+            idl_index += 1;
+        }
+        while (selected_index < selected_variant_name.len and selected_variant_name[selected_index] == '_') {
+            selected_index += 1;
+        }
+
+        if (idl_index == idl_variant_name.len or selected_index == selected_variant_name.len) break;
+        if (std.ascii.toLower(idl_variant_name[idl_index]) != std.ascii.toLower(selected_variant_name[selected_index])) {
+            return false;
+        }
+
+        idl_index += 1;
+        selected_index += 1;
+    }
+
+    while (idl_index < idl_variant_name.len and idl_variant_name[idl_index] == '_') {
+        idl_index += 1;
+    }
+    while (selected_index < selected_variant_name.len and selected_variant_name[selected_index] == '_') {
+        selected_index += 1;
+    }
+
+    return idl_index == idl_variant_name.len and selected_index == selected_variant_name.len;
 }
 
 fn encodeArgValue(
@@ -1025,6 +1050,30 @@ test "anchor idl encodeInstructionData accepts lowerCamel enum variants" {
         14, 14, 14,   14,   14, 14, 14,   14,
         1,  0,  0x01, 0x02, 0,  7,  0x01, 0x04,
     };
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "anchor idl encodeInstructionData accepts snake_case enum variants" {
+    const allocator = std.testing.allocator;
+    const parsed_idl = try std.json.parseFromSlice(
+        idl_types.Idl,
+        allocator,
+        \\{"instructions":[{"name":"setMode","discriminator":[17,17,17,17,17,17,17,17],"args":[{"name":"mode","type":{"defined":{"name":"Mode"}}}]}],"types":[{"name":"Mode","type":{"kind":"enum","variants":[{"name":"FixedValue","fields":[{"name":"value","type":"u16"}]},{"name":"OpenValue"}]}}]}
+    ,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_idl.deinit();
+
+    const instruction = idl_types.findInstruction(&parsed_idl.value, "setMode").?;
+    const encoded = try encodeInstructionData(
+        allocator,
+        &parsed_idl.value,
+        &instruction,
+        "{\"mode\":{\"fixed_value\":{\"value\":513}}}",
+    );
+    defer allocator.free(encoded);
+
+    const expected = [_]u8{ 17, 17, 17, 17, 17, 17, 17, 17, 0, 1, 2 };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
 

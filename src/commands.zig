@@ -920,10 +920,35 @@ fn resolveAnchorIdlArrayElementType(type_spec: std.json.Value) !std.json.Value {
 
 fn anchorIdlEnumVariantNameMatches(idl_variant_name: []const u8, selected_variant_name: []const u8) bool {
     if (std.mem.eql(u8, idl_variant_name, selected_variant_name)) return true;
-    if (idl_variant_name.len != selected_variant_name.len or idl_variant_name.len == 0) return false;
+    if (idl_variant_name.len == 0 or selected_variant_name.len == 0) return false;
 
-    if (std.ascii.toLower(idl_variant_name[0]) != selected_variant_name[0]) return false;
-    return std.mem.eql(u8, idl_variant_name[1..], selected_variant_name[1..]);
+    var idl_index: usize = 0;
+    var selected_index: usize = 0;
+    while (true) {
+        while (idl_index < idl_variant_name.len and idl_variant_name[idl_index] == '_') {
+            idl_index += 1;
+        }
+        while (selected_index < selected_variant_name.len and selected_variant_name[selected_index] == '_') {
+            selected_index += 1;
+        }
+
+        if (idl_index == idl_variant_name.len or selected_index == selected_variant_name.len) break;
+        if (std.ascii.toLower(idl_variant_name[idl_index]) != std.ascii.toLower(selected_variant_name[selected_index])) {
+            return false;
+        }
+
+        idl_index += 1;
+        selected_index += 1;
+    }
+
+    while (idl_index < idl_variant_name.len and idl_variant_name[idl_index] == '_') {
+        idl_index += 1;
+    }
+    while (selected_index < selected_variant_name.len and selected_variant_name[selected_index] == '_') {
+        selected_index += 1;
+    }
+
+    return idl_index == idl_variant_name.len and selected_index == selected_variant_name.len;
 }
 
 fn resolveAnchorIdlPdaSeedType(
@@ -14591,6 +14616,67 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from snake case enum field 
     const args_json = try std.fmt.allocPrint(
         allocator,
         "{{\"mode\":{{\"fixed\":{{\"mintAuthority\":\"{s}\"}}}}}}",
+        .{authority_base58},
+    );
+    defer allocator.free(args_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        args_json,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "state", authority.bytes[0..] },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from snake case enum variant path alias" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{89} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-snake-enum-variant-path-alias-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const authority = client.Pubkey.fromBytes(.{90} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const program_id = client.Pubkey.fromBytes(.{91} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.mem.concat(allocator, u8, &.{
+        "{\"address\":\"",
+        program_id_base58,
+        "\",\"instructions\":[{\"name\":\"init\",\"discriminator\":[102,102,102,102,102,102,102,102],\"accounts\":[{\"name\":\"state\",\"writable\":true,\"pda\":{\"seeds\":[{\"kind\":\"const\",\"value\":\"state\"},{\"kind\":\"arg\",\"path\":\"mode.fixed_value.mint_authority\"}]}}],\"args\":[{\"name\":\"mode\",\"type\":{\"defined\":{\"name\":\"Mode\"}}}]}],\"types\":[{\"name\":\"Mode\",\"type\":{\"kind\":\"enum\",\"variants\":[{\"name\":\"FixedValue\",\"fields\":[{\"name\":\"mintAuthority\",\"type\":\"publicKey\"}]}]}}]}",
+    });
+    defer allocator.free(idl_json);
+    const args_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"mode\":{{\"fixed_value\":{{\"mintAuthority\":\"{s}\"}}}}}}",
         .{authority_base58},
     );
     defer allocator.free(args_json);
