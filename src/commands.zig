@@ -1200,6 +1200,13 @@ fn resolveAnchorBuiltinAccountPubkey(allocator: Allocator, account_name: []const
     {
         return try client.Pubkey.fromBase58(allocator, "Sysvar1nstructions1111111111111111111111111");
     }
+    if (std.mem.eql(u8, account_name, "recentBlockhashes") or
+        std.mem.eql(u8, account_name, "recent_blockhashes") or
+        std.mem.eql(u8, account_name, "recentBlockhashesSysvar") or
+        std.mem.eql(u8, account_name, "recent_blockhashes_sysvar"))
+    {
+        return try client.Pubkey.fromBase58(allocator, client.Sysvar.recent_blockhashes_base58);
+    }
     return null;
 }
 
@@ -12685,6 +12692,49 @@ test "loadAnchorIdlInvokeInstructionSpec resolves builtin account aliases automa
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[4].pubkey.eql(expected_rent));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[5].pubkey.eql(expected_clock));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[6].pubkey.eql(expected_instructions));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec resolves recent blockhashes builtin aliases automatically" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{215} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-recent-blockhashes-aliases-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[69,69,69,69,69,69,69,69],"accounts":[{"name":"recentBlockhashes"},{"name":"recent_blockhashes"},{"name":"recentBlockhashesSysvar"},{"name":"recent_blockhashes_sysvar"}],"args":[]}]}
+    ;
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_recent_blockhashes = try client.Sysvar.recentBlockhashes(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 4), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_recent_blockhashes));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_recent_blockhashes));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[2].pubkey.eql(expected_recent_blockhashes));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[3].pubkey.eql(expected_recent_blockhashes));
 }
 
 test "loadAnchorIdlInvokeInstructionSpec prefers explicit builtin account bindings" {
