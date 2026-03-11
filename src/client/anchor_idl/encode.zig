@@ -38,6 +38,15 @@ fn parseSignedAnchorIdlIntValue(comptime T: type, value: std.json.Value) !T {
     }
 }
 
+fn parseAnchorIdlFloatValue(comptime T: type, value: std.json.Value) !T {
+    switch (value) {
+        .integer => return @floatFromInt(value.integer),
+        .float => return std.math.lossyCast(T, value.float),
+        .string => return std.fmt.parseFloat(T, value.string) catch return error.InvalidAnchorIdlArgValue,
+        else => return error.InvalidAnchorIdlArgValue,
+    }
+}
+
 fn encodeArgValue(
     allocator: Allocator,
     bytes: *std.ArrayListUnmanaged(u8),
@@ -238,6 +247,16 @@ fn encodeArgValue(
     }
     if (std.mem.eql(u8, type_spec.string, "i256")) {
         try appendIntLittle(i256, bytes, allocator, try parseSignedAnchorIdlIntValue(i256, value));
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "f32")) {
+        const float_value = try parseAnchorIdlFloatValue(f32, value);
+        try appendIntLittle(u32, bytes, allocator, @as(u32, @bitCast(float_value)));
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "f64")) {
+        const float_value = try parseAnchorIdlFloatValue(f64, value);
+        try appendIntLittle(u64, bytes, allocator, @as(u64, @bitCast(float_value)));
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "string")) {
@@ -586,6 +605,39 @@ test "anchor idl encodeInstructionData encodes 256-bit integer args" {
     try std.testing.expectEqualSlices(u8, instruction.discriminator, encoded[0..8]);
     try std.testing.expectEqualSlices(u8, &expected_huge, encoded[8..40]);
     try std.testing.expectEqualSlices(u8, &expected_offset, encoded[40..72]);
+}
+
+test "anchor idl encodeInstructionData encodes float args" {
+    const allocator = std.testing.allocator;
+
+    const instruction = idl_types.Instruction{
+        .name = "setFloat",
+        .discriminator = &.{ 13, 13, 13, 13, 13, 13, 13, 13 },
+        .args = &.{
+            .{ .name = "price", .type = .{ .string = "f32" } },
+            .{ .name = "ratio", .type = .{ .string = "f64" } },
+        },
+    };
+    const idl = idl_types.Idl{
+        .instructions = &.{instruction},
+    };
+
+    const encoded = try encodeInstructionData(
+        allocator,
+        &idl,
+        &instruction,
+        "{\"price\":1.5,\"ratio\":-2.25}",
+    );
+    defer allocator.free(encoded);
+
+    var expected_price: [4]u8 = undefined;
+    std.mem.writeInt(u32, &expected_price, @as(u32, @bitCast(@as(f32, 1.5))), .little);
+    var expected_ratio: [8]u8 = undefined;
+    std.mem.writeInt(u64, &expected_ratio, @as(u64, @bitCast(@as(f64, -2.25))), .little);
+
+    try std.testing.expectEqualSlices(u8, instruction.discriminator, encoded[0..8]);
+    try std.testing.expectEqualSlices(u8, &expected_price, encoded[8..12]);
+    try std.testing.expectEqualSlices(u8, &expected_ratio, encoded[12..20]);
 }
 
 test "anchor idl encodeInstructionData encodes defined struct args" {
