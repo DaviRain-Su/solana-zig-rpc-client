@@ -47,6 +47,66 @@ fn parseAnchorIdlFloatValue(comptime T: type, value: std.json.Value) !T {
     }
 }
 
+fn decodeAnchorIdlBytesString(allocator: Allocator, value: []const u8) !?[]u8 {
+    if (std.mem.startsWith(u8, value, "hex:")) {
+        const hex_value = value[4..];
+        if (hex_value.len % 2 != 0) return error.InvalidAnchorIdlArgValue;
+        const decoded = try allocator.alloc(u8, hex_value.len / 2);
+        _ = std.fmt.hexToBytes(decoded, hex_value) catch {
+            allocator.free(decoded);
+            return error.InvalidAnchorIdlArgValue;
+        };
+        return decoded;
+    }
+    if (std.mem.startsWith(u8, value, "0x")) {
+        const hex_value = value[2..];
+        if (hex_value.len % 2 != 0) return error.InvalidAnchorIdlArgValue;
+        const decoded = try allocator.alloc(u8, hex_value.len / 2);
+        _ = std.fmt.hexToBytes(decoded, hex_value) catch {
+            allocator.free(decoded);
+            return error.InvalidAnchorIdlArgValue;
+        };
+        return decoded;
+    }
+    if (std.mem.startsWith(u8, value, "base64:")) {
+        const base64_value = value[7..];
+        const decoded_len = std.base64.standard.Decoder.calcSizeForSlice(base64_value) catch return error.InvalidAnchorIdlArgValue;
+        const decoded = try allocator.alloc(u8, decoded_len);
+        std.base64.standard.Decoder.decode(decoded, base64_value) catch {
+            allocator.free(decoded);
+            return error.InvalidAnchorIdlArgValue;
+        };
+        return decoded;
+    }
+    return null;
+}
+
+fn decodeAnchorIdlBytesValue(allocator: Allocator, value: std.json.Value) !?[]u8 {
+    switch (value) {
+        .string => return try decodeAnchorIdlBytesString(allocator, value.string),
+        .object => {
+            if (value.object.get("hex")) |field_value| {
+                if (field_value != .string) return error.InvalidAnchorIdlArgValue;
+                const wrapped = try std.mem.concat(allocator, u8, &.{ "hex:", field_value.string });
+                defer allocator.free(wrapped);
+                return try decodeAnchorIdlBytesString(allocator, wrapped);
+            }
+            if (value.object.get("base64")) |field_value| {
+                if (field_value != .string) return error.InvalidAnchorIdlArgValue;
+                const wrapped = try std.mem.concat(allocator, u8, &.{ "base64:", field_value.string });
+                defer allocator.free(wrapped);
+                return try decodeAnchorIdlBytesString(allocator, wrapped);
+            }
+            if (value.object.get("utf8")) |field_value| {
+                if (field_value != .string) return error.InvalidAnchorIdlArgValue;
+                return try allocator.dupe(u8, field_value.string);
+            }
+            return null;
+        },
+        else => return null,
+    }
+}
+
 fn resolveAnchorIdlFieldType(field_value: std.json.Value) !std.json.Value {
     if (field_value == .object) {
         if (field_value.object.get("type")) |field_type| return field_type;
@@ -325,9 +385,23 @@ fn encodeArgValue(
     if (std.mem.eql(u8, type_spec.string, "bytes")) {
         switch (value) {
             .string => {
+                if (try decodeAnchorIdlBytesValue(allocator, value)) |decoded| {
+                    defer allocator.free(decoded);
+                    if (decoded.len > std.math.maxInt(u32)) return error.InvalidAnchorIdlArgValue;
+                    try appendIntLittle(u32, bytes, allocator, @intCast(decoded.len));
+                    try bytes.appendSlice(allocator, decoded);
+                    return;
+                }
                 if (value.string.len > std.math.maxInt(u32)) return error.InvalidAnchorIdlArgValue;
                 try appendIntLittle(u32, bytes, allocator, @intCast(value.string.len));
                 try bytes.appendSlice(allocator, value.string);
+            },
+            .object => {
+                const decoded = try decodeAnchorIdlBytesValue(allocator, value) orelse return error.InvalidAnchorIdlArgValue;
+                defer allocator.free(decoded);
+                if (decoded.len > std.math.maxInt(u32)) return error.InvalidAnchorIdlArgValue;
+                try appendIntLittle(u32, bytes, allocator, @intCast(decoded.len));
+                try bytes.appendSlice(allocator, decoded);
             },
             .array => {
                 if (value.array.items.len > std.math.maxInt(u32)) return error.InvalidAnchorIdlArgValue;
@@ -908,6 +982,35 @@ test "anchor idl encodeInstructionData encodes tuple enum variant field objects"
     const expected = [_]u8{
         17, 17, 17,   17,   17, 17, 17, 17,
         0,  7,  0x01, 0x04,
+    };
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "anchor idl encodeInstructionData encodes bytes object wrappers" {
+    const allocator = std.testing.allocator;
+    const parsed_idl = try std.json.parseFromSlice(
+        idl_types.Idl,
+        allocator,
+        \\{"instructions":[{"name":"setDigest","discriminator":[19,19,19,19,19,19,19,19],"args":[{"name":"hexDigest","type":"bytes"},{"name":"base64Digest","type":"bytes"},{"name":"utf8Digest","type":"bytes"}]}]}
+    ,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_idl.deinit();
+
+    const instruction = idl_types.findInstruction(&parsed_idl.value, "setDigest").?;
+    const encoded = try encodeInstructionData(
+        allocator,
+        &parsed_idl.value,
+        &instruction,
+        "{\"hexDigest\":{\"hex\":\"010203\"},\"base64Digest\":{\"base64\":\"BAUG\"},\"utf8Digest\":{\"utf8\":\"hi\"}}",
+    );
+    defer allocator.free(encoded);
+
+    const expected = [_]u8{
+        19, 19, 19,  19,  19, 19, 19, 19,
+        3,  0,  0,   0,   1,  2,  3,  3,
+        0,  0,  0,   4,   5,  6,  2,  0,
+        0,  0,  'h', 'i',
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
