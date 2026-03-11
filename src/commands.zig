@@ -1120,14 +1120,32 @@ fn findJsonBindingValue(
     json_account_bindings: *const std.json.Value,
     path: []const u8,
 ) ?std.json.Value {
+    const FindObjectValue = struct {
+        fn find(object: std.json.ObjectMap, key: []const u8) ?std.json.Value {
+            if (object.get(key)) |binding| return binding;
+            if (key.len == 0) return null;
+
+            var iterator = object.iterator();
+            while (iterator.next()) |entry| {
+                const candidate = entry.key_ptr.*;
+                if (candidate.len != key.len or candidate.len == 0) continue;
+                if (std.ascii.toLower(candidate[0]) != std.ascii.toLower(key[0])) continue;
+                if (!std.mem.eql(u8, candidate[1..], key[1..])) continue;
+                return entry.value_ptr.*;
+            }
+
+            return null;
+        }
+    };
+
     switch (json_account_bindings.*) {
         .object => {
-            if (json_account_bindings.object.get(path)) |binding| return binding;
+            if (FindObjectValue.find(json_account_bindings.object, path)) |binding| return binding;
 
             if (std.mem.indexOfScalar(u8, path, '.')) |dot_index| {
                 const head = path[0..dot_index];
                 const tail = path[dot_index + 1 ..];
-                const nested_value = json_account_bindings.object.get(head) orelse return null;
+                const nested_value = FindObjectValue.find(json_account_bindings.object, head) orelse return null;
                 return findJsonBindingValue(&nested_value, tail);
             }
 
@@ -13576,6 +13594,124 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from array nested account p
     const expected_pda = try findProgramAddress(
         allocator,
         &.{ "vault", &field_seed },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(state));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from PascalCase enum arg path" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{230} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-pascal-enum-arg-path-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{231} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.mem.concat(allocator, u8, &.{
+        "{\"address\":\"",
+        program_id_base58,
+        "\",\"instructions\":[{\"name\":\"init\",\"discriminator\":[91,91,91,91,91,91,91,91],\"accounts\":[{\"name\":\"state\",\"writable\":true,\"pda\":{\"seeds\":[{\"kind\":\"const\",\"value\":\"state\"},{\"kind\":\"arg\",\"path\":\"threshold.Fixed.value\"}]}}],\"args\":[{\"name\":\"threshold\",\"type\":{\"defined\":{\"name\":\"Threshold\"}}}]}],\"types\":[{\"name\":\"Threshold\",\"type\":{\"kind\":\"enum\",\"variants\":[{\"name\":\"Fixed\",\"fields\":[{\"name\":\"value\",\"type\":\"u16\"}]},{\"name\":\"Open\"}]}}]}",
+    });
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        "{\"threshold\":{\"fixed\":{\"value\":513}}}",
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    var value_seed: [2]u8 = undefined;
+    std.mem.writeInt(u16, &value_seed, 513, .little);
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "state", &value_seed },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from PascalCase enum account path" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{232} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-pascal-enum-account-path-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const state = client.Pubkey.fromBytes(.{233} ** 32);
+    const state_base58 = try state.toBase58(allocator);
+    defer allocator.free(state_base58);
+    const program_id = client.Pubkey.fromBytes(.{234} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.mem.concat(allocator, u8, &.{
+        "{\"address\":\"",
+        program_id_base58,
+        "\",\"instructions\":[{\"name\":\"init\",\"discriminator\":[92,92,92,92,92,92,92,92],\"accounts\":[{\"name\":\"state\"},{\"name\":\"vault\",\"writable\":true,\"pda\":{\"seeds\":[{\"kind\":\"const\",\"value\":\"vault\"},{\"kind\":\"account\",\"path\":\"state.threshold.Fixed.value\",\"account\":\"State\"}]}}],\"args\":[]}],\"accounts\":[{\"name\":\"State\",\"type\":{\"kind\":\"struct\",\"fields\":[{\"name\":\"threshold\",\"type\":{\"defined\":{\"name\":\"Threshold\"}}}]}}],\"types\":[{\"name\":\"Threshold\",\"type\":{\"kind\":\"enum\",\"variants\":[{\"name\":\"Fixed\",\"fields\":[{\"name\":\"value\",\"type\":\"u16\"}]},{\"name\":\"Open\"}]}}]}",
+    });
+    defer allocator.free(idl_json);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"state\":{{\"address\":\"{s}\",\"threshold\":{{\"fixed\":{{\"value\":\"99\"}}}}}}}}",
+        .{state_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    var value_seed: [2]u8 = undefined;
+    std.mem.writeInt(u16, &value_seed, 99, .little);
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "vault", &value_seed },
         program_id,
     );
 
