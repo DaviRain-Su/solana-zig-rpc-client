@@ -1089,6 +1089,7 @@ fn populateAnchorIdlCliAccounts(
     account_bindings: []const []const u8,
     json_account_bindings: ?*const std.json.Value,
     program_id: client.Pubkey,
+    default_signer_pubkey: ?client.Pubkey,
     cli_accounts: []CliInstructionAccountMeta,
     next_index: *usize,
     owned_resolved_account_pubkeys: *std.ArrayListUnmanaged([]u8),
@@ -1116,6 +1117,7 @@ fn populateAnchorIdlCliAccounts(
                 account_bindings,
                 json_account_bindings,
                 program_id,
+                default_signer_pubkey,
                 cli_accounts,
                 next_index,
                 owned_resolved_account_pubkeys,
@@ -1166,6 +1168,18 @@ fn populateAnchorIdlCliAccounts(
                 .explicit_null => has_explicit_null_binding = true,
             }
         }
+        const is_optional = try isAnchorIdlOptionalAccountCompat(account_value);
+        const is_signer = try isAnchorIdlAccountSigner(account_value);
+        const is_writable = try isAnchorIdlAccountWritable(account_value);
+        if (!has_explicit_null_binding and pubkey_value == null) {
+            if (default_signer_pubkey) |value| {
+                if (is_signer and !is_optional) {
+                    const signer_pubkey_base58 = try value.toBase58(allocator);
+                    try owned_resolved_account_pubkeys.append(allocator, signer_pubkey_base58);
+                    pubkey_value = signer_pubkey_base58;
+                }
+            }
+        }
         if (!has_explicit_null_binding and pubkey_value == null and parent_path == null) {
             if (try isAnchorIdlEventCpiAccount(accounts, account_index, "eventAuthority")) {
                 const event_authority = try findProgramAddress(allocator, &.{"__event_authority"}, program_id);
@@ -1178,10 +1192,7 @@ fn populateAnchorIdlCliAccounts(
                 pubkey_value = program_id_base58;
             }
         }
-        const is_optional = try isAnchorIdlOptionalAccountCompat(account_value);
         var is_missing_optional_account = false;
-        const is_signer = try isAnchorIdlAccountSigner(account_value);
-        const is_writable = try isAnchorIdlAccountWritable(account_value);
         if (pubkey_value == null and is_optional) {
             const program_id_base58 = try program_id.toBase58(allocator);
             try owned_resolved_account_pubkeys.append(allocator, program_id_base58);
@@ -1493,6 +1504,10 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
     defer allocator.free(encoded_data);
 
     const program_id_pubkey = try client.Pubkey.fromBase58(allocator, program_id);
+    const default_signer_pubkey = if (payer_keypair_path_arg) |value|
+        (try loadInstructionKeypairFromPath(allocator, value)).public_key
+    else
+        null;
     const leaf_account_count = try countAnchorIdlLeafAccounts(instruction.accounts);
     const json_remaining_account_count = if (parsed_remaining_accounts) |value| value.value.len else 0;
     const cli_accounts = try allocator.alloc(CliInstructionAccountMeta, leaf_account_count + remaining_accounts.len + json_remaining_account_count);
@@ -1512,6 +1527,7 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
         account_bindings,
         if (parsed_account_bindings) |value| &value.value else null,
         program_id_pubkey,
+        default_signer_pubkey,
         cli_accounts,
         &next_index,
         &owned_resolved_account_pubkeys,
@@ -12261,6 +12277,122 @@ test "loadAnchorIdlInvokeInstructionSpec prefers explicit event cpi account bind
     try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(event_authority));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(program_override));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec defaults missing signer account to payer" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{196} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-signer-default-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{197} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const payer = client.Pubkey.fromBytes(payer_raw.public_key.toBytes());
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[60,60,60,60,60,60,60,60],"accounts":[{{"name":"authority","signer":true}},{{"name":"vault","writable":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const vault = client.Pubkey.fromBytes(.{198} ** 32);
+    const vault_base58 = try vault.toBase58(allocator);
+    defer allocator.free(vault_base58);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"vault\":\"{s}\"}}",
+        .{vault_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(payer));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(vault));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec prefers explicit signer account binding over payer default" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{199} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-signer-override-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{200} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const authority = client.Pubkey.fromBytes(.{201} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const vault = client.Pubkey.fromBytes(.{202} ** 32);
+    const vault_base58 = try vault.toBase58(allocator);
+    defer allocator.free(vault_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[61,61,61,61,61,61,61,61],"accounts":[{{"name":"authority","signer":true}},{{"name":"vault","writable":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"authority\":\"{s}\",\"vault\":\"{s}\"}}",
+        .{ authority_base58, vault_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(authority));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(vault));
 }
 
 test "loadAnchorIdlInvokeInstructionSpec treats json null optional account as missing" {
