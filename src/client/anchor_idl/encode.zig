@@ -170,6 +170,12 @@ fn encodeArgValue(
                 return error.InvalidAnchorIdlArgValue;
             }
 
+            if (std.mem.eql(u8, kind_value.string, "alias")) {
+                const alias_value = type_def.type.object.get("value") orelse return error.UnsupportedAnchorIdlType;
+                try encodeArgValue(allocator, bytes, idl, alias_value, value);
+                return;
+            }
+
             return error.UnsupportedAnchorIdlType;
         }
 
@@ -646,6 +652,33 @@ test "anchor idl encodeInstructionData encodes float args" {
     try std.testing.expectEqualSlices(u8, instruction.discriminator, encoded[0..8]);
     try std.testing.expectEqualSlices(u8, &expected_price, encoded[8..12]);
     try std.testing.expectEqualSlices(u8, &expected_ratio, encoded[12..20]);
+}
+
+test "anchor idl encodeInstructionData encodes defined alias args" {
+    const allocator = std.testing.allocator;
+    const parsed_idl = try std.json.parseFromSlice(
+        idl_types.Idl,
+        allocator,
+        \\{"instructions":[{"name":"setAlias","discriminator":[15,15,15,15,15,15,15,15],"args":[{"name":"weights","type":{"defined":{"name":"U8Pair"}}}]}],"types":[{"name":"U8Pair","type":{"kind":"alias","value":{"array":["u8",2]}}}]}
+    ,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_idl.deinit();
+
+    const instruction = idl_types.findInstruction(&parsed_idl.value, "setAlias").?;
+    const encoded = try encodeInstructionData(
+        allocator,
+        &parsed_idl.value,
+        &instruction,
+        "{\"weights\":[7,9]}",
+    );
+    defer allocator.free(encoded);
+
+    const expected = [_]u8{
+        15, 15, 15, 15, 15, 15, 15, 15,
+        7,  9,
+    };
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
 
 test "anchor idl encodeInstructionData encodes defined struct args" {
