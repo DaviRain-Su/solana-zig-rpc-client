@@ -1006,6 +1006,31 @@ fn isAnchorIdlEventCpiAccount(accounts: []const std.json.Value, account_index: u
     return false;
 }
 
+fn resolveAnchorBuiltinAccountPubkey(allocator: Allocator, account_name: []const u8) !?client.Pubkey {
+    if (std.mem.eql(u8, account_name, "systemProgram")) {
+        return try client.Pubkey.fromBase58(allocator, "11111111111111111111111111111111");
+    }
+    if (std.mem.eql(u8, account_name, "tokenProgram")) {
+        return try client.Pubkey.fromBase58(allocator, "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    }
+    if (std.mem.eql(u8, account_name, "associatedTokenProgram")) {
+        return try client.Pubkey.fromBase58(allocator, "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+    }
+    if (std.mem.eql(u8, account_name, "token2022Program")) {
+        return try client.Pubkey.fromBase58(allocator, "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+    }
+    if (std.mem.eql(u8, account_name, "rent")) {
+        return try client.Pubkey.fromBase58(allocator, "SysvarRent111111111111111111111111111111111");
+    }
+    if (std.mem.eql(u8, account_name, "clock")) {
+        return try client.Pubkey.fromBase58(allocator, "SysvarC1ock11111111111111111111111111111111");
+    }
+    if (std.mem.eql(u8, account_name, "instructions")) {
+        return try client.Pubkey.fromBase58(allocator, "Sysvar1nstructions1111111111111111111111111");
+    }
+    return null;
+}
+
 fn findAnchorIdlRelationAccountBinding(
     allocator: Allocator,
     account_value: std.json.Value,
@@ -1178,6 +1203,13 @@ fn populateAnchorIdlCliAccounts(
                     try owned_resolved_account_pubkeys.append(allocator, signer_pubkey_base58);
                     pubkey_value = signer_pubkey_base58;
                 }
+            }
+        }
+        if (!has_explicit_null_binding and pubkey_value == null) {
+            if (try resolveAnchorBuiltinAccountPubkey(allocator, name_value.string)) |builtin_pubkey| {
+                const builtin_pubkey_base58 = try builtin_pubkey.toBase58(allocator);
+                try owned_resolved_account_pubkeys.append(allocator, builtin_pubkey_base58);
+                pubkey_value = builtin_pubkey_base58;
             }
         }
         if (!has_explicit_null_binding and pubkey_value == null) {
@@ -12326,6 +12358,106 @@ test "loadAnchorIdlInvokeInstructionSpec resolves nested event cpi accounts auto
     try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_event_authority));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(program_id));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec resolves builtin accounts automatically" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{201} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-builtin-accounts-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[61,61,61,61,61,61,61,61],"accounts":[{"name":"systemProgram"},{"name":"tokenProgram"},{"name":"associatedTokenProgram"},{"name":"token2022Program"},{"name":"rent"},{"name":"clock"},{"name":"instructions"}],"args":[]}]}
+    ;
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_system_program = try client.Pubkey.fromBase58(allocator, "11111111111111111111111111111111");
+    const expected_token_program = try client.Pubkey.fromBase58(allocator, "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    const expected_associated_token_program = try client.Pubkey.fromBase58(allocator, "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+    const expected_token2022_program = try client.Pubkey.fromBase58(allocator, "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+    const expected_rent = try client.Pubkey.fromBase58(allocator, "SysvarRent111111111111111111111111111111111");
+    const expected_clock = try client.Pubkey.fromBase58(allocator, "SysvarC1ock11111111111111111111111111111111");
+    const expected_instructions = try client.Pubkey.fromBase58(allocator, "Sysvar1nstructions1111111111111111111111111");
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 7), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_system_program));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_token_program));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[2].pubkey.eql(expected_associated_token_program));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[3].pubkey.eql(expected_token2022_program));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[4].pubkey.eql(expected_rent));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[5].pubkey.eql(expected_clock));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[6].pubkey.eql(expected_instructions));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec prefers explicit builtin account bindings" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{202} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-builtin-override-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const override_program = client.Pubkey.fromBytes(.{203} ** 32);
+    const override_program_base58 = try override_program.toBase58(allocator);
+    defer allocator.free(override_program_base58);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[62,62,62,62,62,62,62,62],"accounts":[{"name":"systemProgram"}],"args":[]}]}
+    ;
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"systemProgram\":\"{s}\"}}",
+        .{override_program_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(override_program));
 }
 
 test "loadAnchorIdlInvokeInstructionSpec defaults missing signer account to payer" {
