@@ -977,7 +977,7 @@ fn resolveAnchorIdlPdaSeedType(
             const name_value = field_value.object.get("name") orelse return error.InvalidCli;
             const field_type = field_value.object.get("type") orelse return error.InvalidCli;
             if (name_value != .string) return error.InvalidCli;
-            if (!std.mem.eql(u8, name_value.string, field_name)) continue;
+            if (!anchorIdlPathSegmentMatches(name_value.string, field_name)) continue;
             return try resolveAnchorIdlPdaSeedType(idl, field_type, child_path);
         }
         return error.InvalidCli;
@@ -1018,7 +1018,7 @@ fn resolveAnchorIdlPdaSeedType(
                 const name_value = field_value.object.get("name") orelse return error.InvalidCli;
                 const field_type = field_value.object.get("type") orelse return error.InvalidCli;
                 if (name_value != .string) return error.InvalidCli;
-                if (!std.mem.eql(u8, name_value.string, nested_field_name)) continue;
+                if (!anchorIdlPathSegmentMatches(name_value.string, nested_field_name)) continue;
                 return try resolveAnchorIdlPdaSeedType(idl, field_type, nested_child_path);
             }
             return error.InvalidCli;
@@ -14468,6 +14468,128 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from snake case arg path al
     const args_json = try std.fmt.allocPrint(
         allocator,
         "{{\"mintAuthority\":\"{s}\"}}",
+        .{authority_base58},
+    );
+    defer allocator.free(args_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        args_json,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "state", authority.bytes[0..] },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from snake case struct field path alias" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{85} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-snake-struct-field-path-alias-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const authority = client.Pubkey.fromBytes(.{86} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const program_id = client.Pubkey.fromBytes(.{87} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.mem.concat(allocator, u8, &.{
+        "{\"address\":\"",
+        program_id_base58,
+        "\",\"instructions\":[{\"name\":\"init\",\"discriminator\":[100,100,100,100,100,100,100,100],\"accounts\":[{\"name\":\"state\",\"writable\":true,\"pda\":{\"seeds\":[{\"kind\":\"const\",\"value\":\"state\"},{\"kind\":\"arg\",\"path\":\"config.mint_authority\"}]}}],\"args\":[{\"name\":\"config\",\"type\":{\"defined\":{\"name\":\"Config\"}}}]}],\"types\":[{\"name\":\"Config\",\"type\":{\"kind\":\"struct\",\"fields\":[{\"name\":\"mintAuthority\",\"type\":\"publicKey\"}]}}]}",
+    });
+    defer allocator.free(idl_json);
+    const args_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"config\":{{\"mintAuthority\":\"{s}\"}}}}",
+        .{authority_base58},
+    );
+    defer allocator.free(args_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        args_json,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "state", authority.bytes[0..] },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from snake case enum field path alias" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{88} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-snake-enum-field-path-alias-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const authority = client.Pubkey.fromBytes(.{89} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const program_id = client.Pubkey.fromBytes(.{90} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.mem.concat(allocator, u8, &.{
+        "{\"address\":\"",
+        program_id_base58,
+        "\",\"instructions\":[{\"name\":\"init\",\"discriminator\":[101,101,101,101,101,101,101,101],\"accounts\":[{\"name\":\"state\",\"writable\":true,\"pda\":{\"seeds\":[{\"kind\":\"const\",\"value\":\"state\"},{\"kind\":\"arg\",\"path\":\"mode.Fixed.mint_authority\"}]}}],\"args\":[{\"name\":\"mode\",\"type\":{\"defined\":{\"name\":\"Mode\"}}}]}],\"types\":[{\"name\":\"Mode\",\"type\":{\"kind\":\"enum\",\"variants\":[{\"name\":\"Fixed\",\"fields\":[{\"name\":\"mintAuthority\",\"type\":\"publicKey\"}]}]}}]}",
+    });
+    defer allocator.free(idl_json);
+    const args_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"mode\":{{\"fixed\":{{\"mintAuthority\":\"{s}\"}}}}}}",
         .{authority_base58},
     );
     defer allocator.free(args_json);
