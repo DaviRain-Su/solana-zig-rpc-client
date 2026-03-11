@@ -832,6 +832,42 @@ fn findAnchorIdlAccountValue(accounts: []const std.json.Value, path: []const u8)
     return null;
 }
 
+const AnchorIdlAccountContext = struct {
+    account_value: std.json.Value,
+    siblings: []const std.json.Value,
+    account_index: usize,
+};
+
+fn findAnchorIdlAccountContext(accounts: []const std.json.Value, path: []const u8) !?AnchorIdlAccountContext {
+    if (std.mem.indexOfScalar(u8, path, '.')) |dot_index| {
+        const head = path[0..dot_index];
+        const tail = path[dot_index + 1 ..];
+        for (accounts) |account_value| {
+            if (account_value != .object) continue;
+            const name_value = account_value.object.get("name") orelse continue;
+            if (name_value != .string) continue;
+            if (!std.mem.eql(u8, name_value.string, head)) continue;
+            const nested_value = account_value.object.get("accounts") orelse return null;
+            if (nested_value != .array) return error.InvalidCli;
+            return try findAnchorIdlAccountContext(nested_value.array.items, tail);
+        }
+        return null;
+    }
+
+    for (accounts, 0..) |account_value, account_index| {
+        if (account_value != .object) continue;
+        const name_value = account_value.object.get("name") orelse continue;
+        if (name_value != .string) continue;
+        if (!std.mem.eql(u8, name_value.string, path)) continue;
+        return .{
+            .account_value = account_value,
+            .siblings = accounts,
+            .account_index = account_index,
+        };
+    }
+    return null;
+}
+
 fn findAnchorIdlAccountFullPath(
     allocator: Allocator,
     accounts: []const std.json.Value,
@@ -1024,6 +1060,14 @@ fn resolveAnchorIdlNamedAccountPubkeyFromAccounts(
 
     const is_optional = try isAnchorIdlOptionalAccountCompat(account_value);
     const is_signer = try isAnchorIdlAccountSigner(account_value);
+    if (try findAnchorIdlAccountContext(accounts, account_path)) |context| {
+        if (try isAnchorIdlEventCpiAccount(context.siblings, context.account_index, "eventAuthority")) {
+            return try findProgramAddress(allocator, &.{"__event_authority"}, program_id);
+        }
+        if (try isAnchorIdlEventCpiAccount(context.siblings, context.account_index, "program")) {
+            return program_id;
+        }
+    }
     if (default_signer_pubkey) |value| {
         if (is_signer and !is_optional) return value;
     }
@@ -12806,6 +12850,57 @@ test "loadAnchorIdlInvokeInstructionSpec resolves forward relation through neste
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_vault));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(payer));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[2].pubkey.eql(payer));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec resolves forward nested event cpi accounts in pda program" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{210} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-forward-event-cpi-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{211} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"emit","discriminator":[66,66,66,66,66,66,66,66],"accounts":[{{"name":"vault","pda":{{"program":{{"kind":"account","path":"event.program"}},"seeds":[{{"kind":"const","value":[118,97,117,108,116]}}]}}}},{{"name":"event","accounts":[{{"name":"eventAuthority"}},{{"name":"program"}}]}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "emit",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_vault = try findProgramAddress(allocator, &.{"vault"}, program_id);
+    const expected_event_authority = try findProgramAddress(allocator, &.{"__event_authority"}, program_id);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 3), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_vault));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_event_authority));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[2].pubkey.eql(program_id));
 }
 
 test "loadAnchorIdlInvokeInstructionSpec prefers explicit signer account binding over payer default" {
