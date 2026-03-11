@@ -192,7 +192,13 @@ fn encodeArgValue(
                         return error.InvalidAnchorIdlArgValue;
                     }
                     for (fields_value.array.items, payload.array.items) |field_type, payload_value| {
-                        try encodeArgValue(allocator, bytes, idl, field_type, payload_value);
+                        try encodeArgValue(
+                            allocator,
+                            bytes,
+                            idl,
+                            try resolveAnchorIdlFieldType(field_type),
+                            payload_value,
+                        );
                     }
                     return;
                 }
@@ -815,6 +821,33 @@ test "anchor idl encodeInstructionData accepts lowerCamel enum variants" {
     const expected = [_]u8{
         14, 14, 14,   14,   14, 14, 14,   14,
         1,  0,  0x01, 0x02, 0,  7,  0x01, 0x04,
+    };
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "anchor idl encodeInstructionData encodes tuple enum variant field objects" {
+    const allocator = std.testing.allocator;
+    const parsed_idl = try std.json.parseFromSlice(
+        idl_types.Idl,
+        allocator,
+        \\{"instructions":[{"name":"setMode","discriminator":[17,17,17,17,17,17,17,17],"args":[{"name":"pair","type":{"defined":{"name":"Pair"}}}]}],"types":[{"name":"Pair","type":{"kind":"enum","variants":[{"name":"Values","fields":[{"type":"u8"},{"type":"u16"}]}]}}]}
+    ,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_idl.deinit();
+
+    const instruction = idl_types.findInstruction(&parsed_idl.value, "setMode").?;
+    const encoded = try encodeInstructionData(
+        allocator,
+        &parsed_idl.value,
+        &instruction,
+        "{\"pair\":{\"Values\":[7,1025]}}",
+    );
+    defer allocator.free(encoded);
+
+    const expected = [_]u8{
+        17, 17, 17,   17,   17, 17, 17, 17,
+        0,  7,  0x01, 0x04,
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
