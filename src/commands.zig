@@ -963,7 +963,63 @@ fn resolveAnchorIdlNamedAccountPubkeyFromAccounts(
     )) {
         .pubkey => |pubkey_value| return client.Pubkey.fromBase58(allocator, pubkey_value) catch return error.InvalidCli,
         .explicit_null => return error.InvalidCli,
-        .missing => {},
+        .missing => {
+            const relations_value = account_value.object.get("relations");
+            if (relations_value) |value| {
+                if (value != .array) return error.InvalidCli;
+                for (value.array.items) |relation_value| {
+                    if (relation_value != .string) return error.InvalidCli;
+
+                    if (parent_path) |parent| {
+                        const nested_relation_path = try std.fmt.allocPrint(
+                            allocator,
+                            "{s}.{s}.{s}",
+                            .{ parent, relation_value.string, leaf_name },
+                        );
+                        defer allocator.free(nested_relation_path);
+                        const nested_pubkey = resolveAnchorIdlNamedAccountPubkeyFromAccounts(
+                            allocator,
+                            idl,
+                            instruction,
+                            accounts,
+                            parsed_args,
+                            account_bindings,
+                            json_account_bindings,
+                            nested_relation_path,
+                            program_id,
+                            default_signer_pubkey,
+                        ) catch |err| switch (err) {
+                            error.InvalidCli => null,
+                            else => return err,
+                        };
+                        if (nested_pubkey) |pubkey| return pubkey;
+                    }
+
+                    const relation_path = try std.fmt.allocPrint(
+                        allocator,
+                        "{s}.{s}",
+                        .{ relation_value.string, leaf_name },
+                    );
+                    defer allocator.free(relation_path);
+                    const relation_pubkey = resolveAnchorIdlNamedAccountPubkeyFromAccounts(
+                        allocator,
+                        idl,
+                        instruction,
+                        accounts,
+                        parsed_args,
+                        account_bindings,
+                        json_account_bindings,
+                        relation_path,
+                        program_id,
+                        default_signer_pubkey,
+                    ) catch |err| switch (err) {
+                        error.InvalidCli => null,
+                        else => return err,
+                    };
+                    if (relation_pubkey) |pubkey| return pubkey;
+                }
+            }
+        },
     }
 
     const is_optional = try isAnchorIdlOptionalAccountCompat(account_value);
@@ -12698,6 +12754,58 @@ test "loadAnchorIdlInvokeInstructionSpec resolves earlier pda from later auto-re
     try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_state));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(payer));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec resolves forward relation through nested auto-resolved signer" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{208} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-forward-relation-signer-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const payer = client.Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const payer_pubkey_bytes = payer_raw.public_key.toBytes();
+    const program_id = client.Pubkey.fromBytes(.{209} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[65,65,65,65,65,65,65,65],"accounts":[{{"name":"vault","pda":{{"seeds":[{{"kind":"account","path":"authority"}}]}}}},{{"name":"state","accounts":[{{"name":"authority","signer":true}}]}},{{"name":"authority","relations":["state"]}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_vault = try findProgramAddress(allocator, &.{payer_pubkey_bytes[0..]}, program_id);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 3), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_vault));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(payer));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[2].pubkey.eql(payer));
 }
 
 test "loadAnchorIdlInvokeInstructionSpec prefers explicit signer account binding over payer default" {
