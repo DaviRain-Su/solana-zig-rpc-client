@@ -1105,19 +1105,32 @@ fn countAnchorIdlLeafAccounts(accounts: []const std.json.Value) !usize {
     return count;
 }
 
+fn appendResolvedAnchorIdlAccountBinding(
+    allocator: Allocator,
+    account_bindings: *std.ArrayListUnmanaged([]const u8),
+    owned_resolved_account_bindings: *std.ArrayListUnmanaged([]u8),
+    account_path: []const u8,
+    pubkey_value: []const u8,
+) !void {
+    const binding = try std.fmt.allocPrint(allocator, "{s}={s}", .{ account_path, pubkey_value });
+    try account_bindings.append(allocator, binding);
+    try owned_resolved_account_bindings.append(allocator, binding);
+}
+
 fn populateAnchorIdlCliAccounts(
     allocator: Allocator,
     idl: *const anchor_idl.Idl,
     instruction: *const anchor_idl.Instruction,
     accounts: []const std.json.Value,
     parsed_args: ?*const std.json.Value,
-    account_bindings: []const []const u8,
+    account_bindings: *std.ArrayListUnmanaged([]const u8),
     json_account_bindings: ?*const std.json.Value,
     program_id: client.Pubkey,
     default_signer_pubkey: ?client.Pubkey,
     cli_accounts: []CliInstructionAccountMeta,
     next_index: *usize,
     owned_resolved_account_pubkeys: *std.ArrayListUnmanaged([]u8),
+    owned_resolved_account_bindings: *std.ArrayListUnmanaged([]u8),
     parent_path: ?[]const u8,
 ) !void {
     for (accounts, 0..) |account_value, account_index| {
@@ -1146,6 +1159,7 @@ fn populateAnchorIdlCliAccounts(
                 cli_accounts,
                 next_index,
                 owned_resolved_account_pubkeys,
+                owned_resolved_account_bindings,
                 full_name,
             );
             continue;
@@ -1153,7 +1167,7 @@ fn populateAnchorIdlCliAccounts(
 
         var pubkey_value: ?[]const u8 = null;
         var has_explicit_null_binding = false;
-        switch (try findCliAccountBinding(account_bindings, json_account_bindings, full_name, name_value.string)) {
+        switch (try findCliAccountBinding(account_bindings.items, json_account_bindings, full_name, name_value.string)) {
             .pubkey => |value| pubkey_value = value,
             .explicit_null => has_explicit_null_binding = true,
             .missing => {},
@@ -1169,7 +1183,7 @@ fn populateAnchorIdlCliAccounts(
                     instruction,
                     pda_value,
                     parsed_args,
-                    account_bindings,
+                    account_bindings.items,
                     json_account_bindings,
                     program_id,
                 );
@@ -1182,7 +1196,7 @@ fn populateAnchorIdlCliAccounts(
             const relation_binding = try findAnchorIdlRelationAccountBinding(
                 allocator,
                 account_value,
-                account_bindings,
+                account_bindings.items,
                 json_account_bindings,
                 name_value.string,
                 parent_path,
@@ -1231,9 +1245,17 @@ fn populateAnchorIdlCliAccounts(
             pubkey_value = program_id_base58;
             is_missing_optional_account = true;
         }
+        const resolved_pubkey_value = pubkey_value orelse return error.InvalidCli;
+        try appendResolvedAnchorIdlAccountBinding(
+            allocator,
+            account_bindings,
+            owned_resolved_account_bindings,
+            full_name,
+            resolved_pubkey_value,
+        );
 
         cli_accounts[next_index.*] = .{
-            .pubkey = pubkey_value orelse return error.InvalidCli,
+            .pubkey = resolved_pubkey_value,
             .is_signer = if (is_missing_optional_account) false else is_signer,
             .is_writable = if (is_missing_optional_account) false else is_writable,
         };
@@ -1544,10 +1566,18 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
     const json_remaining_account_count = if (parsed_remaining_accounts) |value| value.value.len else 0;
     const cli_accounts = try allocator.alloc(CliInstructionAccountMeta, leaf_account_count + remaining_accounts.len + json_remaining_account_count);
     defer allocator.free(cli_accounts);
+    var accumulated_account_bindings: std.ArrayListUnmanaged([]const u8) = .{};
+    defer accumulated_account_bindings.deinit(allocator);
+    try accumulated_account_bindings.appendSlice(allocator, account_bindings);
     var owned_resolved_account_pubkeys: std.ArrayListUnmanaged([]u8) = .{};
     defer {
         for (owned_resolved_account_pubkeys.items) |value| allocator.free(value);
         owned_resolved_account_pubkeys.deinit(allocator);
+    }
+    var owned_resolved_account_bindings: std.ArrayListUnmanaged([]u8) = .{};
+    defer {
+        for (owned_resolved_account_bindings.items) |value| allocator.free(value);
+        owned_resolved_account_bindings.deinit(allocator);
     }
     var next_index: usize = 0;
     try populateAnchorIdlCliAccounts(
@@ -1556,13 +1586,14 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
         &instruction,
         instruction.accounts,
         if (parsed_args) |value| &value.value else null,
-        account_bindings,
+        &accumulated_account_bindings,
         if (parsed_account_bindings) |value| &value.value else null,
         program_id_pubkey,
         default_signer_pubkey,
         cli_accounts,
         &next_index,
         &owned_resolved_account_pubkeys,
+        &owned_resolved_account_bindings,
         null,
     );
     if (next_index != leaf_account_count) return error.InvalidCli;
@@ -12516,6 +12547,57 @@ test "loadAnchorIdlInvokeInstructionSpec defaults missing signer account to paye
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(payer));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(vault));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec reuses auto-resolved accounts in later pda resolution" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{204} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-auto-binding-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const payer = client.Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const payer_pubkey_bytes = payer_raw.public_key.toBytes();
+    const program_id = client.Pubkey.fromBytes(.{205} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[63,63,63,63,63,63,63,63],"accounts":[{{"name":"authority","signer":true}},{{"name":"vault","pda":{{"seeds":[{{"kind":"account","path":"authority"}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_vault = try findProgramAddress(allocator, &.{payer_pubkey_bytes[0..]}, program_id);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(payer));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_vault));
 }
 
 test "loadAnchorIdlInvokeInstructionSpec prefers explicit signer account binding over payer default" {
