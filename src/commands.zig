@@ -430,6 +430,16 @@ fn findCliAccountRawBinding(
     return null;
 }
 
+fn anchorIdlResolutionStackContains(
+    resolution_stack: *const std.ArrayListUnmanaged([]u8),
+    path: []const u8,
+) bool {
+    for (resolution_stack.items) |value| {
+        if (std.mem.eql(u8, value, path)) return true;
+    }
+    return false;
+}
+
 fn encodeAnchorPdaAccountSeed(
     allocator: Allocator,
     idl: *const anchor_idl.Idl,
@@ -440,6 +450,7 @@ fn encodeAnchorPdaAccountSeed(
     json_account_bindings: ?*const std.json.Value,
     program_id: client.Pubkey,
     default_signer_pubkey: ?client.Pubkey,
+    resolution_stack: *std.ArrayListUnmanaged([]u8),
 ) ![]u8 {
     if (seed_value != .object) return error.InvalidCli;
     const path_value = if (seed_value.object.get("path")) |value|
@@ -470,6 +481,7 @@ fn encodeAnchorPdaAccountSeed(
             path_value.string,
             program_id,
             default_signer_pubkey,
+            resolution_stack,
         );
         return try allocator.dupe(u8, &pubkey.bytes);
     }
@@ -949,6 +961,7 @@ fn resolveAnchorIdlNamedAccountPubkeyFromAccounts(
     path: []const u8,
     program_id: client.Pubkey,
     default_signer_pubkey: ?client.Pubkey,
+    resolution_stack: *std.ArrayListUnmanaged([]u8),
 ) anyerror!client.Pubkey {
     const normalized_path = normalizeAnchorIdlAccountPubkeyPath(path);
     const leaf_name = if (std.mem.lastIndexOfScalar(u8, normalized_path, '.')) |dot_index|
@@ -965,6 +978,10 @@ fn resolveAnchorIdlNamedAccountPubkeyFromAccounts(
     const full_path = try findAnchorIdlAccountFullPath(allocator, accounts, normalized_path, null);
     defer if (full_path) |value| allocator.free(value);
     const account_path = if (full_path) |value| value else normalized_path;
+    if (anchorIdlResolutionStackContains(resolution_stack, account_path)) return error.InvalidCli;
+    const owned_account_path = try allocator.dupe(u8, account_path);
+    try resolution_stack.append(allocator, owned_account_path);
+    defer allocator.free(resolution_stack.pop().?);
     const account_value = findAnchorIdlAccountValue(accounts, account_path) orelse return error.InvalidCli;
     if (account_value != .object) return error.InvalidCli;
     if (account_value.object.get("accounts") != null) return error.InvalidCli;
@@ -982,6 +999,7 @@ fn resolveAnchorIdlNamedAccountPubkeyFromAccounts(
             json_account_bindings,
             program_id,
             default_signer_pubkey,
+            resolution_stack,
         );
     }
 
@@ -1024,6 +1042,7 @@ fn resolveAnchorIdlNamedAccountPubkeyFromAccounts(
                             nested_relation_path,
                             program_id,
                             default_signer_pubkey,
+                            resolution_stack,
                         ) catch |err| switch (err) {
                             error.InvalidCli => null,
                             else => return err,
@@ -1048,6 +1067,7 @@ fn resolveAnchorIdlNamedAccountPubkeyFromAccounts(
                         relation_path,
                         program_id,
                         default_signer_pubkey,
+                        resolution_stack,
                     ) catch |err| switch (err) {
                         error.InvalidCli => null,
                         else => return err,
@@ -1268,6 +1288,7 @@ fn populateAnchorIdlCliAccounts(
     next_index: *usize,
     owned_resolved_account_pubkeys: *std.ArrayListUnmanaged([]u8),
     owned_resolved_account_bindings: *std.ArrayListUnmanaged([]u8),
+    resolution_stack: *std.ArrayListUnmanaged([]u8),
     parent_path: ?[]const u8,
 ) !void {
     for (accounts, 0..) |account_value, account_index| {
@@ -1297,6 +1318,7 @@ fn populateAnchorIdlCliAccounts(
                 next_index,
                 owned_resolved_account_pubkeys,
                 owned_resolved_account_bindings,
+                resolution_stack,
                 full_name,
             );
             continue;
@@ -1324,6 +1346,7 @@ fn populateAnchorIdlCliAccounts(
                     json_account_bindings,
                     program_id,
                     default_signer_pubkey,
+                    resolution_stack,
                 );
                 const resolved_pubkey_base58 = try resolved_pubkey.toBase58(allocator);
                 try owned_resolved_account_pubkeys.append(allocator, resolved_pubkey_base58);
@@ -1411,6 +1434,7 @@ fn deriveAnchorIdlPda(
     json_account_bindings: ?*const std.json.Value,
     program_id: client.Pubkey,
     default_signer_pubkey: ?client.Pubkey,
+    resolution_stack: *std.ArrayListUnmanaged([]u8),
 ) anyerror!client.Pubkey {
     if (pda_value != .object) return error.InvalidCli;
     const seeds_value = pda_value.object.get("seeds") orelse return error.InvalidCli;
@@ -1457,6 +1481,7 @@ fn deriveAnchorIdlPda(
                         json_account_bindings,
                         program_id,
                         default_signer_pubkey,
+                        resolution_stack,
                     );
                     defer allocator.free(seed);
                     break :blk try pubkeyFromAnchorSeedBytes(seed);
@@ -1522,6 +1547,7 @@ fn deriveAnchorIdlPda(
                 json_account_bindings,
                 program_id,
                 default_signer_pubkey,
+                resolution_stack,
             );
             owned_seeds[index] = seed;
             owned_seed_count += 1;
@@ -1724,6 +1750,11 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
         for (owned_resolved_account_bindings.items) |value| allocator.free(value);
         owned_resolved_account_bindings.deinit(allocator);
     }
+    var resolution_stack: std.ArrayListUnmanaged([]u8) = .{};
+    defer {
+        for (resolution_stack.items) |value| allocator.free(value);
+        resolution_stack.deinit(allocator);
+    }
     var next_index: usize = 0;
     try populateAnchorIdlCliAccounts(
         allocator,
@@ -1739,6 +1770,7 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
         &next_index,
         &owned_resolved_account_pubkeys,
         &owned_resolved_account_bindings,
+        &resolution_stack,
         null,
     );
     if (next_index != leaf_account_count) return error.InvalidCli;
@@ -12901,6 +12933,50 @@ test "loadAnchorIdlInvokeInstructionSpec resolves forward nested event cpi accou
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_vault));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_event_authority));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[2].pubkey.eql(program_id));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec rejects cyclic forward account resolution" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{212} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-cyclic-resolution-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{213} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[67,67,67,67,67,67,67,67],"accounts":[{{"name":"state","pda":{{"seeds":[{{"kind":"account","path":"authority"}}]}}}},{{"name":"authority","pda":{{"seeds":[{{"kind":"account","path":"state"}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    try std.testing.expectError(
+        error.InvalidCli,
+        loadAnchorIdlInvokeInstructionSpec(
+            allocator,
+            idl_json,
+            "initialize",
+            null,
+            null,
+            &.{},
+            &.{},
+            null,
+            payer_keypair_realpath,
+        ),
+    );
 }
 
 test "loadAnchorIdlInvokeInstructionSpec prefers explicit signer account binding over payer default" {
