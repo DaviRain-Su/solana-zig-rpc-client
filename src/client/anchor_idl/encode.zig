@@ -51,7 +51,7 @@ fn parseAnchorIdlPubkeyValue(value: std.json.Value) ![]const u8 {
     switch (value) {
         .string => return value.string,
         .object => {
-            inline for (.{ "address", "publicKey", "pubkey", "key", "programId", "program_id" }) |field_name| {
+            inline for (.{ "address", "publicKey", "public_key", "pubkey", "key", "programId", "program_id" }) |field_name| {
                 if (value.object.get(field_name)) |field_value| {
                     if (field_value != .string) return error.InvalidAnchorIdlArgValue;
                     return field_value.string;
@@ -1122,6 +1122,44 @@ test "anchor idl encodeInstructionData accepts pubkey object wrappers" {
     try expected.appendSlice(allocator, &.{ 20, 20, 20, 20, 20, 20, 20, 20 });
     try expected.appendSlice(allocator, &authority.bytes);
     try expected.appendSlice(allocator, &program.bytes);
+
+    try std.testing.expectEqualSlices(u8, expected.items, encoded);
+}
+
+test "anchor idl encodeInstructionData accepts public_key object wrapper" {
+    const allocator = std.testing.allocator;
+    const parsed_idl = try std.json.parseFromSlice(
+        idl_types.Idl,
+        allocator,
+        \\{"instructions":[{"name":"setAuthority","discriminator":[21,21,21,21,21,21,21,21],"args":[{"name":"authority","type":"publicKey"}]}]}
+    ,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_idl.deinit();
+
+    const authority = sdk.Pubkey.fromBytes(.{13} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const args_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"authority\":{{\"public_key\":\"{s}\"}}}}",
+        .{authority_base58},
+    );
+    defer allocator.free(args_json);
+
+    const instruction = idl_types.findInstruction(&parsed_idl.value, "setAuthority").?;
+    const encoded = try encodeInstructionData(
+        allocator,
+        &parsed_idl.value,
+        &instruction,
+        args_json,
+    );
+    defer allocator.free(encoded);
+
+    var expected = std.ArrayListUnmanaged(u8){};
+    defer expected.deinit(allocator);
+    try expected.appendSlice(allocator, &.{ 21, 21, 21, 21, 21, 21, 21, 21 });
+    try expected.appendSlice(allocator, &authority.bytes);
 
     try std.testing.expectEqualSlices(u8, expected.items, encoded);
 }
