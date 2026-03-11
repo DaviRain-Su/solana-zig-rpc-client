@@ -1186,13 +1186,15 @@ fn resolveAnchorBuiltinAccountPubkey(allocator: Allocator, account_name: []const
     }
     if (std.mem.eql(u8, account_name, "rent") or
         std.mem.eql(u8, account_name, "rentSysvar") or
-        std.mem.eql(u8, account_name, "rent_sysvar"))
+        std.mem.eql(u8, account_name, "rent_sysvar") or
+        std.mem.eql(u8, account_name, "sysvar_rent"))
     {
         return try client.Pubkey.fromBase58(allocator, "SysvarRent111111111111111111111111111111111");
     }
     if (std.mem.eql(u8, account_name, "clock") or
         std.mem.eql(u8, account_name, "clockSysvar") or
-        std.mem.eql(u8, account_name, "clock_sysvar"))
+        std.mem.eql(u8, account_name, "clock_sysvar") or
+        std.mem.eql(u8, account_name, "sysvar_clock"))
     {
         return try client.Pubkey.fromBase58(allocator, "SysvarC1ock11111111111111111111111111111111");
     }
@@ -1200,42 +1202,48 @@ fn resolveAnchorBuiltinAccountPubkey(allocator: Allocator, account_name: []const
         std.mem.eql(u8, account_name, "instructionsSysvar") or
         std.mem.eql(u8, account_name, "instructions_sysvar") or
         std.mem.eql(u8, account_name, "instructionSysvar") or
-        std.mem.eql(u8, account_name, "instruction_sysvar"))
+        std.mem.eql(u8, account_name, "instruction_sysvar") or
+        std.mem.eql(u8, account_name, "sysvar_instructions"))
     {
         return try client.Pubkey.fromBase58(allocator, "Sysvar1nstructions1111111111111111111111111");
     }
     if (std.mem.eql(u8, account_name, "recentBlockhashes") or
         std.mem.eql(u8, account_name, "recent_blockhashes") or
         std.mem.eql(u8, account_name, "recentBlockhashesSysvar") or
-        std.mem.eql(u8, account_name, "recent_blockhashes_sysvar"))
+        std.mem.eql(u8, account_name, "recent_blockhashes_sysvar") or
+        std.mem.eql(u8, account_name, "sysvar_recent_blockhashes"))
     {
         return try client.Pubkey.fromBase58(allocator, client.Sysvar.recent_blockhashes_base58);
     }
     if (std.mem.eql(u8, account_name, "slotHashes") or
         std.mem.eql(u8, account_name, "slot_hashes") or
         std.mem.eql(u8, account_name, "slotHashesSysvar") or
-        std.mem.eql(u8, account_name, "slot_hashes_sysvar"))
+        std.mem.eql(u8, account_name, "slot_hashes_sysvar") or
+        std.mem.eql(u8, account_name, "sysvar_slot_hashes"))
     {
         return try client.Pubkey.fromBase58(allocator, "SysvarS1otHashes111111111111111111111111111");
     }
     if (std.mem.eql(u8, account_name, "epochSchedule") or
         std.mem.eql(u8, account_name, "epoch_schedule") or
         std.mem.eql(u8, account_name, "epochScheduleSysvar") or
-        std.mem.eql(u8, account_name, "epoch_schedule_sysvar"))
+        std.mem.eql(u8, account_name, "epoch_schedule_sysvar") or
+        std.mem.eql(u8, account_name, "sysvar_epoch_schedule"))
     {
         return try client.Pubkey.fromBase58(allocator, "SysvarEpochSchedu1e111111111111111111111111");
     }
     if (std.mem.eql(u8, account_name, "epochRewards") or
         std.mem.eql(u8, account_name, "epoch_rewards") or
         std.mem.eql(u8, account_name, "epochRewardsSysvar") or
-        std.mem.eql(u8, account_name, "epoch_rewards_sysvar"))
+        std.mem.eql(u8, account_name, "epoch_rewards_sysvar") or
+        std.mem.eql(u8, account_name, "sysvar_epoch_rewards"))
     {
         return try client.Pubkey.fromBase58(allocator, "SysvarEpochRewards1111111111111111111111111");
     }
     if (std.mem.eql(u8, account_name, "stakeHistory") or
         std.mem.eql(u8, account_name, "stake_history") or
         std.mem.eql(u8, account_name, "stakeHistorySysvar") or
-        std.mem.eql(u8, account_name, "stake_history_sysvar"))
+        std.mem.eql(u8, account_name, "stake_history_sysvar") or
+        std.mem.eql(u8, account_name, "sysvar_stake_history"))
     {
         return try client.Pubkey.fromBase58(allocator, "SysvarStakeHistory1111111111111111111111111");
     }
@@ -12862,6 +12870,60 @@ test "loadAnchorIdlInvokeInstructionSpec resolves additional sysvar aliases auto
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_epoch_schedule));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[2].pubkey.eql(expected_epoch_rewards));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[3].pubkey.eql(expected_stake_history));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec resolves sysvar prefix aliases automatically" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{219} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-sysvar-prefix-aliases-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[72,72,72,72,72,72,72,72],"accounts":[{"name":"sysvar_rent"},{"name":"sysvar_clock"},{"name":"sysvar_instructions"},{"name":"sysvar_recent_blockhashes"},{"name":"sysvar_slot_hashes"},{"name":"sysvar_epoch_schedule"},{"name":"sysvar_epoch_rewards"},{"name":"sysvar_stake_history"}],"args":[]}]}
+    ;
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_rent = try client.Pubkey.fromBase58(allocator, "SysvarRent111111111111111111111111111111111");
+    const expected_clock = try client.Pubkey.fromBase58(allocator, "SysvarC1ock11111111111111111111111111111111");
+    const expected_instructions = try client.Pubkey.fromBase58(allocator, "Sysvar1nstructions1111111111111111111111111");
+    const expected_recent_blockhashes = try client.Sysvar.recentBlockhashes(allocator);
+    const expected_slot_hashes = try client.Pubkey.fromBase58(allocator, "SysvarS1otHashes111111111111111111111111111");
+    const expected_epoch_schedule = try client.Pubkey.fromBase58(allocator, "SysvarEpochSchedu1e111111111111111111111111");
+    const expected_epoch_rewards = try client.Pubkey.fromBase58(allocator, "SysvarEpochRewards1111111111111111111111111");
+    const expected_stake_history = try client.Pubkey.fromBase58(allocator, "SysvarStakeHistory1111111111111111111111111");
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 8), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_rent));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_clock));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[2].pubkey.eql(expected_instructions));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[3].pubkey.eql(expected_recent_blockhashes));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[4].pubkey.eql(expected_slot_hashes));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[5].pubkey.eql(expected_epoch_schedule));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[6].pubkey.eql(expected_epoch_rewards));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[7].pubkey.eql(expected_stake_history));
 }
 
 test "loadAnchorIdlInvokeInstructionSpec prefers explicit builtin account bindings" {
