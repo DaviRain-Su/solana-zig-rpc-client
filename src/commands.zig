@@ -1769,6 +1769,7 @@ fn parseAnchorIdlAccountBoolFlag(
     account_value: std.json.Value,
     primary_field: []const u8,
     alias_field: []const u8,
+    snake_alias_field: []const u8,
 ) !bool {
     if (account_value != .object) return error.InvalidCli;
     if (account_value.object.get(primary_field)) |value| {
@@ -1779,19 +1780,23 @@ fn parseAnchorIdlAccountBoolFlag(
         if (value != .bool) return error.InvalidCli;
         return value.bool;
     }
+    if (account_value.object.get(snake_alias_field)) |value| {
+        if (value != .bool) return error.InvalidCli;
+        return value.bool;
+    }
     return false;
 }
 
 fn isAnchorIdlAccountWritable(account_value: std.json.Value) !bool {
-    return parseAnchorIdlAccountBoolFlag(account_value, "writable", "isMut");
+    return parseAnchorIdlAccountBoolFlag(account_value, "writable", "isMut", "is_mut");
 }
 
 fn isAnchorIdlAccountSigner(account_value: std.json.Value) !bool {
-    return parseAnchorIdlAccountBoolFlag(account_value, "signer", "isSigner");
+    return parseAnchorIdlAccountBoolFlag(account_value, "signer", "isSigner", "is_signer");
 }
 
 fn isAnchorIdlOptionalAccountCompat(account_value: std.json.Value) !bool {
-    return parseAnchorIdlAccountBoolFlag(account_value, "optional", "isOptional");
+    return parseAnchorIdlAccountBoolFlag(account_value, "optional", "isOptional", "is_optional");
 }
 
 fn isAnchorIdlEventCpiAccount(accounts: []const std.json.Value, account_index: usize, expected_name: []const u8) !bool {
@@ -17625,6 +17630,62 @@ test "loadAnchorIdlInvokeInstructionSpec supports legacy isOptional account flag
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(program_id));
     try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_signer);
     try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec supports snake case account flag aliases" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{255} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-snake-flags-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{80} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const authority = client.Pubkey.fromBytes(.{81} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const authority_binding = try std.fmt.allocPrint(allocator, "authority={s}", .{authority_base58});
+    defer allocator.free(authority_binding);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[12,12,12,12,12,12,12,12],"accounts":[{{"name":"authority","is_mut":true,"is_signer":true}},{{"name":"maybeAuthority","is_optional":true,"is_mut":true,"is_signer":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{authority_binding},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(authority));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(program_id));
+    try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[1].is_signer);
+    try std.testing.expect(!loaded.owned_instructions.instructions[0].accounts[1].is_writable);
 }
 
 test "loadAnchorIdlInvokeInstructionSpec computes missing instruction discriminator" {
