@@ -561,6 +561,9 @@ fn resolveAnchorIdlPdaAccountFieldType(
         else
             .{ path, "" };
         if (child_path.len != 0) return error.InvalidCli;
+        if (std.mem.eql(u8, field_name, "mintAuthority") or std.mem.eql(u8, field_name, "freezeAuthority")) {
+            return .{ .string = "publicKey" };
+        }
         if (std.mem.eql(u8, field_name, "decimals")) {
             return .{ .string = "u8" };
         }
@@ -10750,6 +10753,136 @@ test "loadAnchorIdlInvokeInstructionSpec infers mint decimals seed type via cli 
         allocator,
         &.{ "vault", &.{9} },
         program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(mint));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec infers mint authority seed type" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{176} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-mint-authority-seed-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const mint = client.Pubkey.fromBytes(.{177} ** 32);
+    const mint_base58 = try mint.toBase58(allocator);
+    defer allocator.free(mint_base58);
+    const mint_authority = client.Pubkey.fromBytes(.{178} ** 32);
+    const mint_authority_base58 = try mint_authority.toBase58(allocator);
+    defer allocator.free(mint_authority_base58);
+    const program_id = client.Pubkey.fromBytes(.{179} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[54,54,54,54,54,54,54,54],"accounts":[{{"name":"mint"}},{{"name":"vault","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[118,97,117,108,116]}},{{"kind":"account","path":"mint.mintAuthority","account":"mint"}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"mint\":{{\"address\":\"{s}\",\"mintAuthority\":\"{s}\"}}}}",
+        .{ mint_base58, mint_authority_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "vault", mint_authority.bytes[0..] },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(mint));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec infers mint freeze authority pda program type via cli binding" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{180} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-mint-freeze-program-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const mint = client.Pubkey.fromBytes(.{181} ** 32);
+    const mint_base58 = try mint.toBase58(allocator);
+    defer allocator.free(mint_base58);
+    const freeze_authority = client.Pubkey.fromBytes(.{182} ** 32);
+    const freeze_authority_base58 = try freeze_authority.toBase58(allocator);
+    defer allocator.free(freeze_authority_base58);
+    const program_id = client.Pubkey.fromBytes(.{183} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[55,55,55,55,55,55,55,55],"accounts":[{{"name":"mint"}},{{"name":"vault","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[118,97,117,108,116]}}],"program":{{"kind":"account","path":"mint.freezeAuthority","account":"mint"}}}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+    const mint_binding = try std.fmt.allocPrint(allocator, "mint={s}", .{mint_base58});
+    defer allocator.free(mint_binding);
+    const freeze_binding = try std.fmt.allocPrint(allocator, "mint.freezeAuthority={s}", .{freeze_authority_base58});
+    defer allocator.free(freeze_binding);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        null,
+        null,
+        &.{ mint_binding, freeze_binding },
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{"vault"},
+        freeze_authority,
     );
 
     try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
