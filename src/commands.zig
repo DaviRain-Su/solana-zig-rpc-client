@@ -470,6 +470,65 @@ fn findAnchorIdlAccountValue(accounts: []const std.json.Value, path: []const u8)
     return null;
 }
 
+fn findAnchorIdlAccountFullPath(
+    allocator: Allocator,
+    accounts: []const std.json.Value,
+    path: []const u8,
+    parent_path: ?[]const u8,
+) !?[]u8 {
+    if (std.mem.indexOfScalar(u8, path, '.')) |dot_index| {
+        const head = path[0..dot_index];
+        const tail = path[dot_index + 1 ..];
+        for (accounts) |account_value| {
+            if (account_value != .object) continue;
+            const name_value = account_value.object.get("name") orelse continue;
+            if (name_value != .string) continue;
+            if (!std.mem.eql(u8, name_value.string, head)) continue;
+            const nested_value = account_value.object.get("accounts") orelse return null;
+            if (nested_value != .array) return error.InvalidCli;
+            const full_name = if (parent_path) |value|
+                try std.fmt.allocPrint(allocator, "{s}.{s}", .{ value, head })
+            else
+                try allocator.dupe(u8, head);
+            defer allocator.free(full_name);
+            return try findAnchorIdlAccountFullPath(
+                allocator,
+                nested_value.array.items,
+                tail,
+                full_name,
+            );
+        }
+        return null;
+    }
+
+    for (accounts) |account_value| {
+        if (account_value != .object) continue;
+        const name_value = account_value.object.get("name") orelse continue;
+        if (name_value != .string) continue;
+        if (std.mem.eql(u8, name_value.string, path)) {
+            return if (parent_path) |value|
+                try std.fmt.allocPrint(allocator, "{s}.{s}", .{ value, path })
+            else
+                try allocator.dupe(u8, path);
+        }
+        if (account_value.object.get("accounts")) |nested_value| {
+            if (nested_value != .array) return error.InvalidCli;
+            const full_name = if (parent_path) |value|
+                try std.fmt.allocPrint(allocator, "{s}.{s}", .{ value, name_value.string })
+            else
+                try allocator.dupe(u8, name_value.string);
+            defer allocator.free(full_name);
+            if (try findAnchorIdlAccountFullPath(
+                allocator,
+                nested_value.array.items,
+                path,
+                full_name,
+            )) |found| return found;
+        }
+    }
+    return null;
+}
+
 fn resolveAnchorIdlNamedAccountPubkeyFromAccounts(
     allocator: Allocator,
     accounts: []const std.json.Value,
@@ -489,12 +548,33 @@ fn resolveAnchorIdlNamedAccountPubkeyFromAccounts(
         .missing => {},
     }
 
-    const account_value = findAnchorIdlAccountValue(accounts, normalized_path) orelse return error.InvalidCli;
+    const full_path = try findAnchorIdlAccountFullPath(allocator, accounts, normalized_path, null);
+    defer if (full_path) |value| allocator.free(value);
+    const account_path = if (full_path) |value| value else normalized_path;
+    const account_value = findAnchorIdlAccountValue(accounts, account_path) orelse return error.InvalidCli;
     if (account_value != .object) return error.InvalidCli;
     if (account_value.object.get("accounts") != null) return error.InvalidCli;
-    const address_value = account_value.object.get("address") orelse return error.InvalidCli;
-    if (address_value != .string) return error.InvalidCli;
-    return client.Pubkey.fromBase58(allocator, address_value.string) catch return error.InvalidCli;
+    if (account_value.object.get("address")) |address_value| {
+        if (address_value != .string) return error.InvalidCli;
+        return client.Pubkey.fromBase58(allocator, address_value.string) catch return error.InvalidCli;
+    }
+
+    const parent_path = if (std.mem.lastIndexOfScalar(u8, account_path, '.')) |dot_index|
+        account_path[0..dot_index]
+    else
+        null;
+    switch (try findAnchorIdlRelationAccountBinding(
+        allocator,
+        account_value,
+        account_bindings,
+        json_account_bindings,
+        leaf_name,
+        parent_path,
+    )) {
+        .pubkey => |pubkey_value| return client.Pubkey.fromBase58(allocator, pubkey_value) catch return error.InvalidCli,
+        .explicit_null => return error.InvalidCli,
+        .missing => return error.InvalidCli,
+    }
 }
 
 fn isAnchorIdlOptionalAccount(account_value: std.json.Value) !bool {
@@ -10046,6 +10126,136 @@ test "loadAnchorIdlInvokeInstructionSpec resolves related account from nested js
     try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(state));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(authority));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives pda seed account from related binding" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{86} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-relation-seed-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{71} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const state = client.Pubkey.fromBytes(.{72} ** 32);
+    const state_base58 = try state.toBase58(allocator);
+    defer allocator.free(state_base58);
+    const authority = client.Pubkey.fromBytes(.{73} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[18,18,18,18,18,18,18,18],"accounts":[{{"name":"state","writable":true}},{{"name":"authority","relations":["state"]}},{{"name":"vault","pda":{{"seeds":[{{"kind":"account","path":"authority"}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"state\":{{\"address\":\"{s}\",\"authority\":\"{s}\"}}}}",
+        .{ state_base58, authority_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_vault = try findProgramAddress(
+        allocator,
+        &.{authority.bytes[0..]},
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 3), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(authority));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[2].pubkey.eql(expected_vault));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives pda program account from related binding" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{87} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-relation-program-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{74} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const state = client.Pubkey.fromBytes(.{75} ** 32);
+    const state_base58 = try state.toBase58(allocator);
+    defer allocator.free(state_base58);
+    const authority = client.Pubkey.fromBytes(.{76} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[19,19,19,19,19,19,19,19],"accounts":[{{"name":"state","writable":true}},{{"name":"authority","relations":["state"]}},{{"name":"vault","pda":{{"program":{{"kind":"account","path":"authority"}},"seeds":[{{"kind":"const","value":[118,97,117,108,116]}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"state\":{{\"address\":\"{s}\",\"authority\":\"{s}\"}}}}",
+        .{ state_base58, authority_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_vault = try findProgramAddress(
+        allocator,
+        &.{"vault"},
+        authority,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 3), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(authority));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[2].pubkey.eql(expected_vault));
 }
 
 test "loadAnchorIdlInvokeInstructionSpec treats nested json null optional account as missing" {
