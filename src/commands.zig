@@ -1140,7 +1140,11 @@ fn isAnchorIdlEventCpiAccount(accounts: []const std.json.Value, account_index: u
     if (account_value != .object) return error.InvalidCli;
     const name_value = account_value.object.get("name") orelse return error.InvalidCli;
     if (name_value != .string) return error.InvalidCli;
-    if (!std.mem.eql(u8, name_value.string, expected_name)) return false;
+    const matches_expected = if (std.mem.eql(u8, expected_name, "eventAuthority"))
+        std.mem.eql(u8, name_value.string, "eventAuthority") or std.mem.eql(u8, name_value.string, "event_authority")
+    else
+        std.mem.eql(u8, name_value.string, expected_name);
+    if (!matches_expected) return false;
 
     if (std.mem.eql(u8, expected_name, "eventAuthority")) {
         if (account_index + 1 >= accounts.len) return false;
@@ -1157,7 +1161,7 @@ fn isAnchorIdlEventCpiAccount(accounts: []const std.json.Value, account_index: u
         if (prev_value != .object) return error.InvalidCli;
         const prev_name = prev_value.object.get("name") orelse return error.InvalidCli;
         if (prev_name != .string) return error.InvalidCli;
-        return std.mem.eql(u8, prev_name.string, "eventAuthority");
+        return std.mem.eql(u8, prev_name.string, "eventAuthority") or std.mem.eql(u8, prev_name.string, "event_authority");
     }
 
     return false;
@@ -12592,6 +12596,55 @@ test "loadAnchorIdlInvokeInstructionSpec resolves nested event cpi accounts auto
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"emit","discriminator":[60,60,60,60,60,60,60,60],"accounts":[{{"name":"event","accounts":[{{"name":"eventAuthority"}},{{"name":"program"}}]}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "emit",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_event_authority = try findProgramAddress(allocator, &.{"__event_authority"}, program_id);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_event_authority));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(program_id));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec resolves snake_case event cpi accounts automatically" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{217} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-snake-event-cpi-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{218} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"emit","discriminator":[71,71,71,71,71,71,71,71],"accounts":[{{"name":"event_authority"}},{{"name":"program"}}],"args":[]}}]}}
     ,
         .{program_id_base58},
     );
