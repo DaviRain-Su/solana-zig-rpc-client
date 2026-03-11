@@ -47,6 +47,22 @@ fn parseAnchorIdlFloatValue(comptime T: type, value: std.json.Value) !T {
     }
 }
 
+fn parseAnchorIdlPubkeyValue(value: std.json.Value) ![]const u8 {
+    switch (value) {
+        .string => return value.string,
+        .object => {
+            inline for (.{ "address", "publicKey", "pubkey", "key", "programId", "program_id" }) |field_name| {
+                if (value.object.get(field_name)) |field_value| {
+                    if (field_value != .string) return error.InvalidAnchorIdlArgValue;
+                    return field_value.string;
+                }
+            }
+            return error.InvalidAnchorIdlArgValue;
+        },
+        else => return error.InvalidAnchorIdlArgValue,
+    }
+}
+
 fn decodeAnchorIdlBytesString(allocator: Allocator, value: []const u8) !?[]u8 {
     if (std.mem.startsWith(u8, value, "hex:")) {
         const hex_value = value[4..];
@@ -416,8 +432,8 @@ fn encodeArgValue(
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "pubkey") or std.mem.eql(u8, type_spec.string, "publicKey")) {
-        if (value != .string) return error.InvalidAnchorIdlArgValue;
-        const pubkey = sdk.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidAnchorIdlArgValue;
+        const pubkey_value = try parseAnchorIdlPubkeyValue(value);
+        const pubkey = sdk.Pubkey.fromBase58(allocator, pubkey_value) catch return error.InvalidAnchorIdlArgValue;
         try bytes.appendSlice(allocator, &pubkey.bytes);
         return;
     }
@@ -1013,4 +1029,46 @@ test "anchor idl encodeInstructionData encodes bytes object wrappers" {
         0,  0,  'h', 'i',
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "anchor idl encodeInstructionData accepts pubkey object wrappers" {
+    const allocator = std.testing.allocator;
+    const parsed_idl = try std.json.parseFromSlice(
+        idl_types.Idl,
+        allocator,
+        \\{"instructions":[{"name":"setAuthority","discriminator":[20,20,20,20,20,20,20,20],"args":[{"name":"authority","type":"publicKey"},{"name":"program","type":"publicKey"}]}]}
+    ,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_idl.deinit();
+
+    const authority = sdk.Pubkey.fromBytes(.{11} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const program = sdk.Pubkey.fromBytes(.{12} ** 32);
+    const program_base58 = try program.toBase58(allocator);
+    defer allocator.free(program_base58);
+    const args_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"authority\":{{\"address\":\"{s}\"}},\"program\":{{\"programId\":\"{s}\"}}}}",
+        .{ authority_base58, program_base58 },
+    );
+    defer allocator.free(args_json);
+
+    const instruction = idl_types.findInstruction(&parsed_idl.value, "setAuthority").?;
+    const encoded = try encodeInstructionData(
+        allocator,
+        &parsed_idl.value,
+        &instruction,
+        args_json,
+    );
+    defer allocator.free(encoded);
+
+    var expected = std.ArrayListUnmanaged(u8){};
+    defer expected.deinit(allocator);
+    try expected.appendSlice(allocator, &.{ 20, 20, 20, 20, 20, 20, 20, 20 });
+    try expected.appendSlice(allocator, &authority.bytes);
+    try expected.appendSlice(allocator, &program.bytes);
+
+    try std.testing.expectEqualSlices(u8, expected.items, encoded);
 }
