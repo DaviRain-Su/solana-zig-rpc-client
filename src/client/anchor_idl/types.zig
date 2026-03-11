@@ -3,6 +3,7 @@ const std = @import("std");
 pub const Idl = struct {
     address: ?[]const u8 = null,
     programId: ?[]const u8 = null,
+    program_id: ?[]const u8 = null,
     metadata: ?IdlMetadata = null,
     instructions: []const Instruction = &.{},
     types: []const TypeDef = &.{},
@@ -12,6 +13,7 @@ pub const Idl = struct {
 pub const IdlMetadata = struct {
     address: ?[]const u8 = null,
     programId: ?[]const u8 = null,
+    program_id: ?[]const u8 = null,
 };
 
 pub const TypeDef = struct {
@@ -45,9 +47,11 @@ pub fn findInstruction(idl: *const Idl, name: []const u8) ?Instruction {
 pub fn programAddress(idl: *const Idl) ?[]const u8 {
     if (idl.address) |value| return value;
     if (idl.programId) |value| return value;
+    if (idl.program_id) |value| return value;
     if (idl.metadata) |metadata| {
         if (metadata.address) |value| return value;
         if (metadata.programId) |value| return value;
+        if (metadata.program_id) |value| return value;
     }
     return null;
 }

@@ -748,7 +748,7 @@ fn parseJsonCliAccountBinding(binding: std.json.Value) !AnchorCliAccountBinding 
         .string => return .{ .pubkey = binding.string },
         .null => return .explicit_null,
         .object => {
-            inline for (.{ "address", "pubkey", "publicKey", "key", "programId" }) |field_name| {
+            inline for (.{ "address", "pubkey", "publicKey", "key", "programId", "program_id" }) |field_name| {
                 if (binding.object.get(field_name)) |field_value| {
                     switch (field_value) {
                         .string => return .{ .pubkey = field_value.string },
@@ -941,7 +941,7 @@ fn findAnchorIdlAccountFullPath(
 
 fn findAnchorIdlAccountLiteralPubkey(account_value: std.json.Value) !?[]const u8 {
     if (account_value != .object) return error.InvalidCli;
-    inline for (.{ "address", "publicKey", "pubkey", "key", "programId" }) |field_name| {
+    inline for (.{ "address", "publicKey", "pubkey", "key", "programId", "program_id" }) |field_name| {
         if (account_value.object.get(field_name)) |field_value| {
             if (field_value != .string) return error.InvalidCli;
             return field_value.string;
@@ -13722,6 +13722,62 @@ test "loadAnchorIdlInvokeInstructionSpec binds account from json programId objec
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
 }
 
+test "loadAnchorIdlInvokeInstructionSpec binds account from json program_id object" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{245} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-json-program-id-snake-object-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{246} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const authority = client.Pubkey.fromBytes(.{247} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[84,84,84,84,84,84,84,84],"accounts":[{{"name":"authority","signer":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"authority\":{{\"program_id\":\"{s}\"}}}}",
+        .{authority_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(authority));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+}
+
 test "loadAnchorIdlInvokeInstructionSpec uses account publicKey literal" {
     const allocator = std.testing.allocator;
 
@@ -13798,6 +13854,56 @@ test "loadAnchorIdlInvokeInstructionSpec uses account programId literal" {
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[81,81,81,81,81,81,81,81],"accounts":[{{"name":"authority","programId":"{s}","signer":true}}],"args":[]}}]}}
+    ,
+        .{ program_id_base58, authority_base58 },
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(authority));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec uses account program_id literal" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{248} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-program-id-snake-literal-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{249} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const authority = client.Pubkey.fromBytes(.{250} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[85,85,85,85,85,85,85,85],"accounts":[{{"name":"authority","program_id":"{s}","signer":true}}],"args":[]}}]}}
     ,
         .{ program_id_base58, authority_base58 },
     );
@@ -14542,6 +14648,96 @@ test "loadAnchorIdlInvokeInstructionSpec accepts metadata programId as program i
     const idl_json = try std.fmt.allocPrint(
         allocator,
         \\{{"metadata":{{"programId":"{s}"}},"instructions":[{{"name":"initialize","discriminator":[77,77,77,77,77,77,77,77],"accounts":[],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].program_id.eql(program_id));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec accepts top level program_id as program id" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{241} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-program-id-snake-field-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{242} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"program_id":"{s}","instructions":[{{"name":"initialize","discriminator":[82,82,82,82,82,82,82,82],"accounts":[],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "initialize",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].program_id.eql(program_id));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec accepts metadata program_id as program id" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{243} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-metadata-program-id-snake-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{244} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"metadata":{{"program_id":"{s}"}},"instructions":[{{"name":"initialize","discriminator":[83,83,83,83,83,83,83,83],"accounts":[],"args":[]}}]}}
     ,
         .{program_id_base58},
     );
