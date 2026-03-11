@@ -5,6 +5,7 @@ pub const Idl = struct {
     metadata: ?IdlMetadata = null,
     instructions: []const Instruction = &.{},
     types: []const TypeDef = &.{},
+    accounts: []const TypeDef = &.{},
 };
 
 pub const IdlMetadata = struct {
@@ -18,7 +19,7 @@ pub const TypeDef = struct {
 
 pub const IdlArg = struct {
     name: []const u8,
-    @"type": std.json.Value = .null,
+    type: std.json.Value = .null,
 };
 
 pub const Instruction = struct {
@@ -49,6 +50,9 @@ pub fn programAddress(idl: *const Idl) ?[]const u8 {
 
 pub fn findType(idl: *const Idl, name: []const u8) ?TypeDef {
     for (idl.types) |type_def| {
+        if (std.mem.eql(u8, type_def.name, name)) return type_def;
+    }
+    for (idl.accounts) |type_def| {
         if (std.mem.eql(u8, type_def.name, name)) return type_def;
     }
     return null;
