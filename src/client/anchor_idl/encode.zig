@@ -22,6 +22,22 @@ fn appendIntLittle(
     try bytes.appendSlice(allocator, &encoded);
 }
 
+fn parseUnsignedAnchorIdlIntValue(comptime T: type, value: std.json.Value) !T {
+    switch (value) {
+        .integer => return std.math.cast(T, value.integer) orelse error.InvalidAnchorIdlArgValue,
+        .string => return std.fmt.parseInt(T, value.string, 10) catch return error.InvalidAnchorIdlArgValue,
+        else => return error.InvalidAnchorIdlArgValue,
+    }
+}
+
+fn parseSignedAnchorIdlIntValue(comptime T: type, value: std.json.Value) !T {
+    switch (value) {
+        .integer => return std.math.cast(T, value.integer) orelse error.InvalidAnchorIdlArgValue,
+        .string => return std.fmt.parseInt(T, value.string, 10) catch return error.InvalidAnchorIdlArgValue,
+        else => return error.InvalidAnchorIdlArgValue,
+    }
+}
+
 fn encodeArgValue(
     allocator: Allocator,
     bytes: *std.ArrayListUnmanaged(u8),
@@ -177,43 +193,51 @@ fn encodeArgValue(
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "u8")) {
-        if (value != .integer or value.integer < 0 or value.integer > std.math.maxInt(u8)) return error.InvalidAnchorIdlArgValue;
-        try bytes.append(allocator, @intCast(value.integer));
+        try bytes.append(allocator, try parseUnsignedAnchorIdlIntValue(u8, value));
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "u16")) {
-        if (value != .integer or value.integer < 0 or value.integer > std.math.maxInt(u16)) return error.InvalidAnchorIdlArgValue;
-        try appendIntLittle(u16, bytes, allocator, @intCast(value.integer));
+        try appendIntLittle(u16, bytes, allocator, try parseUnsignedAnchorIdlIntValue(u16, value));
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "u32")) {
-        if (value != .integer or value.integer < 0 or value.integer > std.math.maxInt(u32)) return error.InvalidAnchorIdlArgValue;
-        try appendIntLittle(u32, bytes, allocator, @intCast(value.integer));
+        try appendIntLittle(u32, bytes, allocator, try parseUnsignedAnchorIdlIntValue(u32, value));
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "u64")) {
-        if (value != .integer or value.integer < 0) return error.InvalidAnchorIdlArgValue;
-        try appendIntLittle(u64, bytes, allocator, @intCast(value.integer));
+        try appendIntLittle(u64, bytes, allocator, try parseUnsignedAnchorIdlIntValue(u64, value));
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "u128")) {
+        try appendIntLittle(u128, bytes, allocator, try parseUnsignedAnchorIdlIntValue(u128, value));
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "u256")) {
+        try appendIntLittle(u256, bytes, allocator, try parseUnsignedAnchorIdlIntValue(u256, value));
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "i8")) {
-        if (value != .integer or value.integer < std.math.minInt(i8) or value.integer > std.math.maxInt(i8)) return error.InvalidAnchorIdlArgValue;
-        try appendIntLittle(i8, bytes, allocator, @intCast(value.integer));
+        try appendIntLittle(i8, bytes, allocator, try parseSignedAnchorIdlIntValue(i8, value));
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "i16")) {
-        if (value != .integer or value.integer < std.math.minInt(i16) or value.integer > std.math.maxInt(i16)) return error.InvalidAnchorIdlArgValue;
-        try appendIntLittle(i16, bytes, allocator, @intCast(value.integer));
+        try appendIntLittle(i16, bytes, allocator, try parseSignedAnchorIdlIntValue(i16, value));
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "i32")) {
-        if (value != .integer or value.integer < std.math.minInt(i32) or value.integer > std.math.maxInt(i32)) return error.InvalidAnchorIdlArgValue;
-        try appendIntLittle(i32, bytes, allocator, @intCast(value.integer));
+        try appendIntLittle(i32, bytes, allocator, try parseSignedAnchorIdlIntValue(i32, value));
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "i64")) {
-        if (value != .integer) return error.InvalidAnchorIdlArgValue;
-        try appendIntLittle(i64, bytes, allocator, @intCast(value.integer));
+        try appendIntLittle(i64, bytes, allocator, try parseSignedAnchorIdlIntValue(i64, value));
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "i128")) {
+        try appendIntLittle(i128, bytes, allocator, try parseSignedAnchorIdlIntValue(i128, value));
+        return;
+    }
+    if (std.mem.eql(u8, type_spec.string, "i256")) {
+        try appendIntLittle(i256, bytes, allocator, try parseSignedAnchorIdlIntValue(i256, value));
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "string")) {
@@ -459,6 +483,109 @@ test "anchor idl encodeInstructionData encodes null option args" {
         0,
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "anchor idl encodeInstructionData encodes string-backed u64 args" {
+    const allocator = std.testing.allocator;
+
+    const instruction = idl_types.Instruction{
+        .name = "setAmount",
+        .discriminator = &.{ 10, 10, 10, 10, 10, 10, 10, 10 },
+        .args = &.{
+            .{ .name = "amount", .type = .{ .string = "u64" } },
+        },
+    };
+    const idl = idl_types.Idl{
+        .instructions = &.{instruction},
+    };
+
+    const encoded = try encodeInstructionData(
+        allocator,
+        &idl,
+        &instruction,
+        "{\"amount\":\"18446744073709551615\"}",
+    );
+    defer allocator.free(encoded);
+
+    var expected_amount: [8]u8 = undefined;
+    std.mem.writeInt(u64, &expected_amount, std.math.maxInt(u64), .little);
+
+    try std.testing.expectEqualSlices(u8, instruction.discriminator, encoded[0..8]);
+    try std.testing.expectEqualSlices(u8, &expected_amount, encoded[8..16]);
+}
+
+test "anchor idl encodeInstructionData encodes 128-bit integer args" {
+    const allocator = std.testing.allocator;
+
+    const big: u128 = (@as(u128, 1) << 100) + 1234;
+    const delta: i128 = -((@as(i128, 1) << 100) + 4321);
+    const args_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"big\":\"{d}\",\"delta\":\"{d}\"}}",
+        .{ big, delta },
+    );
+    defer allocator.free(args_json);
+
+    const instruction = idl_types.Instruction{
+        .name = "setWide",
+        .discriminator = &.{ 11, 11, 11, 11, 11, 11, 11, 11 },
+        .args = &.{
+            .{ .name = "big", .type = .{ .string = "u128" } },
+            .{ .name = "delta", .type = .{ .string = "i128" } },
+        },
+    };
+    const idl = idl_types.Idl{
+        .instructions = &.{instruction},
+    };
+
+    const encoded = try encodeInstructionData(allocator, &idl, &instruction, args_json);
+    defer allocator.free(encoded);
+
+    var expected_big: [16]u8 = undefined;
+    std.mem.writeInt(u128, &expected_big, big, .little);
+    var expected_delta: [16]u8 = undefined;
+    std.mem.writeInt(i128, &expected_delta, delta, .little);
+
+    try std.testing.expectEqualSlices(u8, instruction.discriminator, encoded[0..8]);
+    try std.testing.expectEqualSlices(u8, &expected_big, encoded[8..24]);
+    try std.testing.expectEqualSlices(u8, &expected_delta, encoded[24..40]);
+}
+
+test "anchor idl encodeInstructionData encodes 256-bit integer args" {
+    const allocator = std.testing.allocator;
+
+    const huge: u256 = (@as(u256, 1) << 200) + 55;
+    const offset: i256 = -((@as(i256, 1) << 180) + 77);
+    const args_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"huge\":\"{d}\",\"offset\":\"{d}\"}}",
+        .{ huge, offset },
+    );
+    defer allocator.free(args_json);
+
+    const instruction = idl_types.Instruction{
+        .name = "setHuge",
+        .discriminator = &.{ 12, 12, 12, 12, 12, 12, 12, 12 },
+        .args = &.{
+            .{ .name = "huge", .type = .{ .string = "u256" } },
+            .{ .name = "offset", .type = .{ .string = "i256" } },
+        },
+    };
+    const idl = idl_types.Idl{
+        .instructions = &.{instruction},
+    };
+
+    const encoded = try encodeInstructionData(allocator, &idl, &instruction, args_json);
+    defer allocator.free(encoded);
+
+    var expected_huge: [32]u8 = undefined;
+    std.mem.writeInt(u256, &expected_huge, huge, .little);
+    var expected_offset: [32]u8 = undefined;
+    std.mem.writeInt(i256, &expected_offset, offset, .little);
+
+    try std.testing.expectEqualSlices(u8, instruction.discriminator, encoded[0..8]);
+    try std.testing.expectEqualSlices(u8, &expected_huge, encoded[8..40]);
+    try std.testing.expectEqualSlices(u8, &expected_offset, encoded[40..72]);
 }
 
 test "anchor idl encodeInstructionData encodes defined struct args" {
