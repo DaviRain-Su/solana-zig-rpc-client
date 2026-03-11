@@ -47,6 +47,14 @@ fn parseAnchorIdlFloatValue(comptime T: type, value: std.json.Value) !T {
     }
 }
 
+fn anchorEnumVariantNameMatches(idl_variant_name: []const u8, selected_variant_name: []const u8) bool {
+    if (std.mem.eql(u8, idl_variant_name, selected_variant_name)) return true;
+    if (idl_variant_name.len != selected_variant_name.len or idl_variant_name.len == 0) return false;
+
+    if (std.ascii.toLower(idl_variant_name[0]) != selected_variant_name[0]) return false;
+    return std.mem.eql(u8, idl_variant_name[1..], selected_variant_name[1..]);
+}
+
 fn encodeArgValue(
     allocator: Allocator,
     bytes: *std.ArrayListUnmanaged(u8),
@@ -124,7 +132,7 @@ fn encodeArgValue(
                     if (variant_value != .object) return error.UnsupportedAnchorIdlType;
                     const variant_name = variant_value.object.get("name") orelse return error.UnsupportedAnchorIdlType;
                     if (variant_name != .string) return error.UnsupportedAnchorIdlType;
-                    if (!std.mem.eql(u8, variant_name.string, selected_variant_name)) continue;
+                    if (!anchorEnumVariantNameMatches(variant_name.string, selected_variant_name)) continue;
 
                     if (index > std.math.maxInt(u8)) return error.UnsupportedAnchorIdlType;
                     try bytes.append(allocator, @intCast(index));
@@ -690,6 +698,33 @@ test "anchor idl encodeInstructionData encodes defined enum args" {
     const expected = [_]u8{
         8, 8, 8,    8,    8, 8, 8,    8,
         1, 0, 0x01, 0x02, 0, 7, 0x01, 0x04,
+    };
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "anchor idl encodeInstructionData accepts lowerCamel enum variants" {
+    const allocator = std.testing.allocator;
+    const parsed_idl = try std.json.parseFromSlice(
+        idl_types.Idl,
+        allocator,
+        \\{"instructions":[{"name":"setMode","discriminator":[14,14,14,14,14,14,14,14],"args":[{"name":"state","type":{"defined":{"name":"State"}}},{"name":"threshold","type":{"defined":{"name":"Threshold"}}},{"name":"pair","type":{"defined":{"name":"Pair"}}}]}],"types":[{"name":"State","type":{"kind":"enum","variants":[{"name":"Ready"},{"name":"Paused"}]}},{"name":"Threshold","type":{"kind":"enum","variants":[{"name":"Fixed","fields":[{"name":"value","type":"u16"}]},{"name":"Open"}]}},{"name":"Pair","type":{"kind":"enum","variants":[{"name":"Values","fields":["u8","u16"]}]}}]}
+    ,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_idl.deinit();
+
+    const instruction = idl_types.findInstruction(&parsed_idl.value, "setMode").?;
+    const encoded = try encodeInstructionData(
+        allocator,
+        &parsed_idl.value,
+        &instruction,
+        "{\"state\":{\"paused\":{}},\"threshold\":{\"fixed\":{\"value\":513}},\"pair\":{\"values\":[7,1025]}}",
+    );
+    defer allocator.free(encoded);
+
+    const expected = [_]u8{
+        14, 14, 14,   14,   14, 14, 14,   14,
+        1,  0,  0x01, 0x02, 0,  7,  0x01, 0x04,
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
