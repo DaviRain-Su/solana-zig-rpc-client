@@ -188,6 +188,7 @@ fn resolveAnchorIdlNamedAccountPubkey(
 fn appendAnchorPdaScalarSeed(
     allocator: Allocator,
     bytes: *std.ArrayListUnmanaged(u8),
+    idl: *const anchor_idl.Idl,
     type_spec: std.json.Value,
     value: std.json.Value,
 ) !void {
@@ -220,17 +221,19 @@ fn appendAnchorPdaScalarSeed(
         }
     };
 
-    if (type_spec == .object) {
-        if (type_spec.object.get("option")) |child_type| {
+    const concrete_type = try resolveAnchorIdlPdaConcreteType(idl, type_spec);
+
+    if (concrete_type == .object) {
+        if (concrete_type.object.get("option")) |child_type| {
             if (value == .null) {
                 try bytes.append(allocator, 0);
                 return;
             }
             try bytes.append(allocator, 1);
-            try appendAnchorPdaScalarSeed(allocator, bytes, child_type, value);
+            try appendAnchorPdaScalarSeed(allocator, bytes, idl, child_type, value);
             return;
         }
-        if (type_spec.object.get("vec")) |child_type| {
+        if (concrete_type.object.get("vec")) |child_type| {
             if (value != .array) return error.InvalidCli;
             if (value.array.items.len > std.math.maxInt(u32)) return error.InvalidCli;
 
@@ -239,11 +242,11 @@ fn appendAnchorPdaScalarSeed(
             try bytes.appendSlice(allocator, &encoded_len);
 
             for (value.array.items) |item| {
-                try appendAnchorPdaScalarSeed(allocator, bytes, child_type, item);
+                try appendAnchorPdaScalarSeed(allocator, bytes, idl, child_type, item);
             }
             return;
         }
-        if (type_spec.object.get("array")) |array_value| {
+        if (concrete_type.object.get("array")) |array_value| {
             const element_type, const expected_len: usize = switch (array_value) {
                 .array => |items| blk: {
                     if (items.items.len != 2) return error.InvalidCli;
@@ -263,110 +266,110 @@ fn appendAnchorPdaScalarSeed(
 
             if (value != .array or value.array.items.len != expected_len) return error.InvalidCli;
             for (value.array.items) |item| {
-                try appendAnchorPdaScalarSeed(allocator, bytes, element_type, item);
+                try appendAnchorPdaScalarSeed(allocator, bytes, idl, element_type, item);
             }
             return;
         }
         return error.InvalidCli;
     }
 
-    if (type_spec != .string) return error.InvalidCli;
+    if (concrete_type != .string) return error.InvalidCli;
 
-    if (std.mem.eql(u8, type_spec.string, "bool")) {
+    if (std.mem.eql(u8, concrete_type.string, "bool")) {
         if (value != .bool) return error.InvalidCli;
         try bytes.append(allocator, if (value.bool) 1 else 0);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "u8")) {
+    if (std.mem.eql(u8, concrete_type.string, "u8")) {
         try bytes.append(allocator, try ParseUnsigned.parse(u8, value));
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "u16")) {
+    if (std.mem.eql(u8, concrete_type.string, "u16")) {
         var encoded: [2]u8 = undefined;
         std.mem.writeInt(u16, &encoded, try ParseUnsigned.parse(u16, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "u32")) {
+    if (std.mem.eql(u8, concrete_type.string, "u32")) {
         var encoded: [4]u8 = undefined;
         std.mem.writeInt(u32, &encoded, try ParseUnsigned.parse(u32, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "u64")) {
+    if (std.mem.eql(u8, concrete_type.string, "u64")) {
         var encoded: [8]u8 = undefined;
         std.mem.writeInt(u64, &encoded, try ParseUnsigned.parse(u64, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "u128")) {
+    if (std.mem.eql(u8, concrete_type.string, "u128")) {
         var encoded: [16]u8 = undefined;
         std.mem.writeInt(u128, &encoded, try ParseUnsigned.parse(u128, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "u256")) {
+    if (std.mem.eql(u8, concrete_type.string, "u256")) {
         var encoded: [32]u8 = undefined;
         std.mem.writeInt(u256, &encoded, try ParseUnsigned.parse(u256, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "i8")) {
+    if (std.mem.eql(u8, concrete_type.string, "i8")) {
         var encoded: [1]u8 = undefined;
         std.mem.writeInt(i8, &encoded, try ParseSigned.parse(i8, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "i16")) {
+    if (std.mem.eql(u8, concrete_type.string, "i16")) {
         var encoded: [2]u8 = undefined;
         std.mem.writeInt(i16, &encoded, try ParseSigned.parse(i16, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "i32")) {
+    if (std.mem.eql(u8, concrete_type.string, "i32")) {
         var encoded: [4]u8 = undefined;
         std.mem.writeInt(i32, &encoded, try ParseSigned.parse(i32, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "i64")) {
+    if (std.mem.eql(u8, concrete_type.string, "i64")) {
         var encoded: [8]u8 = undefined;
         std.mem.writeInt(i64, &encoded, try ParseSigned.parse(i64, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "i128")) {
+    if (std.mem.eql(u8, concrete_type.string, "i128")) {
         var encoded: [16]u8 = undefined;
         std.mem.writeInt(i128, &encoded, try ParseSigned.parse(i128, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "i256")) {
+    if (std.mem.eql(u8, concrete_type.string, "i256")) {
         var encoded: [32]u8 = undefined;
         std.mem.writeInt(i256, &encoded, try ParseSigned.parse(i256, value), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "f32")) {
+    if (std.mem.eql(u8, concrete_type.string, "f32")) {
         const float_value = try ParseFloat.parse(f32, value);
         var encoded: [4]u8 = undefined;
         std.mem.writeInt(u32, &encoded, @as(u32, @bitCast(float_value)), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "f64")) {
+    if (std.mem.eql(u8, concrete_type.string, "f64")) {
         const float_value = try ParseFloat.parse(f64, value);
         var encoded: [8]u8 = undefined;
         std.mem.writeInt(u64, &encoded, @as(u64, @bitCast(float_value)), .little);
         try bytes.appendSlice(allocator, &encoded);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "string")) {
+    if (std.mem.eql(u8, concrete_type.string, "string")) {
         if (value != .string) return error.InvalidCli;
         try bytes.appendSlice(allocator, value.string);
         return;
     }
-    if (std.mem.eql(u8, type_spec.string, "bytes")) {
+    if (std.mem.eql(u8, concrete_type.string, "bytes")) {
         switch (value) {
             .string => {
                 try bytes.appendSlice(allocator, value.string);
@@ -382,7 +385,7 @@ fn appendAnchorPdaScalarSeed(
             else => return error.InvalidCli,
         }
     }
-    if (std.mem.eql(u8, type_spec.string, "pubkey") or std.mem.eql(u8, type_spec.string, "publicKey")) {
+    if (std.mem.eql(u8, concrete_type.string, "pubkey") or std.mem.eql(u8, concrete_type.string, "publicKey")) {
         if (value != .string) return error.InvalidCli;
         const pubkey = client.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidCli;
         try bytes.appendSlice(allocator, &pubkey.bytes);
@@ -395,6 +398,7 @@ fn appendAnchorPdaScalarSeed(
 fn appendAnchorPdaScalarSeedFromCliString(
     allocator: Allocator,
     bytes: *std.ArrayListUnmanaged(u8),
+    idl: *const anchor_idl.Idl,
     type_spec: std.json.Value,
     value: []const u8,
 ) !void {
@@ -414,12 +418,12 @@ fn appendAnchorPdaScalarSeedFromCliString(
         const parsed = std.json.parseFromSlice(std.json.Value, allocator, value, .{}) catch null;
         if (parsed) |parsed_value| {
             defer parsed_value.deinit();
-            try appendAnchorPdaScalarSeed(allocator, bytes, type_spec, parsed_value.value);
+            try appendAnchorPdaScalarSeed(allocator, bytes, idl, type_spec, parsed_value.value);
             return;
         }
     }
 
-    try appendAnchorPdaScalarSeed(allocator, bytes, type_spec, .{ .string = value });
+    try appendAnchorPdaScalarSeed(allocator, bytes, idl, type_spec, .{ .string = value });
 }
 
 const AnchorCliRawBinding = union(enum) {
@@ -524,14 +528,14 @@ fn encodeAnchorPdaAccountSeed(
         if (findJsonBindingValue(value, path_value.string)) |binding| {
             var bytes: std.ArrayListUnmanaged(u8) = .{};
             defer bytes.deinit(allocator);
-            try appendAnchorPdaScalarSeed(allocator, &bytes, resolved_type_spec.?, binding);
+            try appendAnchorPdaScalarSeed(allocator, &bytes, idl, resolved_type_spec.?, binding);
             return try allocator.dupe(u8, bytes.items);
         }
         if (!std.mem.eql(u8, path_value.string, leaf_name)) {
             if (findJsonBindingValue(value, leaf_name)) |binding| {
                 var bytes: std.ArrayListUnmanaged(u8) = .{};
                 defer bytes.deinit(allocator);
-                try appendAnchorPdaScalarSeed(allocator, &bytes, resolved_type_spec.?, binding);
+                try appendAnchorPdaScalarSeed(allocator, &bytes, idl, resolved_type_spec.?, binding);
                 return try allocator.dupe(u8, bytes.items);
             }
         }
@@ -541,13 +545,13 @@ fn encodeAnchorPdaAccountSeed(
         .raw => |binding| {
             var bytes: std.ArrayListUnmanaged(u8) = .{};
             defer bytes.deinit(allocator);
-            try appendAnchorPdaScalarSeedFromCliString(allocator, &bytes, resolved_type_spec.?, binding);
+            try appendAnchorPdaScalarSeedFromCliString(allocator, &bytes, idl, resolved_type_spec.?, binding);
             return try allocator.dupe(u8, bytes.items);
         },
         .explicit_null => {
             var bytes: std.ArrayListUnmanaged(u8) = .{};
             defer bytes.deinit(allocator);
-            try appendAnchorPdaScalarSeed(allocator, &bytes, resolved_type_spec.?, .null);
+            try appendAnchorPdaScalarSeed(allocator, &bytes, idl, resolved_type_spec.?, .null);
             return try allocator.dupe(u8, bytes.items);
         },
         .missing => {},
@@ -698,7 +702,7 @@ fn encodeAnchorPdaArgSeed(
 
     var bytes: std.ArrayListUnmanaged(u8) = .{};
     defer bytes.deinit(allocator);
-    try appendAnchorPdaScalarSeed(allocator, &bytes, type_spec, arg_value);
+    try appendAnchorPdaScalarSeed(allocator, &bytes, idl, type_spec, arg_value);
     return try allocator.dupe(u8, bytes.items);
 }
 
@@ -12062,6 +12066,124 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from vec account seed field
     const expected_pda = try findProgramAddress(
         allocator,
         &.{ "vault", &digest_seed },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(state));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from vec defined arg seed" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{179} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-vec-defined-arg-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{180} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.mem.concat(allocator, u8, &.{
+        "{\"address\":\"",
+        program_id_base58,
+        "\",\"instructions\":[{\"name\":\"init\",\"discriminator\":[71,71,71,71,71,71,71,71],\"accounts\":[{\"name\":\"state\",\"writable\":true,\"pda\":{\"seeds\":[{\"kind\":\"const\",\"value\":[115,116,97,116,101]},{\"kind\":\"arg\",\"path\":\"digest\"}]}}],\"args\":[{\"name\":\"digest\",\"type\":{\"vec\":{\"defined\":{\"name\":\"Word\"}}}}]}],\"types\":[{\"name\":\"Word\",\"type\":\"u16\"}]}",
+    });
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        "{\"digest\":[258,513]}",
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    var digest_seed: [8]u8 = undefined;
+    std.mem.writeInt(u32, digest_seed[0..4], 2, .little);
+    std.mem.writeInt(u16, digest_seed[4..6], 258, .little);
+    std.mem.writeInt(u16, digest_seed[6..8], 513, .little);
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "state", &digest_seed },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from optional defined account seed field" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{181} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-option-defined-account-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const state = client.Pubkey.fromBytes(.{182} ** 32);
+    const state_base58 = try state.toBase58(allocator);
+    defer allocator.free(state_base58);
+    const program_id = client.Pubkey.fromBytes(.{183} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.mem.concat(allocator, u8, &.{
+        "{\"address\":\"",
+        program_id_base58,
+        "\",\"instructions\":[{\"name\":\"init\",\"discriminator\":[72,72,72,72,72,72,72,72],\"accounts\":[{\"name\":\"state\"},{\"name\":\"vault\",\"writable\":true,\"pda\":{\"seeds\":[{\"kind\":\"const\",\"value\":[118,97,117,108,116]},{\"kind\":\"account\",\"path\":\"state.maybeDigest\",\"account\":\"State\"}]}}],\"args\":[]}],\"accounts\":[{\"name\":\"State\",\"type\":{\"kind\":\"struct\",\"fields\":[{\"name\":\"maybeDigest\",\"type\":{\"option\":{\"defined\":{\"name\":\"Digest\"}}}}]}}],\"types\":[{\"name\":\"Digest\",\"type\":{\"kind\":\"alias\",\"value\":{\"array\":[\"u8\",2]}}}]}",
+    });
+    defer allocator.free(idl_json);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"state\":{{\"address\":\"{s}\",\"maybeDigest\":[7,8]}}}}",
+        .{state_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "vault", &.{ 1, 7, 8 } },
         program_id,
     );
 
