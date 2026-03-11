@@ -91,10 +91,10 @@ pub fn programAddress(idl: *const Idl) ?[]const u8 {
 
 pub fn findType(idl: *const Idl, name: []const u8) ?TypeDef {
     for (idl.types) |type_def| {
-        if (std.mem.eql(u8, type_def.name, name)) return type_def;
+        if (anchorIdlNameMatches(type_def.name, name)) return type_def;
     }
     for (idl.accounts) |type_def| {
-        if (std.mem.eql(u8, type_def.name, name)) return type_def;
+        if (anchorIdlNameMatches(type_def.name, name)) return type_def;
     }
     return null;
 }
@@ -110,4 +110,20 @@ test "findInstruction matches camel and snake case aliases" {
     try std.testing.expect(findInstruction(&idl, "initialize_config") != null);
     try std.testing.expect(findInstruction(&idl, "InitializeConfig") != null);
     try std.testing.expect(findInstruction(&idl, "closePosition") != null);
+}
+
+test "findType matches camel and snake case aliases" {
+    const idl = Idl{
+        .types = &.{
+            .{ .name = "vaultConfig" },
+        },
+        .accounts = &.{
+            .{ .name = "PositionAccount" },
+        },
+    };
+
+    try std.testing.expect(findType(&idl, "vault_config") != null);
+    try std.testing.expect(findType(&idl, "VaultConfig") != null);
+    try std.testing.expect(findType(&idl, "position_account") != null);
+    try std.testing.expect(findType(&idl, "positionAccount") != null);
 }
