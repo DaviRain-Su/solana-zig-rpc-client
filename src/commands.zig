@@ -1180,7 +1180,7 @@ fn populateAnchorIdlCliAccounts(
                 }
             }
         }
-        if (!has_explicit_null_binding and pubkey_value == null and parent_path == null) {
+        if (!has_explicit_null_binding and pubkey_value == null) {
             if (try isAnchorIdlEventCpiAccount(accounts, account_index, "eventAuthority")) {
                 const event_authority = try findProgramAddress(allocator, &.{"__event_authority"}, program_id);
                 const event_authority_base58 = try event_authority.toBase58(allocator);
@@ -12277,6 +12277,55 @@ test "loadAnchorIdlInvokeInstructionSpec prefers explicit event cpi account bind
     try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(event_authority));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(program_override));
+}
+
+test "loadAnchorIdlInvokeInstructionSpec resolves nested event cpi accounts automatically" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{199} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-nested-event-cpi-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{200} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"emit","discriminator":[60,60,60,60,60,60,60,60],"accounts":[{{"name":"event","accounts":[{{"name":"eventAuthority"}},{{"name":"program"}}]}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "emit",
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const expected_event_authority = try findProgramAddress(allocator, &.{"__event_authority"}, program_id);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_event_authority));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(program_id));
 }
 
 test "loadAnchorIdlInvokeInstructionSpec defaults missing signer account to payer" {
