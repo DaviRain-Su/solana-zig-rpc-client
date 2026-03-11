@@ -9,6 +9,12 @@ pub const std_options = struct {
 const test_recent_blockhash_base58 = "11111111111111111111111111111111";
 const simulated_transaction_response_body =
     "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":321},\"value\":{\"accounts\":[{\"lamports\":99,\"owner\":\"Owner11111111111111111111111111111111\",\"executable\":false,\"rentEpoch\":7,\"space\":3,\"data\":[\"abc\",\"base64\"]}],\"err\":null,\"fee\":12,\"innerInstructions\":[{\"noop\":true}],\"logs\":[\"log-1\",\"log-2\"],\"loadedAccountsDataSize\":256,\"replacementBlockhash\":{\"blockhash\":\"replacement-blockhash\",\"lastValidBlockHeight\":999},\"returnData\":{\"programId\":\"Program11111111111111111111111111111111\",\"data\":[\"ZGF0YQ==\",\"base64\"]},\"unitsConsumed\":42}},\"id\":1}";
+const root_server_accept_timeout_ms = 10_000;
+const StableTransferInstruction = @TypeOf(client.SystemProgram.transfer(
+    client.Pubkey.fromBytes(.{0} ** 32),
+    client.Pubkey.fromBytes(.{0} ** 32),
+    0,
+));
 
 fn makeDeterministicKeypair(seed_byte: u8) !client.Keypair {
     const raw = try Ed25519.KeyPair.generateDeterministic(.{seed_byte} ** 32);
@@ -24,8 +30,8 @@ fn makeTransferInstruction(
     payer: client.Pubkey,
     destination: client.Pubkey,
     lamports: u64,
-) client.Instruction {
-    return client.SystemProgram.transfer(payer, destination, lamports).instruction();
+) StableTransferInstruction {
+    return client.SystemProgram.transfer(payer, destination, lamports);
 }
 
 fn runDelayedRootServer(
@@ -34,8 +40,14 @@ fn runDelayedRootServer(
     delay_ms: u64,
     response_body: []const u8,
 ) void {
+    _ = allocator;
+
     var connection = listener.accept() catch return;
     defer connection.stream.close();
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const thread_allocator = arena.allocator();
 
     var receive_buffer: [4096]u8 = undefined;
     var request_body_buffer: [4096]u8 = undefined;
@@ -47,8 +59,8 @@ fn runDelayedRootServer(
     var request = http_server.receiveHead() catch return;
     const body_length = request.head.content_length orelse 0;
     const request_body_reader = request.readerExpectNone(&request_body_buffer);
-    const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
-    defer allocator.free(request_body);
+    const request_body = request_body_reader.readAlloc(thread_allocator, @intCast(body_length)) catch return;
+    defer thread_allocator.free(request_body);
 
     std.Thread.sleep(delay_ms * std.time.ns_per_ms);
     request.respond(response_body, .{}) catch return;
@@ -62,8 +74,14 @@ fn runDelayedRootServerAndCheckBodyContains(
     matched: *bool,
     response_body: []const u8,
 ) void {
-    var connection = acceptWithTimeout(listener, 2_000) orelse return;
+    _ = allocator;
+
+    var connection = acceptWithTimeout(listener, root_server_accept_timeout_ms) orelse return;
     defer connection.stream.close();
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const thread_allocator = arena.allocator();
 
     var receive_buffer: [4096]u8 = undefined;
     var request_body_buffer: [4096]u8 = undefined;
@@ -75,8 +93,8 @@ fn runDelayedRootServerAndCheckBodyContains(
     var request = http_server.receiveHead() catch return;
     const body_length = request.head.content_length orelse 0;
     const request_body_reader = request.readerExpectNone(&request_body_buffer);
-    const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
-    defer allocator.free(request_body);
+    const request_body = request_body_reader.readAlloc(thread_allocator, @intCast(body_length)) catch return;
+    defer thread_allocator.free(request_body);
 
     matched.* = std.mem.indexOf(u8, request_body, expected_fragment) != null;
 
@@ -93,8 +111,14 @@ fn runDelayedRootServerAndCheckBodyContainsBoth(
     matched: *bool,
     response_body: []const u8,
 ) void {
-    var connection = acceptWithTimeout(listener, 2_000) orelse return;
+    _ = allocator;
+
+    var connection = acceptWithTimeout(listener, root_server_accept_timeout_ms) orelse return;
     defer connection.stream.close();
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const thread_allocator = arena.allocator();
 
     var receive_buffer: [4096]u8 = undefined;
     var request_body_buffer: [4096]u8 = undefined;
@@ -106,8 +130,8 @@ fn runDelayedRootServerAndCheckBodyContainsBoth(
     var request = http_server.receiveHead() catch return;
     const body_length = request.head.content_length orelse 0;
     const request_body_reader = request.readerExpectNone(&request_body_buffer);
-    const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch return;
-    defer allocator.free(request_body);
+    const request_body = request_body_reader.readAlloc(thread_allocator, @intCast(body_length)) catch return;
+    defer thread_allocator.free(request_body);
 
     matched.* = std.mem.indexOf(u8, request_body, first_fragment) != null and
         std.mem.indexOf(u8, request_body, second_fragment) != null;
@@ -124,9 +148,15 @@ fn runDelayedRootServerWithResponsePlan(
     response_bodies: []const []const u8,
     matched: anytype,
 ) void {
+    _ = allocator;
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const thread_allocator = arena.allocator();
+
     var index: usize = 0;
     while (index < response_bodies.len) {
-        var connection = acceptWithTimeout(listener, 2_000) orelse return;
+        var connection = acceptWithTimeout(listener, root_server_accept_timeout_ms) orelse return;
         defer connection.stream.close();
 
         var receive_buffer: [4096]u8 = undefined;
@@ -140,8 +170,8 @@ fn runDelayedRootServerWithResponsePlan(
             var request = http_server.receiveHead() catch break;
             const body_length = request.head.content_length orelse 0;
             const request_body_reader = request.readerExpectNone(&request_body_buffer);
-            const request_body = request_body_reader.readAlloc(allocator, @intCast(body_length)) catch break;
-            defer allocator.free(request_body);
+            const request_body = request_body_reader.readAlloc(thread_allocator, @intCast(body_length)) catch break;
+            defer thread_allocator.free(request_body);
 
             if (index < expected_fragments.len) {
                 const did_match = std.mem.indexOf(u8, request_body, expected_fragments[index]) != null;
@@ -2534,7 +2564,10 @@ test "root.NonblockingRpcClient sendTransactionAsync sends transaction and retur
     );
     try std.testing.expect(!task.isDone());
 
-    const signature = try task.wait();
+    const signature = task.wait() catch |err| {
+        std.debug.print("sendLegacyInstructionsWithOptionsAsync err={}\n", .{err});
+        return err;
+    };
     defer allocator.free(signature);
 
     try std.testing.expectEqualStrings("Sig111111111111111111111111111111111111", signature);
@@ -2608,7 +2641,10 @@ test "root.NonblockingRpcClient sendAndConfirmTransactionAsync sends and waits f
     );
     try std.testing.expect(!task.isDone());
 
-    const signature = try task.wait();
+    const signature = task.wait() catch |err| {
+        std.debug.print("sendAndConfirmLegacyInstructionsWithOptionsAsync err={}\n", .{err});
+        return err;
+    };
     defer allocator.free(signature);
     try std.testing.expectEqualStrings("Sig111111111111111111111111111111111111", signature);
     try std.testing.expect(matched[0]);
@@ -2647,7 +2683,10 @@ test "root.NonblockingRpcClient sendAndConfirmTransactionWithCommitmentAsync con
     );
     try std.testing.expect(!task.isDone());
 
-    const signature = try task.wait();
+    const signature = task.wait() catch |err| {
+        std.debug.print("sendLegacyInstructionsWithOptionsAsync err={}\n", .{err});
+        return err;
+    };
     defer allocator.free(signature);
     try std.testing.expectEqualStrings("Sig111111111111111111111111111111111111", signature);
     try std.testing.expect(matched[0]);
@@ -2690,7 +2729,10 @@ test "root.NonblockingRpcClient sendAndConfirmTransactionWithCommitmentAndConfig
     );
     try std.testing.expect(!task.isDone());
 
-    const signature = try task.wait();
+    const signature = task.wait() catch |err| {
+        std.debug.print("sendAndConfirmLegacyInstructionsWithOptionsAsync err={}\n", .{err});
+        return err;
+    };
     defer allocator.free(signature);
     try std.testing.expectEqualStrings("Sig111111111111111111111111111111111111", signature);
     try std.testing.expect(matched[0]);
@@ -2774,8 +2816,9 @@ test "root.NonblockingRpcClient simulateLegacyInstructionsWithOptionsAsync retur
 
     const payer = try makeDeterministicKeypair(7);
     const destination = try makeDeterministicPubkey(1);
+    const transfer = makeTransferInstruction(payer.public_key, destination, 500);
     const instructions = [_]client.Instruction{
-        makeTransferInstruction(payer.public_key, destination, 500),
+        transfer.instruction(),
     };
     const signers = [_]client.Keypair{payer};
 
@@ -2823,8 +2866,9 @@ test "root.NonblockingRpcClient sendLegacyInstructionsWithOptionsAsync sends tra
 
     const payer = try makeDeterministicKeypair(7);
     const destination = try makeDeterministicPubkey(1);
+    const transfer = makeTransferInstruction(payer.public_key, destination, 750);
     const instructions = [_]client.Instruction{
-        makeTransferInstruction(payer.public_key, destination, 750),
+        transfer.instruction(),
     };
     const signers = [_]client.Keypair{payer};
 
@@ -2879,8 +2923,9 @@ test "root.NonblockingRpcClient sendAndConfirmLegacyInstructionsWithOptionsAsync
 
     const payer = try makeDeterministicKeypair(7);
     const destination = try makeDeterministicPubkey(1);
+    const transfer = makeTransferInstruction(payer.public_key, destination, 900);
     const instructions = [_]client.Instruction{
-        makeTransferInstruction(payer.public_key, destination, 900),
+        transfer.instruction(),
     };
     const signers = [_]client.Keypair{payer};
 
@@ -2936,8 +2981,9 @@ test "root.NonblockingRpcClient simulateVersionedInstructionsWithOptionsAsync re
 
     const payer = try makeDeterministicKeypair(7);
     const destination = try makeDeterministicPubkey(1);
+    const transfer = makeTransferInstruction(payer.public_key, destination, 1200);
     const instructions = [_]client.Instruction{
-        makeTransferInstruction(payer.public_key, destination, 1200),
+        transfer.instruction(),
     };
     const signers = [_]client.Keypair{payer};
 
@@ -2986,8 +3032,9 @@ test "root.NonblockingRpcClient sendVersionedInstructionsWithOptionsAsync sends 
 
     const payer = try makeDeterministicKeypair(7);
     const destination = try makeDeterministicPubkey(1);
+    const transfer = makeTransferInstruction(payer.public_key, destination, 1500);
     const instructions = [_]client.Instruction{
-        makeTransferInstruction(payer.public_key, destination, 1500),
+        transfer.instruction(),
     };
     const signers = [_]client.Keypair{payer};
 
@@ -3041,8 +3088,9 @@ test "root.NonblockingRpcClient sendAndConfirmVersionedInstructionsWithOptionsAs
 
     const payer = try makeDeterministicKeypair(7);
     const destination = try makeDeterministicPubkey(1);
+    const transfer = makeTransferInstruction(payer.public_key, destination, 1800);
     const instructions = [_]client.Instruction{
-        makeTransferInstruction(payer.public_key, destination, 1800),
+        transfer.instruction(),
     };
     const signers = [_]client.Keypair{payer};
 
