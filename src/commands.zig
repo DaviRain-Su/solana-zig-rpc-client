@@ -278,6 +278,118 @@ fn appendAnchorPdaScalarSeed(
     return error.InvalidCli;
 }
 
+fn appendAnchorPdaScalarSeedFromCliString(
+    allocator: Allocator,
+    bytes: *std.ArrayListUnmanaged(u8),
+    type_spec: std.json.Value,
+    value: []const u8,
+) !void {
+    if (type_spec == .string and std.mem.eql(u8, type_spec.string, "bool")) {
+        if (std.mem.eql(u8, value, "true")) {
+            try bytes.append(allocator, 1);
+            return;
+        }
+        if (std.mem.eql(u8, value, "false")) {
+            try bytes.append(allocator, 0);
+            return;
+        }
+        return error.InvalidCli;
+    }
+
+    try appendAnchorPdaScalarSeed(allocator, bytes, type_spec, .{ .string = value });
+}
+
+fn findCliAccountRawBinding(
+    account_bindings: []const []const u8,
+    full_name: []const u8,
+    leaf_name: []const u8,
+) ?[]const u8 {
+    for (account_bindings) |binding| {
+        const equals_index = std.mem.indexOfScalar(u8, binding, '=') orelse continue;
+        if (equals_index == 0) continue;
+        if (std.mem.eql(u8, binding[0..equals_index], full_name)) {
+            const value = binding[equals_index + 1 ..];
+            if (value.len == 0 or std.mem.eql(u8, value, "null")) return null;
+            return value;
+        }
+    }
+
+    if (!std.mem.eql(u8, full_name, leaf_name)) {
+        for (account_bindings) |binding| {
+            const equals_index = std.mem.indexOfScalar(u8, binding, '=') orelse continue;
+            if (equals_index == 0) continue;
+            if (std.mem.eql(u8, binding[0..equals_index], leaf_name)) {
+                const value = binding[equals_index + 1 ..];
+                if (value.len == 0 or std.mem.eql(u8, value, "null")) return null;
+                return value;
+            }
+        }
+    }
+
+    return null;
+}
+
+fn encodeAnchorPdaAccountSeed(
+    allocator: Allocator,
+    instruction: *const anchor_idl.Instruction,
+    seed_value: std.json.Value,
+    account_bindings: []const []const u8,
+    json_account_bindings: ?*const std.json.Value,
+) ![]u8 {
+    if (seed_value != .object) return error.InvalidCli;
+    const path_value = if (seed_value.object.get("path")) |value|
+        value
+    else
+        seed_value.object.get("account") orelse return error.InvalidCli;
+    if (path_value != .string) return error.InvalidCli;
+
+    const type_spec = seed_value.object.get("type");
+    if (type_spec == null or (type_spec.? == .string and
+        (std.mem.eql(u8, type_spec.?.string, "pubkey") or std.mem.eql(u8, type_spec.?.string, "publicKey"))))
+    {
+        const pubkey = try resolveAnchorIdlNamedAccountPubkeyFromAccounts(
+            allocator,
+            instruction.accounts,
+            account_bindings,
+            json_account_bindings,
+            path_value.string,
+        );
+        return try allocator.dupe(u8, &pubkey.bytes);
+    }
+
+    const leaf_name = if (std.mem.lastIndexOfScalar(u8, path_value.string, '.')) |dot_index|
+        path_value.string[dot_index + 1 ..]
+    else
+        path_value.string;
+
+    if (json_account_bindings) |value| {
+        if (value.* != .object) return error.InvalidCli;
+        if (findJsonBindingValue(value, path_value.string)) |binding| {
+            var bytes: std.ArrayListUnmanaged(u8) = .{};
+            defer bytes.deinit(allocator);
+            try appendAnchorPdaScalarSeed(allocator, &bytes, type_spec.?, binding);
+            return try allocator.dupe(u8, bytes.items);
+        }
+        if (!std.mem.eql(u8, path_value.string, leaf_name)) {
+            if (findJsonBindingValue(value, leaf_name)) |binding| {
+                var bytes: std.ArrayListUnmanaged(u8) = .{};
+                defer bytes.deinit(allocator);
+                try appendAnchorPdaScalarSeed(allocator, &bytes, type_spec.?, binding);
+                return try allocator.dupe(u8, bytes.items);
+            }
+        }
+    }
+
+    if (findCliAccountRawBinding(account_bindings, path_value.string, leaf_name)) |binding| {
+        var bytes: std.ArrayListUnmanaged(u8) = .{};
+        defer bytes.deinit(allocator);
+        try appendAnchorPdaScalarSeedFromCliString(allocator, &bytes, type_spec.?, binding);
+        return try allocator.dupe(u8, bytes.items);
+    }
+
+    return error.InvalidCli;
+}
+
 fn resolveAnchorIdlPdaSeedType(
     idl: *const anchor_idl.Idl,
     type_spec: std.json.Value,
@@ -982,19 +1094,13 @@ fn deriveAnchorIdlPda(
         }
 
         if (std.mem.eql(u8, kind_value.string, "account")) {
-            const name_value = if (seed_value.object.get("path")) |value|
-                value
-            else
-                seed_value.object.get("account") orelse return error.InvalidCli;
-            if (name_value != .string) return error.InvalidCli;
-            const pubkey = try resolveAnchorIdlNamedAccountPubkeyFromAccounts(
+            const seed = try encodeAnchorPdaAccountSeed(
                 allocator,
-                instruction.accounts,
+                instruction,
+                seed_value,
                 account_bindings,
                 json_account_bindings,
-                name_value.string,
             );
-            const seed = try allocator.dupe(u8, &pubkey.bytes);
             owned_seeds[index] = seed;
             seed_slices[index] = seed;
             continue;
@@ -9486,6 +9592,138 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from nested string u64 arg 
     try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from typed account publicKey seed field" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{110} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-account-field-public-key-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const state = client.Pubkey.fromBytes(.{111} ** 32);
+    const state_base58 = try state.toBase58(allocator);
+    defer allocator.free(state_base58);
+    const owner = client.Pubkey.fromBytes(.{112} ** 32);
+    const owner_base58 = try owner.toBase58(allocator);
+    defer allocator.free(owner_base58);
+    const program_id = client.Pubkey.fromBytes(.{113} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[32,32,32,32,32,32,32,32],"accounts":[{{"name":"state"}},{{"name":"vault","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[118,97,117,108,116]}},{{"kind":"account","path":"state.owner","type":"publicKey"}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"state\":{{\"address\":\"{s}\",\"owner\":\"{s}\"}}}}",
+        .{ state_base58, owner_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const seed_const = "vault";
+    const seed_owner = try allocator.dupe(u8, &owner.bytes);
+    defer allocator.free(seed_owner);
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ seed_const, seed_owner },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(state));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from typed account u64 seed field" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{114} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-account-field-u64-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const state = client.Pubkey.fromBytes(.{115} ** 32);
+    const state_base58 = try state.toBase58(allocator);
+    defer allocator.free(state_base58);
+    const program_id = client.Pubkey.fromBytes(.{116} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[33,33,33,33,33,33,33,33],"accounts":[{{"name":"state"}},{{"name":"vault","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[118,97,117,108,116]}},{{"kind":"account","path":"state.counter","type":"u64"}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+    const state_binding = try std.fmt.allocPrint(allocator, "state={s}", .{state_base58});
+    defer allocator.free(state_binding);
+    const counter_binding = "state.counter=18446744073709551615";
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        null,
+        null,
+        &.{ state_binding, counter_binding },
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    const seed_const = "vault";
+    var counter_seed: [8]u8 = undefined;
+    std.mem.writeInt(u64, &counter_seed, std.math.maxInt(u64), .little);
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ seed_const, &counter_seed },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(state));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].is_writable);
 }
 
 test "loadAnchorIdlInvokeInstructionSpec flattens nested anchor account groups" {
