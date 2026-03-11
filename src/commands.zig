@@ -848,6 +848,14 @@ fn resolveAnchorIdlPdaAccountFieldType(
     return try resolveAnchorIdlPdaSeedType(idl, type_def.type, path);
 }
 
+fn anchorIdlEnumVariantNameMatches(idl_variant_name: []const u8, selected_variant_name: []const u8) bool {
+    if (std.mem.eql(u8, idl_variant_name, selected_variant_name)) return true;
+    if (idl_variant_name.len != selected_variant_name.len or idl_variant_name.len == 0) return false;
+
+    if (std.ascii.toLower(idl_variant_name[0]) != selected_variant_name[0]) return false;
+    return std.mem.eql(u8, idl_variant_name[1..], selected_variant_name[1..]);
+}
+
 fn resolveAnchorIdlPdaSeedType(
     idl: *const anchor_idl.Idl,
     type_spec: std.json.Value,
@@ -864,22 +872,55 @@ fn resolveAnchorIdlPdaSeedType(
     const kind_value = concrete_type.object.get("kind") orelse return error.InvalidCli;
     if (kind_value != .string) return error.InvalidCli;
 
-    if (!std.mem.eql(u8, kind_value.string, "struct")) return error.InvalidCli;
-    const fields_value = concrete_type.object.get("fields") orelse return error.InvalidCli;
-    if (fields_value != .array) return error.InvalidCli;
-
     const field_name, const child_path = if (std.mem.indexOfScalar(u8, path, '.')) |dot_index|
         .{ path[0..dot_index], path[dot_index + 1 ..] }
     else
         .{ path, "" };
 
-    for (fields_value.array.items) |field_value| {
-        if (field_value != .object) return error.InvalidCli;
-        const name_value = field_value.object.get("name") orelse return error.InvalidCli;
-        const field_type = field_value.object.get("type") orelse return error.InvalidCli;
-        if (name_value != .string) return error.InvalidCli;
-        if (!std.mem.eql(u8, name_value.string, field_name)) continue;
-        return try resolveAnchorIdlPdaSeedType(idl, field_type, child_path);
+    if (std.mem.eql(u8, kind_value.string, "struct")) {
+        const fields_value = concrete_type.object.get("fields") orelse return error.InvalidCli;
+        if (fields_value != .array) return error.InvalidCli;
+
+        for (fields_value.array.items) |field_value| {
+            if (field_value != .object) return error.InvalidCli;
+            const name_value = field_value.object.get("name") orelse return error.InvalidCli;
+            const field_type = field_value.object.get("type") orelse return error.InvalidCli;
+            if (name_value != .string) return error.InvalidCli;
+            if (!std.mem.eql(u8, name_value.string, field_name)) continue;
+            return try resolveAnchorIdlPdaSeedType(idl, field_type, child_path);
+        }
+        return error.InvalidCli;
+    }
+
+    if (std.mem.eql(u8, kind_value.string, "enum")) {
+        const variants_value = concrete_type.object.get("variants") orelse return error.InvalidCli;
+        if (variants_value != .array) return error.InvalidCli;
+        const nested_field_name, const nested_child_path = if (std.mem.indexOfScalar(u8, child_path, '.')) |dot_index|
+            .{ child_path[0..dot_index], child_path[dot_index + 1 ..] }
+        else
+            .{ child_path, "" };
+
+        for (variants_value.array.items) |variant_value| {
+            if (variant_value != .object) return error.InvalidCli;
+            const variant_name = variant_value.object.get("name") orelse return error.InvalidCli;
+            if (variant_name != .string) return error.InvalidCli;
+            if (!anchorIdlEnumVariantNameMatches(variant_name.string, field_name)) continue;
+
+            const fields_value = variant_value.object.get("fields") orelse return error.InvalidCli;
+            if (fields_value == .null or fields_value != .array) return error.InvalidCli;
+            if (child_path.len == 0) return error.InvalidCli;
+
+            for (fields_value.array.items) |field_value| {
+                if (field_value != .object) return error.InvalidCli;
+                const name_value = field_value.object.get("name") orelse return error.InvalidCli;
+                const field_type = field_value.object.get("type") orelse return error.InvalidCli;
+                if (name_value != .string) return error.InvalidCli;
+                if (!std.mem.eql(u8, name_value.string, nested_field_name)) continue;
+                return try resolveAnchorIdlPdaSeedType(idl, field_type, nested_child_path);
+            }
+            return error.InvalidCli;
+        }
+        return error.InvalidCli;
     }
 
     return error.InvalidCli;
@@ -13105,6 +13146,124 @@ test "loadAnchorIdlInvokeInstructionSpec derives PDA from optional nested accoun
     const expected_pda = try findProgramAddress(
         allocator,
         &.{ "vault", &counter_seed },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(state));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from nested enum arg path" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{215} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-nested-enum-arg-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const program_id = client.Pubkey.fromBytes(.{216} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.mem.concat(allocator, u8, &.{
+        "{\"address\":\"",
+        program_id_base58,
+        "\",\"instructions\":[{\"name\":\"init\",\"discriminator\":[85,85,85,85,85,85,85,85],\"accounts\":[{\"name\":\"state\",\"writable\":true,\"pda\":{\"seeds\":[{\"kind\":\"const\",\"value\":\"state\"},{\"kind\":\"arg\",\"path\":\"threshold.fixed.value\"}]}}],\"args\":[{\"name\":\"threshold\",\"type\":{\"defined\":{\"name\":\"Threshold\"}}}]}],\"types\":[{\"name\":\"Threshold\",\"type\":{\"kind\":\"enum\",\"variants\":[{\"name\":\"Fixed\",\"fields\":[{\"name\":\"value\",\"type\":\"u16\"}]},{\"name\":\"Open\"}]}}]}",
+    });
+    defer allocator.free(idl_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        "{\"threshold\":{\"fixed\":{\"value\":513}}}",
+        null,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    var value_seed: [2]u8 = undefined;
+    std.mem.writeInt(u16, &value_seed, 513, .little);
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "state", &value_seed },
+        program_id,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_pda));
+    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_writable);
+}
+
+test "loadAnchorIdlInvokeInstructionSpec derives PDA from nested enum account path" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{217} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-idl-pda-nested-enum-account-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const state = client.Pubkey.fromBytes(.{218} ** 32);
+    const state_base58 = try state.toBase58(allocator);
+    defer allocator.free(state_base58);
+    const program_id = client.Pubkey.fromBytes(.{219} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.mem.concat(allocator, u8, &.{
+        "{\"address\":\"",
+        program_id_base58,
+        "\",\"instructions\":[{\"name\":\"init\",\"discriminator\":[86,86,86,86,86,86,86,86],\"accounts\":[{\"name\":\"state\"},{\"name\":\"vault\",\"writable\":true,\"pda\":{\"seeds\":[{\"kind\":\"const\",\"value\":\"vault\"},{\"kind\":\"account\",\"path\":\"state.threshold.fixed.value\",\"account\":\"State\"}]}}],\"args\":[]}],\"accounts\":[{\"name\":\"State\",\"type\":{\"kind\":\"struct\",\"fields\":[{\"name\":\"threshold\",\"type\":{\"defined\":{\"name\":\"Threshold\"}}}]}}],\"types\":[{\"name\":\"Threshold\",\"type\":{\"kind\":\"enum\",\"variants\":[{\"name\":\"Fixed\",\"fields\":[{\"name\":\"value\",\"type\":\"u16\"}]},{\"name\":\"Open\"}]}}]}",
+    });
+    defer allocator.free(idl_json);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"state\":{{\"address\":\"{s}\",\"threshold\":{{\"fixed\":{{\"value\":\"99\"}}}}}}}}",
+        .{state_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var loaded = try loadAnchorIdlInvokeInstructionSpec(
+        allocator,
+        idl_json,
+        "init",
+        null,
+        accounts_json,
+        &.{},
+        &.{},
+        null,
+        payer_keypair_realpath,
+    );
+    defer loaded.deinit(allocator);
+
+    var value_seed: [2]u8 = undefined;
+    std.mem.writeInt(u16, &value_seed, 99, .little);
+    const expected_pda = try findProgramAddress(
+        allocator,
+        &.{ "vault", &value_seed },
         program_id,
     );
 
