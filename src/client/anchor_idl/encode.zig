@@ -99,8 +99,14 @@ fn encodeArgValue(
                 else => return error.UnsupportedAnchorIdlType,
             };
             const type_def = idl_types.findType(idl, defined_name) orelse return error.UnsupportedAnchorIdlType;
-            if (type_def.type != .object) return error.UnsupportedAnchorIdlType;
-            const kind_value = type_def.type.object.get("kind") orelse return error.UnsupportedAnchorIdlType;
+            if (type_def.type != .object) {
+                try encodeArgValue(allocator, bytes, idl, type_def.type, value);
+                return;
+            }
+            const kind_value = type_def.type.object.get("kind") orelse {
+                try encodeArgValue(allocator, bytes, idl, type_def.type, value);
+                return;
+            };
             if (kind_value != .string) return error.UnsupportedAnchorIdlType;
 
             if (std.mem.eql(u8, kind_value.string, "struct")) {
@@ -740,6 +746,34 @@ test "anchor idl encodeInstructionData encodes defined tuple struct args" {
     const expected = [_]u8{
         16, 16,   16,   16, 16, 16, 16, 16,
         7,  0x01, 0x04,
+    };
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "anchor idl encodeInstructionData encodes defined legacy alias args" {
+    const allocator = std.testing.allocator;
+    const parsed_idl = try std.json.parseFromSlice(
+        idl_types.Idl,
+        allocator,
+        \\{"instructions":[{"name":"setAlias","discriminator":[18,18,18,18,18,18,18,18],"args":[{"name":"count","type":{"defined":{"name":"Counter"}}},{"name":"pair","type":{"defined":{"name":"Pair"}}}]}],"types":[{"name":"Counter","type":"u64"},{"name":"Pair","type":{"array":["u8",2]}}]}
+    ,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_idl.deinit();
+
+    const instruction = idl_types.findInstruction(&parsed_idl.value, "setAlias").?;
+    const encoded = try encodeInstructionData(
+        allocator,
+        &parsed_idl.value,
+        &instruction,
+        "{\"count\":\"99\",\"pair\":[7,9]}",
+    );
+    defer allocator.free(encoded);
+
+    const expected = [_]u8{
+        18, 18, 18, 18, 18, 18, 18, 18,
+        99, 0,  0,  0,  0,  0,  0,  0,
+        7,  9,
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
