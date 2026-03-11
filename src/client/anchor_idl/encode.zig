@@ -47,6 +47,13 @@ fn parseAnchorIdlFloatValue(comptime T: type, value: std.json.Value) !T {
     }
 }
 
+fn resolveAnchorIdlFieldType(field_value: std.json.Value) !std.json.Value {
+    if (field_value == .object) {
+        if (field_value.object.get("type")) |field_type| return field_type;
+    }
+    return field_value;
+}
+
 fn anchorEnumVariantNameMatches(idl_variant_name: []const u8, selected_variant_name: []const u8) bool {
     if (std.mem.eql(u8, idl_variant_name, selected_variant_name)) return true;
     if (idl_variant_name.len != selected_variant_name.len or idl_variant_name.len == 0) return false;
@@ -98,7 +105,30 @@ fn encodeArgValue(
 
             if (std.mem.eql(u8, kind_value.string, "struct")) {
                 const fields_value = type_def.type.object.get("fields") orelse return error.UnsupportedAnchorIdlType;
-                if (fields_value != .array or value != .object) return error.InvalidAnchorIdlArgValue;
+                if (fields_value != .array) return error.UnsupportedAnchorIdlType;
+                if (fields_value.array.items.len == 0) {
+                    if (value != .object and value != .array) return error.InvalidAnchorIdlArgValue;
+                    return;
+                }
+
+                const first_field = fields_value.array.items[0];
+                if (!(first_field == .object and first_field.object.get("name") != null)) {
+                    if (value != .array or value.array.items.len != fields_value.array.items.len) {
+                        return error.InvalidAnchorIdlArgValue;
+                    }
+                    for (fields_value.array.items, value.array.items) |field_value, payload_value| {
+                        try encodeArgValue(
+                            allocator,
+                            bytes,
+                            idl,
+                            try resolveAnchorIdlFieldType(field_value),
+                            payload_value,
+                        );
+                    }
+                    return;
+                }
+
+                if (value != .object) return error.InvalidAnchorIdlArgValue;
                 for (fields_value.array.items) |field_value| {
                     if (field_value != .object) return error.UnsupportedAnchorIdlType;
                     const field_name = field_value.object.get("name") orelse return error.UnsupportedAnchorIdlType;
@@ -677,6 +707,33 @@ test "anchor idl encodeInstructionData encodes defined alias args" {
     const expected = [_]u8{
         15, 15, 15, 15, 15, 15, 15, 15,
         7,  9,
+    };
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "anchor idl encodeInstructionData encodes defined tuple struct args" {
+    const allocator = std.testing.allocator;
+    const parsed_idl = try std.json.parseFromSlice(
+        idl_types.Idl,
+        allocator,
+        \\{"instructions":[{"name":"setTuple","discriminator":[16,16,16,16,16,16,16,16],"args":[{"name":"pair","type":{"defined":{"name":"Pair"}}}]}],"types":[{"name":"Pair","type":{"kind":"struct","fields":["u8","u16"]}}]}
+    ,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_idl.deinit();
+
+    const instruction = idl_types.findInstruction(&parsed_idl.value, "setTuple").?;
+    const encoded = try encodeInstructionData(
+        allocator,
+        &parsed_idl.value,
+        &instruction,
+        "{\"pair\":[7,1025]}",
+    );
+    defer allocator.free(encoded);
+
+    const expected = [_]u8{
+        16, 16,   16,   16, 16, 16, 16, 16,
+        7,  0x01, 0x04,
     };
     try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
