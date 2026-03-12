@@ -4,6 +4,18 @@ const sdk = @import("./sdk.zig");
 
 const Allocator = std.mem.Allocator;
 
+pub const InstructionDataEncoding = enum {
+    base64,
+    hex,
+    utf8,
+};
+
+pub const BuildError = Allocator.Error || error{
+    InvalidInstructionSpec,
+    InvalidHexData,
+    InvalidBase64Data,
+};
+
 pub const BuildLegacyMessageOptions = struct {
     payer: sdk.Pubkey,
     recent_blockhash: sdk.Hash,
@@ -28,6 +40,34 @@ pub const BuildVersionedTransactionOptions = struct {
     payer: sdk.Pubkey,
     recent_blockhash: sdk.Hash,
     instructions: []const sdk.Instruction,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+};
+
+pub const BuildLegacyMessageFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    recent_blockhash: sdk.Hash,
+    instructions_json: []const u8,
+};
+
+pub const BuildLegacyTransactionFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    recent_blockhash: sdk.Hash,
+    instructions_json: []const u8,
+    signers: []const sdk.Keypair,
+};
+
+pub const BuildVersionedMessageFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    recent_blockhash: sdk.Hash,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+};
+
+pub const BuildVersionedTransactionFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    recent_blockhash: sdk.Hash,
+    instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
     signers: []const sdk.Keypair,
 };
@@ -78,6 +118,233 @@ pub const SendAndConfirmVersionedTransactionOptions = struct {
     signers: []const sdk.Keypair,
     rpc: ?rpc_types.VersionedInstructionsOptions = null,
 };
+
+fn freeInstructionClones(
+    allocator: Allocator,
+    instructions: []sdk.Instruction,
+    initialized_len: usize,
+) void {
+    for (instructions[0..initialized_len]) |instruction| {
+        allocator.free(instruction.accounts);
+        allocator.free(instruction.data);
+    }
+    allocator.free(instructions);
+}
+
+fn jsonObjectField(
+    object: *const std.json.ObjectMap,
+    comptime names: []const []const u8,
+) ?std.json.Value {
+    inline for (names) |name| {
+        if (object.get(name)) |value| return value;
+    }
+    return null;
+}
+
+fn parseInstructionDataEncoding(value: ?std.json.Value) BuildError!InstructionDataEncoding {
+    const raw = switch (value orelse return .base64) {
+        .string => |string| string,
+        else => return error.InvalidInstructionSpec,
+    };
+
+    if (std.mem.eql(u8, raw, "base64")) return .base64;
+    if (std.mem.eql(u8, raw, "hex")) return .hex;
+    if (std.mem.eql(u8, raw, "utf8")) return .utf8;
+    return error.InvalidInstructionSpec;
+}
+
+fn parseJsonBool(value: std.json.Value) BuildError!bool {
+    return switch (value) {
+        .bool => |boolean| boolean,
+        else => error.InvalidInstructionSpec,
+    };
+}
+
+fn parseJsonPubkey(
+    allocator: Allocator,
+    value: std.json.Value,
+) BuildError!sdk.Pubkey {
+    return switch (value) {
+        .string => |string| sdk.Pubkey.fromBase58(allocator, string) catch return error.InvalidInstructionSpec,
+        else => error.InvalidInstructionSpec,
+    };
+}
+
+fn parseHexData(
+    allocator: Allocator,
+    encoded: []const u8,
+) BuildError![]u8 {
+    const trimmed = if (std.mem.startsWith(u8, encoded, "0x") or std.mem.startsWith(u8, encoded, "0X"))
+        encoded[2..]
+    else
+        encoded;
+    if (trimmed.len % 2 != 0) return error.InvalidHexData;
+
+    const decoded = try allocator.alloc(u8, trimmed.len / 2);
+    errdefer allocator.free(decoded);
+    _ = std.fmt.hexToBytes(decoded, trimmed) catch return error.InvalidHexData;
+    return decoded;
+}
+
+fn parseBase64Data(
+    allocator: Allocator,
+    encoded: []const u8,
+) BuildError![]u8 {
+    const decoder = std.base64.standard.Decoder;
+    const decoded_len = decoder.calcSizeForSlice(encoded) catch return error.InvalidBase64Data;
+    const decoded = try allocator.alloc(u8, decoded_len);
+    errdefer allocator.free(decoded);
+    decoder.decode(decoded, encoded) catch return error.InvalidBase64Data;
+    return decoded;
+}
+
+fn parseJsonByteArray(
+    allocator: Allocator,
+    value: std.json.Value,
+) BuildError![]u8 {
+    const items = switch (value) {
+        .array => |array| array.items,
+        else => return error.InvalidInstructionSpec,
+    };
+
+    const bytes = try allocator.alloc(u8, items.len);
+    errdefer allocator.free(bytes);
+
+    for (items, 0..) |item, index| {
+        const integer = switch (item) {
+            .integer => |raw| raw,
+            else => return error.InvalidInstructionSpec,
+        };
+        if (integer < 0 or integer > 255) return error.InvalidInstructionSpec;
+        bytes[index] = @intCast(integer);
+    }
+
+    return bytes;
+}
+
+fn parseInstructionDataFromJsonObject(
+    allocator: Allocator,
+    object: *const std.json.ObjectMap,
+) BuildError![]u8 {
+    if (jsonObjectField(object, &.{ "dataBytes", "data_bytes" })) |value| {
+        return try parseJsonByteArray(allocator, value);
+    }
+
+    const encoded_value = jsonObjectField(object, &.{"data"}) orelse return allocator.alloc(u8, 0);
+    const encoding = try parseInstructionDataEncoding(jsonObjectField(
+        object,
+        &.{ "dataEncoding", "data_encoding", "encoding" },
+    ));
+
+    const encoded = switch (encoded_value) {
+        .string => |string| string,
+        else => return error.InvalidInstructionSpec,
+    };
+
+    return switch (encoding) {
+        .utf8 => try allocator.dupe(u8, encoded),
+        .hex => try parseHexData(allocator, encoded),
+        .base64 => try parseBase64Data(allocator, encoded),
+    };
+}
+
+fn parseAccountMetaFromJsonValue(
+    allocator: Allocator,
+    value: std.json.Value,
+) BuildError!sdk.AccountMeta {
+    switch (value) {
+        .string => |string| {
+            const pubkey = sdk.Pubkey.fromBase58(allocator, string) catch return error.InvalidInstructionSpec;
+            return sdk.AccountMeta.init(pubkey, false, false);
+        },
+        .object => |object| {
+            const pubkey = try parseJsonPubkey(
+                allocator,
+                jsonObjectField(&object, &.{ "pubkey", "publicKey", "public_key", "address", "key" }) orelse
+                    return error.InvalidInstructionSpec,
+            );
+            const is_signer = if (jsonObjectField(&object, &.{ "isSigner", "is_signer", "signer" })) |bool_value|
+                try parseJsonBool(bool_value)
+            else
+                false;
+            const is_writable = if (jsonObjectField(&object, &.{ "isWritable", "is_writable", "writable" })) |bool_value|
+                try parseJsonBool(bool_value)
+            else
+                false;
+
+            return sdk.AccountMeta.init(pubkey, is_signer, is_writable);
+        },
+        else => return error.InvalidInstructionSpec,
+    }
+}
+
+fn parseInstructionFromJsonValue(
+    allocator: Allocator,
+    value: std.json.Value,
+) BuildError!sdk.Instruction {
+    const object = switch (value) {
+        .object => |object| object,
+        else => return error.InvalidInstructionSpec,
+    };
+
+    const program_id = try parseJsonPubkey(
+        allocator,
+        jsonObjectField(&object, &.{ "programId", "program_id" }) orelse return error.InvalidInstructionSpec,
+    );
+
+    const accounts = if (jsonObjectField(&object, &.{"accounts"})) |accounts_value| blk: {
+        const account_values = switch (accounts_value) {
+            .array => |array| array.items,
+            else => return error.InvalidInstructionSpec,
+        };
+        const parsed_accounts = try allocator.alloc(sdk.AccountMeta, account_values.len);
+        errdefer allocator.free(parsed_accounts);
+        for (account_values, 0..) |account_value, index| {
+            parsed_accounts[index] = try parseAccountMetaFromJsonValue(allocator, account_value);
+        }
+        break :blk parsed_accounts;
+    } else try allocator.alloc(sdk.AccountMeta, 0);
+    errdefer allocator.free(accounts);
+
+    const data = try parseInstructionDataFromJsonObject(allocator, &object);
+    errdefer allocator.free(data);
+
+    return .{
+        .program_id = program_id,
+        .accounts = accounts,
+        .data = data,
+    };
+}
+
+pub fn buildOwnedInstructionsFromJson(
+    allocator: Allocator,
+    instructions_json: []const u8,
+) BuildError!sdk.OwnedInstructions {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, instructions_json, .{}) catch {
+        return error.InvalidInstructionSpec;
+    };
+    defer parsed.deinit();
+
+    const instruction_values = switch (parsed.value) {
+        .array => |array| array.items,
+        .object => |object| blk: {
+            _ = object;
+            break :blk @as([]const std.json.Value, &.{parsed.value});
+        },
+        else => return error.InvalidInstructionSpec,
+    };
+
+    const instructions = try allocator.alloc(sdk.Instruction, instruction_values.len);
+    var initialized_len: usize = 0;
+    errdefer freeInstructionClones(allocator, instructions, initialized_len);
+
+    for (instruction_values, 0..) |instruction_value, index| {
+        instructions[index] = try parseInstructionFromJsonValue(allocator, instruction_value);
+        initialized_len += 1;
+    }
+
+    return .{ .instructions = instructions };
+}
 
 pub const BuildLegacyMessageRpcOptions = struct {
     payer: sdk.Pubkey,
@@ -422,6 +689,155 @@ pub fn buildVersionedTransactionBase64(
         options.address_lookup_tables,
         options.signers,
     );
+}
+
+pub fn buildOwnedLegacyMessageFromJson(
+    allocator: Allocator,
+    options: BuildLegacyMessageFromJsonOptions,
+) BuildError!sdk.OwnedLegacyMessage {
+    var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
+    defer owned_instructions.deinit(allocator);
+
+    return try buildOwnedLegacyMessage(allocator, .{
+        .payer = options.payer,
+        .recent_blockhash = options.recent_blockhash,
+        .instructions = owned_instructions.instructions,
+    });
+}
+
+pub fn buildLegacyMessageBytesFromJson(
+    allocator: Allocator,
+    options: BuildLegacyMessageFromJsonOptions,
+) BuildError![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
+    defer owned_instructions.deinit(allocator);
+
+    return try buildLegacyMessageBytes(allocator, .{
+        .payer = options.payer,
+        .recent_blockhash = options.recent_blockhash,
+        .instructions = owned_instructions.instructions,
+    });
+}
+
+pub fn buildLegacyMessageBase64FromJson(
+    allocator: Allocator,
+    options: BuildLegacyMessageFromJsonOptions,
+) BuildError![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
+    defer owned_instructions.deinit(allocator);
+
+    return try buildLegacyMessageBase64(allocator, .{
+        .payer = options.payer,
+        .recent_blockhash = options.recent_blockhash,
+        .instructions = owned_instructions.instructions,
+    });
+}
+
+pub fn buildSignedLegacyTransactionFromJson(
+    allocator: Allocator,
+    options: BuildLegacyTransactionFromJsonOptions,
+) BuildError!sdk.SignedLegacyTransaction {
+    var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
+    defer owned_instructions.deinit(allocator);
+
+    return try buildSignedLegacyTransaction(allocator, .{
+        .payer = options.payer,
+        .recent_blockhash = options.recent_blockhash,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+    });
+}
+
+pub fn buildLegacyTransactionBase64FromJson(
+    allocator: Allocator,
+    options: BuildLegacyTransactionFromJsonOptions,
+) BuildError![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
+    defer owned_instructions.deinit(allocator);
+
+    return try buildLegacyTransactionBase64(allocator, .{
+        .payer = options.payer,
+        .recent_blockhash = options.recent_blockhash,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+    });
+}
+
+pub fn buildOwnedVersionedMessageFromJson(
+    allocator: Allocator,
+    options: BuildVersionedMessageFromJsonOptions,
+) BuildError!sdk.OwnedVersionedMessageV0 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
+    defer owned_instructions.deinit(allocator);
+
+    return try buildOwnedVersionedMessage(allocator, .{
+        .payer = options.payer,
+        .recent_blockhash = options.recent_blockhash,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+    });
+}
+
+pub fn buildVersionedMessageBytesFromJson(
+    allocator: Allocator,
+    options: BuildVersionedMessageFromJsonOptions,
+) BuildError![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
+    defer owned_instructions.deinit(allocator);
+
+    return try buildVersionedMessageBytes(allocator, .{
+        .payer = options.payer,
+        .recent_blockhash = options.recent_blockhash,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+    });
+}
+
+pub fn buildVersionedMessageBase64FromJson(
+    allocator: Allocator,
+    options: BuildVersionedMessageFromJsonOptions,
+) BuildError![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
+    defer owned_instructions.deinit(allocator);
+
+    return try buildVersionedMessageBase64(allocator, .{
+        .payer = options.payer,
+        .recent_blockhash = options.recent_blockhash,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+    });
+}
+
+pub fn buildSignedVersionedTransactionFromJson(
+    allocator: Allocator,
+    options: BuildVersionedTransactionFromJsonOptions,
+) BuildError!sdk.SignedVersionedTransaction {
+    var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
+    defer owned_instructions.deinit(allocator);
+
+    return try buildSignedVersionedTransaction(allocator, .{
+        .payer = options.payer,
+        .recent_blockhash = options.recent_blockhash,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+    });
+}
+
+pub fn buildVersionedTransactionBase64FromJson(
+    allocator: Allocator,
+    options: BuildVersionedTransactionFromJsonOptions,
+) BuildError![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
+    defer owned_instructions.deinit(allocator);
+
+    return try buildVersionedTransactionBase64(allocator, .{
+        .payer = options.payer,
+        .recent_blockhash = options.recent_blockhash,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+    });
 }
 
 pub fn sendLegacyTransaction(
@@ -1313,6 +1729,157 @@ test "instructions_invoke.buildOwnedLegacyMessage clones generic instruction set
     try std.testing.expect(owned.owned_instructions[0].data.ptr != instruction_data[0..].ptr);
     try std.testing.expectEqualSlices(sdk.AccountMeta, instruction_accounts[0..], owned.owned_instructions[0].accounts);
     try std.testing.expectEqualSlices(u8, instruction_data[0..], owned.owned_instructions[0].data);
+}
+
+test "instructions_invoke.buildOwnedInstructionsFromJson parses flexible instruction json" {
+    const allocator = std.testing.allocator;
+    const program_id = sdk.Pubkey.fromBytes([_]u8{23} ** 32);
+    const readonly_account = sdk.Pubkey.fromBytes([_]u8{24} ** 32);
+    const signer_account = sdk.Pubkey.fromBytes([_]u8{25} ** 32);
+
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const readonly_base58 = try readonly_account.toBase58(allocator);
+    defer allocator.free(readonly_base58);
+    const signer_base58 = try signer_account.toBase58(allocator);
+    defer allocator.free(signer_base58);
+
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\[
+        \\  {{
+        \\    "programId": "{s}",
+        \\    "accounts": [
+        \\      "{s}",
+        \\      {{"address":"{s}","isSigner":true,"writable":true}}
+        \\    ],
+        \\    "data": "6869",
+        \\    "dataEncoding": "hex"
+        \\  }},
+        \\  {{
+        \\    "program_id": "{s}",
+        \\    "data_bytes": [1,2,3]
+        \\  }}
+        \\]
+    ,
+        .{ program_id_base58, readonly_base58, signer_base58, program_id_base58 },
+    );
+    defer allocator.free(instructions_json);
+
+    var owned = try buildOwnedInstructionsFromJson(allocator, instructions_json);
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.instructions.len);
+    try std.testing.expectEqual(program_id, owned.instructions[0].program_id);
+    try std.testing.expectEqual(@as(usize, 2), owned.instructions[0].accounts.len);
+    try std.testing.expectEqual(readonly_account, owned.instructions[0].accounts[0].pubkey);
+    try std.testing.expect(!owned.instructions[0].accounts[0].is_signer);
+    try std.testing.expect(!owned.instructions[0].accounts[0].is_writable);
+    try std.testing.expectEqual(signer_account, owned.instructions[0].accounts[1].pubkey);
+    try std.testing.expect(owned.instructions[0].accounts[1].is_signer);
+    try std.testing.expect(owned.instructions[0].accounts[1].is_writable);
+    try std.testing.expectEqualSlices(u8, "hi", owned.instructions[0].data);
+    try std.testing.expectEqual(@as(usize, 0), owned.instructions[1].accounts.len);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3 }, owned.instructions[1].data);
+}
+
+test "instructions_invoke.buildLegacyTransactionBase64FromJson matches typed helper" {
+    const allocator = std.testing.allocator;
+    const payer = sdk.Pubkey.fromBytes([_]u8{26} ** 32);
+    const recent_blockhash = sdk.Hash.fromBytes([_]u8{27} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{28} ** 32);
+    const signer_secret_key = [_]u8{29} ** 32;
+    const signer = try sdk.Keypair.fromSecretKeySlice(signer_secret_key[0..]);
+
+    const payer_base58 = try payer.toBase58(allocator);
+    defer allocator.free(payer_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "programId":"{s}",
+        \\  "accounts":[{{"pubkey":"{s}","signer":true,"writable":true}}],
+        \\  "data":"hello",
+        \\  "dataEncoding":"utf8"
+        \\}}
+    ,
+        .{ program_id_base58, payer_base58 },
+    );
+    defer allocator.free(instructions_json);
+
+    const encoded = try buildLegacyTransactionBase64FromJson(allocator, .{
+        .payer = payer,
+        .recent_blockhash = recent_blockhash,
+        .instructions_json = instructions_json,
+        .signers = &.{signer},
+    });
+    defer allocator.free(encoded);
+
+    const expected_instruction = [_]sdk.Instruction{
+        .{
+            .program_id = program_id,
+            .accounts = &.{sdk.AccountMeta.init(payer, true, true)},
+            .data = "hello",
+        },
+    };
+    const expected = try buildLegacyTransactionBase64(allocator, .{
+        .payer = payer,
+        .recent_blockhash = recent_blockhash,
+        .instructions = expected_instruction[0..],
+        .signers = &.{signer},
+    });
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "instructions_invoke.buildVersionedMessageBytesFromJson matches typed helper" {
+    const allocator = std.testing.allocator;
+    const payer = sdk.Pubkey.fromBytes([_]u8{30} ** 32);
+    const recent_blockhash = sdk.Hash.fromBytes([_]u8{31} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{32} ** 32);
+    const payer_base58 = try payer.toBase58(allocator);
+    defer allocator.free(payer_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{
+        \\  "program_id":"{s}",
+        \\  "accounts":[{{"publicKey":"{s}","isSigner":true,"isWritable":false}}],
+        \\  "data":"AQID",
+        \\  "dataEncoding":"base64"
+        \\}}]
+    ,
+        .{ program_id_base58, payer_base58 },
+    );
+    defer allocator.free(instructions_json);
+
+    const encoded = try buildVersionedMessageBytesFromJson(allocator, .{
+        .payer = payer,
+        .recent_blockhash = recent_blockhash,
+        .instructions_json = instructions_json,
+    });
+    defer allocator.free(encoded);
+
+    const expected_instruction = [_]sdk.Instruction{
+        .{
+            .program_id = program_id,
+            .accounts = &.{sdk.AccountMeta.init(payer, true, false)},
+            .data = &.{ 1, 2, 3 },
+        },
+    };
+    const expected = try buildVersionedMessageBytes(allocator, .{
+        .payer = payer,
+        .recent_blockhash = recent_blockhash,
+        .instructions = expected_instruction[0..],
+    });
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualSlices(u8, expected, encoded);
 }
 
 test "instructions_invoke.buildVersionedTransactionBase64 matches sdk helper" {
