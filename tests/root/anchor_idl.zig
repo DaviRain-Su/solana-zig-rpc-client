@@ -2781,3 +2781,136 @@ test "root.anchor_idl_invoke.buildOwnedInstruction prefers explicit account_bind
     try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(correct_state));
     try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(signer));
 }
+
+test "root.anchor_idl_invoke.buildOwnedInstruction accepts remaining_accounts_json entries" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{84} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const authority = client.Pubkey.fromBytes(.{85} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const extra_readonly = client.Pubkey.fromBytes(.{86} ** 32);
+    const extra_readonly_base58 = try extra_readonly.toBase58(allocator);
+    defer allocator.free(extra_readonly_base58);
+    const extra_writable = client.Pubkey.fromBytes(.{87} ** 32);
+    const extra_writable_base58 = try extra_writable.toBase58(allocator);
+    defer allocator.free(extra_writable_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"setAuthority","discriminator":[5,4,3,2,1,0,9,8],"accounts":[{{"name":"authority","signer":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const remaining_accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[\"{s}\",{{\"pubkey\":\"{s}\",\"isWritable\":true,\"isSigner\":true}}]",
+        .{ extra_readonly_base58, extra_writable_base58 },
+    );
+    defer allocator.free(remaining_accounts_json);
+    const account_bindings_json = try std.fmt.allocPrint(allocator, "{{\"authority\":\"{s}\"}}", .{authority_base58});
+    defer allocator.free(account_bindings_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "setAuthority",
+        .{
+            .account_bindings_json = account_bindings_json,
+            .remaining_accounts_json = remaining_accounts_json,
+        },
+    );
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(authority));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(extra_readonly));
+    try std.testing.expect(!owned.instruction.accounts[1].is_signer);
+    try std.testing.expect(!owned.instruction.accounts[1].is_writable);
+    try std.testing.expect(owned.instruction.accounts[2].pubkey.eql(extra_writable));
+    try std.testing.expect(owned.instruction.accounts[2].is_signer);
+    try std.testing.expect(owned.instruction.accounts[2].is_writable);
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction concatenates remaining_accounts_json before typed remaining_accounts" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{88} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const authority = client.Pubkey.fromBytes(.{89} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const json_extra = client.Pubkey.fromBytes(.{90} ** 32);
+    const json_extra_base58 = try json_extra.toBase58(allocator);
+    defer allocator.free(json_extra_base58);
+    const typed_extra = client.Pubkey.fromBytes(.{91} ** 32);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"setAuthority","discriminator":[5,4,3,2,1,0,9,8],"accounts":[{{"name":"authority","signer":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const account_bindings_json = try std.fmt.allocPrint(allocator, "{{\"authority\":\"{s}\"}}", .{authority_base58});
+    defer allocator.free(account_bindings_json);
+    const remaining_accounts_json = try std.fmt.allocPrint(allocator, "[\"{s}\"]", .{json_extra_base58});
+    defer allocator.free(remaining_accounts_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "setAuthority",
+        .{
+            .account_bindings_json = account_bindings_json,
+            .remaining_accounts_json = remaining_accounts_json,
+            .remaining_accounts = &.{
+                .{ .pubkey = typed_extra, .is_signer = true, .is_writable = false },
+            },
+        },
+    );
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 3), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(json_extra));
+    try std.testing.expect(owned.instruction.accounts[2].pubkey.eql(typed_extra));
+    try std.testing.expect(owned.instruction.accounts[2].is_signer);
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction rejects invalid remaining_accounts_json fields" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{92} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const authority = client.Pubkey.fromBytes(.{93} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"setAuthority","discriminator":[5,4,3,2,1,0,9,8],"accounts":[{{"name":"authority","signer":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const account_bindings_json = try std.fmt.allocPrint(allocator, "{{\"authority\":\"{s}\"}}", .{authority_base58});
+    defer allocator.free(account_bindings_json);
+
+    try std.testing.expectError(
+        client.anchor_idl_invoke.BuildError.InvalidAnchorIdlAccountSpec,
+        client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+            allocator,
+            idl_json,
+            "setAuthority",
+            .{
+                .account_bindings_json = account_bindings_json,
+                .remaining_accounts_json = "[{\"pubkey\":123}]",
+            },
+        ),
+    );
+}

@@ -34,6 +34,7 @@ pub const BuildInstructionOptions = struct {
     account_bindings: []const AccountBinding = &.{},
     account_bindings_json: ?[]const u8 = null,
     remaining_accounts: []const sdk.AccountMeta = &.{},
+    remaining_accounts_json: ?[]const u8 = null,
     default_signer: ?sdk.Pubkey = null,
 };
 
@@ -55,6 +56,15 @@ const OwnedAccountBindings = struct {
         for (self.owned_paths) |path| allocator.free(path);
         allocator.free(self.owned_paths);
         allocator.free(self.bindings);
+        self.* = undefined;
+    }
+};
+
+const OwnedRemainingAccounts = struct {
+    metas: []sdk.AccountMeta,
+
+    pub fn deinit(self: *OwnedRemainingAccounts, allocator: Allocator) void {
+        allocator.free(self.metas);
         self.* = undefined;
     }
 };
@@ -208,6 +218,52 @@ fn parseAccountBindingPubkeyValue(allocator: Allocator, value: std.json.Value) B
     }
 }
 
+fn parseBoolField(value: std.json.Value) BuildError!bool {
+    return switch (value) {
+        .bool => value.bool,
+        else => error.InvalidAnchorIdlAccountSpec,
+    };
+}
+
+fn parseRemainingAccountMeta(allocator: Allocator, value: std.json.Value) BuildError!sdk.AccountMeta {
+    return switch (value) {
+        .string => .{
+            .pubkey = sdk.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidAnchorIdlAccountSpec,
+            .is_signer = false,
+            .is_writable = false,
+        },
+        .object => blk: {
+            const pubkey = if (try parseAccountBindingPubkeyValue(allocator, value)) |resolved|
+                resolved
+            else
+                return error.InvalidAnchorIdlAccountSpec;
+
+            var is_signer = false;
+            inline for ([_][]const u8{ "isSigner", "is_signer", "signer" }) |field_name| {
+                if (findJsonObjectField(value.object, field_name)) |field_value| {
+                    is_signer = try parseBoolField(field_value);
+                    break;
+                }
+            }
+
+            var is_writable = false;
+            inline for ([_][]const u8{ "isWritable", "is_writable", "writable" }) |field_name| {
+                if (findJsonObjectField(value.object, field_name)) |field_value| {
+                    is_writable = try parseBoolField(field_value);
+                    break;
+                }
+            }
+
+            break :blk .{
+                .pubkey = pubkey,
+                .is_signer = is_signer,
+                .is_writable = is_writable,
+            };
+        },
+        else => return error.InvalidAnchorIdlAccountSpec,
+    };
+}
+
 fn appendJsonAccountBinding(
     allocator: Allocator,
     bindings: *std.ArrayListUnmanaged(AccountBinding),
@@ -317,6 +373,22 @@ fn parseAccountBindingsJson(allocator: Allocator, json_source: []const u8) Build
         .bindings = owned_bindings,
         .owned_paths = try owned_paths.toOwnedSlice(allocator),
     };
+}
+
+fn parseRemainingAccountsJson(allocator: Allocator, json_source: []const u8) BuildError!OwnedRemainingAccounts {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_source, .{}) catch return error.InvalidAnchorIdlAccountSpec;
+    defer parsed.deinit();
+
+    if (parsed.value != .array) return error.InvalidAnchorIdlAccountSpec;
+
+    const metas = try allocator.alloc(sdk.AccountMeta, parsed.value.array.items.len);
+    errdefer allocator.free(metas);
+
+    for (parsed.value.array.items, 0..) |item, index| {
+        metas[index] = try parseRemainingAccountMeta(allocator, item);
+    }
+
+    return .{ .metas = metas };
 }
 
 fn parsePathIndex(path_segment: []const u8) BuildError!usize {
@@ -1551,8 +1623,27 @@ pub fn buildOwnedInstruction(
         break :blk merged;
     } else options.account_bindings;
 
+    var json_remaining_accounts = if (options.remaining_accounts_json) |value|
+        try parseRemainingAccountsJson(allocator, value)
+    else
+        null;
+    defer if (json_remaining_accounts) |*value| value.deinit(allocator);
+
+    var merged_remaining_accounts: ?[]sdk.AccountMeta = null;
+    defer if (merged_remaining_accounts) |value| allocator.free(value);
+    const resolved_remaining_accounts = if (json_remaining_accounts) |value| blk: {
+        if (options.remaining_accounts.len == 0) break :blk value.metas;
+        if (value.metas.len == 0) break :blk options.remaining_accounts;
+
+        const merged = try allocator.alloc(sdk.AccountMeta, value.metas.len + options.remaining_accounts.len);
+        merged_remaining_accounts = merged;
+        @memcpy(merged[0..value.metas.len], value.metas);
+        @memcpy(merged[value.metas.len..], options.remaining_accounts);
+        break :blk merged;
+    } else options.remaining_accounts;
+
     const leaf_account_count = try countLeafAccounts(instruction.accounts);
-    const accounts = try allocator.alloc(sdk.AccountMeta, leaf_account_count + options.remaining_accounts.len);
+    const accounts = try allocator.alloc(sdk.AccountMeta, leaf_account_count + resolved_remaining_accounts.len);
     errdefer allocator.free(accounts);
 
     var next_index: usize = 0;
@@ -1575,8 +1666,8 @@ pub fn buildOwnedInstruction(
         &resolution_stack,
         null,
     );
-    @memcpy(accounts[next_index .. next_index + options.remaining_accounts.len], options.remaining_accounts);
-    next_index += options.remaining_accounts.len;
+    @memcpy(accounts[next_index .. next_index + resolved_remaining_accounts.len], resolved_remaining_accounts);
+    next_index += resolved_remaining_accounts.len;
 
     return .{
         .instruction = .{
