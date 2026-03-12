@@ -1456,6 +1456,21 @@ pub const BuildVersionedTransactionOptions = struct {
     instruction_options: BuildInstructionOptions = .{},
 };
 
+pub const BuildLegacyTransactionWithLatestBlockhashOptions = struct {
+    payer: sdk.Pubkey,
+    signers: []const sdk.Keypair,
+    instruction_options: BuildInstructionOptions = .{},
+    blockhash_commitment: ?rpc_types.Commitment = null,
+};
+
+pub const BuildVersionedTransactionWithLatestBlockhashOptions = struct {
+    payer: sdk.Pubkey,
+    signers: []const sdk.Keypair,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    instruction_options: BuildInstructionOptions = .{},
+    blockhash_commitment: ?rpc_types.Commitment = null,
+};
+
 pub const SendOptions = struct {
     transaction_options: ?rpc_types.SendTransactionOptions = null,
 };
@@ -1836,4 +1851,229 @@ pub fn sendAndConfirmVersionedTransactionFromJson(
     defer parsed_idl.deinit();
 
     return try sendAndConfirmVersionedTransaction(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
+}
+
+fn resolveLatestBlockhash(rpc: anytype, allocator: Allocator, commitment: ?rpc_types.Commitment) !sdk.Hash {
+    const latest = try rpc.getLatestBlockhash(commitment);
+    defer rpc.allocator.free(latest.blockhash);
+    return try sdk.Hash.fromBase58(allocator, latest.blockhash);
+}
+
+fn buildLegacyTransactionOptionsWithLatestBlockhash(
+    rpc: anytype,
+    allocator: Allocator,
+    options: BuildLegacyTransactionWithLatestBlockhashOptions,
+) !BuildLegacyTransactionOptions {
+    return .{
+        .payer = options.payer,
+        .recent_blockhash = try resolveLatestBlockhash(rpc, allocator, options.blockhash_commitment),
+        .signers = options.signers,
+        .instruction_options = options.instruction_options,
+    };
+}
+
+fn buildVersionedTransactionOptionsWithLatestBlockhash(
+    rpc: anytype,
+    allocator: Allocator,
+    options: BuildVersionedTransactionWithLatestBlockhashOptions,
+) !BuildVersionedTransactionOptions {
+    return .{
+        .payer = options.payer,
+        .recent_blockhash = try resolveLatestBlockhash(rpc, allocator, options.blockhash_commitment),
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .instruction_options = options.instruction_options,
+    };
+}
+
+pub fn sendLegacyTransactionWithLatestBlockhash(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionWithLatestBlockhashOptions,
+    options: SendOptions,
+) ![]const u8 {
+    return try sendLegacyTransaction(
+        rpc,
+        allocator,
+        idl,
+        instruction_name,
+        try buildLegacyTransactionOptionsWithLatestBlockhash(rpc, allocator, build_options),
+        options,
+    );
+}
+
+pub fn sendLegacyTransactionWithLatestBlockhashFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionWithLatestBlockhashOptions,
+    options: SendOptions,
+) ![]const u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try sendLegacyTransactionWithLatestBlockhash(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
+}
+
+pub fn simulateLegacyTransactionWithLatestBlockhash(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionWithLatestBlockhashOptions,
+    options: SimulateOptions,
+) !rpc_types.SimulatedTransaction {
+    return try simulateLegacyTransaction(
+        rpc,
+        allocator,
+        idl,
+        instruction_name,
+        try buildLegacyTransactionOptionsWithLatestBlockhash(rpc, allocator, build_options),
+        options,
+    );
+}
+
+pub fn simulateLegacyTransactionWithLatestBlockhashFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionWithLatestBlockhashOptions,
+    options: SimulateOptions,
+) !rpc_types.SimulatedTransaction {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try simulateLegacyTransactionWithLatestBlockhash(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
+}
+
+pub fn sendAndConfirmLegacyTransactionWithLatestBlockhash(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionWithLatestBlockhashOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    return try sendAndConfirmLegacyTransaction(
+        rpc,
+        allocator,
+        idl,
+        instruction_name,
+        try buildLegacyTransactionOptionsWithLatestBlockhash(rpc, allocator, build_options),
+        options,
+    );
+}
+
+pub fn sendAndConfirmLegacyTransactionWithLatestBlockhashFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionWithLatestBlockhashOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try sendAndConfirmLegacyTransactionWithLatestBlockhash(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
+}
+
+pub fn sendVersionedTransactionWithLatestBlockhash(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionWithLatestBlockhashOptions,
+    options: SendOptions,
+) ![]const u8 {
+    return try sendVersionedTransaction(
+        rpc,
+        allocator,
+        idl,
+        instruction_name,
+        try buildVersionedTransactionOptionsWithLatestBlockhash(rpc, allocator, build_options),
+        options,
+    );
+}
+
+pub fn sendVersionedTransactionWithLatestBlockhashFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionWithLatestBlockhashOptions,
+    options: SendOptions,
+) ![]const u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try sendVersionedTransactionWithLatestBlockhash(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
+}
+
+pub fn simulateVersionedTransactionWithLatestBlockhash(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionWithLatestBlockhashOptions,
+    options: SimulateOptions,
+) !rpc_types.SimulatedTransaction {
+    return try simulateVersionedTransaction(
+        rpc,
+        allocator,
+        idl,
+        instruction_name,
+        try buildVersionedTransactionOptionsWithLatestBlockhash(rpc, allocator, build_options),
+        options,
+    );
+}
+
+pub fn simulateVersionedTransactionWithLatestBlockhashFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionWithLatestBlockhashOptions,
+    options: SimulateOptions,
+) !rpc_types.SimulatedTransaction {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try simulateVersionedTransactionWithLatestBlockhash(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
+}
+
+pub fn sendAndConfirmVersionedTransactionWithLatestBlockhash(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionWithLatestBlockhashOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    return try sendAndConfirmVersionedTransaction(
+        rpc,
+        allocator,
+        idl,
+        instruction_name,
+        try buildVersionedTransactionOptionsWithLatestBlockhash(rpc, allocator, build_options),
+        options,
+    );
+}
+
+pub fn sendAndConfirmVersionedTransactionWithLatestBlockhashFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionWithLatestBlockhashOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try sendAndConfirmVersionedTransactionWithLatestBlockhash(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
 }
