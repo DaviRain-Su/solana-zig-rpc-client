@@ -62,6 +62,7 @@ pub const BuildVersionedMessageFromJsonOptions = struct {
     recent_blockhash: sdk.Hash,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
 };
 
 pub const BuildVersionedTransactionFromJsonOptions = struct {
@@ -69,6 +70,7 @@ pub const BuildVersionedTransactionFromJsonOptions = struct {
     recent_blockhash: sdk.Hash,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     signers: []const sdk.Keypair,
 };
 
@@ -89,6 +91,7 @@ pub const BuildVersionedMessageRpcFromJsonOptions = struct {
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     build: ?rpc_types.VersionedInstructionsBuildOptions = null,
 };
 
@@ -96,6 +99,7 @@ pub const BuildVersionedTransactionRpcFromJsonOptions = struct {
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     signers: []const sdk.Keypair,
     build: ?rpc_types.VersionedInstructionsBuildOptions = null,
 };
@@ -126,6 +130,7 @@ pub const SendVersionedTransactionFromJsonOptions = struct {
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     signers: []const sdk.Keypair,
     rpc: ?rpc_types.SendVersionedInstructionsOptions = null,
 };
@@ -134,6 +139,7 @@ pub const SimulateVersionedTransactionFromJsonOptions = struct {
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     signers: []const sdk.Keypair,
     build: ?rpc_types.VersionedInstructionsBuildOptions = null,
     rpc: ?rpc_types.SimulateTransactionOptions = null,
@@ -143,6 +149,7 @@ pub const SendAndConfirmVersionedTransactionFromJsonOptions = struct {
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     signers: []const sdk.Keypair,
     rpc: ?rpc_types.VersionedInstructionsOptions = null,
 };
@@ -166,6 +173,7 @@ pub const BuildVersionedMessageWithBlockhashQueryFromJsonOptions = struct {
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     blockhash_query: rpc_types.BlockhashQuery,
     nonce_authority: ?sdk.Pubkey = null,
 };
@@ -174,6 +182,7 @@ pub const BuildVersionedTransactionWithBlockhashQueryFromJsonOptions = struct {
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     signers: []const sdk.Keypair,
     blockhash_query: rpc_types.BlockhashQuery,
     nonce_authority: ?sdk.Pubkey = null,
@@ -214,6 +223,7 @@ pub const SendVersionedTransactionWithBlockhashQueryFromJsonOptions = struct {
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     signers: []const sdk.Keypair,
     blockhash_query: rpc_types.BlockhashQuery,
     nonce_authority: ?sdk.Pubkey = null,
@@ -224,6 +234,7 @@ pub const SimulateVersionedTransactionWithBlockhashQueryFromJsonOptions = struct
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     signers: []const sdk.Keypair,
     blockhash_query: rpc_types.BlockhashQuery,
     nonce_authority: ?sdk.Pubkey = null,
@@ -234,6 +245,7 @@ pub const SendAndConfirmVersionedTransactionWithBlockhashQueryFromJsonOptions = 
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     signers: []const sdk.Keypair,
     blockhash_query: rpc_types.BlockhashQuery,
     nonce_authority: ?sdk.Pubkey = null,
@@ -261,6 +273,7 @@ pub const BuildVersionedMessageWithLatestBlockhashFromJsonOptions = struct {
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     blockhash_commitment: ?rpc_types.Commitment = null,
 };
 
@@ -268,6 +281,7 @@ pub const BuildVersionedTransactionWithLatestBlockhashFromJsonOptions = struct {
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     signers: []const sdk.Keypair,
     blockhash_commitment: ?rpc_types.Commitment = null,
 };
@@ -304,6 +318,7 @@ pub const SendVersionedTransactionWithLatestBlockhashFromJsonOptions = struct {
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     signers: []const sdk.Keypair,
     blockhash_commitment: ?rpc_types.Commitment = null,
     send_transaction_options: ?rpc_types.SendTransactionOptions = null,
@@ -313,6 +328,7 @@ pub const SimulateVersionedTransactionWithLatestBlockhashFromJsonOptions = struc
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     signers: []const sdk.Keypair,
     blockhash_commitment: ?rpc_types.Commitment = null,
     simulate_options: ?rpc_types.SimulateTransactionOptions = null,
@@ -322,6 +338,7 @@ pub const SendAndConfirmVersionedTransactionWithLatestBlockhashFromJsonOptions =
     payer: sdk.Pubkey,
     instructions_json: []const u8,
     address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    address_lookup_tables_json: ?[]const u8 = null,
     signers: []const sdk.Keypair,
     blockhash_commitment: ?rpc_types.Commitment = null,
     send_transaction_options: ?rpc_types.SendTransactionOptions = null,
@@ -389,6 +406,16 @@ fn freeInstructionClones(
     }
     allocator.free(instructions);
 }
+
+const OwnedAddressLookupTables = struct {
+    tables: []sdk.AddressLookupTableAccount,
+
+    fn deinit(self: *OwnedAddressLookupTables, allocator: Allocator) void {
+        for (self.tables) |table| allocator.free(table.addresses);
+        allocator.free(self.tables);
+        self.* = undefined;
+    }
+};
 
 fn jsonObjectField(
     object: *const std.json.ObjectMap,
@@ -573,6 +600,137 @@ fn parseInstructionFromJsonValue(
         .accounts = accounts,
         .data = data,
     };
+}
+
+fn parseAddressLookupTableFromJsonValue(
+    allocator: Allocator,
+    value: std.json.Value,
+) BuildError!sdk.AddressLookupTableAccount {
+    const object = switch (value) {
+        .object => |object| object,
+        else => return error.InvalidInstructionSpec,
+    };
+
+    const account_key = try parseJsonPubkey(
+        allocator,
+        jsonObjectField(&object, &.{ "accountKey", "account_key", "key", "pubkey", "address" }) orelse
+            return error.InvalidInstructionSpec,
+    );
+
+    const addresses_value = jsonObjectField(&object, &.{"addresses"}) orelse return error.InvalidInstructionSpec;
+    const address_items = switch (addresses_value) {
+        .array => |array| array.items,
+        else => return error.InvalidInstructionSpec,
+    };
+
+    const addresses = try allocator.alloc(sdk.Pubkey, address_items.len);
+    errdefer allocator.free(addresses);
+
+    for (address_items, 0..) |address_value, index| {
+        addresses[index] = try parseJsonPubkey(allocator, address_value);
+    }
+
+    return .{
+        .account_key = account_key,
+        .addresses = addresses,
+    };
+}
+
+fn buildOwnedAddressLookupTablesFromJson(
+    allocator: Allocator,
+    address_lookup_tables_json: []const u8,
+) BuildError!OwnedAddressLookupTables {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, address_lookup_tables_json, .{}) catch {
+        return error.InvalidInstructionSpec;
+    };
+    defer parsed.deinit();
+
+    const table_values = switch (parsed.value) {
+        .array => |array| array.items,
+        .object => |object| blk: {
+            _ = object;
+            break :blk @as([]const std.json.Value, &.{parsed.value});
+        },
+        else => return error.InvalidInstructionSpec,
+    };
+
+    const tables = try allocator.alloc(sdk.AddressLookupTableAccount, table_values.len);
+    var initialized_len: usize = 0;
+    errdefer {
+        for (tables[0..initialized_len]) |table| allocator.free(table.addresses);
+        allocator.free(tables);
+    }
+
+    for (table_values, 0..) |table_value, index| {
+        tables[index] = try parseAddressLookupTableFromJsonValue(allocator, table_value);
+        initialized_len += 1;
+    }
+
+    return .{ .tables = tables };
+}
+
+fn cloneAddressLookupTables(
+    allocator: Allocator,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount,
+) BuildError!OwnedAddressLookupTables {
+    const tables = try allocator.alloc(sdk.AddressLookupTableAccount, address_lookup_tables.len);
+    var initialized_len: usize = 0;
+    errdefer {
+        for (tables[0..initialized_len]) |table| allocator.free(table.addresses);
+        allocator.free(tables);
+    }
+
+    for (address_lookup_tables, 0..) |table, index| {
+        tables[index] = .{
+            .account_key = table.account_key,
+            .addresses = try allocator.dupe(sdk.Pubkey, table.addresses),
+        };
+        initialized_len += 1;
+    }
+
+    return .{ .tables = tables };
+}
+
+fn buildMergedAddressLookupTables(
+    allocator: Allocator,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount,
+    address_lookup_tables_json: ?[]const u8,
+) BuildError!OwnedAddressLookupTables {
+    var parsed_tables: ?OwnedAddressLookupTables = null;
+    defer if (parsed_tables) |*tables| tables.deinit(allocator);
+
+    if (address_lookup_tables_json) |value| {
+        parsed_tables = try buildOwnedAddressLookupTablesFromJson(allocator, value);
+    }
+
+    const parsed_len = if (parsed_tables) |tables| tables.tables.len else 0;
+    const total_len = parsed_len + address_lookup_tables.len;
+    const merged = try allocator.alloc(sdk.AddressLookupTableAccount, total_len);
+    var initialized_len: usize = 0;
+    errdefer {
+        for (merged[0..initialized_len]) |table| allocator.free(table.addresses);
+        allocator.free(merged);
+    }
+
+    if (parsed_tables) |tables| {
+        for (tables.tables, 0..) |table, index| {
+            merged[index] = .{
+                .account_key = table.account_key,
+                .addresses = try allocator.dupe(sdk.Pubkey, table.addresses),
+            };
+            initialized_len += 1;
+        }
+    }
+
+    for (address_lookup_tables, 0..) |table, index| {
+        merged[parsed_len + index] = .{
+            .account_key = table.account_key,
+            .addresses = try allocator.dupe(sdk.Pubkey, table.addresses),
+        };
+        initialized_len += 1;
+    }
+
+    return .{ .tables = merged };
 }
 
 pub fn buildOwnedInstructionsFromJson(
@@ -1028,12 +1186,18 @@ pub fn buildOwnedVersionedMessageFromJson(
 ) BuildError!sdk.OwnedVersionedMessageV0 {
     var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
     defer owned_instructions.deinit(allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(allocator);
 
     return try buildOwnedVersionedMessage(allocator, .{
         .payer = options.payer,
         .recent_blockhash = options.recent_blockhash,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
     });
 }
 
@@ -1043,12 +1207,18 @@ pub fn buildVersionedMessageBytesFromJson(
 ) BuildError![]u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
     defer owned_instructions.deinit(allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(allocator);
 
     return try buildVersionedMessageBytes(allocator, .{
         .payer = options.payer,
         .recent_blockhash = options.recent_blockhash,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
     });
 }
 
@@ -1058,12 +1228,18 @@ pub fn buildVersionedMessageBase64FromJson(
 ) BuildError![]u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
     defer owned_instructions.deinit(allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(allocator);
 
     return try buildVersionedMessageBase64(allocator, .{
         .payer = options.payer,
         .recent_blockhash = options.recent_blockhash,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
     });
 }
 
@@ -1073,12 +1249,18 @@ pub fn buildSignedVersionedTransactionFromJson(
 ) BuildError!sdk.SignedVersionedTransaction {
     var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
     defer owned_instructions.deinit(allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(allocator);
 
     return try buildSignedVersionedTransaction(allocator, .{
         .payer = options.payer,
         .recent_blockhash = options.recent_blockhash,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
     });
 }
@@ -1089,12 +1271,18 @@ pub fn buildVersionedTransactionBase64FromJson(
 ) BuildError![]u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(allocator, options.instructions_json);
     defer owned_instructions.deinit(allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(allocator);
 
     return try buildVersionedTransactionBase64(allocator, .{
         .payer = options.payer,
         .recent_blockhash = options.recent_blockhash,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
     });
 }
@@ -1177,11 +1365,17 @@ pub fn buildOwnedVersionedMessageWithOptionsFromJson(
 ) !sdk.OwnedVersionedMessageV0 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try buildOwnedVersionedMessageWithOptions(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .build = options.build,
     });
 }
@@ -1192,11 +1386,17 @@ pub fn buildVersionedMessageBytesWithOptionsFromJson(
 ) ![]u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try buildVersionedMessageBytesWithOptions(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .build = options.build,
     });
 }
@@ -1207,11 +1407,17 @@ pub fn buildVersionedMessageBase64WithOptionsFromJson(
 ) ![]u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try buildVersionedMessageBase64WithOptions(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .build = options.build,
     });
 }
@@ -1222,11 +1428,17 @@ pub fn buildSignedVersionedTransactionWithOptionsFromJson(
 ) !sdk.SignedVersionedTransaction {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try buildSignedVersionedTransactionWithOptions(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .build = options.build,
     });
@@ -1238,11 +1450,17 @@ pub fn buildVersionedTransactionBase64WithOptionsFromJson(
 ) ![]u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try buildVersionedTransactionBase64WithOptions(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .build = options.build,
     });
@@ -1315,11 +1533,17 @@ pub fn sendVersionedTransactionFromJson(
 ) ![]const u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try sendVersionedTransaction(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .rpc = options.rpc,
     });
@@ -1331,11 +1555,17 @@ pub fn simulateVersionedTransactionFromJson(
 ) !rpc_types.SimulatedTransaction {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try simulateVersionedTransaction(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .build = options.build,
         .rpc = options.rpc,
@@ -1348,11 +1578,17 @@ pub fn sendAndConfirmVersionedTransactionFromJson(
 ) ![]const u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try sendAndConfirmVersionedTransaction(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .rpc = options.rpc,
     });
@@ -1364,11 +1600,17 @@ pub fn sendAndConfirmVersionedTransactionWithSpinnerFromJson(
 ) ![]const u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try sendAndConfirmVersionedTransactionWithSpinner(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .rpc = options.rpc,
     });
@@ -1396,11 +1638,17 @@ pub fn getFeeForVersionedMessageWithOptionsFromJson(
 ) !rpc_types.FeeForMessage {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, message_options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        message_options.address_lookup_tables,
+        message_options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try getFeeForVersionedMessageWithOptions(self, .{
         .payer = message_options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = message_options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .build = message_options.build,
     }, fee_options);
 }
@@ -1580,11 +1828,17 @@ pub fn buildOwnedVersionedMessageWithBlockhashQueryFromJson(
 ) !sdk.OwnedVersionedMessageV0 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try buildOwnedVersionedMessageWithBlockhashQuery(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .blockhash_query = options.blockhash_query,
         .nonce_authority = options.nonce_authority,
     });
@@ -1596,11 +1850,17 @@ pub fn buildVersionedMessageBytesWithBlockhashQueryFromJson(
 ) ![]u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try buildVersionedMessageBytesWithBlockhashQuery(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .blockhash_query = options.blockhash_query,
         .nonce_authority = options.nonce_authority,
     });
@@ -1612,11 +1872,17 @@ pub fn buildVersionedMessageBase64WithBlockhashQueryFromJson(
 ) ![]u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try buildVersionedMessageBase64WithBlockhashQuery(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .blockhash_query = options.blockhash_query,
         .nonce_authority = options.nonce_authority,
     });
@@ -1628,11 +1894,17 @@ pub fn buildSignedVersionedTransactionWithBlockhashQueryFromJson(
 ) !sdk.SignedVersionedTransaction {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try buildSignedVersionedTransactionWithBlockhashQuery(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .blockhash_query = options.blockhash_query,
         .nonce_authority = options.nonce_authority,
@@ -1645,11 +1917,17 @@ pub fn buildVersionedTransactionBase64WithBlockhashQueryFromJson(
 ) ![]u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try buildVersionedTransactionBase64WithBlockhashQuery(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .blockhash_query = options.blockhash_query,
         .nonce_authority = options.nonce_authority,
@@ -1662,11 +1940,17 @@ pub fn sendVersionedTransactionWithBlockhashQueryFromJson(
 ) ![]const u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try sendVersionedTransactionWithBlockhashQuery(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .blockhash_query = options.blockhash_query,
         .nonce_authority = options.nonce_authority,
@@ -1680,11 +1964,17 @@ pub fn simulateVersionedTransactionWithBlockhashQueryFromJson(
 ) !rpc_types.SimulatedTransaction {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try simulateVersionedTransactionWithBlockhashQuery(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .blockhash_query = options.blockhash_query,
         .nonce_authority = options.nonce_authority,
@@ -1698,11 +1988,17 @@ pub fn sendAndConfirmVersionedTransactionWithBlockhashQueryFromJson(
 ) ![]const u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try sendAndConfirmVersionedTransactionWithBlockhashQuery(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .blockhash_query = options.blockhash_query,
         .nonce_authority = options.nonce_authority,
@@ -1720,11 +2016,17 @@ pub fn sendAndConfirmVersionedTransactionWithBlockhashQueryAndSpinnerFromJson(
 ) ![]const u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try sendAndConfirmVersionedTransactionWithBlockhashQueryAndSpinner(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .blockhash_query = options.blockhash_query,
         .nonce_authority = options.nonce_authority,
@@ -1743,11 +2045,17 @@ pub fn getFeeForVersionedMessageWithBlockhashQueryFromJson(
 ) !rpc_types.FeeForMessage {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, message_options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        message_options.address_lookup_tables,
+        message_options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try getFeeForVersionedMessageWithBlockhashQuery(self, .{
         .payer = message_options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = message_options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .blockhash_query = message_options.blockhash_query,
         .nonce_authority = message_options.nonce_authority,
     }, fee_options);
@@ -1902,6 +2210,7 @@ pub fn buildOwnedVersionedMessageWithLatestBlockhashFromJson(
         .payer = options.payer,
         .instructions_json = options.instructions_json,
         .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables_json = options.address_lookup_tables_json,
         .build = .{ .blockhash_commitment = options.blockhash_commitment },
     });
 }
@@ -1914,6 +2223,7 @@ pub fn buildVersionedMessageBytesWithLatestBlockhashFromJson(
         .payer = options.payer,
         .instructions_json = options.instructions_json,
         .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables_json = options.address_lookup_tables_json,
         .build = .{ .blockhash_commitment = options.blockhash_commitment },
     });
 }
@@ -1926,6 +2236,7 @@ pub fn buildVersionedMessageBase64WithLatestBlockhashFromJson(
         .payer = options.payer,
         .instructions_json = options.instructions_json,
         .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables_json = options.address_lookup_tables_json,
         .build = .{ .blockhash_commitment = options.blockhash_commitment },
     });
 }
@@ -1938,6 +2249,7 @@ pub fn buildSignedVersionedTransactionWithLatestBlockhashFromJson(
         .payer = options.payer,
         .instructions_json = options.instructions_json,
         .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables_json = options.address_lookup_tables_json,
         .signers = options.signers,
         .build = .{ .blockhash_commitment = options.blockhash_commitment },
     });
@@ -1951,6 +2263,7 @@ pub fn buildVersionedTransactionBase64WithLatestBlockhashFromJson(
         .payer = options.payer,
         .instructions_json = options.instructions_json,
         .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables_json = options.address_lookup_tables_json,
         .signers = options.signers,
         .build = .{ .blockhash_commitment = options.blockhash_commitment },
     });
@@ -1962,11 +2275,17 @@ pub fn sendVersionedTransactionWithLatestBlockhashFromJson(
 ) ![]const u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try sendVersionedTransactionWithLatestBlockhash(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .blockhash_commitment = options.blockhash_commitment,
         .send_transaction_options = options.send_transaction_options,
@@ -1979,11 +2298,17 @@ pub fn simulateVersionedTransactionWithLatestBlockhashFromJson(
 ) !rpc_types.SimulatedTransaction {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try simulateVersionedTransactionWithLatestBlockhash(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .blockhash_commitment = options.blockhash_commitment,
         .simulate_options = options.simulate_options,
@@ -1996,11 +2321,17 @@ pub fn sendAndConfirmVersionedTransactionWithLatestBlockhashFromJson(
 ) ![]const u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try sendAndConfirmVersionedTransactionWithLatestBlockhash(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .blockhash_commitment = options.blockhash_commitment,
         .send_transaction_options = options.send_transaction_options,
@@ -2017,11 +2348,17 @@ pub fn sendAndConfirmVersionedTransactionWithLatestBlockhashAndSpinnerFromJson(
 ) ![]const u8 {
     var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
     defer owned_instructions.deinit(self.allocator);
+    var owned_lookup_tables = try buildMergedAddressLookupTables(
+        self.allocator,
+        options.address_lookup_tables,
+        options.address_lookup_tables_json,
+    );
+    defer owned_lookup_tables.deinit(self.allocator);
 
     return try sendAndConfirmVersionedTransactionWithLatestBlockhashAndSpinner(self, .{
         .payer = options.payer,
         .instructions = owned_instructions.instructions,
-        .address_lookup_tables = options.address_lookup_tables,
+        .address_lookup_tables = owned_lookup_tables.tables,
         .signers = options.signers,
         .blockhash_commitment = options.blockhash_commitment,
         .send_transaction_options = options.send_transaction_options,
@@ -2041,6 +2378,7 @@ pub fn getFeeForVersionedMessageWithLatestBlockhashFromJson(
         .payer = message_options.payer,
         .instructions_json = message_options.instructions_json,
         .address_lookup_tables = message_options.address_lookup_tables,
+        .address_lookup_tables_json = message_options.address_lookup_tables_json,
         .build = .{ .blockhash_commitment = message_options.blockhash_commitment },
     }, fee_options);
 }
@@ -3087,6 +3425,59 @@ test "instructions_invoke.buildVersionedMessageBytesFromJson matches typed helpe
     try std.testing.expectEqualSlices(u8, expected, encoded);
 }
 
+test "instructions_invoke.buildOwnedVersionedMessageFromJson uses address_lookup_tables_json" {
+    const allocator = std.testing.allocator;
+    const payer = sdk.Pubkey.fromBytes([_]u8{56} ** 32);
+    const recent_blockhash = sdk.Hash.fromBytes([_]u8{57} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{58} ** 32);
+    const looked_up_account = sdk.Pubkey.fromBytes([_]u8{59} ** 32);
+    const lookup_table_key = sdk.Pubkey.fromBytes([_]u8{60} ** 32);
+
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const looked_up_account_base58 = try looked_up_account.toBase58(allocator);
+    defer allocator.free(looked_up_account_base58);
+    const lookup_table_key_base58 = try lookup_table_key.toBase58(allocator);
+    defer allocator.free(lookup_table_key_base58);
+
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{
+        \\  "programId":"{s}",
+        \\  "accounts":["{s}"],
+        \\  "dataBytes":[1]
+        \\}}]
+    ,
+        .{ program_id_base58, looked_up_account_base58 },
+    );
+    defer allocator.free(instructions_json);
+
+    const address_lookup_tables_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{
+        \\  "accountKey":"{s}",
+        \\  "addresses":["{s}"]
+        \\}}]
+    ,
+        .{ lookup_table_key_base58, looked_up_account_base58 },
+    );
+    defer allocator.free(address_lookup_tables_json);
+
+    var owned = try buildOwnedVersionedMessageFromJson(allocator, .{
+        .payer = payer,
+        .recent_blockhash = recent_blockhash,
+        .instructions_json = instructions_json,
+        .address_lookup_tables_json = address_lookup_tables_json,
+    });
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), owned.message.address_table_lookups.len);
+    try std.testing.expectEqual(lookup_table_key, owned.message.address_table_lookups[0].account_key);
+    try std.testing.expectEqual(@as(usize, 0), owned.message.address_table_lookups[0].writable_indexes.len);
+    try std.testing.expectEqual(@as(usize, 1), owned.message.address_table_lookups[0].readonly_indexes.len);
+    try std.testing.expectEqual(@as(u8, 0), owned.message.address_table_lookups[0].readonly_indexes[0]);
+}
+
 test "instructions_invoke.buildLegacyMessageBase64WithOptionsFromJson forwards parsed instructions and build options" {
     const allocator = std.testing.allocator;
     const payer = sdk.Pubkey.fromBytes([_]u8{33} ** 32);
@@ -3385,6 +3776,14 @@ test "instructions_invoke.sendAndConfirmVersionedTransactionWithBlockhashQueryAn
 
     const program_id_base58 = try program_id.toBase58(allocator);
     defer allocator.free(program_id_base58);
+    const json_lookup_key = sdk.Pubkey.fromBytes([_]u8{61} ** 32);
+    const json_lookup_address = sdk.Pubkey.fromBytes([_]u8{62} ** 32);
+    const typed_lookup_key = sdk.Pubkey.fromBytes([_]u8{63} ** 32);
+    const typed_lookup_address = sdk.Pubkey.fromBytes([_]u8{64} ** 32);
+    const json_lookup_key_base58 = try json_lookup_key.toBase58(allocator);
+    defer allocator.free(json_lookup_key_base58);
+    const json_lookup_address_base58 = try json_lookup_address.toBase58(allocator);
+    defer allocator.free(json_lookup_address_base58);
     const instructions_json = try std.fmt.allocPrint(
         allocator,
         \\{{"programId":"{s}","dataBytes":[7,6,5]}}
@@ -3392,6 +3791,23 @@ test "instructions_invoke.sendAndConfirmVersionedTransactionWithBlockhashQueryAn
         .{program_id_base58},
     );
     defer allocator.free(instructions_json);
+    const address_lookup_tables_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{
+        \\  "accountKey":"{s}",
+        \\  "addresses":["{s}"]
+        \\}}]
+    ,
+        .{ json_lookup_key_base58, json_lookup_address_base58 },
+    );
+    defer allocator.free(address_lookup_tables_json);
+    const typed_lookup_addresses = [_]sdk.Pubkey{typed_lookup_address};
+    const typed_lookup_tables = [_]sdk.AddressLookupTableAccount{
+        .{
+            .account_key = typed_lookup_key,
+            .addresses = typed_lookup_addresses[0..],
+        },
+    };
 
     const MockRpc = struct {
         allocator: Allocator,
@@ -3420,6 +3836,8 @@ test "instructions_invoke.sendAndConfirmVersionedTransactionWithBlockhashQueryAn
     const signature = try sendAndConfirmVersionedTransactionWithBlockhashQueryAndSpinnerFromJson(&rpc, .{
         .payer = payer,
         .instructions_json = instructions_json,
+        .address_lookup_tables = typed_lookup_tables[0..],
+        .address_lookup_tables_json = address_lookup_tables_json,
         .signers = &.{signer},
         .blockhash_query = blockhash_query,
         .nonce_authority = authority,
@@ -3430,7 +3848,7 @@ test "instructions_invoke.sendAndConfirmVersionedTransactionWithBlockhashQueryAn
 
     try std.testing.expectEqualStrings("sig-query-spinner", signature);
     try std.testing.expectEqual(@as(usize, 1), rpc.captured_instruction_count);
-    try std.testing.expectEqual(@as(usize, 0), rpc.captured_lookup_count);
+    try std.testing.expectEqual(@as(usize, 2), rpc.captured_lookup_count);
     try std.testing.expectEqualDeep(blockhash_query, rpc.captured_options.?.blockhash_query.?);
     try std.testing.expectEqual(authority, rpc.captured_options.?.nonce_authority.?);
     try std.testing.expectEqual(.confirmed, rpc.captured_options.?.commitment.?);
@@ -3494,9 +3912,15 @@ test "instructions_invoke.getFeeForVersionedMessageWithLatestBlockhashFromJson f
     const allocator = std.testing.allocator;
     const payer = sdk.Pubkey.fromBytes([_]u8{54} ** 32);
     const program_id = sdk.Pubkey.fromBytes([_]u8{55} ** 32);
+    const lookup_table_key = sdk.Pubkey.fromBytes([_]u8{65} ** 32);
+    const lookup_table_address = sdk.Pubkey.fromBytes([_]u8{66} ** 32);
 
     const program_id_base58 = try program_id.toBase58(allocator);
     defer allocator.free(program_id_base58);
+    const lookup_table_key_base58 = try lookup_table_key.toBase58(allocator);
+    defer allocator.free(lookup_table_key_base58);
+    const lookup_table_address_base58 = try lookup_table_address.toBase58(allocator);
+    defer allocator.free(lookup_table_address_base58);
     const instructions_json = try std.fmt.allocPrint(
         allocator,
         \\{{"programId":"{s}","dataBytes":[1,4,9]}}
@@ -3504,9 +3928,20 @@ test "instructions_invoke.getFeeForVersionedMessageWithLatestBlockhashFromJson f
         .{program_id_base58},
     );
     defer allocator.free(instructions_json);
+    const address_lookup_tables_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{
+        \\  "accountKey":"{s}",
+        \\  "addresses":["{s}"]
+        \\}}]
+    ,
+        .{ lookup_table_key_base58, lookup_table_address_base58 },
+    );
+    defer allocator.free(address_lookup_tables_json);
 
     const MockRpc = struct {
         captured_instruction_count: usize = 0,
+        captured_lookup_count: usize = 0,
         captured_build_options: ?rpc_types.VersionedInstructionsBuildOptions = null,
         captured_commitment: ?rpc_types.Commitment = null,
 
@@ -3519,8 +3954,8 @@ test "instructions_invoke.getFeeForVersionedMessageWithLatestBlockhashFromJson f
             commitment_arg: ?rpc_types.Commitment,
         ) !rpc_types.FeeForMessage {
             _ = payer_arg;
-            _ = address_lookup_tables_arg;
             self.captured_instruction_count = instructions_arg.len;
+            self.captured_lookup_count = address_lookup_tables_arg.len;
             self.captured_build_options = options_arg;
             self.captured_commitment = commitment_arg;
             return .{ .value = 4242 };
@@ -3531,6 +3966,7 @@ test "instructions_invoke.getFeeForVersionedMessageWithLatestBlockhashFromJson f
     const fee = try getFeeForVersionedMessageWithLatestBlockhashFromJson(&rpc, .{
         .payer = payer,
         .instructions_json = instructions_json,
+        .address_lookup_tables_json = address_lookup_tables_json,
         .blockhash_commitment = .finalized,
     }, .{
         .commitment = .confirmed,
@@ -3538,6 +3974,7 @@ test "instructions_invoke.getFeeForVersionedMessageWithLatestBlockhashFromJson f
 
     try std.testing.expectEqual(@as(u64, 4242), fee.value.?);
     try std.testing.expectEqual(@as(usize, 1), rpc.captured_instruction_count);
+    try std.testing.expectEqual(@as(usize, 1), rpc.captured_lookup_count);
     try std.testing.expectEqual(.finalized, rpc.captured_build_options.?.blockhash_commitment.?);
     try std.testing.expectEqual(.confirmed, rpc.captured_commitment.?);
 }
