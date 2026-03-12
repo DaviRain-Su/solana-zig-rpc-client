@@ -1954,6 +1954,164 @@ pub fn sendAndConfirmVersionedTransactionWithSpinnerFromJson(
     );
 }
 
+pub fn buildSignedLegacyTransactionWithBlockhashQuery(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionWithBlockhashQueryOptions,
+) !sdk.SignedLegacyTransaction {
+    var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
+    defer owned_instruction.deinit(allocator);
+
+    const instructions = [_]sdk.Instruction{owned_instruction.instruction};
+    return try rpc.buildSignedLegacyTransactionWithBlockhashQuery(
+        build_options.payer,
+        instructions[0..],
+        build_options.signers,
+        build_options.blockhash_query,
+        build_options.nonce_authority,
+    );
+}
+
+pub fn buildSignedLegacyTransactionWithBlockhashQueryFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionWithBlockhashQueryOptions,
+) !sdk.SignedLegacyTransaction {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildSignedLegacyTransactionWithBlockhashQuery(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        build_options,
+    );
+}
+
+pub fn buildLegacyTransactionBase64WithBlockhashQuery(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionWithBlockhashQueryOptions,
+) ![]u8 {
+    var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
+    defer owned_instruction.deinit(allocator);
+
+    const instructions = [_]sdk.Instruction{owned_instruction.instruction};
+    return try rpc.buildLegacyTransactionBase64WithBlockhashQuery(
+        build_options.payer,
+        instructions[0..],
+        build_options.signers,
+        build_options.blockhash_query,
+        build_options.nonce_authority,
+    );
+}
+
+pub fn buildLegacyTransactionBase64WithBlockhashQueryFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionWithBlockhashQueryOptions,
+) ![]u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildLegacyTransactionBase64WithBlockhashQuery(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        build_options,
+    );
+}
+
+pub fn buildSignedVersionedTransactionWithBlockhashQuery(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionWithBlockhashQueryOptions,
+) !sdk.SignedVersionedTransaction {
+    var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
+    defer owned_instruction.deinit(allocator);
+
+    const instructions = [_]sdk.Instruction{owned_instruction.instruction};
+    return try rpc.buildSignedVersionedTransactionWithBlockhashQuery(
+        build_options.payer,
+        instructions[0..],
+        build_options.address_lookup_tables,
+        build_options.signers,
+        build_options.blockhash_query,
+        build_options.nonce_authority,
+    );
+}
+
+pub fn buildSignedVersionedTransactionWithBlockhashQueryFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionWithBlockhashQueryOptions,
+) !sdk.SignedVersionedTransaction {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildSignedVersionedTransactionWithBlockhashQuery(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        build_options,
+    );
+}
+
+pub fn buildVersionedTransactionBase64WithBlockhashQuery(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionWithBlockhashQueryOptions,
+) ![]u8 {
+    var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
+    defer owned_instruction.deinit(allocator);
+
+    const instructions = [_]sdk.Instruction{owned_instruction.instruction};
+    return try rpc.buildVersionedTransactionBase64WithBlockhashQuery(
+        build_options.payer,
+        instructions[0..],
+        build_options.address_lookup_tables,
+        build_options.signers,
+        build_options.blockhash_query,
+        build_options.nonce_authority,
+    );
+}
+
+pub fn buildVersionedTransactionBase64WithBlockhashQueryFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionWithBlockhashQueryOptions,
+) ![]u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildVersionedTransactionBase64WithBlockhashQuery(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        build_options,
+    );
+}
+
 pub fn sendLegacyTransactionWithBlockhashQuery(
     rpc: anytype,
     allocator: Allocator,
