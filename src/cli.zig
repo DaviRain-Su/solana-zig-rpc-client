@@ -274,6 +274,42 @@ const recent_performance_samples_command_positionals_params = clap.parseParamsCo
     \\
 );
 
+const instruction_command_usage_params = clap.parseParamsComptime(
+    \\    --sender-keypair <path>
+    \\    --sender-secret-key <sender-secret-key>
+    \\    --recent-blockhash <base58>
+    \\<instruction-spec-json|@path>
+    \\
+);
+
+const program_invoke_command_usage_params = clap.parseParamsComptime(
+    \\    --sender-keypair <path>
+    \\    --sender-secret-key <sender-secret-key>
+    \\    --recent-blockhash <base58>
+    \\    --nonce-account <pubkey>
+    \\    --nonce-authority-keypair <path>
+    \\<program-id>
+    \\<accounts-json|@path>
+    \\
+);
+
+const idl_invoke_command_usage_params = clap.parseParamsComptime(
+    \\    --sender-keypair <path>
+    \\    --sender-secret-key <sender-secret-key>
+    \\    --recent-blockhash <base58>
+    \\    --program-id <pubkey>
+    \\    --nonce-account <pubkey>
+    \\    --nonce-authority-keypair <path>
+    \\    --idl-args-json <json|@path>
+    \\    --accounts-json <json|@path>
+    \\    --account <name=pubkey>...
+    \\    --remaining-account <pubkey[,is_signer,is_writable]>...
+    \\    --remaining-accounts-json <json|@path>
+    \\<idl-json|@path>
+    \\<instruction-name>
+    \\
+);
+
 const signed_transaction_command_positionals_params = clap.parseParamsComptime(
     \\<signed-tx-base64>
     \\<extra>...
@@ -346,6 +382,7 @@ pub const default_solana_rpc_url = "https://api.mainnet-beta.solana.com";
 pub const default_solana_cli_config_path = ".config/solana/cli/config.yml";
 pub const default_solana_keypair_path = ".config/solana/id.json";
 const optional_flags_marker = "\nOptional flags:\n";
+const usage_command_line_prefix = "  solana_client_zig [--rpc <url>] ";
 
 pub const Commitment = enum {
     processed,
@@ -519,8 +556,7 @@ pub fn printUsage(out: *std.Io.Writer) !void {
     try clap.usage(out, clap.Help, &cli_params);
     try out.writeAll("\n\n");
 
-    const marker_index = std.mem.indexOf(u8, usage_text, optional_flags_marker) orelse usage_text.len;
-    try out.writeAll(usage_text[0..marker_index]);
+    try writeCommandUsageSection(out);
     try out.writeAll(optional_flags_marker[1..]);
     try clap.help(out, clap.Help, &cli_option_help_params, .{});
 }
@@ -537,6 +573,110 @@ pub fn parseCommitment(value: []const u8) ?Commitment {
     if (std.mem.eql(u8, value, "confirmed")) return .confirmed;
     if (std.mem.eql(u8, value, "finalized")) return .finalized;
     return null;
+}
+
+fn writeCommandUsageLine(out: *std.Io.Writer, command_name: []const u8, comptime params: []const clap.Param(clap.Help), suffix: ?[]const u8) !void {
+    try out.writeAll(usage_command_line_prefix);
+    try out.writeAll(command_name);
+    try out.writeAll(" ");
+    try clap.usage(out, clap.Help, params);
+    if (suffix) |value| try out.writeAll(value);
+    try out.writeByte('\n');
+}
+
+fn maybeWriteGeneratedCommandUsageLine(out: *std.Io.Writer, line: []const u8) !bool {
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-versioned-instructions-and-confirm ")) {
+        try writeCommandUsageLine(out, "send-versioned-instructions-and-confirm", &instruction_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-versioned-instructions ")) {
+        try writeCommandUsageLine(out, "send-versioned-instructions", &instruction_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-instructions-and-confirm ")) {
+        try writeCommandUsageLine(out, "send-instructions-and-confirm", &instruction_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-instructions ")) {
+        try writeCommandUsageLine(out, "send-instructions", &instruction_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-versioned-instructions ")) {
+        try writeCommandUsageLine(out, "simulate-versioned-instructions", &instruction_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-instructions ")) {
+        try writeCommandUsageLine(out, "simulate-instructions", &instruction_command_usage_params, null);
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-versioned-program-invoke-and-confirm ")) {
+        try writeCommandUsageLine(out, "send-versioned-program-invoke-and-confirm", &program_invoke_command_usage_params, " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]");
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-versioned-program-invoke ")) {
+        try writeCommandUsageLine(out, "send-versioned-program-invoke", &program_invoke_command_usage_params, " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]");
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-program-invoke-and-confirm ")) {
+        try writeCommandUsageLine(out, "send-program-invoke-and-confirm", &program_invoke_command_usage_params, " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]");
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-program-invoke ")) {
+        try writeCommandUsageLine(out, "send-program-invoke", &program_invoke_command_usage_params, " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]");
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-versioned-program-invoke ")) {
+        try writeCommandUsageLine(out, "simulate-versioned-program-invoke", &program_invoke_command_usage_params, " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]");
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-program-invoke ")) {
+        try writeCommandUsageLine(out, "simulate-program-invoke", &program_invoke_command_usage_params, " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]");
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-versioned-idl-invoke-and-confirm ")) {
+        try writeCommandUsageLine(out, "send-versioned-idl-invoke-and-confirm", &idl_invoke_command_usage_params, " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]");
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-versioned-idl-invoke ")) {
+        try writeCommandUsageLine(out, "send-versioned-idl-invoke", &idl_invoke_command_usage_params, " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]");
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-idl-invoke-and-confirm ")) {
+        try writeCommandUsageLine(out, "send-idl-invoke-and-confirm", &idl_invoke_command_usage_params, " [additional-signer-keypair-paths-json|@path]");
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-idl-invoke ")) {
+        try writeCommandUsageLine(out, "send-idl-invoke", &idl_invoke_command_usage_params, " [additional-signer-keypair-paths-json|@path]");
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-versioned-idl-invoke ")) {
+        try writeCommandUsageLine(out, "simulate-versioned-idl-invoke", &idl_invoke_command_usage_params, " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]");
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-idl-invoke ")) {
+        try writeCommandUsageLine(out, "simulate-idl-invoke", &idl_invoke_command_usage_params, " [additional-signer-keypair-paths-json|@path]");
+        return true;
+    }
+
+    return false;
+}
+
+fn writeCommandUsageSection(out: *std.Io.Writer) !void {
+    const marker_index = std.mem.indexOf(u8, usage_text, optional_flags_marker) orelse usage_text.len;
+    var lines = std.mem.splitScalar(u8, usage_text[0..marker_index], '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) {
+            try out.writeByte('\n');
+            continue;
+        }
+
+        if (try maybeWriteGeneratedCommandUsageLine(out, line)) continue;
+
+        try out.writeAll(line);
+        try out.writeByte('\n');
+    }
 }
 
 fn expandUserPathForHome(allocator: Allocator, path: []const u8, home_dir: ?[]const u8) ![]u8 {
@@ -1711,24 +1851,24 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "inflation-reward <address-1> [address-2 ...] [--epoch <epoch>]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transaction <signature>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-transaction <signed-tx-base64>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions-and-confirm [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-instructions [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-instructions-and-confirm [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke-and-confirm [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke-and-confirm [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-instructions [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-instructions [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-program-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-program-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-idl-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-idl-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke-and-confirm [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-idl-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-idl-invoke-and-confirm [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-instructions-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-idl-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "raw-rpc <method> [params-json]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "poll-balance <account>") != null);
