@@ -2386,6 +2386,143 @@ fn parseCliRemainingAccountMeta(raw: []const u8) !CliInstructionAccountMeta {
     };
 }
 
+const ParsedCliAnchorInvokeBindings = struct {
+    typed_bindings: []client.anchor_idl_invoke.AccountBinding,
+    explicit_null_paths: []const []const u8,
+
+    fn deinit(self: *ParsedCliAnchorInvokeBindings, allocator: Allocator) void {
+        allocator.free(self.typed_bindings);
+        allocator.free(self.explicit_null_paths);
+        self.* = undefined;
+    }
+};
+
+fn parseCliAnchorInvokeBindings(
+    allocator: Allocator,
+    account_bindings: []const []const u8,
+) !ParsedCliAnchorInvokeBindings {
+    var typed_bindings = std.ArrayListUnmanaged(client.anchor_idl_invoke.AccountBinding){};
+    errdefer typed_bindings.deinit(allocator);
+    var explicit_null_paths = std.ArrayListUnmanaged([]const u8){};
+    errdefer explicit_null_paths.deinit(allocator);
+
+    for (account_bindings) |binding| {
+        const equals_index = std.mem.indexOfScalar(u8, binding, '=') orelse return error.InvalidCli;
+        if (equals_index == 0 or equals_index == binding.len - 1) return error.InvalidCli;
+
+        const path = binding[0..equals_index];
+        const value = binding[equals_index + 1 ..];
+        if (std.mem.eql(u8, value, "null")) {
+            try explicit_null_paths.append(allocator, path);
+            continue;
+        }
+
+        try typed_bindings.append(allocator, .{
+            .path = path,
+            .pubkey = try client.Pubkey.fromBase58(allocator, value),
+        });
+    }
+
+    const typed_bindings_slice = try typed_bindings.toOwnedSlice(allocator);
+    errdefer allocator.free(typed_bindings_slice);
+    const explicit_null_paths_slice = try explicit_null_paths.toOwnedSlice(allocator);
+    return .{
+        .typed_bindings = typed_bindings_slice,
+        .explicit_null_paths = explicit_null_paths_slice,
+    };
+}
+
+fn mergeAnchorInvokeAccountBindingsJson(
+    allocator: Allocator,
+    base_json_source: ?[]const u8,
+    explicit_null_paths: []const []const u8,
+) !?[]u8 {
+    if (explicit_null_paths.len == 0) return null;
+
+    var parsed_base: ?std.json.Parsed(std.json.Value) = null;
+    defer if (parsed_base) |*value| value.deinit();
+
+    var standalone_object = std.json.ObjectMap.init(allocator);
+    defer if (parsed_base == null) standalone_object.deinit();
+
+    const root_object: *std.json.ObjectMap = if (base_json_source) |source| blk: {
+        parsed_base = std.json.parseFromSlice(std.json.Value, allocator, source, .{}) catch return error.InvalidCli;
+        if (parsed_base.?.value != .object) return error.InvalidCli;
+        break :blk &parsed_base.?.value.object;
+    } else &standalone_object;
+
+    var inserted_keys = std.ArrayListUnmanaged([]u8){};
+    defer {
+        for (inserted_keys.items) |key| allocator.free(key);
+        inserted_keys.deinit(allocator);
+    }
+
+    for (explicit_null_paths) |path| {
+        const key_copy = try allocator.dupe(u8, path);
+        try inserted_keys.append(allocator, key_copy);
+        try root_object.put(key_copy, .null);
+    }
+
+    var json_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer json_buffer.deinit();
+    try std.json.Stringify.value(std.json.Value{ .object = root_object.* }, .{}, &json_buffer.writer);
+    return try allocator.dupe(u8, json_buffer.written());
+}
+
+const SerializedCliInstruction = struct {
+    program_id: []u8,
+    accounts: []CliInstructionAccountMeta,
+    owned_account_pubkeys: [][]u8,
+    data_hex: []u8,
+
+    fn deinit(self: *SerializedCliInstruction, allocator: Allocator) void {
+        allocator.free(self.program_id);
+        for (self.owned_account_pubkeys) |pubkey| allocator.free(pubkey);
+        allocator.free(self.owned_account_pubkeys);
+        allocator.free(self.accounts);
+        allocator.free(self.data_hex);
+        self.* = undefined;
+    }
+};
+
+fn serializeCliInstruction(
+    allocator: Allocator,
+    instruction: client.Instruction,
+) !SerializedCliInstruction {
+    const program_id = try instruction.program_id.toBase58(allocator);
+    errdefer allocator.free(program_id);
+
+    const accounts = try allocator.alloc(CliInstructionAccountMeta, instruction.accounts.len);
+    errdefer allocator.free(accounts);
+    const owned_account_pubkeys = try allocator.alloc([]u8, instruction.accounts.len);
+    errdefer allocator.free(owned_account_pubkeys);
+
+    for (instruction.accounts, 0..) |account, index| {
+        const pubkey_base58 = try account.pubkey.toBase58(allocator);
+        errdefer allocator.free(pubkey_base58);
+        owned_account_pubkeys[index] = pubkey_base58;
+        accounts[index] = .{
+            .pubkey = pubkey_base58,
+            .is_signer = account.is_signer,
+            .is_writable = account.is_writable,
+        };
+    }
+
+    const data_hex = try allocator.alloc(u8, instruction.data.len * 2);
+    errdefer allocator.free(data_hex);
+    for (instruction.data, 0..) |byte, index| {
+        data_hex[index * 2] = std.fmt.hex_charset[byte >> 4];
+        data_hex[index * 2 + 1] = std.fmt.hex_charset[byte & 0x0f];
+    }
+
+    return .{
+        .program_id = program_id,
+        .accounts = accounts,
+        .owned_account_pubkeys = owned_account_pubkeys,
+        .data_hex = data_hex,
+    };
+}
+
 fn loadAnchorIdlInvokeInstructionSpec(
     allocator: Allocator,
     idl_arg: []const u8,
@@ -2452,6 +2589,247 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
 }
 
 fn loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
+    allocator: Allocator,
+    idl_arg: []const u8,
+    instruction_name: []const u8,
+    program_id_override_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    accounts_json_arg: ?[]const u8,
+    account_bindings: []const []const u8,
+    remaining_accounts: []const []const u8,
+    remaining_accounts_json_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+) !LoadedCliInstructionSpec {
+    const can_use_reusable_builder = blk: {
+        if (accounts_json_arg != null or account_bindings.len != 0 or remaining_accounts.len != 0 or remaining_accounts_json_arg != null) {
+            break :blk false;
+        }
+
+        const idl_source = loadInstructionSpecSource(allocator, idl_arg) catch return error.InvalidCli;
+        defer allocator.free(idl_source);
+
+        const parsed_idl = anchor_idl.parseJson(allocator, idl_source) catch return error.InvalidCli;
+        defer parsed_idl.deinit();
+
+        const instruction = anchor_idl.findInstruction(&parsed_idl.value, instruction_name) orelse return error.InvalidCli;
+        break :blk (countAnchorIdlLeafAccounts(instruction.accounts) catch return error.InvalidCli) == 0;
+    };
+
+    if (can_use_reusable_builder) {
+        return loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(
+            allocator,
+            idl_arg,
+            instruction_name,
+            program_id_override_arg,
+            args_json_arg,
+            accounts_json_arg,
+            account_bindings,
+            remaining_accounts,
+            remaining_accounts_json_arg,
+            payer_keypair_path_arg,
+            payer_secret_key_arg,
+            signer_keypair_paths_arg,
+            lookup_tables_arg,
+            nonce_account_arg,
+            nonce_authority_keypair_path_arg,
+            additional_signer_secret_keys_arg,
+        ) catch loadAnchorIdlInvokeInstructionSpecLegacyWithPayerSecret(
+            allocator,
+            idl_arg,
+            instruction_name,
+            program_id_override_arg,
+            args_json_arg,
+            accounts_json_arg,
+            account_bindings,
+            remaining_accounts,
+            remaining_accounts_json_arg,
+            payer_keypair_path_arg,
+            payer_secret_key_arg,
+            signer_keypair_paths_arg,
+            lookup_tables_arg,
+            nonce_account_arg,
+            nonce_authority_keypair_path_arg,
+            additional_signer_secret_keys_arg,
+        );
+    }
+
+    return loadAnchorIdlInvokeInstructionSpecLegacyWithPayerSecret(
+        allocator,
+        idl_arg,
+        instruction_name,
+        program_id_override_arg,
+        args_json_arg,
+        accounts_json_arg,
+        account_bindings,
+        remaining_accounts,
+        remaining_accounts_json_arg,
+        payer_keypair_path_arg,
+        payer_secret_key_arg,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+        nonce_account_arg,
+        nonce_authority_keypair_path_arg,
+        additional_signer_secret_keys_arg,
+    );
+}
+
+fn loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(
+    allocator: Allocator,
+    idl_arg: []const u8,
+    instruction_name: []const u8,
+    program_id_override_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    accounts_json_arg: ?[]const u8,
+    account_bindings: []const []const u8,
+    remaining_accounts: []const []const u8,
+    remaining_accounts_json_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+) !LoadedCliInstructionSpec {
+    const idl_source = loadInstructionSpecSource(allocator, idl_arg) catch return error.InvalidCli;
+    defer allocator.free(idl_source);
+
+    const args_json_source = if (args_json_arg) |value|
+        loadInstructionSpecSource(allocator, value) catch return error.InvalidCli
+    else
+        null;
+    defer if (args_json_source) |value| allocator.free(value);
+    const accounts_json_source = if (accounts_json_arg) |value|
+        loadInstructionSpecSource(allocator, value) catch return error.InvalidCli
+    else
+        null;
+    defer if (accounts_json_source) |value| allocator.free(value);
+    const remaining_accounts_json_source = if (remaining_accounts_json_arg) |value|
+        loadInstructionSpecSource(allocator, value) catch return error.InvalidCli
+    else
+        null;
+    defer if (remaining_accounts_json_source) |value| allocator.free(value);
+    const parsed_remaining_accounts = if (remaining_accounts_json_source) |value|
+        std.json.parseFromSlice([]CliInstructionAccountMeta, allocator, value, .{
+            .ignore_unknown_fields = true,
+        }) catch return error.InvalidCli
+    else
+        null;
+    defer if (parsed_remaining_accounts) |*value| value.deinit();
+    var parsed_signer_keypair_paths: ?std.json.Parsed([]const []const u8) = null;
+    defer if (parsed_signer_keypair_paths) |*value| value.deinit();
+
+    if (signer_keypair_paths_arg) |value| {
+        const signer_paths_source = loadInstructionSpecSource(allocator, value) catch return error.InvalidCli;
+        defer allocator.free(signer_paths_source);
+
+        parsed_signer_keypair_paths = std.json.parseFromSlice([]const []const u8, allocator, signer_paths_source, .{
+            .allocate = .alloc_always,
+        }) catch return error.InvalidCli;
+    }
+
+    var parsed_lookup_tables: ?std.json.Parsed([]CliAddressLookupTableSpec) = null;
+    defer if (parsed_lookup_tables) |*value| value.deinit();
+
+    if (lookup_tables_arg) |value| {
+        const lookup_tables_source = loadInstructionSpecSource(allocator, value) catch return error.InvalidCli;
+        defer allocator.free(lookup_tables_source);
+
+        parsed_lookup_tables = std.json.parseFromSlice([]CliAddressLookupTableSpec, allocator, lookup_tables_source, .{
+            .allocate = .alloc_always,
+            .ignore_unknown_fields = true,
+        }) catch return error.InvalidCli;
+    }
+    const payer_keypair = if (payer_secret_key_arg != null or payer_keypair_path_arg != null)
+        try resolveOptionalInstructionKeypair(allocator, payer_secret_key_arg, payer_keypair_path_arg)
+    else
+        null;
+    const default_signer_pubkey = if (payer_keypair) |value| value.public_key else null;
+    var parsed_cli_account_bindings = parseCliAnchorInvokeBindings(allocator, account_bindings) catch return error.InvalidCli;
+    defer parsed_cli_account_bindings.deinit(allocator);
+
+    const merged_accounts_json_source = mergeAnchorInvokeAccountBindingsJson(
+        allocator,
+        accounts_json_source,
+        parsed_cli_account_bindings.explicit_null_paths,
+    ) catch return error.InvalidCli;
+    defer if (merged_accounts_json_source) |value| allocator.free(value);
+
+    const program_id_override = if (program_id_override_arg) |value|
+        client.Pubkey.fromBase58(allocator, value) catch return error.InvalidCli
+    else
+        null;
+
+    const remaining_account_count = remaining_accounts.len + if (parsed_remaining_accounts) |value| value.value.len else 0;
+    const typed_remaining_accounts = try allocator.alloc(client.AccountMeta, remaining_account_count);
+    defer allocator.free(typed_remaining_accounts);
+    var remaining_account_index: usize = 0;
+    for (remaining_accounts) |raw_remaining_account| {
+        const parsed_account = parseCliRemainingAccountMeta(raw_remaining_account) catch return error.InvalidCli;
+        typed_remaining_accounts[remaining_account_index] = client.AccountMeta.init(
+            client.Pubkey.fromBase58(allocator, parsed_account.pubkey) catch return error.InvalidCli,
+            parsed_account.is_signer,
+            parsed_account.is_writable,
+        );
+        remaining_account_index += 1;
+    }
+    if (parsed_remaining_accounts) |value| {
+        for (value.value) |account| {
+            typed_remaining_accounts[remaining_account_index] = client.AccountMeta.init(
+                client.Pubkey.fromBase58(allocator, account.pubkey) catch return error.InvalidCli,
+                account.is_signer,
+                account.is_writable,
+            );
+            remaining_account_index += 1;
+        }
+    }
+
+    var owned_instruction = client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_source,
+        instruction_name,
+        .{
+            .program_id = program_id_override,
+            .args_json = args_json_source,
+            .account_bindings = parsed_cli_account_bindings.typed_bindings,
+            .account_bindings_json = if (merged_accounts_json_source) |value| value else accounts_json_source,
+            .remaining_accounts = typed_remaining_accounts,
+            .default_signer = default_signer_pubkey,
+        },
+    ) catch return error.InvalidCli;
+    defer owned_instruction.deinit(allocator);
+
+    var serialized_instruction = try serializeCliInstruction(allocator, owned_instruction.instruction);
+    defer serialized_instruction.deinit(allocator);
+
+    const instruction_specs = [_]CliInstructionSpec{
+        .{
+            .program_id = serialized_instruction.program_id,
+            .accounts = serialized_instruction.accounts,
+            .data = serialized_instruction.data_hex,
+            .data_encoding = .hex,
+        },
+    };
+    const spec = CliSimulateInstructionsSpec{
+        .payer_secret_key = payer_secret_key_arg,
+        .payer_keypair_path = payer_keypair_path_arg,
+        .nonce_account = nonce_account_arg,
+        .nonce_authority_keypair_path = nonce_authority_keypair_path_arg,
+        .additional_signer_secret_keys = additional_signer_secret_keys_arg,
+        .additional_signer_keypair_paths = if (parsed_signer_keypair_paths) |value| value.value else &.{},
+        .address_lookup_tables = if (parsed_lookup_tables) |value| value.value else &.{},
+        .instructions = &instruction_specs,
+    };
+    return try loadCliInstructionSpec(allocator, &spec);
+}
+
+fn loadAnchorIdlInvokeInstructionSpecLegacyWithPayerSecret(
     allocator: Allocator,
     idl_arg: []const u8,
     instruction_name: []const u8,
