@@ -32,6 +32,7 @@ pub const BuildInstructionOptions = struct {
     program_id: ?sdk.Pubkey = null,
     args_json: ?[]const u8 = null,
     account_bindings: []const AccountBinding = &.{},
+    account_bindings_json: ?[]const u8 = null,
     remaining_accounts: []const sdk.AccountMeta = &.{},
     default_signer: ?sdk.Pubkey = null,
 };
@@ -42,6 +43,18 @@ pub const OwnedInstruction = struct {
     pub fn deinit(self: *OwnedInstruction, allocator: Allocator) void {
         allocator.free(self.instruction.accounts);
         allocator.free(self.instruction.data);
+        self.* = undefined;
+    }
+};
+
+const OwnedAccountBindings = struct {
+    bindings: []AccountBinding,
+    owned_paths: [][]u8,
+
+    pub fn deinit(self: *OwnedAccountBindings, allocator: Allocator) void {
+        for (self.owned_paths) |path| allocator.free(path);
+        allocator.free(self.owned_paths);
+        allocator.free(self.bindings);
         self.* = undefined;
     }
 };
@@ -165,6 +178,145 @@ fn findBoundPubkey(bindings: []const AccountBinding, full_name: []const u8, leaf
         }
     }
     return null;
+}
+
+fn parseAccountBindingPubkeyValue(allocator: Allocator, value: std.json.Value) BuildError!?sdk.Pubkey {
+    switch (value) {
+        .null => return null,
+        .string => return sdk.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidAnchorIdlAccountSpec,
+        .object => {
+            inline for ([_][]const u8{
+                "pubkey",
+                "publicKey",
+                "public_key",
+                "address",
+                "key",
+                "programId",
+                "program_id",
+            }) |field_name| {
+                if (findJsonObjectField(value.object, field_name)) |field_value| {
+                    return switch (field_value) {
+                        .null => null,
+                        .string => sdk.Pubkey.fromBase58(allocator, field_value.string) catch return error.InvalidAnchorIdlAccountSpec,
+                        else => return error.InvalidAnchorIdlAccountSpec,
+                    };
+                }
+            }
+            return null;
+        },
+        else => return null,
+    }
+}
+
+fn appendJsonAccountBinding(
+    allocator: Allocator,
+    bindings: *std.ArrayListUnmanaged(AccountBinding),
+    owned_paths: *std.ArrayListUnmanaged([]u8),
+    path: []const u8,
+    pubkey: sdk.Pubkey,
+) BuildError!void {
+    const owned_path = try allocator.dupe(u8, path);
+    errdefer allocator.free(owned_path);
+
+    try owned_paths.append(allocator, owned_path);
+    errdefer _ = owned_paths.pop();
+
+    try bindings.append(allocator, .{
+        .path = owned_path,
+        .pubkey = pubkey,
+    });
+}
+
+fn appendAccountBindingsFromJsonValue(
+    allocator: Allocator,
+    bindings: *std.ArrayListUnmanaged(AccountBinding),
+    owned_paths: *std.ArrayListUnmanaged([]u8),
+    path: ?[]const u8,
+    value: std.json.Value,
+) BuildError!void {
+    if (path) |path_value| {
+        if (try parseAccountBindingPubkeyValue(allocator, value)) |pubkey| {
+            try appendJsonAccountBinding(allocator, bindings, owned_paths, path_value, pubkey);
+            return;
+        }
+        if (value == .null) return;
+    } else if (value == .null) {
+        return;
+    }
+
+    switch (value) {
+        .object => {
+            var iterator = value.object.iterator();
+            while (iterator.next()) |entry| {
+                const child_path = if (path) |path_value|
+                    try std.fmt.allocPrint(allocator, "{s}.{s}", .{ path_value, entry.key_ptr.* })
+                else
+                    try allocator.dupe(u8, entry.key_ptr.*);
+                defer allocator.free(child_path);
+
+                try appendAccountBindingsFromJsonValue(
+                    allocator,
+                    bindings,
+                    owned_paths,
+                    child_path,
+                    entry.value_ptr.*,
+                );
+            }
+        },
+        .array => |items| {
+            for (items.items, 0..) |item, index| {
+                const child_path = if (path) |path_value|
+                    try std.fmt.allocPrint(allocator, "{s}.{d}", .{ path_value, index })
+                else
+                    try std.fmt.allocPrint(allocator, "{d}", .{index});
+                defer allocator.free(child_path);
+
+                try appendAccountBindingsFromJsonValue(
+                    allocator,
+                    bindings,
+                    owned_paths,
+                    child_path,
+                    item,
+                );
+            }
+        },
+        .string => if (path == null) return error.InvalidAnchorIdlAccountSpec,
+        else => {},
+    }
+}
+
+fn parseAccountBindingsJson(allocator: Allocator, json_source: []const u8) BuildError!OwnedAccountBindings {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_source, .{}) catch return error.InvalidAnchorIdlAccountSpec;
+    defer parsed.deinit();
+
+    switch (parsed.value) {
+        .object, .array, .null => {},
+        else => return error.InvalidAnchorIdlAccountSpec,
+    }
+
+    var bindings: std.ArrayListUnmanaged(AccountBinding) = .{};
+    errdefer bindings.deinit(allocator);
+    var owned_paths: std.ArrayListUnmanaged([]u8) = .{};
+    errdefer {
+        for (owned_paths.items) |path| allocator.free(path);
+        owned_paths.deinit(allocator);
+    }
+
+    try appendAccountBindingsFromJsonValue(
+        allocator,
+        &bindings,
+        &owned_paths,
+        null,
+        parsed.value,
+    );
+
+    const owned_bindings = try bindings.toOwnedSlice(allocator);
+    errdefer allocator.free(owned_bindings);
+
+    return .{
+        .bindings = owned_bindings,
+        .owned_paths = try owned_paths.toOwnedSlice(allocator),
+    };
 }
 
 fn parsePathIndex(path_segment: []const u8) BuildError!usize {
@@ -1380,6 +1532,25 @@ pub fn buildOwnedInstruction(
         null;
     defer if (parsed_args) |*value| value.deinit();
 
+    var json_account_bindings = if (options.account_bindings_json) |value|
+        try parseAccountBindingsJson(allocator, value)
+    else
+        null;
+    defer if (json_account_bindings) |*value| value.deinit(allocator);
+
+    var merged_account_bindings: ?[]AccountBinding = null;
+    defer if (merged_account_bindings) |value| allocator.free(value);
+    const resolved_account_bindings = if (json_account_bindings) |value| blk: {
+        if (options.account_bindings.len == 0) break :blk value.bindings;
+        if (value.bindings.len == 0) break :blk options.account_bindings;
+
+        const merged = try allocator.alloc(AccountBinding, options.account_bindings.len + value.bindings.len);
+        merged_account_bindings = merged;
+        @memcpy(merged[0..options.account_bindings.len], options.account_bindings);
+        @memcpy(merged[options.account_bindings.len..], value.bindings);
+        break :blk merged;
+    } else options.account_bindings;
+
     const leaf_account_count = try countLeafAccounts(instruction.accounts);
     const accounts = try allocator.alloc(sdk.AccountMeta, leaf_account_count + options.remaining_accounts.len);
     errdefer allocator.free(accounts);
@@ -1396,7 +1567,7 @@ pub fn buildOwnedInstruction(
         &instruction,
         instruction.accounts,
         if (parsed_args) |value| &value.value else null,
-        options.account_bindings,
+        resolved_account_bindings,
         options.default_signer,
         program_id,
         accounts,
