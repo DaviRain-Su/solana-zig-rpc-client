@@ -274,6 +274,40 @@ const recent_performance_samples_command_positionals_params = clap.parseParamsCo
     \\
 );
 
+const signed_transaction_command_positionals_params = clap.parseParamsComptime(
+    \\<signed-tx-base64>
+    \\<extra>...
+    \\
+);
+
+const signatures_for_address_command_positionals_params = clap.parseParamsComptime(
+    \\<address>
+    \\<extra>...
+    \\
+);
+
+const poll_for_signature_confirmation_command_positionals_params = clap.parseParamsComptime(
+    \\<signature>
+    \\<min-confirmed-blocks>
+    \\<extra>...
+    \\
+);
+
+const transfer_with_default_sender_command_positionals_params = clap.parseParamsComptime(
+    \\<sender-secret-key>
+    \\<destination>
+    \\<lamports>
+    \\<extra>...
+    \\
+);
+
+const transfer_with_explicit_sender_command_positionals_params = clap.parseParamsComptime(
+    \\<destination>
+    \\<lamports>
+    \\<extra>...
+    \\
+);
+
 const positional_only_parsers = .{
     .string = clap.parsers.string,
     .@"instruction-spec-json|@path" = clap.parsers.string,
@@ -302,6 +336,10 @@ const positional_only_parsers = .{
     .method = clap.parsers.string,
     .@"params-json" = clap.parsers.string,
     .identity = clap.parsers.string,
+    .@"signed-tx-base64" = clap.parsers.string,
+    .@"min-confirmed-blocks" = clap.parsers.string,
+    .destination = clap.parsers.string,
+    .@"sender-secret-key" = clap.parsers.string,
 };
 
 pub const default_solana_rpc_url = "https://api.mainnet-beta.solana.com";
@@ -891,6 +929,37 @@ fn parseCommandPositionals(allocator: Allocator, parsed: *ParsedArgs, positional
             return;
         },
 
+        .signatures_for_address => {
+            var command_result = try parsePositionalsWithClap(&signatures_for_address_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.signatures_for_address_arg = command_result.positionals[0];
+            if (command_result.positionals[1].len != 0) return error.InvalidCli;
+            return;
+        },
+
+        .poll_for_signature_confirmation => {
+            var command_result = try parsePositionalsWithClap(&poll_for_signature_confirmation_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.signature = command_result.positionals[0];
+            parsed.confirmation_blocks_arg = command_result.positionals[1];
+            if (command_result.positionals[2].len != 0) return error.InvalidCli;
+            return;
+        },
+
+        .send_transaction,
+        .send_transaction_and_confirm,
+        .simulate_transaction,
+        => {
+            var command_result = try parsePositionalsWithClap(&signed_transaction_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.signed_tx_arg = command_result.positionals[0];
+            if (command_result.positionals[1].len != 0) return error.InvalidCli;
+            return;
+        },
+
         .raw_rpc => {
             var command_result = try parsePositionalsWithClap(&raw_rpc_command_positionals_params, allocator, positionals);
             defer command_result.deinit();
@@ -940,6 +1009,27 @@ fn parseCommandPositionals(allocator: Allocator, parsed: *ParsedArgs, positional
             parsed.account = command_result.positionals[0];
             parsed.lamports_arg = command_result.positionals[1];
             if (command_result.positionals[2].len != 0) return error.InvalidCli;
+            return;
+        },
+
+        .transfer => {
+            if (parsed.sender_keypair_path_arg == null and parsed.sender_secret_key_arg == null) {
+                var command_result = try parsePositionalsWithClap(&transfer_with_default_sender_command_positionals_params, allocator, positionals);
+                defer command_result.deinit();
+
+                parsed.sender_secret_key_arg = command_result.positionals[0];
+                parsed.account = command_result.positionals[1];
+                parsed.lamports_arg = command_result.positionals[2];
+                if (command_result.positionals[3].len != 0) return error.InvalidCli;
+            } else {
+                var command_result = try parsePositionalsWithClap(&transfer_with_explicit_sender_command_positionals_params, allocator, positionals);
+                defer command_result.deinit();
+
+                parsed.account = command_result.positionals[0];
+                parsed.lamports_arg = command_result.positionals[1];
+                if (command_result.positionals[2].len != 0) return error.InvalidCli;
+            }
+
             return;
         },
 
