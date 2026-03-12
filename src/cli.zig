@@ -137,17 +137,6 @@ const cli_option_help_params = clap.parseParamsComptime(
     \\    --token-program-id <program-id>     Token account filter by token program (token-accounts-by-*)
 );
 
-const generic_command_positionals_params = clap.parseParamsComptime(
-    \\<string>
-    \\<string>
-    \\<string>
-    \\<string>
-    \\<string>
-    \\<string>
-    \\<string>...
-    \\
-);
-
 const instruction_command_positionals_params = clap.parseParamsComptime(
     \\<instruction-spec-json|@path>
     \\<extra>...
@@ -1083,21 +1072,6 @@ fn parsePositionalsWithClap(
         error.OutOfMemory => return err,
         else => return error.InvalidCli,
     };
-}
-
-fn appendPositionals(
-    allocator: Allocator,
-    dest: *std.ArrayListUnmanaged([]const u8),
-    fixed: []const ?[]const u8,
-    tail: []const []const u8,
-) !void {
-    for (fixed) |value_opt| {
-        const value = value_opt orelse break;
-        dest.append(allocator, value) catch return error.InvalidCli;
-    }
-    for (tail) |value| {
-        dest.append(allocator, value) catch return error.InvalidCli;
-    }
 }
 
 fn commandFromArg(arg: []const u8) ?Command {
