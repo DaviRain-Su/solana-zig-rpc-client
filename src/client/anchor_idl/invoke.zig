@@ -1419,3 +1419,43 @@ pub fn buildOwnedInstructionFromJson(
 
     return try buildOwnedInstruction(allocator, &parsed_idl.value, instruction_name, options);
 }
+
+pub const BuildLegacyMessageOptions = struct {
+    payer: sdk.Pubkey,
+    recent_blockhash: sdk.Hash,
+    instruction_options: BuildInstructionOptions = .{},
+};
+
+pub fn buildOwnedLegacyMessage(
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    options: BuildLegacyMessageOptions,
+) BuildError!sdk.OwnedLegacyMessage {
+    var owned_instruction = try buildOwnedInstruction(
+        allocator,
+        idl,
+        instruction_name,
+        options.instruction_options,
+    );
+    defer owned_instruction.deinit(allocator);
+
+    return try sdk.buildOwnedLegacyMessage(
+        allocator,
+        options.payer,
+        options.recent_blockhash,
+        &.{owned_instruction.instruction},
+    );
+}
+
+pub fn buildOwnedLegacyMessageFromJson(
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    options: BuildLegacyMessageOptions,
+) BuildError!sdk.OwnedLegacyMessage {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildOwnedLegacyMessage(allocator, &parsed_idl.value, instruction_name, options);
+}

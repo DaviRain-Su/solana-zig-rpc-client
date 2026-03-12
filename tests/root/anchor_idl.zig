@@ -356,3 +356,63 @@ test "root.anchor_idl_invoke.buildOwnedInstruction returns unsupported account f
         ),
     );
 }
+
+test "root.anchor_idl_invoke.buildOwnedLegacyMessageFromJson builds typed legacy message" {
+    const allocator = std.testing.allocator;
+    const program_id = try client.sdk.Pubkey.fromBase58(allocator, "11111111111111111111111111111111");
+    const payer = try client.sdk.Pubkey.fromBase58(allocator, "ComputeBudget111111111111111111111111111111");
+    const authority = try client.sdk.Pubkey.fromBase58(allocator, "Stake11111111111111111111111111111111111111");
+    const target = try client.sdk.Pubkey.fromBase58(allocator, "Vote111111111111111111111111111111111111111");
+    const args_json = "{\"value\":42}";
+
+    var owned = try client.anchor_idl_invoke.buildOwnedLegacyMessageFromJson(
+        allocator,
+        \\{
+        \\  "address": "11111111111111111111111111111111",
+        \\  "instructions": [
+        \\    {
+        \\      "name": "setValue",
+        \\      "discriminator": [1, 2, 3, 4, 5, 6, 7, 8],
+        \\      "accounts": [
+        \\        { "name": "authority", "writable": true, "signer": true },
+        \\        { "name": "target", "writable": true }
+        \\      ],
+        \\      "args": [
+        \\        { "name": "value", "type": "u64" }
+        \\      ]
+        \\    }
+        \\  ]
+        \\}
+    ,
+        "setValue",
+        .{
+            .payer = payer,
+            .recent_blockhash = client.sdk.Hash.fromBytes([_]u8{9} ** 32),
+            .instruction_options = .{
+                .args_json = args_json,
+                .account_bindings = &.{
+                    .{ .path = "authority", .pubkey = authority },
+                    .{ .path = "target", .pubkey = target },
+                },
+            },
+        },
+    );
+    defer owned.deinit(allocator);
+
+    try std.testing.expect(owned.message.payer.eql(payer));
+    try std.testing.expectEqual(client.sdk.Hash.fromBytes([_]u8{9} ** 32), owned.message.recent_blockhash);
+    try std.testing.expectEqual(@as(usize, 1), owned.message.instructions.len);
+
+    const instruction = owned.message.instructions[0];
+    try std.testing.expect(instruction.program_id.eql(program_id));
+    try std.testing.expectEqual(@as(usize, 2), instruction.accounts.len);
+    try std.testing.expect(instruction.accounts[0].pubkey.eql(authority));
+    try std.testing.expect(instruction.accounts[0].is_signer);
+    try std.testing.expect(instruction.accounts[0].is_writable);
+    try std.testing.expect(instruction.accounts[1].pubkey.eql(target));
+    try std.testing.expect(!instruction.accounts[1].is_signer);
+    try std.testing.expect(instruction.accounts[1].is_writable);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8 }, instruction.data[0..8]);
+    try std.testing.expectEqual(@as(usize, 16), instruction.data.len);
+    try std.testing.expectEqual(@as(u64, 42), std.mem.readInt(u64, instruction.data[8..16], .little));
+}
