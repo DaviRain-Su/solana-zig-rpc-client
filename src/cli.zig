@@ -85,6 +85,58 @@ const cli_parsers = .{
     .arg = clap.parsers.string,
 };
 
+const cli_option_help_params = clap.parseParamsComptime(
+    \\-h, --help                              Display this help and exit.
+    \\    --rpc <url>                         RPC endpoint to use (default: Solana CLI config json_rpc_url or mainnet-beta)
+    \\    --commitment <level>                processed|confirmed|finalized (default: Solana CLI config commitment when present)
+    \\    --timeout-ms <ms>                   Wait timeout (status, poll/wait balance, poll-for-signature-confirmation, send-transaction-and-confirm)
+    \\    --poll-ms <ms>                      Poll interval in ms (status, poll/wait balance, poll-for-signature-confirmation, send-transaction-and-confirm)
+    \\    --before <signature>                Filter signatures after this older signature (signatures-for-address)
+    \\    --until <signature>                 Stop at this oldest signature (signatures-for-address)
+    \\    --limit <count>                     Maximum results to return (signatures-for-address)
+    \\    --min-context-slot <slot>           Minimum context slot (send commands, signatures-for-address, account/program queries, or token-account)
+    \\    --search-transaction-history        Search transaction history for status and confirmation queries
+    \\    --skip-preflight                    Skip tx preflight checks (send commands)
+    \\    --sig-verify                        Verify signatures during simulation (simulate-transaction)
+    \\    --replace-recent-blockhash          Replace recent blockhash during simulation
+    \\    --inner-instructions                Include inner instructions in simulation results
+    \\    --simulation-account <pubkey>       Include account data in simulation results
+    \\    --simulation-account-encoding <mode> base58|base64 for simulation account results
+    \\    --simulation-min-context-slot <slot> Minimum context slot for simulate-transaction
+    \\    --max-retries <count>               Max tx retries before giving up
+    \\    --preflight-commitment <level>      Commitment for tx preflight checks
+    \\    --airdrop-recent-blockhash <blockhash> Recent blockhash override for request-airdrop
+    \\    --sender-keypair <path>             Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)
+    \\    --sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer secret key (base58)
+    \\    --additional-signer-secret-key <additional-signer-secret-key> Additional signer secret key (base58, repeatable)
+    \\    --transfer-recent-blockhash <blockhash> Recent blockhash override for transfer
+    \\    --epoch <epoch>                     Epoch override for inflation-reward
+    \\    --encoding <mode>                   json|jsonParsed|base58|base64 (block and transaction)
+    \\    --max-supported-transaction-version <n> Max supported tx version (block and transaction)
+    \\    --transaction-details <mode>        full|accounts|signatures|none (block)
+    \\    --rewards <true|false>              Include rewards in block response
+    \\    --vote-pubkey <pubkey>              Filter vote-accounts by vote pubkey
+    \\    --keep-unstaked-delinquents         Keep unstaked delinquents in vote-accounts
+    \\    --delinquent-slot-distance <n>      Delinquent slot distance for vote-accounts
+    \\    --largest-filter <mode>             circulating|non-circulating (largest-accounts)
+    \\    --block-production-identity <pubkey> Filter block-production by identity
+    \\    --range-first-slot <slot>           First slot for block-production range
+    \\    --range-last-slot <slot>            Last slot for block-production range
+    \\    --exclude-non-circulating-accounts-list Exclude non-circulating account list from supply
+    \\    --program-data-size <bytes>         Filter program-accounts and program-ui-accounts by account data size
+    \\    --program-memcmp-offset <offset>    Memcmp offset for program-accounts and program-ui-accounts
+    \\    --program-memcmp-bytes <bytes>      Memcmp bytes for program-accounts and program-ui-accounts
+    \\    --program-data-slice-offset <offset> Data slice offset for program-accounts and program-ui-accounts
+    \\    --program-data-slice-length <length> Data slice length for program-accounts and program-ui-accounts
+    \\    --with-context                      Include RPC context in latest-blockhash, balance, fee-for-message, token-account-balance, token-supply, token-largest-accounts, account, and program queries
+    \\    --sort-results                      Sort program account results by pubkey locally
+    \\    --account-encoding <mode>           base58|base64|jsonParsed for account-info and multiple-accounts
+    \\    --account-data-slice-offset <offset> Data slice offset for account-info and multiple-accounts
+    \\    --account-data-slice-length <length> Data slice length for account-info and multiple-accounts
+    \\    --mint <mint>                       Token account filter by mint (token-accounts-by-*)
+    \\    --token-program-id <program-id>     Token account filter by token program (token-accounts-by-*)
+);
+
 const command_positionals_params = clap.parseParamsComptime(
     \\<string>
     \\<string>
@@ -103,6 +155,7 @@ const positional_only_parsers = .{
 pub const default_solana_rpc_url = "https://api.mainnet-beta.solana.com";
 pub const default_solana_cli_config_path = ".config/solana/cli/config.yml";
 pub const default_solana_keypair_path = ".config/solana/id.json";
+const optional_flags_marker = "\nOptional flags:\n";
 
 pub const Commitment = enum {
     processed,
@@ -275,7 +328,11 @@ pub fn printUsage(out: *std.Io.Writer) !void {
     try out.writeAll("Quick usage:\n  solana_client_zig ");
     try clap.usage(out, clap.Help, &cli_params);
     try out.writeAll("\n\n");
-    try out.print("{s}", .{usage_text});
+
+    const marker_index = std.mem.indexOf(u8, usage_text, optional_flags_marker) orelse usage_text.len;
+    try out.writeAll(usage_text[0..marker_index]);
+    try out.writeAll(optional_flags_marker[1..]);
+    try clap.help(out, clap.Help, &cli_option_help_params, .{});
 }
 
 pub fn printUsageToFile(file: std.fs.File) !void {
@@ -1199,10 +1256,14 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "--max-retries <count>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--preflight-commitment") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--airdrop-recent-blockhash <blockhash>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "--rpc <url>             RPC endpoint to use (default: Solana CLI config json_rpc_url or mainnet-beta)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "--commitment <level>     processed|confirmed|finalized (default: Solana CLI config commitment when present)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-keypair <path> Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer secret key (base58)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--rpc <url>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "RPC endpoint to use (default: Solana CLI config json_rpc_url or mainnet-beta)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--commitment <level>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "processed|confirmed|finalized (default: Solana CLI config commitment when present)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-keypair <path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-secret-key <sender-secret-key>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "payer secret key (base58)") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--transfer-recent-blockhash <blockhash>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--epoch <epoch>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--encoding <mode>") != null);
@@ -1224,7 +1285,8 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "--program-data-slice-length <length>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--with-context") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--sort-results") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "--account-encoding <mode> base58|base64|jsonParsed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--account-encoding <mode>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "base58|base64|jsonParsed for account-info and multiple-accounts") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--account-data-slice-offset <offset>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--account-data-slice-length <length>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--mint <mint>") != null);
