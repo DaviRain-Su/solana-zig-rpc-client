@@ -3779,3 +3779,174 @@ pub fn sendAndConfirmVersionedTransactionWithLatestBlockhashAndSpinnerFromJson(
         options,
     );
 }
+
+test "anchor_idl_invoke.buildOwnedInstructionFromJson resolves flat dotted account binding values for typed account seeds" {
+    const allocator = std.testing.allocator;
+
+    const state = sdk.Pubkey.fromBytes(.{71} ** 32);
+    const state_base58 = try state.toBase58(allocator);
+    defer allocator.free(state_base58);
+    const program_id = sdk.Pubkey.fromBytes(.{72} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[1,1,1,1,1,1,1,1],"accounts":[{{"name":"state"}},{{"name":"vault","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[118,97,117,108,116]}},{{"kind":"account","path":"state.counter","type":"u64"}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const account_bindings_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"state\":\"{s}\",\"state.counter\":\"18446744073709551615\"}}",
+        .{state_base58},
+    );
+    defer allocator.free(account_bindings_json);
+
+    var owned_instruction = try buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "init",
+        .{ .account_bindings_json = account_bindings_json },
+    );
+    defer owned_instruction.deinit(allocator);
+
+    var counter_seed: [8]u8 = undefined;
+    std.mem.writeInt(u64, &counter_seed, std.math.maxInt(u64), .little);
+    const expected_pda = try findProgramAddress(allocator, &.{ "vault", &counter_seed }, program_id);
+
+    try std.testing.expectEqual(@as(usize, 2), owned_instruction.instruction.accounts.len);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].pubkey.eql(state));
+    try std.testing.expect(owned_instruction.instruction.accounts[1].pubkey.eql(expected_pda));
+    try std.testing.expect(owned_instruction.instruction.accounts[1].is_writable);
+}
+
+test "anchor_idl_invoke.buildOwnedInstructionFromJson infers tokenAccount alias seed types" {
+    const allocator = std.testing.allocator;
+
+    const token = sdk.Pubkey.fromBytes(.{73} ** 32);
+    const token_base58 = try token.toBase58(allocator);
+    defer allocator.free(token_base58);
+    const program_id = sdk.Pubkey.fromBytes(.{74} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[2,2,2,2,2,2,2,2],"accounts":[{{"name":"token"}},{{"name":"vault","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[118,97,117,108,116]}},{{"kind":"account","path":"token.amount","account":"tokenAccount"}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const account_bindings_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"token\":{{\"address\":\"{s}\",\"amount\":\"18446744073709551615\"}}}}",
+        .{token_base58},
+    );
+    defer allocator.free(account_bindings_json);
+
+    var owned_instruction = try buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "init",
+        .{ .account_bindings_json = account_bindings_json },
+    );
+    defer owned_instruction.deinit(allocator);
+
+    var amount_seed: [8]u8 = undefined;
+    std.mem.writeInt(u64, &amount_seed, std.math.maxInt(u64), .little);
+    const expected_pda = try findProgramAddress(allocator, &.{ "vault", &amount_seed }, program_id);
+
+    try std.testing.expectEqual(@as(usize, 2), owned_instruction.instruction.accounts.len);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].pubkey.eql(token));
+    try std.testing.expect(owned_instruction.instruction.accounts[1].pubkey.eql(expected_pda));
+}
+
+test "anchor_idl_invoke.buildOwnedInstructionFromJson infers mint alias seed types" {
+    const allocator = std.testing.allocator;
+
+    const mint = sdk.Pubkey.fromBytes(.{75} ** 32);
+    const mint_base58 = try mint.toBase58(allocator);
+    defer allocator.free(mint_base58);
+    const program_id = sdk.Pubkey.fromBytes(.{76} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[3,3,3,3,3,3,3,3],"accounts":[{{"name":"mint"}},{{"name":"vault","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[118,97,117,108,116]}},{{"kind":"account","path":"mint.is_initialized","account":"Mint"}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const account_bindings_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"mint\":{{\"address\":\"{s}\",\"is_initialized\":true}}}}",
+        .{mint_base58},
+    );
+    defer allocator.free(account_bindings_json);
+
+    var owned_instruction = try buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "init",
+        .{ .account_bindings_json = account_bindings_json },
+    );
+    defer owned_instruction.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(allocator, &.{ "vault", &.{1} }, program_id);
+
+    try std.testing.expectEqual(@as(usize, 2), owned_instruction.instruction.accounts.len);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].pubkey.eql(mint));
+    try std.testing.expect(owned_instruction.instruction.accounts[1].pubkey.eql(expected_pda));
+}
+
+test "anchor_idl_invoke.buildOwnedInstructionFromJson infers multisig alias seed types" {
+    const allocator = std.testing.allocator;
+
+    const multisig = sdk.Pubkey.fromBytes(.{77} ** 32);
+    const multisig_base58 = try multisig.toBase58(allocator);
+    defer allocator.free(multisig_base58);
+    const signer_one = sdk.Pubkey.fromBytes(.{78} ** 32);
+    const signer_one_base58 = try signer_one.toBase58(allocator);
+    defer allocator.free(signer_one_base58);
+    const signer_two = sdk.Pubkey.fromBytes(.{79} ** 32);
+    const signer_two_base58 = try signer_two.toBase58(allocator);
+    defer allocator.free(signer_two_base58);
+    const program_id = sdk.Pubkey.fromBytes(.{80} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[4,4,4,4,4,4,4,4],"accounts":[{{"name":"multisig"}},{{"name":"vault","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[118,97,117,108,116]}},{{"kind":"account","path":"multisig.signers.1","account":"Multisig"}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const account_bindings_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"multisig\":{{\"address\":\"{s}\",\"signers\":[\"{s}\",\"{s}\"]}}}}",
+        .{ multisig_base58, signer_one_base58, signer_two_base58 },
+    );
+    defer allocator.free(account_bindings_json);
+
+    var owned_instruction = try buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "init",
+        .{ .account_bindings_json = account_bindings_json },
+    );
+    defer owned_instruction.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(allocator, &.{ "vault", signer_two.bytes[0..] }, program_id);
+
+    try std.testing.expectEqual(@as(usize, 2), owned_instruction.instruction.accounts.len);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].pubkey.eql(multisig));
+    try std.testing.expect(owned_instruction.instruction.accounts[1].pubkey.eql(expected_pda));
+}
