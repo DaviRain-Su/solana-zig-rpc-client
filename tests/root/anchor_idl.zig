@@ -2522,3 +2522,126 @@ test "root.anchor_idl_invoke.buildVersionedMessageBytesWithBlockhashQueryFromJso
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"encoding\":\"jsonParsed\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"finalized\"") != null);
 }
+
+test "root.anchor_idl_invoke.getFeeForLegacyMessageWithBlockhashQueryFromJson resolves cluster blockhash and encodes message" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{71} ** 32);
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const target_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{72} ** 32);
+    const target = client.Pubkey.fromBytes(target_raw.public_key.toBytes());
+    const recent_blockhash = [_]u8{0x1D} ** 32;
+    const recent_blockhash_base58 = try client.encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockLatestBlockhashResponse(190, recent_blockhash_base58, 6789);
+    try rpc.pushMockResultJson("{\"context\":{\"slot\":191},\"value\":5000}");
+
+    var expected_message = try client.anchor_idl_invoke.buildOwnedLegacyMessageFromJson(
+        allocator,
+        rpc_test_idl_json,
+        "setValue",
+        .{
+            .payer = payer.public_key,
+            .recent_blockhash = client.Hash.fromBytes(recent_blockhash),
+            .instruction_options = .{
+                .args_json = "{\"value\":42}",
+                .account_bindings = &.{
+                    .{ .path = "authority", .pubkey = payer.public_key },
+                    .{ .path = "target", .pubkey = target },
+                },
+            },
+        },
+    );
+    defer expected_message.deinit(allocator);
+    const expected_base64 = try expected_message.toBase64(allocator);
+    defer allocator.free(expected_base64);
+
+    const fee = try client.anchor_idl_invoke.getFeeForLegacyMessageWithBlockhashQueryFromJson(
+        &rpc,
+        allocator,
+        rpc_test_idl_json,
+        "setValue",
+        .{
+            .payer = payer.public_key,
+            .instruction_options = .{
+                .args_json = "{\"value\":42}",
+                .account_bindings = &.{
+                    .{ .path = "authority", .pubkey = payer.public_key },
+                    .{ .path = "target", .pubkey = target },
+                },
+            },
+            .blockhash_query = .{ .cluster = .{ .commitment = .confirmed } },
+        },
+        .{ .commitment = .confirmed },
+    );
+
+    try std.testing.expectEqual(@as(?u64, 5000), fee.value);
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expectEqualStrings("getFeeForMessage", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].request_body, expected_base64) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"commitment\":\"confirmed\"") != null);
+}
+
+test "root.anchor_idl_invoke.getFeeForVersionedMessageWithBlockhashQueryFromJson supports fixed blockhashes" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{73} ** 32);
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const target_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{74} ** 32);
+    const target = client.Pubkey.fromBytes(target_raw.public_key.toBytes());
+    const recent_blockhash = [_]u8{0x1E} ** 32;
+    const recent_blockhash_base58 = try client.encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    var expected_message = try client.anchor_idl_invoke.buildOwnedVersionedMessageFromJson(
+        allocator,
+        rpc_test_idl_json,
+        "setValue",
+        .{
+            .payer = payer.public_key,
+            .recent_blockhash = client.Hash.fromBytes(recent_blockhash),
+            .instruction_options = .{
+                .args_json = "{\"value\":42}",
+                .account_bindings = &.{
+                    .{ .path = "authority", .pubkey = payer.public_key },
+                    .{ .path = "target", .pubkey = target },
+                },
+            },
+        },
+    );
+    defer expected_message.deinit(allocator);
+    const expected_base64 = try expected_message.toBase64(allocator);
+    defer allocator.free(expected_base64);
+
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockResultJson("{\"context\":{\"slot\":192},\"value\":6000}");
+
+    const fee = try client.anchor_idl_invoke.getFeeForVersionedMessageWithBlockhashQueryFromJson(
+        &rpc,
+        allocator,
+        rpc_test_idl_json,
+        "setValue",
+        .{
+            .payer = payer.public_key,
+            .instruction_options = .{
+                .args_json = "{\"value\":42}",
+                .account_bindings = &.{
+                    .{ .path = "authority", .pubkey = payer.public_key },
+                    .{ .path = "target", .pubkey = target },
+                },
+            },
+            .blockhash_query = .{ .fixed = recent_blockhash_base58 },
+        },
+        .{ .commitment = .processed },
+    );
+
+    try std.testing.expectEqual(@as(?u64, 6000), fee.value);
+    try std.testing.expectEqual(@as(usize, 1), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getFeeForMessage", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].request_body, expected_base64) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"processed\"") != null);
+}

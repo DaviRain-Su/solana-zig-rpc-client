@@ -1519,6 +1519,10 @@ pub const SendAndConfirmOptions = struct {
     poll_interval_ms: u64 = sdk.signature_poll_interval_ms,
 };
 
+pub const GetFeeOptions = struct {
+    commitment: ?rpc_types.Commitment = null,
+};
+
 pub fn buildOwnedLegacyMessage(
     allocator: Allocator,
     idl: *const idl_types.Idl,
@@ -1671,6 +1675,52 @@ pub fn buildLegacyMessageBase64WithBlockhashQueryFromJson(
         allocator,
         &parsed_idl.value,
         instruction_name,
+        options,
+    );
+}
+
+pub fn getFeeForLegacyMessageWithBlockhashQuery(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildLegacyMessageWithBlockhashQueryOptions,
+    options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    var owned_instruction = try buildOwnedInstruction(
+        allocator,
+        idl,
+        instruction_name,
+        build_options.instruction_options,
+    );
+    defer owned_instruction.deinit(allocator);
+
+    return try rpc.getFeeForLegacyInstructionsWithBlockhashQuery(
+        build_options.payer,
+        &.{owned_instruction.instruction},
+        build_options.blockhash_query,
+        build_options.nonce_authority,
+        options.commitment,
+    );
+}
+
+pub fn getFeeForLegacyMessageWithBlockhashQueryFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildLegacyMessageWithBlockhashQueryOptions,
+    options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try getFeeForLegacyMessageWithBlockhashQuery(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        build_options,
         options,
     );
 }
@@ -1887,6 +1937,53 @@ pub fn buildVersionedMessageBase64WithBlockhashQueryFromJson(
         allocator,
         &parsed_idl.value,
         instruction_name,
+        options,
+    );
+}
+
+pub fn getFeeForVersionedMessageWithBlockhashQuery(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildVersionedMessageWithBlockhashQueryOptions,
+    options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    var owned_instruction = try buildOwnedInstruction(
+        allocator,
+        idl,
+        instruction_name,
+        build_options.instruction_options,
+    );
+    defer owned_instruction.deinit(allocator);
+
+    return try rpc.getFeeForVersionedInstructionsWithBlockhashQuery(
+        build_options.payer,
+        &.{owned_instruction.instruction},
+        build_options.address_lookup_tables,
+        build_options.blockhash_query,
+        build_options.nonce_authority,
+        options.commitment,
+    );
+}
+
+pub fn getFeeForVersionedMessageWithBlockhashQueryFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildVersionedMessageWithBlockhashQueryOptions,
+    options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try getFeeForVersionedMessageWithBlockhashQuery(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        build_options,
         options,
     );
 }
