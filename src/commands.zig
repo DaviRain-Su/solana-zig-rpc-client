@@ -4855,16 +4855,19 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            const tx_signature = try rpc.sendLegacyInstructionsWithOptions(
-                loaded.payer,
-                loaded.owned_instructions.instructions,
-                loaded.signers,
+            const tx_signature = try client.instructions_invoke.sendLegacyTransaction(
+                rpc,
                 .{
-                    .recent_blockhash = build_context.recent_blockhash,
-                    .blockhash_commitment = build_context.blockhash_commitment,
-                    .blockhash_query = build_context.blockhash_query,
-                    .nonce_authority = build_context.nonce_authority,
-                    .send_transaction_options = send_transaction_options,
+                    .payer = loaded.payer,
+                    .instructions = loaded.owned_instructions.instructions,
+                    .signers = loaded.signers,
+                    .rpc = .{
+                        .recent_blockhash = build_context.recent_blockhash,
+                        .blockhash_commitment = build_context.blockhash_commitment,
+                        .blockhash_query = build_context.blockhash_query,
+                        .nonce_authority = build_context.nonce_authority,
+                        .send_transaction_options = send_transaction_options,
+                    },
                 },
             );
             defer allocator.free(tx_signature);
@@ -4913,20 +4916,23 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            const tx_signature = try rpc.sendAndConfirmLegacyInstructionsWithOptions(
-                loaded.payer,
-                loaded.owned_instructions.instructions,
-                loaded.signers,
+            const tx_signature = try client.instructions_invoke.sendAndConfirmLegacyTransaction(
+                rpc,
                 .{
-                    .recent_blockhash = build_context.recent_blockhash,
-                    .blockhash_commitment = build_context.blockhash_commitment,
-                    .blockhash_query = build_context.blockhash_query,
-                    .nonce_authority = build_context.nonce_authority,
-                    .send_transaction_options = send_transaction_options,
-                    .commitment = commitment,
-                    .search_transaction_history = search_transaction_history,
-                    .timeout_ms = status_timeout_ms,
-                    .poll_interval_ms = status_poll_ms,
+                    .payer = loaded.payer,
+                    .instructions = loaded.owned_instructions.instructions,
+                    .signers = loaded.signers,
+                    .rpc = .{
+                        .recent_blockhash = build_context.recent_blockhash,
+                        .blockhash_commitment = build_context.blockhash_commitment,
+                        .blockhash_query = build_context.blockhash_query,
+                        .nonce_authority = build_context.nonce_authority,
+                        .send_transaction_options = send_transaction_options,
+                        .commitment = commitment,
+                        .search_transaction_history = search_transaction_history,
+                        .timeout_ms = status_timeout_ms,
+                        .poll_interval_ms = status_poll_ms,
+                    },
                 },
             );
             defer allocator.free(tx_signature);
@@ -4975,17 +4981,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            const tx_signature = try rpc.sendVersionedInstructionsWithOptions(
-                loaded.payer,
-                loaded.owned_instructions.instructions,
-                loaded.address_lookup_tables,
-                loaded.signers,
+            const tx_signature = try client.instructions_invoke.sendVersionedTransaction(
+                rpc,
                 .{
-                    .recent_blockhash = build_context.recent_blockhash,
-                    .blockhash_commitment = build_context.blockhash_commitment,
-                    .blockhash_query = build_context.blockhash_query,
-                    .nonce_authority = build_context.nonce_authority,
-                    .send_transaction_options = send_transaction_options,
+                    .payer = loaded.payer,
+                    .instructions = loaded.owned_instructions.instructions,
+                    .address_lookup_tables = loaded.address_lookup_tables,
+                    .signers = loaded.signers,
+                    .rpc = .{
+                        .recent_blockhash = build_context.recent_blockhash,
+                        .blockhash_commitment = build_context.blockhash_commitment,
+                        .blockhash_query = build_context.blockhash_query,
+                        .nonce_authority = build_context.nonce_authority,
+                        .send_transaction_options = send_transaction_options,
+                    },
                 },
             );
             defer allocator.free(tx_signature);
@@ -5034,21 +5043,24 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            const tx_signature = try rpc.sendAndConfirmVersionedInstructionsWithOptions(
-                loaded.payer,
-                loaded.owned_instructions.instructions,
-                loaded.address_lookup_tables,
-                loaded.signers,
+            const tx_signature = try client.instructions_invoke.sendAndConfirmVersionedTransaction(
+                rpc,
                 .{
-                    .recent_blockhash = build_context.recent_blockhash,
-                    .blockhash_commitment = build_context.blockhash_commitment,
-                    .blockhash_query = build_context.blockhash_query,
-                    .nonce_authority = build_context.nonce_authority,
-                    .send_transaction_options = send_transaction_options,
-                    .commitment = commitment,
-                    .search_transaction_history = search_transaction_history,
-                    .timeout_ms = status_timeout_ms,
-                    .poll_interval_ms = status_poll_ms,
+                    .payer = loaded.payer,
+                    .instructions = loaded.owned_instructions.instructions,
+                    .address_lookup_tables = loaded.address_lookup_tables,
+                    .signers = loaded.signers,
+                    .rpc = .{
+                        .recent_blockhash = build_context.recent_blockhash,
+                        .blockhash_commitment = build_context.blockhash_commitment,
+                        .blockhash_query = build_context.blockhash_query,
+                        .nonce_authority = build_context.nonce_authority,
+                        .send_transaction_options = send_transaction_options,
+                        .commitment = commitment,
+                        .search_transaction_history = search_transaction_history,
+                        .timeout_ms = status_timeout_ms,
+                        .poll_interval_ms = status_poll_ms,
+                    },
                 },
             );
             defer allocator.free(tx_signature);
@@ -5707,12 +5719,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             else
                 null;
 
-            const simulation = try rpc.simulateLegacyInstructionsWithOptions(
-                loaded.payer,
-                loaded.owned_instructions.instructions,
-                loaded.signers,
-                build_options,
-                options,
+            const simulation = try client.instructions_invoke.simulateLegacyTransaction(
+                rpc,
+                .{
+                    .payer = loaded.payer,
+                    .instructions = loaded.owned_instructions.instructions,
+                    .signers = loaded.signers,
+                    .build = build_options,
+                    .rpc = options,
+                },
             );
             defer freeSimulatedTransaction(allocator, simulation);
 
@@ -5801,13 +5816,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             else
                 null;
 
-            const simulation = try rpc.simulateVersionedInstructionsWithOptions(
-                loaded.payer,
-                loaded.owned_instructions.instructions,
-                loaded.address_lookup_tables,
-                loaded.signers,
-                build_options,
-                options,
+            const simulation = try client.instructions_invoke.simulateVersionedTransaction(
+                rpc,
+                .{
+                    .payer = loaded.payer,
+                    .instructions = loaded.owned_instructions.instructions,
+                    .address_lookup_tables = loaded.address_lookup_tables,
+                    .signers = loaded.signers,
+                    .build = build_options,
+                    .rpc = options,
+                },
             );
             defer freeSimulatedTransaction(allocator, simulation);
 
