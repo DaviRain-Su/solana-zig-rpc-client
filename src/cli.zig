@@ -571,6 +571,17 @@ fn writeCommandName(out: *std.Io.Writer, command: Command) !void {
     }
 }
 
+fn commandNameEql(arg: []const u8, command: Command) bool {
+    const tag_name = @tagName(command);
+    if (arg.len != tag_name.len) return false;
+
+    for (tag_name, arg) |expected_char, actual_char| {
+        if ((if (expected_char == '_') '-' else expected_char) != actual_char) return false;
+    }
+
+    return true;
+}
+
 fn writeCommandUsageLine(out: *std.Io.Writer, command: Command, comptime params: []const clap.Param(clap.Help), suffix: ?[]const u8) !void {
     try out.writeAll(usage_command_line_prefix);
     try writeCommandName(out, command);
@@ -1053,14 +1064,11 @@ fn appendPositionals(
 }
 
 fn commandFromArg(arg: []const u8) ?Command {
-    var normalized: [128]u8 = undefined;
-    if (arg.len == 0 or arg.len > normalized.len) return null;
-
-    for (arg, 0..) |char, index| {
-        normalized[index] = if (char == '-') '_' else char;
+    inline for (command_usage_entries) |entry| {
+        if (commandNameEql(arg, entry.command)) return entry.command;
     }
 
-    return std.meta.stringToEnum(Command, normalized[0..arg.len]);
+    return null;
 }
 
 fn parseTopLevelCommand(arg: []const u8) !ParsedTopLevelCommand {
@@ -1900,6 +1908,31 @@ pub const Command = enum {
     highest_snapshot_slot,
     first_available_block,
 };
+
+comptime {
+    @setEvalBranchQuota(20_000);
+
+    if (command_usage_entries.len != std.meta.fields(Command).len) {
+        @compileError("command_usage_entries must contain exactly one entry for every Command");
+    }
+
+    for (std.meta.fields(Command)) |field| {
+        const command = @field(Command, field.name);
+        var found = false;
+
+        for (command_usage_entries) |entry| {
+            if (entry.command != command) continue;
+            if (found) {
+                @compileError("duplicate command_usage_entries entry for Command." ++ field.name);
+            }
+            found = true;
+        }
+
+        if (!found) {
+            @compileError("missing command_usage_entries entry for Command." ++ field.name);
+        }
+    }
+}
 
 test "cli.printUsage text compiles" {
     var out = std.io.Writer.Allocating.init(std.testing.allocator);
