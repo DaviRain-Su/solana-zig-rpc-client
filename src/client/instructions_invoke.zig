@@ -147,6 +147,190 @@ pub const SendAndConfirmVersionedTransactionFromJsonOptions = struct {
     rpc: ?rpc_types.VersionedInstructionsOptions = null,
 };
 
+pub const BuildLegacyMessageWithBlockhashQueryFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    blockhash_query: rpc_types.BlockhashQuery,
+    nonce_authority: ?sdk.Pubkey = null,
+};
+
+pub const BuildLegacyTransactionWithBlockhashQueryFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    signers: []const sdk.Keypair,
+    blockhash_query: rpc_types.BlockhashQuery,
+    nonce_authority: ?sdk.Pubkey = null,
+};
+
+pub const BuildVersionedMessageWithBlockhashQueryFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    blockhash_query: rpc_types.BlockhashQuery,
+    nonce_authority: ?sdk.Pubkey = null,
+};
+
+pub const BuildVersionedTransactionWithBlockhashQueryFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+    blockhash_query: rpc_types.BlockhashQuery,
+    nonce_authority: ?sdk.Pubkey = null,
+};
+
+pub const SendLegacyTransactionWithBlockhashQueryFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    signers: []const sdk.Keypair,
+    blockhash_query: rpc_types.BlockhashQuery,
+    nonce_authority: ?sdk.Pubkey = null,
+    send_transaction_options: ?rpc_types.SendTransactionOptions = null,
+};
+
+pub const SimulateLegacyTransactionWithBlockhashQueryFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    signers: []const sdk.Keypair,
+    blockhash_query: rpc_types.BlockhashQuery,
+    nonce_authority: ?sdk.Pubkey = null,
+    simulate_options: ?rpc_types.SimulateTransactionOptions = null,
+};
+
+pub const SendAndConfirmLegacyTransactionWithBlockhashQueryFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    signers: []const sdk.Keypair,
+    blockhash_query: rpc_types.BlockhashQuery,
+    nonce_authority: ?sdk.Pubkey = null,
+    send_transaction_options: ?rpc_types.SendTransactionOptions = null,
+    commitment: ?rpc_types.Commitment = null,
+    search_transaction_history: bool = false,
+    timeout_ms: u64 = sdk.poll_for_signature_confirmation_timeout_ms,
+    poll_interval_ms: u64 = sdk.signature_poll_interval_ms,
+};
+
+pub const SendVersionedTransactionWithBlockhashQueryFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+    blockhash_query: rpc_types.BlockhashQuery,
+    nonce_authority: ?sdk.Pubkey = null,
+    send_transaction_options: ?rpc_types.SendTransactionOptions = null,
+};
+
+pub const SimulateVersionedTransactionWithBlockhashQueryFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+    blockhash_query: rpc_types.BlockhashQuery,
+    nonce_authority: ?sdk.Pubkey = null,
+    simulate_options: ?rpc_types.SimulateTransactionOptions = null,
+};
+
+pub const SendAndConfirmVersionedTransactionWithBlockhashQueryFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+    blockhash_query: rpc_types.BlockhashQuery,
+    nonce_authority: ?sdk.Pubkey = null,
+    send_transaction_options: ?rpc_types.SendTransactionOptions = null,
+    commitment: ?rpc_types.Commitment = null,
+    search_transaction_history: bool = false,
+    timeout_ms: u64 = sdk.poll_for_signature_confirmation_timeout_ms,
+    poll_interval_ms: u64 = sdk.signature_poll_interval_ms,
+};
+
+pub const BuildLegacyMessageWithLatestBlockhashFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    blockhash_commitment: ?rpc_types.Commitment = null,
+};
+
+pub const BuildLegacyTransactionWithLatestBlockhashFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    signers: []const sdk.Keypair,
+    blockhash_commitment: ?rpc_types.Commitment = null,
+};
+
+pub const BuildVersionedMessageWithLatestBlockhashFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    blockhash_commitment: ?rpc_types.Commitment = null,
+};
+
+pub const BuildVersionedTransactionWithLatestBlockhashFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+    blockhash_commitment: ?rpc_types.Commitment = null,
+};
+
+pub const SendLegacyTransactionWithLatestBlockhashFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    signers: []const sdk.Keypair,
+    blockhash_commitment: ?rpc_types.Commitment = null,
+    send_transaction_options: ?rpc_types.SendTransactionOptions = null,
+};
+
+pub const SimulateLegacyTransactionWithLatestBlockhashFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    signers: []const sdk.Keypair,
+    blockhash_commitment: ?rpc_types.Commitment = null,
+    simulate_options: ?rpc_types.SimulateTransactionOptions = null,
+};
+
+pub const SendAndConfirmLegacyTransactionWithLatestBlockhashFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    signers: []const sdk.Keypair,
+    blockhash_commitment: ?rpc_types.Commitment = null,
+    send_transaction_options: ?rpc_types.SendTransactionOptions = null,
+    commitment: ?rpc_types.Commitment = null,
+    search_transaction_history: bool = false,
+    timeout_ms: u64 = sdk.poll_for_signature_confirmation_timeout_ms,
+    poll_interval_ms: u64 = sdk.signature_poll_interval_ms,
+};
+
+pub const SendVersionedTransactionWithLatestBlockhashFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+    blockhash_commitment: ?rpc_types.Commitment = null,
+    send_transaction_options: ?rpc_types.SendTransactionOptions = null,
+};
+
+pub const SimulateVersionedTransactionWithLatestBlockhashFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+    blockhash_commitment: ?rpc_types.Commitment = null,
+    simulate_options: ?rpc_types.SimulateTransactionOptions = null,
+};
+
+pub const SendAndConfirmVersionedTransactionWithLatestBlockhashFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+    blockhash_commitment: ?rpc_types.Commitment = null,
+    send_transaction_options: ?rpc_types.SendTransactionOptions = null,
+    commitment: ?rpc_types.Commitment = null,
+    search_transaction_history: bool = false,
+    timeout_ms: u64 = sdk.poll_for_signature_confirmation_timeout_ms,
+    poll_interval_ms: u64 = sdk.signature_poll_interval_ms,
+};
+
 pub const SendLegacyTransactionOptions = struct {
     payer: sdk.Pubkey,
     instructions: []const sdk.Instruction,
@@ -1218,6 +1402,646 @@ pub fn getFeeForVersionedMessageWithOptionsFromJson(
         .instructions = owned_instructions.instructions,
         .address_lookup_tables = message_options.address_lookup_tables,
         .build = message_options.build,
+    }, fee_options);
+}
+
+pub fn buildOwnedLegacyMessageWithBlockhashQueryFromJson(
+    self: anytype,
+    options: BuildLegacyMessageWithBlockhashQueryFromJsonOptions,
+) !sdk.OwnedLegacyMessage {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildOwnedLegacyMessageWithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+    });
+}
+
+pub fn buildLegacyMessageBytesWithBlockhashQueryFromJson(
+    self: anytype,
+    options: BuildLegacyMessageWithBlockhashQueryFromJsonOptions,
+) ![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildLegacyMessageBytesWithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+    });
+}
+
+pub fn buildLegacyMessageBase64WithBlockhashQueryFromJson(
+    self: anytype,
+    options: BuildLegacyMessageWithBlockhashQueryFromJsonOptions,
+) ![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildLegacyMessageBase64WithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+    });
+}
+
+pub fn buildSignedLegacyTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    options: BuildLegacyTransactionWithBlockhashQueryFromJsonOptions,
+) !sdk.SignedLegacyTransaction {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildSignedLegacyTransactionWithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+    });
+}
+
+pub fn buildLegacyTransactionBase64WithBlockhashQueryFromJson(
+    self: anytype,
+    options: BuildLegacyTransactionWithBlockhashQueryFromJsonOptions,
+) ![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildLegacyTransactionBase64WithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+    });
+}
+
+pub fn sendLegacyTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    options: SendLegacyTransactionWithBlockhashQueryFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendLegacyTransactionWithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+        .send_transaction_options = options.send_transaction_options,
+    });
+}
+
+pub fn simulateLegacyTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    options: SimulateLegacyTransactionWithBlockhashQueryFromJsonOptions,
+) !rpc_types.SimulatedTransaction {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try simulateLegacyTransactionWithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+        .simulate_options = options.simulate_options,
+    });
+}
+
+pub fn sendAndConfirmLegacyTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    options: SendAndConfirmLegacyTransactionWithBlockhashQueryFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendAndConfirmLegacyTransactionWithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+        .send_transaction_options = options.send_transaction_options,
+        .commitment = options.commitment,
+        .search_transaction_history = options.search_transaction_history,
+        .timeout_ms = options.timeout_ms,
+        .poll_interval_ms = options.poll_interval_ms,
+    });
+}
+
+pub fn sendAndConfirmLegacyTransactionWithBlockhashQueryAndSpinnerFromJson(
+    self: anytype,
+    options: SendAndConfirmLegacyTransactionWithBlockhashQueryFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendAndConfirmLegacyTransactionWithBlockhashQueryAndSpinner(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+        .send_transaction_options = options.send_transaction_options,
+        .commitment = options.commitment,
+        .search_transaction_history = options.search_transaction_history,
+        .timeout_ms = options.timeout_ms,
+        .poll_interval_ms = options.poll_interval_ms,
+    });
+}
+
+pub fn getFeeForLegacyMessageWithBlockhashQueryFromJson(
+    self: anytype,
+    message_options: BuildLegacyMessageWithBlockhashQueryFromJsonOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, message_options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try getFeeForLegacyMessageWithBlockhashQuery(self, .{
+        .payer = message_options.payer,
+        .instructions = owned_instructions.instructions,
+        .blockhash_query = message_options.blockhash_query,
+        .nonce_authority = message_options.nonce_authority,
+    }, fee_options);
+}
+
+pub fn buildOwnedVersionedMessageWithBlockhashQueryFromJson(
+    self: anytype,
+    options: BuildVersionedMessageWithBlockhashQueryFromJsonOptions,
+) !sdk.OwnedVersionedMessageV0 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildOwnedVersionedMessageWithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+    });
+}
+
+pub fn buildVersionedMessageBytesWithBlockhashQueryFromJson(
+    self: anytype,
+    options: BuildVersionedMessageWithBlockhashQueryFromJsonOptions,
+) ![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildVersionedMessageBytesWithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+    });
+}
+
+pub fn buildVersionedMessageBase64WithBlockhashQueryFromJson(
+    self: anytype,
+    options: BuildVersionedMessageWithBlockhashQueryFromJsonOptions,
+) ![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildVersionedMessageBase64WithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+    });
+}
+
+pub fn buildSignedVersionedTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    options: BuildVersionedTransactionWithBlockhashQueryFromJsonOptions,
+) !sdk.SignedVersionedTransaction {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildSignedVersionedTransactionWithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+    });
+}
+
+pub fn buildVersionedTransactionBase64WithBlockhashQueryFromJson(
+    self: anytype,
+    options: BuildVersionedTransactionWithBlockhashQueryFromJsonOptions,
+) ![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildVersionedTransactionBase64WithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+    });
+}
+
+pub fn sendVersionedTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    options: SendVersionedTransactionWithBlockhashQueryFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendVersionedTransactionWithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+        .send_transaction_options = options.send_transaction_options,
+    });
+}
+
+pub fn simulateVersionedTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    options: SimulateVersionedTransactionWithBlockhashQueryFromJsonOptions,
+) !rpc_types.SimulatedTransaction {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try simulateVersionedTransactionWithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+        .simulate_options = options.simulate_options,
+    });
+}
+
+pub fn sendAndConfirmVersionedTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    options: SendAndConfirmVersionedTransactionWithBlockhashQueryFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendAndConfirmVersionedTransactionWithBlockhashQuery(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+        .send_transaction_options = options.send_transaction_options,
+        .commitment = options.commitment,
+        .search_transaction_history = options.search_transaction_history,
+        .timeout_ms = options.timeout_ms,
+        .poll_interval_ms = options.poll_interval_ms,
+    });
+}
+
+pub fn sendAndConfirmVersionedTransactionWithBlockhashQueryAndSpinnerFromJson(
+    self: anytype,
+    options: SendAndConfirmVersionedTransactionWithBlockhashQueryFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendAndConfirmVersionedTransactionWithBlockhashQueryAndSpinner(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .blockhash_query = options.blockhash_query,
+        .nonce_authority = options.nonce_authority,
+        .send_transaction_options = options.send_transaction_options,
+        .commitment = options.commitment,
+        .search_transaction_history = options.search_transaction_history,
+        .timeout_ms = options.timeout_ms,
+        .poll_interval_ms = options.poll_interval_ms,
+    });
+}
+
+pub fn getFeeForVersionedMessageWithBlockhashQueryFromJson(
+    self: anytype,
+    message_options: BuildVersionedMessageWithBlockhashQueryFromJsonOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, message_options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try getFeeForVersionedMessageWithBlockhashQuery(self, .{
+        .payer = message_options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = message_options.address_lookup_tables,
+        .blockhash_query = message_options.blockhash_query,
+        .nonce_authority = message_options.nonce_authority,
+    }, fee_options);
+}
+
+pub fn buildOwnedLegacyMessageWithLatestBlockhashFromJson(
+    self: anytype,
+    options: BuildLegacyMessageWithLatestBlockhashFromJsonOptions,
+) !sdk.OwnedLegacyMessage {
+    return try buildOwnedLegacyMessageWithOptionsFromJson(self, .{
+        .payer = options.payer,
+        .instructions_json = options.instructions_json,
+        .build = .{ .blockhash_commitment = options.blockhash_commitment },
+    });
+}
+
+pub fn buildLegacyMessageBytesWithLatestBlockhashFromJson(
+    self: anytype,
+    options: BuildLegacyMessageWithLatestBlockhashFromJsonOptions,
+) ![]u8 {
+    return try buildLegacyMessageBytesWithOptionsFromJson(self, .{
+        .payer = options.payer,
+        .instructions_json = options.instructions_json,
+        .build = .{ .blockhash_commitment = options.blockhash_commitment },
+    });
+}
+
+pub fn buildLegacyMessageBase64WithLatestBlockhashFromJson(
+    self: anytype,
+    options: BuildLegacyMessageWithLatestBlockhashFromJsonOptions,
+) ![]u8 {
+    return try buildLegacyMessageBase64WithOptionsFromJson(self, .{
+        .payer = options.payer,
+        .instructions_json = options.instructions_json,
+        .build = .{ .blockhash_commitment = options.blockhash_commitment },
+    });
+}
+
+pub fn buildSignedLegacyTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    options: BuildLegacyTransactionWithLatestBlockhashFromJsonOptions,
+) !sdk.SignedLegacyTransaction {
+    return try buildSignedLegacyTransactionWithOptionsFromJson(self, .{
+        .payer = options.payer,
+        .instructions_json = options.instructions_json,
+        .signers = options.signers,
+        .build = .{ .blockhash_commitment = options.blockhash_commitment },
+    });
+}
+
+pub fn buildLegacyTransactionBase64WithLatestBlockhashFromJson(
+    self: anytype,
+    options: BuildLegacyTransactionWithLatestBlockhashFromJsonOptions,
+) ![]u8 {
+    return try buildLegacyTransactionBase64WithOptionsFromJson(self, .{
+        .payer = options.payer,
+        .instructions_json = options.instructions_json,
+        .signers = options.signers,
+        .build = .{ .blockhash_commitment = options.blockhash_commitment },
+    });
+}
+
+pub fn sendLegacyTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    options: SendLegacyTransactionWithLatestBlockhashFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendLegacyTransactionWithLatestBlockhash(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .blockhash_commitment = options.blockhash_commitment,
+        .send_transaction_options = options.send_transaction_options,
+    });
+}
+
+pub fn simulateLegacyTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    options: SimulateLegacyTransactionWithLatestBlockhashFromJsonOptions,
+) !rpc_types.SimulatedTransaction {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try simulateLegacyTransactionWithLatestBlockhash(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .blockhash_commitment = options.blockhash_commitment,
+        .simulate_options = options.simulate_options,
+    });
+}
+
+pub fn sendAndConfirmLegacyTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    options: SendAndConfirmLegacyTransactionWithLatestBlockhashFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendAndConfirmLegacyTransactionWithLatestBlockhash(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .blockhash_commitment = options.blockhash_commitment,
+        .send_transaction_options = options.send_transaction_options,
+        .commitment = options.commitment,
+        .search_transaction_history = options.search_transaction_history,
+        .timeout_ms = options.timeout_ms,
+        .poll_interval_ms = options.poll_interval_ms,
+    });
+}
+
+pub fn sendAndConfirmLegacyTransactionWithLatestBlockhashAndSpinnerFromJson(
+    self: anytype,
+    options: SendAndConfirmLegacyTransactionWithLatestBlockhashFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendAndConfirmLegacyTransactionWithLatestBlockhashAndSpinner(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .blockhash_commitment = options.blockhash_commitment,
+        .send_transaction_options = options.send_transaction_options,
+        .commitment = options.commitment,
+        .search_transaction_history = options.search_transaction_history,
+        .timeout_ms = options.timeout_ms,
+        .poll_interval_ms = options.poll_interval_ms,
+    });
+}
+
+pub fn getFeeForLegacyMessageWithLatestBlockhashFromJson(
+    self: anytype,
+    message_options: BuildLegacyMessageWithLatestBlockhashFromJsonOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    return try getFeeForLegacyMessageWithOptionsFromJson(self, .{
+        .payer = message_options.payer,
+        .instructions_json = message_options.instructions_json,
+        .build = .{ .blockhash_commitment = message_options.blockhash_commitment },
+    }, fee_options);
+}
+
+pub fn buildOwnedVersionedMessageWithLatestBlockhashFromJson(
+    self: anytype,
+    options: BuildVersionedMessageWithLatestBlockhashFromJsonOptions,
+) !sdk.OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedMessageWithOptionsFromJson(self, .{
+        .payer = options.payer,
+        .instructions_json = options.instructions_json,
+        .address_lookup_tables = options.address_lookup_tables,
+        .build = .{ .blockhash_commitment = options.blockhash_commitment },
+    });
+}
+
+pub fn buildVersionedMessageBytesWithLatestBlockhashFromJson(
+    self: anytype,
+    options: BuildVersionedMessageWithLatestBlockhashFromJsonOptions,
+) ![]u8 {
+    return try buildVersionedMessageBytesWithOptionsFromJson(self, .{
+        .payer = options.payer,
+        .instructions_json = options.instructions_json,
+        .address_lookup_tables = options.address_lookup_tables,
+        .build = .{ .blockhash_commitment = options.blockhash_commitment },
+    });
+}
+
+pub fn buildVersionedMessageBase64WithLatestBlockhashFromJson(
+    self: anytype,
+    options: BuildVersionedMessageWithLatestBlockhashFromJsonOptions,
+) ![]u8 {
+    return try buildVersionedMessageBase64WithOptionsFromJson(self, .{
+        .payer = options.payer,
+        .instructions_json = options.instructions_json,
+        .address_lookup_tables = options.address_lookup_tables,
+        .build = .{ .blockhash_commitment = options.blockhash_commitment },
+    });
+}
+
+pub fn buildSignedVersionedTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    options: BuildVersionedTransactionWithLatestBlockhashFromJsonOptions,
+) !sdk.SignedVersionedTransaction {
+    return try buildSignedVersionedTransactionWithOptionsFromJson(self, .{
+        .payer = options.payer,
+        .instructions_json = options.instructions_json,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .build = .{ .blockhash_commitment = options.blockhash_commitment },
+    });
+}
+
+pub fn buildVersionedTransactionBase64WithLatestBlockhashFromJson(
+    self: anytype,
+    options: BuildVersionedTransactionWithLatestBlockhashFromJsonOptions,
+) ![]u8 {
+    return try buildVersionedTransactionBase64WithOptionsFromJson(self, .{
+        .payer = options.payer,
+        .instructions_json = options.instructions_json,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .build = .{ .blockhash_commitment = options.blockhash_commitment },
+    });
+}
+
+pub fn sendVersionedTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    options: SendVersionedTransactionWithLatestBlockhashFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendVersionedTransactionWithLatestBlockhash(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .blockhash_commitment = options.blockhash_commitment,
+        .send_transaction_options = options.send_transaction_options,
+    });
+}
+
+pub fn simulateVersionedTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    options: SimulateVersionedTransactionWithLatestBlockhashFromJsonOptions,
+) !rpc_types.SimulatedTransaction {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try simulateVersionedTransactionWithLatestBlockhash(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .blockhash_commitment = options.blockhash_commitment,
+        .simulate_options = options.simulate_options,
+    });
+}
+
+pub fn sendAndConfirmVersionedTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    options: SendAndConfirmVersionedTransactionWithLatestBlockhashFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendAndConfirmVersionedTransactionWithLatestBlockhash(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .blockhash_commitment = options.blockhash_commitment,
+        .send_transaction_options = options.send_transaction_options,
+        .commitment = options.commitment,
+        .search_transaction_history = options.search_transaction_history,
+        .timeout_ms = options.timeout_ms,
+        .poll_interval_ms = options.poll_interval_ms,
+    });
+}
+
+pub fn sendAndConfirmVersionedTransactionWithLatestBlockhashAndSpinnerFromJson(
+    self: anytype,
+    options: SendAndConfirmVersionedTransactionWithLatestBlockhashFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendAndConfirmVersionedTransactionWithLatestBlockhashAndSpinner(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .blockhash_commitment = options.blockhash_commitment,
+        .send_transaction_options = options.send_transaction_options,
+        .commitment = options.commitment,
+        .search_transaction_history = options.search_transaction_history,
+        .timeout_ms = options.timeout_ms,
+        .poll_interval_ms = options.poll_interval_ms,
+    });
+}
+
+pub fn getFeeForVersionedMessageWithLatestBlockhashFromJson(
+    self: anytype,
+    message_options: BuildVersionedMessageWithLatestBlockhashFromJsonOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    return try getFeeForVersionedMessageWithOptionsFromJson(self, .{
+        .payer = message_options.payer,
+        .instructions_json = message_options.instructions_json,
+        .address_lookup_tables = message_options.address_lookup_tables,
+        .build = .{ .blockhash_commitment = message_options.blockhash_commitment },
     }, fee_options);
 }
 
@@ -2494,6 +3318,228 @@ test "instructions_invoke.getFeeForVersionedMessageWithOptionsFromJson forwards 
     try std.testing.expectEqual(program_id, rpc.captured_program_id.?);
     try std.testing.expectEqual(.confirmed, rpc.captured_build_options.?.blockhash_commitment.?);
     try std.testing.expectEqual(.finalized, rpc.captured_commitment.?);
+}
+
+test "instructions_invoke.buildLegacyMessageBytesWithBlockhashQueryFromJson forwards parsed instructions and query" {
+    const allocator = std.testing.allocator;
+    const payer = sdk.Pubkey.fromBytes([_]u8{44} ** 32);
+    const authority = sdk.Pubkey.fromBytes([_]u8{45} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{46} ** 32);
+    const blockhash_query = rpc_types.BlockhashQuery{
+        .fixed = .{ .blockhash = "FixedBlockhash2222222222222222222222222222222222222" },
+    };
+
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"programId":"{s}","data":"AQI=","dataEncoding":"base64"}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(instructions_json);
+
+    const MockRpc = struct {
+        allocator: Allocator,
+        captured_instruction_count: usize = 0,
+        captured_build_options: ?rpc_types.LegacyInstructionsBuildOptions = null,
+
+        fn buildLegacyMessageBytesWithOptions(
+            self: *@This(),
+            payer_arg: sdk.Pubkey,
+            instructions_arg: []const sdk.Instruction,
+            options_arg: ?rpc_types.LegacyInstructionsBuildOptions,
+        ) ![]u8 {
+            _ = payer_arg;
+            self.captured_instruction_count = instructions_arg.len;
+            self.captured_build_options = options_arg;
+            return try self.allocator.dupe(u8, "legacy-query-bytes");
+        }
+    };
+
+    var rpc = MockRpc{ .allocator = allocator };
+    const encoded = try buildLegacyMessageBytesWithBlockhashQueryFromJson(&rpc, .{
+        .payer = payer,
+        .instructions_json = instructions_json,
+        .blockhash_query = blockhash_query,
+        .nonce_authority = authority,
+    });
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualStrings("legacy-query-bytes", encoded);
+    try std.testing.expectEqual(@as(usize, 1), rpc.captured_instruction_count);
+    try std.testing.expectEqualDeep(blockhash_query, rpc.captured_build_options.?.blockhash_query.?);
+    try std.testing.expectEqual(authority, rpc.captured_build_options.?.nonce_authority.?);
+}
+
+test "instructions_invoke.sendAndConfirmVersionedTransactionWithBlockhashQueryAndSpinnerFromJson forwards parsed instructions and query options" {
+    const allocator = std.testing.allocator;
+    const payer = sdk.Pubkey.fromBytes([_]u8{47} ** 32);
+    const authority = sdk.Pubkey.fromBytes([_]u8{48} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{49} ** 32);
+    const signer_secret_key = [_]u8{50} ** 32;
+    const signer = try sdk.Keypair.fromSecretKeySlice(signer_secret_key[0..]);
+    const blockhash_query = rpc_types.BlockhashQuery{
+        .fixed = .{ .blockhash = "FixedBlockhash3333333333333333333333333333333333333" },
+    };
+
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"programId":"{s}","dataBytes":[7,6,5]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(instructions_json);
+
+    const MockRpc = struct {
+        allocator: Allocator,
+        captured_instruction_count: usize = 0,
+        captured_lookup_count: usize = 0,
+        captured_options: ?rpc_types.VersionedInstructionsOptions = null,
+
+        fn sendAndConfirmVersionedInstructionsWithSpinnerAndOptions(
+            self: *@This(),
+            payer_arg: sdk.Pubkey,
+            instructions_arg: []const sdk.Instruction,
+            address_lookup_tables_arg: []const sdk.AddressLookupTableAccount,
+            signers_arg: []const sdk.Keypair,
+            options_arg: ?rpc_types.VersionedInstructionsOptions,
+        ) ![]const u8 {
+            _ = payer_arg;
+            _ = signers_arg;
+            self.captured_instruction_count = instructions_arg.len;
+            self.captured_lookup_count = address_lookup_tables_arg.len;
+            self.captured_options = options_arg;
+            return try self.allocator.dupe(u8, "sig-query-spinner");
+        }
+    };
+
+    var rpc = MockRpc{ .allocator = allocator };
+    const signature = try sendAndConfirmVersionedTransactionWithBlockhashQueryAndSpinnerFromJson(&rpc, .{
+        .payer = payer,
+        .instructions_json = instructions_json,
+        .signers = &.{signer},
+        .blockhash_query = blockhash_query,
+        .nonce_authority = authority,
+        .commitment = .confirmed,
+        .timeout_ms = 321,
+    });
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings("sig-query-spinner", signature);
+    try std.testing.expectEqual(@as(usize, 1), rpc.captured_instruction_count);
+    try std.testing.expectEqual(@as(usize, 0), rpc.captured_lookup_count);
+    try std.testing.expectEqualDeep(blockhash_query, rpc.captured_options.?.blockhash_query.?);
+    try std.testing.expectEqual(authority, rpc.captured_options.?.nonce_authority.?);
+    try std.testing.expectEqual(.confirmed, rpc.captured_options.?.commitment.?);
+    try std.testing.expectEqual(@as(u64, 321), rpc.captured_options.?.timeout_ms);
+}
+
+test "instructions_invoke.sendLegacyTransactionWithLatestBlockhashFromJson forwards parsed instructions and latest blockhash options" {
+    const allocator = std.testing.allocator;
+    const payer = sdk.Pubkey.fromBytes([_]u8{51} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{52} ** 32);
+    const signer_secret_key = [_]u8{53} ** 32;
+    const signer = try sdk.Keypair.fromSecretKeySlice(signer_secret_key[0..]);
+
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"programId":"{s}","data":"hello","dataEncoding":"utf8"}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(instructions_json);
+
+    const MockRpc = struct {
+        allocator: Allocator,
+        captured_instruction_count: usize = 0,
+        captured_options: ?rpc_types.SendLegacyInstructionsOptions = null,
+
+        fn sendLegacyInstructionsWithOptions(
+            self: *@This(),
+            payer_arg: sdk.Pubkey,
+            instructions_arg: []const sdk.Instruction,
+            signers_arg: []const sdk.Keypair,
+            options_arg: ?rpc_types.SendLegacyInstructionsOptions,
+        ) ![]const u8 {
+            _ = payer_arg;
+            _ = signers_arg;
+            self.captured_instruction_count = instructions_arg.len;
+            self.captured_options = options_arg;
+            return try self.allocator.dupe(u8, "sig-latest-legacy");
+        }
+    };
+
+    var rpc = MockRpc{ .allocator = allocator };
+    const signature = try sendLegacyTransactionWithLatestBlockhashFromJson(&rpc, .{
+        .payer = payer,
+        .instructions_json = instructions_json,
+        .signers = &.{signer},
+        .blockhash_commitment = .processed,
+        .send_transaction_options = .{ .skip_preflight = true },
+    });
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings("sig-latest-legacy", signature);
+    try std.testing.expectEqual(@as(usize, 1), rpc.captured_instruction_count);
+    try std.testing.expectEqual(.processed, rpc.captured_options.?.blockhash_commitment.?);
+    try std.testing.expect(rpc.captured_options.?.send_transaction_options.?.skip_preflight);
+}
+
+test "instructions_invoke.getFeeForVersionedMessageWithLatestBlockhashFromJson forwards parsed instructions and fee options" {
+    const allocator = std.testing.allocator;
+    const payer = sdk.Pubkey.fromBytes([_]u8{54} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{55} ** 32);
+
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"programId":"{s}","dataBytes":[1,4,9]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(instructions_json);
+
+    const MockRpc = struct {
+        captured_instruction_count: usize = 0,
+        captured_build_options: ?rpc_types.VersionedInstructionsBuildOptions = null,
+        captured_commitment: ?rpc_types.Commitment = null,
+
+        fn getFeeForVersionedInstructionsWithOptions(
+            self: *@This(),
+            payer_arg: sdk.Pubkey,
+            instructions_arg: []const sdk.Instruction,
+            address_lookup_tables_arg: []const sdk.AddressLookupTableAccount,
+            options_arg: ?rpc_types.VersionedInstructionsBuildOptions,
+            commitment_arg: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = payer_arg;
+            _ = address_lookup_tables_arg;
+            self.captured_instruction_count = instructions_arg.len;
+            self.captured_build_options = options_arg;
+            self.captured_commitment = commitment_arg;
+            return .{ .value = 4242 };
+        }
+    };
+
+    var rpc = MockRpc{};
+    const fee = try getFeeForVersionedMessageWithLatestBlockhashFromJson(&rpc, .{
+        .payer = payer,
+        .instructions_json = instructions_json,
+        .blockhash_commitment = .finalized,
+    }, .{
+        .commitment = .confirmed,
+    });
+
+    try std.testing.expectEqual(@as(u64, 4242), fee.value.?);
+    try std.testing.expectEqual(@as(usize, 1), rpc.captured_instruction_count);
+    try std.testing.expectEqual(.finalized, rpc.captured_build_options.?.blockhash_commitment.?);
+    try std.testing.expectEqual(.confirmed, rpc.captured_commitment.?);
 }
 
 test "instructions_invoke.buildVersionedTransactionBase64 matches sdk helper" {
