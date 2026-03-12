@@ -2610,15 +2610,7 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
         if (accounts_json_arg != null or account_bindings.len != 0 or remaining_accounts.len != 0 or remaining_accounts_json_arg != null) {
             break :blk false;
         }
-
-        const idl_source = loadInstructionSpecSource(allocator, idl_arg) catch return error.InvalidCli;
-        defer allocator.free(idl_source);
-
-        const parsed_idl = anchor_idl.parseJson(allocator, idl_source) catch return error.InvalidCli;
-        defer parsed_idl.deinit();
-
-        const instruction = anchor_idl.findInstruction(&parsed_idl.value, instruction_name) orelse return error.InvalidCli;
-        break :blk (countAnchorIdlLeafAccounts(instruction.accounts) catch return error.InvalidCli) == 0;
+        break :blk true;
     };
 
     if (can_use_reusable_builder) {

@@ -194,6 +194,78 @@ test "root.anchor_idl_invoke.buildOwnedInstruction resolves bindings default sig
     try std.testing.expectEqualSlices(u8, &expected, owned.instruction.data);
 }
 
+test "root.anchor_idl_invoke.buildOwnedInstruction resolves extended sysvar aliases" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{62} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[16,16,16,16,16,16,16,16],"accounts":[{{"name":"recentBlockhashes"}},{{"name":"slot_hashes"}},{{"name":"epochScheduleSysvar"}},{{"name":"epoch_rewards"}},{{"name":"stakeHistory"}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "initialize",
+        .{},
+    );
+    defer owned.deinit(allocator);
+
+    const expected_recent_blockhashes = try client.Sysvar.recentBlockhashes(allocator);
+    const expected_slot_hashes = try client.Pubkey.fromBase58(allocator, "SysvarS1otHashes111111111111111111111111111");
+    const expected_epoch_schedule = try client.Pubkey.fromBase58(allocator, "SysvarEpochSchedu1e111111111111111111111111");
+    const expected_epoch_rewards = try client.Pubkey.fromBase58(allocator, "SysvarEpochRewards1111111111111111111111111");
+    const expected_stake_history = try client.Pubkey.fromBase58(allocator, "SysvarStakeHistory1111111111111111111111111");
+
+    try std.testing.expectEqual(@as(usize, 5), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(expected_recent_blockhashes));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(expected_slot_hashes));
+    try std.testing.expect(owned.instruction.accounts[2].pubkey.eql(expected_epoch_schedule));
+    try std.testing.expect(owned.instruction.accounts[3].pubkey.eql(expected_epoch_rewards));
+    try std.testing.expect(owned.instruction.accounts[4].pubkey.eql(expected_stake_history));
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction resolves sysvar prefix and builtin id suffix aliases" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{63} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[17,17,17,17,17,17,17,17],"accounts":[{{"name":"sysvar_recent_blockhashes"}},{{"name":"sysvar_slot_hashes"}},{{"name":"sysvar_epoch_schedule_id"}},{{"name":"epochRewardsSysvarId"}},{{"name":"sysvar_stake_history_id"}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "initialize",
+        .{},
+    );
+    defer owned.deinit(allocator);
+
+    const expected_recent_blockhashes = try client.Sysvar.recentBlockhashes(allocator);
+    const expected_slot_hashes = try client.Pubkey.fromBase58(allocator, "SysvarS1otHashes111111111111111111111111111");
+    const expected_epoch_schedule = try client.Pubkey.fromBase58(allocator, "SysvarEpochSchedu1e111111111111111111111111");
+    const expected_epoch_rewards = try client.Pubkey.fromBase58(allocator, "SysvarEpochRewards1111111111111111111111111");
+    const expected_stake_history = try client.Pubkey.fromBase58(allocator, "SysvarStakeHistory1111111111111111111111111");
+
+    try std.testing.expectEqual(@as(usize, 5), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(expected_recent_blockhashes));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(expected_slot_hashes));
+    try std.testing.expect(owned.instruction.accounts[2].pubkey.eql(expected_epoch_schedule));
+    try std.testing.expect(owned.instruction.accounts[3].pubkey.eql(expected_epoch_rewards));
+    try std.testing.expect(owned.instruction.accounts[4].pubkey.eql(expected_stake_history));
+}
+
 test "root.anchor_idl_invoke.buildOwnedInstruction fills missing optional accounts with program id" {
     const allocator = std.testing.allocator;
     const program_id = client.Pubkey.fromBytes(.{44} ** 32);
@@ -286,6 +358,35 @@ test "root.anchor_idl_invoke.buildOwnedInstruction derives arg seed pda" {
     defer owned.deinit(allocator);
 
     const expected_vault = try findProgramAddress(allocator, &.{ "vault", "main" }, program_id);
+    try std.testing.expectEqual(@as(usize, 1), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(expected_vault));
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction derives bytes arg seed pda from base64 string" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{64} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[18,18,18,18,18,18,18,18],"accounts":[{{"name":"vault","pda":{{"seeds":[{{"kind":"const","value":"vault"}},{{"kind":"arg","path":"digest"}}]}}}}],"args":[{{"name":"digest","type":"bytes"}}]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "initialize",
+        .{
+            .args_json = "{\"digest\":\"base64:AQID\"}",
+        },
+    );
+    defer owned.deinit(allocator);
+
+    const expected_vault = try findProgramAddress(allocator, &.{ "vault", &.{ 1, 2, 3 } }, program_id);
     try std.testing.expectEqual(@as(usize, 1), owned.instruction.accounts.len);
     try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(expected_vault));
 }

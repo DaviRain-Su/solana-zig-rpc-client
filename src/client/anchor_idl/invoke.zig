@@ -786,6 +786,11 @@ fn appendPdaScalarSeed(
         return;
     }
     if (std.mem.eql(u8, concrete_type.string, "bytes")) {
+        if (try decodePdaBytesValue(allocator, value)) |decoded| {
+            defer allocator.free(decoded);
+            try bytes.appendSlice(allocator, decoded);
+            return;
+        }
         switch (value) {
             .string => try bytes.appendSlice(allocator, value.string),
             .array => for (value.array.items) |byte_value| {
@@ -819,6 +824,60 @@ fn appendPdaScalarSeed(
     }
 
     return error.InvalidAnchorIdlAccountSpec;
+}
+
+fn decodePdaBytesString(allocator: Allocator, value: []const u8) BuildError!?[]u8 {
+    if (std.mem.startsWith(u8, value, "hex:")) {
+        const hex_value = value[4..];
+        if (hex_value.len % 2 != 0) return error.InvalidAnchorIdlAccountSpec;
+        const decoded = try allocator.alloc(u8, hex_value.len / 2);
+        errdefer allocator.free(decoded);
+        _ = std.fmt.hexToBytes(decoded, hex_value) catch return error.InvalidAnchorIdlAccountSpec;
+        return decoded;
+    }
+    if (std.mem.startsWith(u8, value, "0x")) {
+        const hex_value = value[2..];
+        if (hex_value.len % 2 != 0) return error.InvalidAnchorIdlAccountSpec;
+        const decoded = try allocator.alloc(u8, hex_value.len / 2);
+        errdefer allocator.free(decoded);
+        _ = std.fmt.hexToBytes(decoded, hex_value) catch return error.InvalidAnchorIdlAccountSpec;
+        return decoded;
+    }
+    if (std.mem.startsWith(u8, value, "base64:")) {
+        const base64_value = value[7..];
+        const decoded_len = std.base64.standard.Decoder.calcSizeForSlice(base64_value) catch return error.InvalidAnchorIdlAccountSpec;
+        const decoded = try allocator.alloc(u8, decoded_len);
+        errdefer allocator.free(decoded);
+        std.base64.standard.Decoder.decode(decoded, base64_value) catch return error.InvalidAnchorIdlAccountSpec;
+        return decoded;
+    }
+    return null;
+}
+
+fn decodePdaBytesValue(allocator: Allocator, value: std.json.Value) BuildError!?[]u8 {
+    switch (value) {
+        .string => return try decodePdaBytesString(allocator, value.string),
+        .object => {
+            if (findJsonObjectField(value.object, "hex")) |field_value| {
+                if (field_value != .string) return error.InvalidAnchorIdlAccountSpec;
+                const wrapped = try std.mem.concat(allocator, u8, &.{ "hex:", field_value.string });
+                defer allocator.free(wrapped);
+                return try decodePdaBytesString(allocator, wrapped);
+            }
+            if (findJsonObjectField(value.object, "base64")) |field_value| {
+                if (field_value != .string) return error.InvalidAnchorIdlAccountSpec;
+                const wrapped = try std.mem.concat(allocator, u8, &.{ "base64:", field_value.string });
+                defer allocator.free(wrapped);
+                return try decodePdaBytesString(allocator, wrapped);
+            }
+            if (findJsonObjectField(value.object, "utf8")) |field_value| {
+                if (field_value != .string) return error.InvalidAnchorIdlAccountSpec;
+                return try allocator.dupe(u8, field_value.string);
+            }
+            return null;
+        },
+        else => return null,
+    }
 }
 
 fn encodePdaArgSeed(
@@ -1493,6 +1552,51 @@ fn resolveBuiltinAccountPubkey(allocator: Allocator, account_name: []const u8) B
         std.mem.eql(u8, account_name, "clock_sysvar_id") or
         std.mem.eql(u8, account_name, "sysvar_clock_id"))
         "SysvarC1ock11111111111111111111111111111111"
+    else if (std.mem.eql(u8, account_name, "recentBlockhashes") or
+        std.mem.eql(u8, account_name, "recent_blockhashes") or
+        std.mem.eql(u8, account_name, "recentBlockhashesSysvar") or
+        std.mem.eql(u8, account_name, "recent_blockhashes_sysvar") or
+        std.mem.eql(u8, account_name, "sysvar_recent_blockhashes") or
+        std.mem.eql(u8, account_name, "recentBlockhashesSysvarId") or
+        std.mem.eql(u8, account_name, "recent_blockhashes_sysvar_id") or
+        std.mem.eql(u8, account_name, "sysvar_recent_blockhashes_id"))
+        "SysvarRecentB1ockHashes11111111111111111111"
+    else if (std.mem.eql(u8, account_name, "slotHashes") or
+        std.mem.eql(u8, account_name, "slot_hashes") or
+        std.mem.eql(u8, account_name, "slotHashesSysvar") or
+        std.mem.eql(u8, account_name, "slot_hashes_sysvar") or
+        std.mem.eql(u8, account_name, "sysvar_slot_hashes") or
+        std.mem.eql(u8, account_name, "slotHashesSysvarId") or
+        std.mem.eql(u8, account_name, "slot_hashes_sysvar_id") or
+        std.mem.eql(u8, account_name, "sysvar_slot_hashes_id"))
+        "SysvarS1otHashes111111111111111111111111111"
+    else if (std.mem.eql(u8, account_name, "epochSchedule") or
+        std.mem.eql(u8, account_name, "epoch_schedule") or
+        std.mem.eql(u8, account_name, "epochScheduleSysvar") or
+        std.mem.eql(u8, account_name, "epoch_schedule_sysvar") or
+        std.mem.eql(u8, account_name, "sysvar_epoch_schedule") or
+        std.mem.eql(u8, account_name, "epochScheduleSysvarId") or
+        std.mem.eql(u8, account_name, "epoch_schedule_sysvar_id") or
+        std.mem.eql(u8, account_name, "sysvar_epoch_schedule_id"))
+        "SysvarEpochSchedu1e111111111111111111111111"
+    else if (std.mem.eql(u8, account_name, "epochRewards") or
+        std.mem.eql(u8, account_name, "epoch_rewards") or
+        std.mem.eql(u8, account_name, "epochRewardsSysvar") or
+        std.mem.eql(u8, account_name, "epoch_rewards_sysvar") or
+        std.mem.eql(u8, account_name, "sysvar_epoch_rewards") or
+        std.mem.eql(u8, account_name, "epochRewardsSysvarId") or
+        std.mem.eql(u8, account_name, "epoch_rewards_sysvar_id") or
+        std.mem.eql(u8, account_name, "sysvar_epoch_rewards_id"))
+        "SysvarEpochRewards1111111111111111111111111"
+    else if (std.mem.eql(u8, account_name, "stakeHistory") or
+        std.mem.eql(u8, account_name, "stake_history") or
+        std.mem.eql(u8, account_name, "stakeHistorySysvar") or
+        std.mem.eql(u8, account_name, "stake_history_sysvar") or
+        std.mem.eql(u8, account_name, "sysvar_stake_history") or
+        std.mem.eql(u8, account_name, "stakeHistorySysvarId") or
+        std.mem.eql(u8, account_name, "stake_history_sysvar_id") or
+        std.mem.eql(u8, account_name, "sysvar_stake_history_id"))
+        "SysvarStakeHistory1111111111111111111111111"
     else if (std.mem.eql(u8, account_name, "instructions") or
         std.mem.eql(u8, account_name, "instructionsSysvar") or
         std.mem.eql(u8, account_name, "instructions_sysvar") or
