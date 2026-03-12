@@ -561,8 +561,62 @@ const signature_statuses_command_usage_params = clap.parseParamsComptime(
     \\
 );
 
+const account_command_usage_params = clap.parseParamsComptime(
+    \\<account>
+    \\
+);
+
+const account_lamports_command_usage_params = clap.parseParamsComptime(
+    \\<account>
+    \\<lamports>
+    \\
+);
+
+const account_expected_balance_command_usage_params = clap.parseParamsComptime(
+    \\<account>
+    \\<expected-lamports>
+    \\
+);
+
 const signed_transaction_command_usage_params = clap.parseParamsComptime(
     \\<signed-tx-base64>
+    \\
+);
+
+const blockhash_command_usage_params = clap.parseParamsComptime(
+    \\<blockhash>
+    \\
+);
+
+const feature_pubkey_command_usage_params = clap.parseParamsComptime(
+    \\<feature-pubkey>
+    \\
+);
+
+const slot_command_usage_params = clap.parseParamsComptime(
+    \\<slot>
+    \\
+);
+
+const start_slot_limit_command_usage_params = clap.parseParamsComptime(
+    \\<start-slot>
+    \\<limit>
+    \\
+);
+
+const poll_for_signature_confirmation_command_usage_params = clap.parseParamsComptime(
+    \\<signature>
+    \\<min-confirmed-blocks>
+    \\
+);
+
+const message_command_usage_params = clap.parseParamsComptime(
+    \\<base64-message>
+    \\
+);
+
+const bytes_command_usage_params = clap.parseParamsComptime(
+    \\<bytes>
     \\
 );
 
@@ -576,8 +630,33 @@ const account_list_command_usage_params = clap.parseParamsComptime(
     \\
 );
 
+const program_id_command_usage_params = clap.parseParamsComptime(
+    \\<program-id>
+    \\
+);
+
 const address_command_usage_params = clap.parseParamsComptime(
     \\<address>
+    \\
+);
+
+const token_account_command_usage_params = clap.parseParamsComptime(
+    \\<token-account>
+    \\
+);
+
+const mint_command_usage_params = clap.parseParamsComptime(
+    \\<mint>
+    \\
+);
+
+const owner_command_usage_params = clap.parseParamsComptime(
+    \\<owner>
+    \\
+);
+
+const delegate_command_usage_params = clap.parseParamsComptime(
+    \\<delegate>
     \\
 );
 
@@ -797,6 +876,115 @@ fn maybeWriteGeneratedCommandUsageLine(out: *std.Io.Writer, line: []const u8) !b
             " [address-2 ...]",
             &inflation_reward_usage_option_params,
         );
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "account-info ")) {
+        try writeCommandUsageLine(out, "account-info", &account_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "account-data ")) {
+        try writeCommandUsageLine(out, "account-data", &account_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "ui-account ")) {
+        try writeCommandUsageLine(out, "ui-account", &account_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "balance ")) {
+        try writeCommandUsageLine(out, "balance", &account_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "poll-balance ")) {
+        try writeCommandUsageLine(out, "poll-balance", &account_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "wait-for-balance ")) {
+        try writeCommandUsageLine(out, "wait-for-balance", &account_expected_balance_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "request-airdrop ")) {
+        try writeCommandUsageLine(out, "request-airdrop", &account_lamports_command_usage_params, null);
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "program-accounts ")) {
+        try writeCommandUsageLine(out, "program-accounts", &program_id_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "program-ui-accounts ")) {
+        try writeCommandUsageLine(out, "program-ui-accounts", &program_id_command_usage_params, null);
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "token-account-balance ")) {
+        try writeCommandUsageLine(out, "token-account-balance", &token_account_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "token-account ")) {
+        try writeCommandUsageLine(out, "token-account", &token_account_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "token-supply ")) {
+        try writeCommandUsageLine(out, "token-supply", &mint_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "token-largest-accounts ")) {
+        try writeCommandUsageLine(out, "token-largest-accounts", &mint_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "token-accounts-by-owner ")) {
+        try writeCommandUsageLine(out, "token-accounts-by-owner", &owner_command_usage_params, " (--mint <mint> | --token-program-id <program-id>)");
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "token-accounts-by-delegate ")) {
+        try writeCommandUsageLine(out, "token-accounts-by-delegate", &delegate_command_usage_params, " (--mint <mint> | --token-program-id <program-id>)");
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "poll-for-signature-confirmation ")) {
+        try writeCommandUsageLine(out, "poll-for-signature-confirmation", &poll_for_signature_confirmation_command_usage_params, null);
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "minimum-rent-exemption ")) {
+        try writeCommandUsageLine(out, "minimum-rent-exemption", &bytes_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "new-latest-blockhash ")) {
+        try writeCommandUsageLine(out, "new-latest-blockhash", &blockhash_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "blockhash-valid ")) {
+        try writeCommandUsageLine(out, "blockhash-valid", &blockhash_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "feature-activation-slot ")) {
+        try writeCommandUsageLine(out, "feature-activation-slot", &feature_pubkey_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "block-time ")) {
+        try writeCommandUsageLine(out, "block-time", &slot_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "block-commitment ")) {
+        try writeCommandUsageLine(out, "block-commitment", &slot_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "block ")) {
+        try writeCommandUsageLine(out, "block", &slot_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "fee-for-message ")) {
+        try writeCommandUsageLine(out, "fee-for-message", &message_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "blocks-with-limit ")) {
+        try writeCommandUsageLine(out, "blocks-with-limit", &start_slot_limit_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "slot-leaders ")) {
+        try writeCommandUsageLine(out, "slot-leaders", &start_slot_limit_command_usage_params, null);
         return true;
     }
 
