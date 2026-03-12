@@ -1762,6 +1762,48 @@ pub fn sendAndConfirmLegacyTransactionFromJson(
     return try sendAndConfirmLegacyTransaction(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
 }
 
+pub fn sendAndConfirmLegacyTransactionWithSpinner(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    var signed = try buildSignedLegacyTransaction(allocator, idl, instruction_name, build_options);
+    defer signed.deinit(allocator);
+
+    return try rpc.sendTransactionAndConfirmTypedWithSpinner(
+        signed,
+        options.transaction_options,
+        options.commitment,
+        options.search_transaction_history,
+        options.timeout_ms,
+        options.poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmLegacyTransactionWithSpinnerFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try sendAndConfirmLegacyTransactionWithSpinner(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        build_options,
+        options,
+    );
+}
+
 pub fn sendVersionedTransaction(
     rpc: anytype,
     allocator: Allocator,
@@ -1851,6 +1893,48 @@ pub fn sendAndConfirmVersionedTransactionFromJson(
     defer parsed_idl.deinit();
 
     return try sendAndConfirmVersionedTransaction(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
+}
+
+pub fn sendAndConfirmVersionedTransactionWithSpinner(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    var signed = try buildSignedVersionedTransaction(allocator, idl, instruction_name, build_options);
+    defer signed.deinit(allocator);
+
+    return try rpc.sendAndConfirmVersionedTransactionTypedWithSpinner(
+        signed,
+        options.transaction_options,
+        options.commitment,
+        options.search_transaction_history,
+        options.timeout_ms,
+        options.poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmVersionedTransactionWithSpinnerFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try sendAndConfirmVersionedTransactionWithSpinner(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        build_options,
+        options,
+    );
 }
 
 fn resolveLatestBlockhash(rpc: anytype, allocator: Allocator, commitment: ?rpc_types.Commitment) !sdk.Hash {
@@ -1982,6 +2066,45 @@ pub fn sendAndConfirmLegacyTransactionWithLatestBlockhashFromJson(
     return try sendAndConfirmLegacyTransactionWithLatestBlockhash(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
 }
 
+pub fn sendAndConfirmLegacyTransactionWithLatestBlockhashAndSpinner(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionWithLatestBlockhashOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    return try sendAndConfirmLegacyTransactionWithSpinner(
+        rpc,
+        allocator,
+        idl,
+        instruction_name,
+        try buildLegacyTransactionOptionsWithLatestBlockhash(rpc, allocator, build_options),
+        options,
+    );
+}
+
+pub fn sendAndConfirmLegacyTransactionWithLatestBlockhashAndSpinnerFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionWithLatestBlockhashOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try sendAndConfirmLegacyTransactionWithLatestBlockhashAndSpinner(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        build_options,
+        options,
+    );
+}
+
 pub fn sendVersionedTransactionWithLatestBlockhash(
     rpc: anytype,
     allocator: Allocator,
@@ -2076,4 +2199,43 @@ pub fn sendAndConfirmVersionedTransactionWithLatestBlockhashFromJson(
     defer parsed_idl.deinit();
 
     return try sendAndConfirmVersionedTransactionWithLatestBlockhash(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
+}
+
+pub fn sendAndConfirmVersionedTransactionWithLatestBlockhashAndSpinner(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionWithLatestBlockhashOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    return try sendAndConfirmVersionedTransactionWithSpinner(
+        rpc,
+        allocator,
+        idl,
+        instruction_name,
+        try buildVersionedTransactionOptionsWithLatestBlockhash(rpc, allocator, build_options),
+        options,
+    );
+}
+
+pub fn sendAndConfirmVersionedTransactionWithLatestBlockhashAndSpinnerFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionWithLatestBlockhashOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try sendAndConfirmVersionedTransactionWithLatestBlockhashAndSpinner(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        build_options,
+        options,
+    );
 }
