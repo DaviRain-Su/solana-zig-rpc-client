@@ -652,21 +652,44 @@ const CommandUsageStyle = enum {
     start_slot,
 };
 
+const CommandPositionalStyle = enum {
+    signature,
+    signature_list,
+    signatures_for_address,
+    poll_for_signature_confirmation,
+    signed_transaction,
+    raw_rpc,
+    account,
+    account_expected_balance,
+    account_lamports,
+    address_list,
+    bytes,
+    blockhash,
+    feature_pubkey,
+    slot,
+    message,
+    recent_performance_samples,
+    blocks,
+    start_slot_limit,
+    leader_schedule,
+};
+
 const CommandUsageEntry = struct {
     command: Command,
     style: CommandUsageStyle,
     suffix: ?[]const u8 = null,
+    parse_style: ?CommandPositionalStyle = null,
 };
 
 const command_usage_entries = [_]CommandUsageEntry{
     .{ .command = .latest_blockhash, .style = .literal },
-    .{ .command = .new_latest_blockhash, .style = .blockhash },
-    .{ .command = .status, .style = .signature },
-    .{ .command = .confirm_transaction, .style = .signature },
-    .{ .command = .signature_status, .style = .signature },
-    .{ .command = .signature_statuses, .style = .signature_list, .suffix = " [signature-2 ...]" },
-    .{ .command = .send_transaction, .style = .signed_transaction },
-    .{ .command = .send_transaction_and_confirm, .style = .signed_transaction },
+    .{ .command = .new_latest_blockhash, .style = .blockhash, .parse_style = .blockhash },
+    .{ .command = .status, .style = .signature, .parse_style = .signature },
+    .{ .command = .confirm_transaction, .style = .signature, .parse_style = .signature },
+    .{ .command = .signature_status, .style = .signature, .parse_style = .signature },
+    .{ .command = .signature_statuses, .style = .signature_list, .suffix = " [signature-2 ...]", .parse_style = .signature_list },
+    .{ .command = .send_transaction, .style = .signed_transaction, .parse_style = .signed_transaction },
+    .{ .command = .send_transaction_and_confirm, .style = .signed_transaction, .parse_style = .signed_transaction },
     .{ .command = .send_instructions, .style = .instruction },
     .{ .command = .send_instructions_and_confirm, .style = .instruction },
     .{ .command = .send_versioned_instructions, .style = .instruction },
@@ -676,7 +699,7 @@ const command_usage_entries = [_]CommandUsageEntry{
     .{ .command = .send_versioned_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
     .{ .command = .send_versioned_program_invoke_and_confirm, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
     .{ .command = .transfer, .style = .literal, .suffix = "[--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>" },
-    .{ .command = .simulate_transaction, .style = .signed_transaction },
+    .{ .command = .simulate_transaction, .style = .signed_transaction, .parse_style = .signed_transaction },
     .{ .command = .simulate_instructions, .style = .instruction },
     .{ .command = .simulate_versioned_instructions, .style = .instruction },
     .{ .command = .simulate_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]" },
@@ -687,56 +710,56 @@ const command_usage_entries = [_]CommandUsageEntry{
     .{ .command = .send_idl_invoke_and_confirm, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path]" },
     .{ .command = .send_versioned_idl_invoke, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
     .{ .command = .send_versioned_idl_invoke_and_confirm, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
-    .{ .command = .raw_rpc, .style = .raw_rpc, .suffix = " [params-json]" },
+    .{ .command = .raw_rpc, .style = .raw_rpc, .suffix = " [params-json]", .parse_style = .raw_rpc },
     .{ .command = .slot, .style = .literal },
     .{ .command = .block_height, .style = .literal },
     .{ .command = .transaction_count, .style = .literal },
-    .{ .command = .transaction, .style = .signature },
-    .{ .command = .balance, .style = .account },
-    .{ .command = .poll_balance, .style = .account },
-    .{ .command = .wait_for_balance, .style = .account_expected_balance },
-    .{ .command = .account_info, .style = .account },
-    .{ .command = .account_data, .style = .account },
-    .{ .command = .ui_account, .style = .account },
-    .{ .command = .multiple_accounts, .style = .account_list, .suffix = " [account-2 ...]" },
-    .{ .command = .multiple_ui_accounts, .style = .account_list, .suffix = " [account-2 ...]" },
-    .{ .command = .program_accounts, .style = .program_id },
-    .{ .command = .program_ui_accounts, .style = .program_id },
-    .{ .command = .request_airdrop, .style = .account_lamports },
-    .{ .command = .minimum_rent_exemption, .style = .bytes },
+    .{ .command = .transaction, .style = .signature, .parse_style = .signature },
+    .{ .command = .balance, .style = .account, .parse_style = .account },
+    .{ .command = .poll_balance, .style = .account, .parse_style = .account },
+    .{ .command = .wait_for_balance, .style = .account_expected_balance, .parse_style = .account_expected_balance },
+    .{ .command = .account_info, .style = .account, .parse_style = .account },
+    .{ .command = .account_data, .style = .account, .parse_style = .account },
+    .{ .command = .ui_account, .style = .account, .parse_style = .account },
+    .{ .command = .multiple_accounts, .style = .account_list, .suffix = " [account-2 ...]", .parse_style = .address_list },
+    .{ .command = .multiple_ui_accounts, .style = .account_list, .suffix = " [account-2 ...]", .parse_style = .address_list },
+    .{ .command = .program_accounts, .style = .program_id, .parse_style = .account },
+    .{ .command = .program_ui_accounts, .style = .program_id, .parse_style = .account },
+    .{ .command = .request_airdrop, .style = .account_lamports, .parse_style = .account_lamports },
+    .{ .command = .minimum_rent_exemption, .style = .bytes, .parse_style = .bytes },
     .{ .command = .version, .style = .literal },
     .{ .command = .epoch_info, .style = .literal },
     .{ .command = .health, .style = .literal },
     .{ .command = .genesis_hash, .style = .literal },
-    .{ .command = .inflation_reward, .style = .inflation_reward, .suffix = " [address-2 ...]" },
+    .{ .command = .inflation_reward, .style = .inflation_reward, .suffix = " [address-2 ...]", .parse_style = .address_list },
     .{ .command = .supply, .style = .literal },
     .{ .command = .epoch_schedule, .style = .literal },
     .{ .command = .inflation_rate, .style = .literal },
-    .{ .command = .block_time, .style = .slot },
-    .{ .command = .block_commitment, .style = .slot },
-    .{ .command = .block, .style = .slot },
-    .{ .command = .blocks_with_limit, .style = .start_slot_limit },
-    .{ .command = .poll_for_signature_confirmation, .style = .poll_for_signature_confirmation },
-    .{ .command = .blocks_since_signature_confirmation, .style = .signature },
-    .{ .command = .signatures_for_address, .style = .address_history },
-    .{ .command = .feature_activation_slot, .style = .feature_pubkey },
+    .{ .command = .block_time, .style = .slot, .parse_style = .slot },
+    .{ .command = .block_commitment, .style = .slot, .parse_style = .slot },
+    .{ .command = .block, .style = .slot, .parse_style = .slot },
+    .{ .command = .blocks_with_limit, .style = .start_slot_limit, .parse_style = .start_slot_limit },
+    .{ .command = .poll_for_signature_confirmation, .style = .poll_for_signature_confirmation, .parse_style = .poll_for_signature_confirmation },
+    .{ .command = .blocks_since_signature_confirmation, .style = .signature, .parse_style = .signature },
+    .{ .command = .signatures_for_address, .style = .address_history, .parse_style = .signatures_for_address },
+    .{ .command = .feature_activation_slot, .style = .feature_pubkey, .parse_style = .feature_pubkey },
     .{ .command = .stake_minimum_delegation, .style = .literal },
     .{ .command = .largest_accounts, .style = .literal },
-    .{ .command = .token_account_balance, .style = .token_account },
-    .{ .command = .token_account, .style = .token_account },
-    .{ .command = .token_supply, .style = .mint },
-    .{ .command = .token_largest_accounts, .style = .mint },
-    .{ .command = .token_accounts_by_owner, .style = .owner_token_accounts, .suffix = " (--mint <mint> | --token-program-id <program-id>)" },
-    .{ .command = .token_accounts_by_delegate, .style = .delegate_token_accounts, .suffix = " (--mint <mint> | --token-program-id <program-id>)" },
-    .{ .command = .fee_for_message, .style = .base64_message },
-    .{ .command = .recent_performance_samples, .style = .literal, .suffix = "[limit]" },
+    .{ .command = .token_account_balance, .style = .token_account, .parse_style = .account },
+    .{ .command = .token_account, .style = .token_account, .parse_style = .account },
+    .{ .command = .token_supply, .style = .mint, .parse_style = .account },
+    .{ .command = .token_largest_accounts, .style = .mint, .parse_style = .account },
+    .{ .command = .token_accounts_by_owner, .style = .owner_token_accounts, .suffix = " (--mint <mint> | --token-program-id <program-id>)", .parse_style = .account },
+    .{ .command = .token_accounts_by_delegate, .style = .delegate_token_accounts, .suffix = " (--mint <mint> | --token-program-id <program-id>)", .parse_style = .account },
+    .{ .command = .fee_for_message, .style = .base64_message, .parse_style = .message },
+    .{ .command = .recent_performance_samples, .style = .literal, .suffix = "[limit]", .parse_style = .recent_performance_samples },
     .{ .command = .highest_snapshot_slot, .style = .literal },
-    .{ .command = .blocks, .style = .start_slot, .suffix = " [end-slot]" },
+    .{ .command = .blocks, .style = .start_slot, .suffix = " [end-slot]", .parse_style = .blocks },
     .{ .command = .slot_leader, .style = .literal },
-    .{ .command = .slot_leaders, .style = .start_slot_limit },
-    .{ .command = .recent_prioritization_fees, .style = .literal, .suffix = "[account-1 ...]" },
+    .{ .command = .slot_leaders, .style = .start_slot_limit, .parse_style = .start_slot_limit },
+    .{ .command = .recent_prioritization_fees, .style = .literal, .suffix = "[account-1 ...]", .parse_style = .address_list },
     .{ .command = .cluster_nodes, .style = .literal },
-    .{ .command = .leader_schedule, .style = .literal, .suffix = "[slot] [identity]" },
+    .{ .command = .leader_schedule, .style = .literal, .suffix = "[slot] [identity]", .parse_style = .leader_schedule },
     .{ .command = .identity, .style = .literal },
     .{ .command = .vote_accounts, .style = .literal },
     .{ .command = .block_production, .style = .literal },
@@ -745,7 +768,7 @@ const command_usage_entries = [_]CommandUsageEntry{
     .{ .command = .max_retransmit_slot, .style = .literal },
     .{ .command = .max_shred_insert_slot, .style = .literal },
     .{ .command = .first_available_block, .style = .literal },
-    .{ .command = .blockhash_valid, .style = .blockhash },
+    .{ .command = .blockhash_valid, .style = .blockhash, .parse_style = .blockhash },
 };
 
 fn writeCommandUsageEntry(out: *std.Io.Writer, entry: CommandUsageEntry) !void {
@@ -784,6 +807,14 @@ fn writeCommandUsageSection(out: *std.Io.Writer) !void {
     for (command_usage_entries) |entry| {
         try writeCommandUsageEntry(out, entry);
     }
+}
+
+fn commandUsageEntry(command: Command) CommandUsageEntry {
+    inline for (command_usage_entries) |entry| {
+        if (entry.command == command) return entry;
+    }
+
+    unreachable;
 }
 
 fn expandUserPathForHome(allocator: Allocator, path: []const u8, home_dir: ?[]const u8) ![]u8 {
@@ -1076,7 +1107,160 @@ fn parseTopLevelCommand(arg: []const u8) !ParsedTopLevelCommand {
     return .{ .command = commandFromArg(arg) orelse return error.InvalidCli };
 }
 
+fn parseCommandPositionalsFromMetadata(allocator: Allocator, parsed: *ParsedArgs, positionals: []const []const u8) !bool {
+    const parse_style = commandUsageEntry(parsed.command).parse_style orelse return false;
+
+    switch (parse_style) {
+        .signature => {
+            var command_result = try parsePositionalsWithClap(&signature_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.signature = command_result.positionals[0];
+            if (command_result.positionals[1].len != 0) return error.InvalidCli;
+        },
+        .signature_list => {
+            var command_result = try parsePositionalsWithClap(&signature_list_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            try appendStringArgs(allocator, &parsed.signature_statuses, command_result.positionals[0]);
+        },
+        .signatures_for_address => {
+            var command_result = try parsePositionalsWithClap(&signatures_for_address_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.signatures_for_address_arg = command_result.positionals[0];
+            if (command_result.positionals[1].len != 0) return error.InvalidCli;
+        },
+        .poll_for_signature_confirmation => {
+            var command_result = try parsePositionalsWithClap(&poll_for_signature_confirmation_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.signature = command_result.positionals[0];
+            parsed.confirmation_blocks_arg = command_result.positionals[1];
+            if (command_result.positionals[2].len != 0) return error.InvalidCli;
+        },
+        .signed_transaction => {
+            var command_result = try parsePositionalsWithClap(&signed_transaction_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.signed_tx_arg = command_result.positionals[0];
+            if (command_result.positionals[1].len != 0) return error.InvalidCli;
+        },
+        .raw_rpc => {
+            var command_result = try parsePositionalsWithClap(&raw_rpc_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.raw_rpc_method_arg = command_result.positionals[0];
+            parsed.raw_rpc_params_arg = command_result.positionals[1];
+            if (command_result.positionals[2].len != 0) return error.InvalidCli;
+        },
+        .account => {
+            var command_result = try parsePositionalsWithClap(&account_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.account = command_result.positionals[0];
+            if (command_result.positionals[1].len != 0) return error.InvalidCli;
+        },
+        .account_expected_balance => {
+            var command_result = try parsePositionalsWithClap(&account_expected_balance_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.account = command_result.positionals[0];
+            parsed.expected_balance_arg = command_result.positionals[1];
+            if (command_result.positionals[2].len != 0) return error.InvalidCli;
+        },
+        .account_lamports => {
+            var command_result = try parsePositionalsWithClap(&account_lamports_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.account = command_result.positionals[0];
+            parsed.lamports_arg = command_result.positionals[1];
+            if (command_result.positionals[2].len != 0) return error.InvalidCli;
+        },
+        .address_list => {
+            var command_result = try parsePositionalsWithClap(&address_list_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            try appendStringArgs(allocator, &parsed.multiple_accounts, command_result.positionals[0]);
+        },
+        .bytes => {
+            var command_result = try parsePositionalsWithClap(&bytes_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.rent_bytes_arg = command_result.positionals[0];
+            if (command_result.positionals[1].len != 0) return error.InvalidCli;
+        },
+        .blockhash => {
+            var command_result = try parsePositionalsWithClap(&blockhash_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.blockhash_arg = command_result.positionals[0];
+            if (command_result.positionals[1].len != 0) return error.InvalidCli;
+        },
+        .feature_pubkey => {
+            var command_result = try parsePositionalsWithClap(&feature_pubkey_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.feature_key_arg = command_result.positionals[0];
+            if (command_result.positionals[1].len != 0) return error.InvalidCli;
+        },
+        .slot => {
+            var command_result = try parsePositionalsWithClap(&slot_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.slot_arg = command_result.positionals[0];
+            if (command_result.positionals[1].len != 0) return error.InvalidCli;
+        },
+        .message => {
+            var command_result = try parsePositionalsWithClap(&message_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.message_arg = command_result.positionals[0];
+            if (command_result.positionals[1].len != 0) return error.InvalidCli;
+        },
+        .recent_performance_samples => {
+            var command_result = try parsePositionalsWithClap(&recent_performance_samples_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.performance_limit_arg = command_result.positionals[0];
+            if (command_result.positionals[1].len != 0) return error.InvalidCli;
+        },
+        .blocks => {
+            var command_result = try parsePositionalsWithClap(&blocks_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.slot_arg = command_result.positionals[0];
+            parsed.blocks_end_slot_arg = command_result.positionals[1];
+            if (command_result.positionals[2].len != 0) return error.InvalidCli;
+        },
+        .start_slot_limit => {
+            var command_result = try parsePositionalsWithClap(&slot_limit_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.slot_arg = command_result.positionals[0];
+            switch (parsed.command) {
+                .blocks_with_limit => parsed.blocks_limit_arg = command_result.positionals[1],
+                .slot_leaders => parsed.slot_leaders_limit_arg = command_result.positionals[1],
+                else => unreachable,
+            }
+            if (command_result.positionals[2].len != 0) return error.InvalidCli;
+        },
+        .leader_schedule => {
+            var command_result = try parsePositionalsWithClap(&leader_schedule_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.leader_schedule_slot_arg = command_result.positionals[0];
+            parsed.leader_schedule_identity_arg = command_result.positionals[1];
+            if (command_result.positionals[2].len != 0) return error.InvalidCli;
+        },
+    }
+
+    return true;
+}
+
 fn parseCommandPositionals(allocator: Allocator, parsed: *ParsedArgs, positionals: []const []const u8) !void {
+    if (try parseCommandPositionalsFromMetadata(allocator, parsed, positionals)) return;
+
     switch (parsed.command) {
         .send_instructions,
         .send_instructions_and_confirm,
@@ -1150,112 +1334,6 @@ fn parseCommandPositionals(allocator: Allocator, parsed: *ParsedArgs, positional
 
             return;
         },
-
-        .status,
-        .confirm_transaction,
-        .signature_status,
-        .transaction,
-        .blocks_since_signature_confirmation,
-        => {
-            var command_result = try parsePositionalsWithClap(&signature_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.signature = command_result.positionals[0];
-            if (command_result.positionals[1].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .signature_statuses => {
-            var command_result = try parsePositionalsWithClap(&signature_list_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            try appendStringArgs(allocator, &parsed.signature_statuses, command_result.positionals[0]);
-            return;
-        },
-
-        .signatures_for_address => {
-            var command_result = try parsePositionalsWithClap(&signatures_for_address_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.signatures_for_address_arg = command_result.positionals[0];
-            if (command_result.positionals[1].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .poll_for_signature_confirmation => {
-            var command_result = try parsePositionalsWithClap(&poll_for_signature_confirmation_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.signature = command_result.positionals[0];
-            parsed.confirmation_blocks_arg = command_result.positionals[1];
-            if (command_result.positionals[2].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .send_transaction,
-        .send_transaction_and_confirm,
-        .simulate_transaction,
-        => {
-            var command_result = try parsePositionalsWithClap(&signed_transaction_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.signed_tx_arg = command_result.positionals[0];
-            if (command_result.positionals[1].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .raw_rpc => {
-            var command_result = try parsePositionalsWithClap(&raw_rpc_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.raw_rpc_method_arg = command_result.positionals[0];
-            parsed.raw_rpc_params_arg = command_result.positionals[1];
-            if (command_result.positionals[2].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .balance,
-        .poll_balance,
-        .account_data,
-        .ui_account,
-        .account_info,
-        .program_accounts,
-        .program_ui_accounts,
-        .token_account_balance,
-        .token_account,
-        .token_supply,
-        .token_largest_accounts,
-        .token_accounts_by_owner,
-        .token_accounts_by_delegate,
-        => {
-            var command_result = try parsePositionalsWithClap(&account_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.account = command_result.positionals[0];
-            if (command_result.positionals[1].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .wait_for_balance => {
-            var command_result = try parsePositionalsWithClap(&account_expected_balance_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.account = command_result.positionals[0];
-            parsed.expected_balance_arg = command_result.positionals[1];
-            if (command_result.positionals[2].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .request_airdrop => {
-            var command_result = try parsePositionalsWithClap(&account_lamports_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.account = command_result.positionals[0];
-            parsed.lamports_arg = command_result.positionals[1];
-            if (command_result.positionals[2].len != 0) return error.InvalidCli;
-            return;
-        },
-
         .transfer => {
             if (parsed.sender_keypair_path_arg == null and parsed.sender_secret_key_arg == null) {
                 var command_result = try parsePositionalsWithClap(&transfer_with_default_sender_command_positionals_params, allocator, positionals);
@@ -1276,107 +1354,6 @@ fn parseCommandPositionals(allocator: Allocator, parsed: *ParsedArgs, positional
 
             return;
         },
-
-        .multiple_accounts,
-        .multiple_ui_accounts,
-        .inflation_reward,
-        .recent_prioritization_fees,
-        => {
-            var command_result = try parsePositionalsWithClap(&address_list_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            try appendStringArgs(allocator, &parsed.multiple_accounts, command_result.positionals[0]);
-            return;
-        },
-
-        .minimum_rent_exemption => {
-            var command_result = try parsePositionalsWithClap(&bytes_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.rent_bytes_arg = command_result.positionals[0];
-            if (command_result.positionals[1].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .new_latest_blockhash, .blockhash_valid => {
-            var command_result = try parsePositionalsWithClap(&blockhash_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.blockhash_arg = command_result.positionals[0];
-            if (command_result.positionals[1].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .feature_activation_slot => {
-            var command_result = try parsePositionalsWithClap(&feature_pubkey_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.feature_key_arg = command_result.positionals[0];
-            if (command_result.positionals[1].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .block_time, .block_commitment, .block => {
-            var command_result = try parsePositionalsWithClap(&slot_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.slot_arg = command_result.positionals[0];
-            if (command_result.positionals[1].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .fee_for_message => {
-            var command_result = try parsePositionalsWithClap(&message_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.message_arg = command_result.positionals[0];
-            if (command_result.positionals[1].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .recent_performance_samples => {
-            var command_result = try parsePositionalsWithClap(&recent_performance_samples_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.performance_limit_arg = command_result.positionals[0];
-            if (command_result.positionals[1].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .blocks => {
-            var command_result = try parsePositionalsWithClap(&blocks_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.slot_arg = command_result.positionals[0];
-            parsed.blocks_end_slot_arg = command_result.positionals[1];
-            if (command_result.positionals[2].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .blocks_with_limit, .slot_leaders => {
-            var command_result = try parsePositionalsWithClap(&slot_limit_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.slot_arg = command_result.positionals[0];
-            switch (parsed.command) {
-                .blocks_with_limit => parsed.blocks_limit_arg = command_result.positionals[1],
-                .slot_leaders => parsed.slot_leaders_limit_arg = command_result.positionals[1],
-                else => unreachable,
-            }
-            if (command_result.positionals[2].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .leader_schedule => {
-            var command_result = try parsePositionalsWithClap(&leader_schedule_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.leader_schedule_slot_arg = command_result.positionals[0];
-            parsed.leader_schedule_identity_arg = command_result.positionals[1];
-            if (command_result.positionals[2].len != 0) return error.InvalidCli;
-            return;
-        },
-
         else => {},
     }
 
