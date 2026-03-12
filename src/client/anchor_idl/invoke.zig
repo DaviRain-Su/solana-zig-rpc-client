@@ -8,6 +8,8 @@ const Sha256 = std.crypto.hash.sha2.Sha256;
 const ParseIdlError = @typeInfo(@typeInfo(@TypeOf(idl_types.parseJson)).@"fn".return_type.?).error_union.error_set;
 const EncodeInstructionDataError = @typeInfo(@typeInfo(@TypeOf(idl_encode.encodeInstructionDataNamed)).@"fn".return_type.?).error_union.error_set;
 const SignLegacyMessageError = @typeInfo(@typeInfo(@TypeOf(sdk.OwnedLegacyMessage.sign)).@"fn".return_type.?).error_union.error_set;
+const SdkBuildVersionedMessageError = @typeInfo(@typeInfo(@TypeOf(sdk.buildVersionedMessageV0)).@"fn".return_type.?).error_union.error_set;
+const SignVersionedMessageError = @typeInfo(@typeInfo(@TypeOf(sdk.OwnedVersionedMessageV0.sign)).@"fn".return_type.?).error_union.error_set;
 
 pub const BuildError = Allocator.Error || ParseIdlError || EncodeInstructionDataError || error{
     MissingAnchorIdlProgramId,
@@ -17,6 +19,8 @@ pub const BuildError = Allocator.Error || ParseIdlError || EncodeInstructionData
 };
 
 pub const BuildLegacyTransactionError = BuildError || SignLegacyMessageError;
+pub const BuildVersionedMessageError = BuildError || SdkBuildVersionedMessageError;
+pub const BuildVersionedTransactionError = BuildVersionedMessageError || SignVersionedMessageError;
 
 pub const AccountBinding = struct {
     path: []const u8,
@@ -1436,6 +1440,21 @@ pub const BuildLegacyTransactionOptions = struct {
     instruction_options: BuildInstructionOptions = .{},
 };
 
+pub const BuildVersionedMessageOptions = struct {
+    payer: sdk.Pubkey,
+    recent_blockhash: sdk.Hash,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    instruction_options: BuildInstructionOptions = .{},
+};
+
+pub const BuildVersionedTransactionOptions = struct {
+    payer: sdk.Pubkey,
+    recent_blockhash: sdk.Hash,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+    instruction_options: BuildInstructionOptions = .{},
+};
+
 pub fn buildOwnedLegacyMessage(
     allocator: Allocator,
     idl: *const idl_types.Idl,
@@ -1525,4 +1544,97 @@ pub fn buildLegacyTransactionBase64FromJson(
     defer parsed_idl.deinit();
 
     return try buildLegacyTransactionBase64(allocator, &parsed_idl.value, instruction_name, options);
+}
+
+pub fn buildOwnedVersionedMessage(
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    options: BuildVersionedMessageOptions,
+) BuildVersionedMessageError!sdk.OwnedVersionedMessageV0 {
+    var owned_instruction = try buildOwnedInstruction(
+        allocator,
+        idl,
+        instruction_name,
+        options.instruction_options,
+    );
+    defer owned_instruction.deinit(allocator);
+
+    return try sdk.buildVersionedMessageV0(
+        allocator,
+        options.payer,
+        options.recent_blockhash,
+        &.{owned_instruction.instruction},
+        options.address_lookup_tables,
+    );
+}
+
+pub fn buildOwnedVersionedMessageFromJson(
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    options: BuildVersionedMessageOptions,
+) BuildVersionedMessageError!sdk.OwnedVersionedMessageV0 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildOwnedVersionedMessage(allocator, &parsed_idl.value, instruction_name, options);
+}
+
+pub fn buildSignedVersionedTransaction(
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    options: BuildVersionedTransactionOptions,
+) BuildVersionedTransactionError!sdk.SignedVersionedTransaction {
+    var owned_message = try buildOwnedVersionedMessage(
+        allocator,
+        idl,
+        instruction_name,
+        .{
+            .payer = options.payer,
+            .recent_blockhash = options.recent_blockhash,
+            .address_lookup_tables = options.address_lookup_tables,
+            .instruction_options = options.instruction_options,
+        },
+    );
+    defer owned_message.deinit(allocator);
+
+    return try owned_message.sign(allocator, options.signers);
+}
+
+pub fn buildSignedVersionedTransactionFromJson(
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    options: BuildVersionedTransactionOptions,
+) BuildVersionedTransactionError!sdk.SignedVersionedTransaction {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildSignedVersionedTransaction(allocator, &parsed_idl.value, instruction_name, options);
+}
+
+pub fn buildVersionedTransactionBase64(
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    options: BuildVersionedTransactionOptions,
+) BuildVersionedTransactionError![]u8 {
+    var signed = try buildSignedVersionedTransaction(allocator, idl, instruction_name, options);
+    defer signed.deinit(allocator);
+
+    return try signed.toBase64(allocator);
+}
+
+pub fn buildVersionedTransactionBase64FromJson(
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    options: BuildVersionedTransactionOptions,
+) BuildVersionedTransactionError![]u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildVersionedTransactionBase64(allocator, &parsed_idl.value, instruction_name, options);
 }

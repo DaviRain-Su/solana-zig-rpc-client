@@ -488,3 +488,100 @@ test "root.anchor_idl_invoke.buildSignedLegacyTransactionFromJson signs and enco
     try std.testing.expect(direct_base64.len > 0);
     try std.testing.expectEqualSlices(u8, direct_base64, helper_base64);
 }
+
+test "root.anchor_idl_invoke.buildOwnedVersionedMessageFromJson compiles and signs versioned transaction" {
+    const allocator = std.testing.allocator;
+    const signer_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{9} ** 32);
+    const signer = try client.Keypair.fromSecretKeyBytes(signer_raw.secret_key.toBytes());
+    const target_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{10} ** 32);
+    const target = client.Pubkey.fromBytes(target_raw.public_key.toBytes());
+    const recent_blockhash = client.Hash.fromBytes([_]u8{0x22} ** 32);
+    const idl_json =
+        \\{
+        \\  "address": "11111111111111111111111111111111",
+        \\  "instructions": [
+        \\    {
+        \\      "name": "setValue",
+        \\      "discriminator": [1, 2, 3, 4, 5, 6, 7, 8],
+        \\      "accounts": [
+        \\        { "name": "authority", "writable": true, "signer": true },
+        \\        { "name": "target", "writable": true }
+        \\      ],
+        \\      "args": [
+        \\        { "name": "value", "type": "u64" }
+        \\      ]
+        \\    }
+        \\  ]
+        \\}
+    ;
+
+    var owned = try client.anchor_idl_invoke.buildOwnedVersionedMessageFromJson(
+        allocator,
+        idl_json,
+        "setValue",
+        .{
+            .payer = signer.public_key,
+            .recent_blockhash = recent_blockhash,
+            .instruction_options = .{
+                .args_json = "{\"value\":42}",
+                .account_bindings = &.{
+                    .{ .path = "authority", .pubkey = signer.public_key },
+                    .{ .path = "target", .pubkey = target },
+                },
+            },
+        },
+    );
+    defer owned.deinit(allocator);
+
+    var direct_signed = try owned.sign(allocator, &.{signer});
+    defer direct_signed.deinit(allocator);
+
+    const direct_base64 = try direct_signed.toBase64(allocator);
+    defer allocator.free(direct_base64);
+
+    var signed = try client.anchor_idl_invoke.buildSignedVersionedTransactionFromJson(
+        allocator,
+        idl_json,
+        "setValue",
+        .{
+            .payer = signer.public_key,
+            .recent_blockhash = recent_blockhash,
+            .signers = &.{signer},
+            .instruction_options = .{
+                .args_json = "{\"value\":42}",
+                .account_bindings = &.{
+                    .{ .path = "authority", .pubkey = signer.public_key },
+                    .{ .path = "target", .pubkey = target },
+                },
+            },
+        },
+    );
+    defer signed.deinit(allocator);
+
+    const signed_base64 = try signed.toBase64(allocator);
+    defer allocator.free(signed_base64);
+
+    const helper_base64 = try client.anchor_idl_invoke.buildVersionedTransactionBase64FromJson(
+        allocator,
+        idl_json,
+        "setValue",
+        .{
+            .payer = signer.public_key,
+            .recent_blockhash = recent_blockhash,
+            .signers = &.{signer},
+            .instruction_options = .{
+                .args_json = "{\"value\":42}",
+                .account_bindings = &.{
+                    .{ .path = "authority", .pubkey = signer.public_key },
+                    .{ .path = "target", .pubkey = target },
+                },
+            },
+        },
+    );
+    defer allocator.free(helper_base64);
+
+    try std.testing.expect(direct_signed.firstSignature() != null);
+    try std.testing.expect(signed.firstSignature() != null);
+    try std.testing.expectEqualSlices(u8, direct_base64, signed_base64);
+    try std.testing.expectEqualSlices(u8, direct_base64, helper_base64);
+}
