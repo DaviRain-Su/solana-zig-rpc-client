@@ -1231,6 +1231,14 @@ pub fn buildOwnedLegacyMessageWithBlockhashQuery(
     );
 }
 
+pub fn buildOwnedLegacyMessageWithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyMessageWithBlockhashQueryOptions,
+) !sdk.OwnedLegacyMessage {
+    return try buildOwnedLegacyMessageWithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildLegacyMessageBase64WithBlockhashQuery(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1241,6 +1249,14 @@ pub fn buildLegacyMessageBase64WithBlockhashQuery(
     return try owned_message.toBase64(self.allocator);
 }
 
+pub fn buildLegacyMessageBase64WithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyMessageWithBlockhashQueryOptions,
+) ![]u8 {
+    return try buildLegacyMessageBase64WithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildLegacyMessageBytesWithBlockhashQuery(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1249,6 +1265,14 @@ pub fn buildLegacyMessageBytesWithBlockhashQuery(
     var owned_message = try buildOwnedLegacyMessageWithBlockhashQuery(self, program_id, options);
     defer owned_message.deinit(self.allocator);
     return try owned_message.serialize(self.allocator);
+}
+
+pub fn buildLegacyMessageBytesWithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyMessageWithBlockhashQueryOptions,
+) ![]u8 {
+    return try buildLegacyMessageBytesWithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn buildSignedLegacyTransactionWithBlockhashQuery(
@@ -1269,6 +1293,14 @@ pub fn buildSignedLegacyTransactionWithBlockhashQuery(
     );
 }
 
+pub fn buildSignedLegacyTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyTransactionWithBlockhashQueryOptions,
+) !sdk.SignedLegacyTransaction {
+    return try buildSignedLegacyTransactionWithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildLegacyTransactionBase64WithBlockhashQuery(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1277,6 +1309,14 @@ pub fn buildLegacyTransactionBase64WithBlockhashQuery(
     var signed = try buildSignedLegacyTransactionWithBlockhashQuery(self, program_id, options);
     defer signed.deinit(self.allocator);
     return try signed.toBase64(self.allocator);
+}
+
+pub fn buildLegacyTransactionBase64WithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyTransactionWithBlockhashQueryOptions,
+) ![]u8 {
+    return try buildLegacyTransactionBase64WithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn buildOwnedVersionedMessageWithBlockhashQuery(
@@ -1297,6 +1337,14 @@ pub fn buildOwnedVersionedMessageWithBlockhashQuery(
     );
 }
 
+pub fn buildOwnedVersionedMessageWithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedMessageWithBlockhashQueryOptions,
+) !sdk.OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedMessageWithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildVersionedMessageBase64WithBlockhashQuery(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1307,6 +1355,14 @@ pub fn buildVersionedMessageBase64WithBlockhashQuery(
     return try owned_message.toBase64(self.allocator);
 }
 
+pub fn buildVersionedMessageBase64WithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedMessageWithBlockhashQueryOptions,
+) ![]u8 {
+    return try buildVersionedMessageBase64WithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildVersionedMessageBytesWithBlockhashQuery(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1315,6 +1371,14 @@ pub fn buildVersionedMessageBytesWithBlockhashQuery(
     var owned_message = try buildOwnedVersionedMessageWithBlockhashQuery(self, program_id, options);
     defer owned_message.deinit(self.allocator);
     return try owned_message.serialize(self.allocator);
+}
+
+pub fn buildVersionedMessageBytesWithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedMessageWithBlockhashQueryOptions,
+) ![]u8 {
+    return try buildVersionedMessageBytesWithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn buildSignedVersionedTransactionWithBlockhashQuery(
@@ -1336,6 +1400,14 @@ pub fn buildSignedVersionedTransactionWithBlockhashQuery(
     );
 }
 
+pub fn buildSignedVersionedTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedTransactionWithBlockhashQueryOptions,
+) !sdk.SignedVersionedTransaction {
+    return try buildSignedVersionedTransactionWithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildVersionedTransactionBase64WithBlockhashQuery(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1344,6 +1416,14 @@ pub fn buildVersionedTransactionBase64WithBlockhashQuery(
     var signed = try buildSignedVersionedTransactionWithBlockhashQuery(self, program_id, options);
     defer signed.deinit(self.allocator);
     return try signed.toBase64(self.allocator);
+}
+
+pub fn buildVersionedTransactionBase64WithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedTransactionWithBlockhashQueryOptions,
+) ![]u8 {
+    return try buildVersionedTransactionBase64WithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn sendLegacyTransactionWithBlockhashQuery(
@@ -1365,6 +1445,14 @@ pub fn sendLegacyTransactionWithBlockhashQuery(
     );
 }
 
+pub fn sendLegacyTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendLegacyTransactionWithBlockhashQueryOptions,
+) ![]const u8 {
+    return try sendLegacyTransactionWithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn simulateLegacyTransactionWithBlockhashQuery(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1382,6 +1470,14 @@ pub fn simulateLegacyTransactionWithBlockhashQuery(
         options.nonce_authority,
         options.simulate_options,
     );
+}
+
+pub fn simulateLegacyTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SimulateLegacyTransactionWithBlockhashQueryOptions,
+) !rpc_types.SimulatedTransaction {
+    return try simulateLegacyTransactionWithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn sendAndConfirmLegacyTransactionWithBlockhashQuery(
@@ -1407,6 +1503,14 @@ pub fn sendAndConfirmLegacyTransactionWithBlockhashQuery(
     );
 }
 
+pub fn sendAndConfirmLegacyTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendAndConfirmLegacyTransactionWithBlockhashQueryOptions,
+) ![]const u8 {
+    return try sendAndConfirmLegacyTransactionWithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn sendAndConfirmLegacyTransactionWithBlockhashQueryWithSpinner(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1430,6 +1534,14 @@ pub fn sendAndConfirmLegacyTransactionWithBlockhashQueryWithSpinner(
     );
 }
 
+pub fn sendAndConfirmLegacyTransactionWithBlockhashQueryWithSpinnerFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendAndConfirmLegacyTransactionWithBlockhashQueryOptions,
+) ![]const u8 {
+    return try sendAndConfirmLegacyTransactionWithBlockhashQueryWithSpinner(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn sendVersionedTransactionWithBlockhashQuery(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1450,6 +1562,14 @@ pub fn sendVersionedTransactionWithBlockhashQuery(
     );
 }
 
+pub fn sendVersionedTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendVersionedTransactionWithBlockhashQueryOptions,
+) ![]const u8 {
+    return try sendVersionedTransactionWithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn simulateVersionedTransactionWithBlockhashQuery(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1468,6 +1588,14 @@ pub fn simulateVersionedTransactionWithBlockhashQuery(
         options.nonce_authority,
         options.simulate_options,
     );
+}
+
+pub fn simulateVersionedTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SimulateVersionedTransactionWithBlockhashQueryOptions,
+) !rpc_types.SimulatedTransaction {
+    return try simulateVersionedTransactionWithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn sendAndConfirmVersionedTransactionWithBlockhashQuery(
@@ -1496,6 +1624,14 @@ pub fn sendAndConfirmVersionedTransactionWithBlockhashQuery(
     );
 }
 
+pub fn sendAndConfirmVersionedTransactionWithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendAndConfirmVersionedTransactionWithBlockhashQueryOptions,
+) ![]const u8 {
+    return try sendAndConfirmVersionedTransactionWithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn sendAndConfirmVersionedTransactionWithBlockhashQueryWithSpinner(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1520,6 +1656,14 @@ pub fn sendAndConfirmVersionedTransactionWithBlockhashQueryWithSpinner(
     );
 }
 
+pub fn sendAndConfirmVersionedTransactionWithBlockhashQueryWithSpinnerFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendAndConfirmVersionedTransactionWithBlockhashQueryOptions,
+) ![]const u8 {
+    return try sendAndConfirmVersionedTransactionWithBlockhashQueryWithSpinner(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn getFeeForLegacyMessageWithBlockhashQuery(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1531,6 +1675,15 @@ pub fn getFeeForLegacyMessageWithBlockhashQuery(
     return try self.getFeeForMessage(encoded, fee_options.commitment);
 }
 
+pub fn getFeeForLegacyMessageWithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    message_options: BuildLegacyMessageWithBlockhashQueryOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    return try getFeeForLegacyMessageWithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), message_options, fee_options);
+}
+
 pub fn getFeeForVersionedMessageWithBlockhashQuery(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1540,6 +1693,15 @@ pub fn getFeeForVersionedMessageWithBlockhashQuery(
     const encoded = try buildVersionedMessageBase64WithBlockhashQuery(self, program_id, message_options);
     defer self.allocator.free(encoded);
     return try self.getFeeForMessage(encoded, fee_options.commitment);
+}
+
+pub fn getFeeForVersionedMessageWithBlockhashQueryFromJson(
+    self: anytype,
+    program_id: []const u8,
+    message_options: BuildVersionedMessageWithBlockhashQueryOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    return try getFeeForVersionedMessageWithBlockhashQuery(self, try parseProgramId(self.allocator, program_id), message_options, fee_options);
 }
 
 pub fn buildOwnedLegacyMessageWithLatestBlockhash(
@@ -1558,6 +1720,14 @@ pub fn buildOwnedLegacyMessageWithLatestBlockhash(
     );
 }
 
+pub fn buildOwnedLegacyMessageWithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyMessageWithLatestBlockhashOptions,
+) !sdk.OwnedLegacyMessage {
+    return try buildOwnedLegacyMessageWithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildLegacyMessageBase64WithLatestBlockhash(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1574,6 +1744,14 @@ pub fn buildLegacyMessageBase64WithLatestBlockhash(
     );
 }
 
+pub fn buildLegacyMessageBase64WithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyMessageWithLatestBlockhashOptions,
+) ![]u8 {
+    return try buildLegacyMessageBase64WithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildLegacyMessageBytesWithLatestBlockhash(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1588,6 +1766,14 @@ pub fn buildLegacyMessageBytesWithLatestBlockhash(
             .instruction = options.instruction,
         },
     );
+}
+
+pub fn buildLegacyMessageBytesWithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyMessageWithLatestBlockhashOptions,
+) ![]u8 {
+    return try buildLegacyMessageBytesWithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn buildSignedLegacyTransactionWithLatestBlockhash(
@@ -1607,6 +1793,14 @@ pub fn buildSignedLegacyTransactionWithLatestBlockhash(
     );
 }
 
+pub fn buildSignedLegacyTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyTransactionWithLatestBlockhashOptions,
+) !sdk.SignedLegacyTransaction {
+    return try buildSignedLegacyTransactionWithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildLegacyTransactionBase64WithLatestBlockhash(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1622,6 +1816,14 @@ pub fn buildLegacyTransactionBase64WithLatestBlockhash(
             .instruction = options.instruction,
         },
     );
+}
+
+pub fn buildLegacyTransactionBase64WithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyTransactionWithLatestBlockhashOptions,
+) ![]u8 {
+    return try buildLegacyTransactionBase64WithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn buildOwnedVersionedMessageWithLatestBlockhash(
@@ -1641,6 +1843,14 @@ pub fn buildOwnedVersionedMessageWithLatestBlockhash(
     );
 }
 
+pub fn buildOwnedVersionedMessageWithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedMessageWithLatestBlockhashOptions,
+) !sdk.OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedMessageWithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildVersionedMessageBase64WithLatestBlockhash(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1658,6 +1868,14 @@ pub fn buildVersionedMessageBase64WithLatestBlockhash(
     );
 }
 
+pub fn buildVersionedMessageBase64WithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedMessageWithLatestBlockhashOptions,
+) ![]u8 {
+    return try buildVersionedMessageBase64WithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildVersionedMessageBytesWithLatestBlockhash(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1673,6 +1891,14 @@ pub fn buildVersionedMessageBytesWithLatestBlockhash(
             .instruction = options.instruction,
         },
     );
+}
+
+pub fn buildVersionedMessageBytesWithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedMessageWithLatestBlockhashOptions,
+) ![]u8 {
+    return try buildVersionedMessageBytesWithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn buildSignedVersionedTransactionWithLatestBlockhash(
@@ -1693,6 +1919,14 @@ pub fn buildSignedVersionedTransactionWithLatestBlockhash(
     );
 }
 
+pub fn buildSignedVersionedTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedTransactionWithLatestBlockhashOptions,
+) !sdk.SignedVersionedTransaction {
+    return try buildSignedVersionedTransactionWithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildVersionedTransactionBase64WithLatestBlockhash(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1709,6 +1943,14 @@ pub fn buildVersionedTransactionBase64WithLatestBlockhash(
             .instruction = options.instruction,
         },
     );
+}
+
+pub fn buildVersionedTransactionBase64WithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedTransactionWithLatestBlockhashOptions,
+) ![]u8 {
+    return try buildVersionedTransactionBase64WithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn sendLegacyTransactionWithLatestBlockhash(
@@ -1729,6 +1971,14 @@ pub fn sendLegacyTransactionWithLatestBlockhash(
     );
 }
 
+pub fn sendLegacyTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendLegacyTransactionWithLatestBlockhashOptions,
+) ![]const u8 {
+    return try sendLegacyTransactionWithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn simulateLegacyTransactionWithLatestBlockhash(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1745,6 +1995,14 @@ pub fn simulateLegacyTransactionWithLatestBlockhash(
             .simulate_options = options.simulate_options,
         },
     );
+}
+
+pub fn simulateLegacyTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SimulateLegacyTransactionWithLatestBlockhashOptions,
+) !rpc_types.SimulatedTransaction {
+    return try simulateLegacyTransactionWithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn sendAndConfirmLegacyTransactionWithLatestBlockhash(
@@ -1769,6 +2027,14 @@ pub fn sendAndConfirmLegacyTransactionWithLatestBlockhash(
     );
 }
 
+pub fn sendAndConfirmLegacyTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendAndConfirmLegacyTransactionWithLatestBlockhashOptions,
+) ![]const u8 {
+    return try sendAndConfirmLegacyTransactionWithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn sendAndConfirmLegacyTransactionWithLatestBlockhashAndSpinner(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1791,6 +2057,14 @@ pub fn sendAndConfirmLegacyTransactionWithLatestBlockhashAndSpinner(
     );
 }
 
+pub fn sendAndConfirmLegacyTransactionWithLatestBlockhashAndSpinnerFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendAndConfirmLegacyTransactionWithLatestBlockhashOptions,
+) ![]const u8 {
+    return try sendAndConfirmLegacyTransactionWithLatestBlockhashAndSpinner(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn sendVersionedTransactionWithLatestBlockhash(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1810,6 +2084,14 @@ pub fn sendVersionedTransactionWithLatestBlockhash(
     );
 }
 
+pub fn sendVersionedTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendVersionedTransactionWithLatestBlockhashOptions,
+) ![]const u8 {
+    return try sendVersionedTransactionWithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn simulateVersionedTransactionWithLatestBlockhash(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1827,6 +2109,14 @@ pub fn simulateVersionedTransactionWithLatestBlockhash(
             .simulate_options = options.simulate_options,
         },
     );
+}
+
+pub fn simulateVersionedTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SimulateVersionedTransactionWithLatestBlockhashOptions,
+) !rpc_types.SimulatedTransaction {
+    return try simulateVersionedTransactionWithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn sendAndConfirmVersionedTransactionWithLatestBlockhash(
@@ -1852,6 +2142,14 @@ pub fn sendAndConfirmVersionedTransactionWithLatestBlockhash(
     );
 }
 
+pub fn sendAndConfirmVersionedTransactionWithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendAndConfirmVersionedTransactionWithLatestBlockhashOptions,
+) ![]const u8 {
+    return try sendAndConfirmVersionedTransactionWithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn sendAndConfirmVersionedTransactionWithLatestBlockhashAndSpinner(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1875,6 +2173,14 @@ pub fn sendAndConfirmVersionedTransactionWithLatestBlockhashAndSpinner(
     );
 }
 
+pub fn sendAndConfirmVersionedTransactionWithLatestBlockhashAndSpinnerFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendAndConfirmVersionedTransactionWithLatestBlockhashOptions,
+) ![]const u8 {
+    return try sendAndConfirmVersionedTransactionWithLatestBlockhashAndSpinner(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn getFeeForLegacyMessageWithLatestBlockhash(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1891,6 +2197,15 @@ pub fn getFeeForLegacyMessageWithLatestBlockhash(
         },
         fee_options,
     );
+}
+
+pub fn getFeeForLegacyMessageWithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    message_options: BuildLegacyMessageWithLatestBlockhashOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    return try getFeeForLegacyMessageWithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), message_options, fee_options);
 }
 
 pub fn getFeeForVersionedMessageWithLatestBlockhash(
@@ -1910,6 +2225,15 @@ pub fn getFeeForVersionedMessageWithLatestBlockhash(
         },
         fee_options,
     );
+}
+
+pub fn getFeeForVersionedMessageWithLatestBlockhashFromJson(
+    self: anytype,
+    program_id: []const u8,
+    message_options: BuildVersionedMessageWithLatestBlockhashOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    return try getFeeForVersionedMessageWithLatestBlockhash(self, try parseProgramId(self.allocator, program_id), message_options, fee_options);
 }
 
 test "program_invoke.buildOwnedInstructionFromJson builds utf8 instruction from accounts json" {
@@ -2773,6 +3097,110 @@ test "program_invoke.buildVersionedMessageBytesWithLatestBlockhash matches sdk s
 
     try std.testing.expectEqual(rpc_types.Commitment.confirmed, mock.captured_query.?.cluster.commitment.?);
     try std.testing.expectEqualSlices(u8, expected, actual);
+}
+
+test "program_invoke.buildLegacyMessageBytesWithBlockhashQueryFromJson parses program id string" {
+    const allocator = std.testing.allocator;
+
+    const MockLegacyQueryBytesBuilder = struct {
+        allocator: Allocator,
+        captured_program_id: ?sdk.Pubkey = null,
+
+        pub fn buildOwnedLegacyMessageWithBlockhashQuery(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            blockhash_query: rpc_types.BlockhashQuery,
+            nonce_authority: ?sdk.Pubkey,
+        ) !sdk.OwnedLegacyMessage {
+            _ = blockhash_query;
+            _ = nonce_authority;
+            self.captured_program_id = instructions[0].program_id;
+            return try sdk.buildOwnedLegacyMessage(
+                self.allocator,
+                payer,
+                sdk.Hash.fromBytes(.{135} ** 32),
+                instructions,
+            );
+        }
+    };
+
+    var mock = MockLegacyQueryBytesBuilder{ .allocator = allocator };
+    const program_id = sdk.Pubkey.fromBytes(.{136} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const payer = sdk.Pubkey.fromBytes(.{137} ** 32);
+
+    const bytes = try buildLegacyMessageBytesWithBlockhashQueryFromJson(
+        &mock,
+        program_id_base58,
+        .{
+            .payer = payer,
+            .blockhash_query = .{ .fixed = "fixed-blockhash-json" },
+            .instruction = .{
+                .data = "ping",
+                .data_encoding = .utf8,
+            },
+        },
+    );
+    defer allocator.free(bytes);
+
+    try std.testing.expect(mock.captured_program_id.?.eql(program_id));
+    try std.testing.expect(bytes.len > 0);
+}
+
+test "program_invoke.sendVersionedTransactionWithLatestBlockhashFromJson parses program id string" {
+    const allocator = std.testing.allocator;
+
+    const MockVersionedLatestClient = struct {
+        allocator: Allocator,
+        captured_program_id: ?sdk.Pubkey = null,
+
+        pub fn sendVersionedInstructionsWithBlockhashQuery(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            address_lookup_tables: []const sdk.AddressLookupTableAccount,
+            signers: []const sdk.Keypair,
+            blockhash_query: rpc_types.BlockhashQuery,
+            nonce_authority: ?sdk.Pubkey,
+            options: ?rpc_types.SendVersionedInstructionsOptions,
+        ) ![]const u8 {
+            _ = self.allocator;
+            _ = payer;
+            _ = address_lookup_tables;
+            _ = signers;
+            _ = blockhash_query;
+            _ = nonce_authority;
+            _ = options;
+            self.captured_program_id = instructions[0].program_id;
+            return "mock-versioned-latest-json-signature";
+        }
+    };
+
+    var mock = MockVersionedLatestClient{ .allocator = allocator };
+    const program_id = sdk.Pubkey.fromBytes(.{138} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const payer = sdk.Pubkey.fromBytes(.{139} ** 32);
+
+    const signature = try sendVersionedTransactionWithLatestBlockhashFromJson(
+        &mock,
+        program_id_base58,
+        .{
+            .payer = payer,
+            .address_lookup_tables = &.{},
+            .signers = &.{},
+            .blockhash_commitment = .processed,
+            .instruction = .{
+                .data = "70696e67",
+                .data_encoding = .hex,
+            },
+        },
+    );
+
+    try std.testing.expectEqualStrings("mock-versioned-latest-json-signature", signature);
+    try std.testing.expect(mock.captured_program_id.?.eql(program_id));
 }
 
 test "program_invoke.simulateVersionedTransaction delegates instruction and options" {
