@@ -78,6 +78,21 @@ const cli_parsers = .{
     .arg = clap.parsers.string,
 };
 
+const command_positionals_params = clap.parseParamsComptime(
+    \\<string>
+    \\<string>
+    \\<string>
+    \\<string>
+    \\<string>
+    \\<string>
+    \\<string>...
+    \\
+);
+
+const positional_only_parsers = .{
+    .string = clap.parsers.string,
+};
+
 pub const default_solana_rpc_url = "https://api.mainnet-beta.solana.com";
 pub const default_solana_cli_config_path = ".config/solana/cli/config.yml";
 pub const default_solana_keypair_path = ".config/solana/id.json";
@@ -504,6 +519,39 @@ fn appendStringArgs(allocator: Allocator, dest: *std.ArrayListUnmanaged([]const 
     }
 }
 
+fn parsePositionalsWithClap(
+    comptime params: []const clap.Param(clap.Help),
+    allocator: Allocator,
+    args: []const []const u8,
+) !clap.ResultEx(clap.Help, params, positional_only_parsers) {
+    comptime {
+        @setEvalBranchQuota(8_000);
+    }
+
+    var iter = clap.args.SliceIterator{ .args = args };
+    return clap.parseEx(clap.Help, params, positional_only_parsers, &iter, .{
+        .allocator = allocator,
+    }) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return error.InvalidCli,
+    };
+}
+
+fn appendPositionals(
+    allocator: Allocator,
+    dest: *std.ArrayListUnmanaged([]const u8),
+    fixed: []const ?[]const u8,
+    tail: []const []const u8,
+) !void {
+    for (fixed) |value_opt| {
+        const value = value_opt orelse break;
+        dest.append(allocator, value) catch return error.InvalidCli;
+    }
+    for (tail) |value| {
+        dest.append(allocator, value) catch return error.InvalidCli;
+    }
+}
+
 fn commandFromArg(arg: []const u8) ?Command {
     var normalized: [128]u8 = undefined;
     if (arg.len == 0 or arg.len > normalized.len) return null;
@@ -516,240 +564,227 @@ fn commandFromArg(arg: []const u8) ?Command {
 }
 
 fn parseCommandPositionals(allocator: Allocator, parsed: *ParsedArgs, positionals: []const []const u8) !void {
-    for (positionals) |arg| {
-        switch (parsed.command) {
-            .latest_blockhash, .slot, .block_height, .transaction_count, .version, .epoch_info, .health, .genesis_hash, .supply, .epoch_schedule, .inflation_rate, .highest_snapshot_slot, .first_available_block, .identity, .cluster_nodes, .vote_accounts, .block_production, .inflation_governor, .minimum_ledger_slot, .max_retransmit_slot, .max_shred_insert_slot, .largest_accounts, .slot_leader => return error.InvalidCli,
+    var result = try parsePositionalsWithClap(&command_positionals_params, allocator, positionals);
+    defer result.deinit();
 
-            .stake_minimum_delegation => return error.InvalidCli,
+    const p0 = result.positionals[0];
+    const p1 = result.positionals[1];
+    const p2 = result.positionals[2];
+    const p3 = result.positionals[3];
+    const p4 = result.positionals[4];
+    const p5 = result.positionals[5];
+    const tail = result.positionals[6];
 
-            .signatures_for_address => if (parsed.signatures_for_address_arg == null) {
-                parsed.signatures_for_address_arg = arg;
+    switch (parsed.command) {
+        .latest_blockhash,
+        .slot,
+        .block_height,
+        .transaction_count,
+        .version,
+        .epoch_info,
+        .health,
+        .genesis_hash,
+        .supply,
+        .epoch_schedule,
+        .inflation_rate,
+        .highest_snapshot_slot,
+        .first_available_block,
+        .identity,
+        .cluster_nodes,
+        .vote_accounts,
+        .block_production,
+        .inflation_governor,
+        .minimum_ledger_slot,
+        .max_retransmit_slot,
+        .max_shred_insert_slot,
+        .largest_accounts,
+        .slot_leader,
+        .stake_minimum_delegation,
+        => if (p0 != null) return error.InvalidCli,
+
+        .signatures_for_address => {
+            parsed.signatures_for_address_arg = p0;
+            if (p1 != null) return error.InvalidCli;
+        },
+
+        .status, .confirm_transaction, .signature_status, .transaction, .blocks_since_signature_confirmation => {
+            parsed.signature = p0;
+            if (p1 != null) return error.InvalidCli;
+        },
+
+        .poll_for_signature_confirmation => {
+            parsed.signature = p0;
+            parsed.confirmation_blocks_arg = p1;
+            if (p2 != null) return error.InvalidCli;
+        },
+
+        .signature_statuses => {
+            try appendPositionals(allocator, &parsed.signature_statuses, &.{ p0, p1, p2, p3, p4, p5 }, tail);
+        },
+
+        .send_transaction, .send_transaction_and_confirm, .simulate_transaction => {
+            parsed.signed_tx_arg = p0;
+            if (p1 != null) return error.InvalidCli;
+        },
+
+        .send_instructions,
+        .send_instructions_and_confirm,
+        .send_versioned_instructions,
+        .send_versioned_instructions_and_confirm,
+        .simulate_instructions,
+        .simulate_versioned_instructions,
+        => {
+            parsed.instructions_spec_arg = p0;
+            if (p1 != null) return error.InvalidCli;
+        },
+
+        .simulate_idl_invoke,
+        .send_idl_invoke,
+        .send_idl_invoke_and_confirm,
+        => {
+            parsed.idl_spec_arg = p0;
+            parsed.idl_instruction_arg = p1;
+            parsed.program_invoke_signer_keypair_paths_arg = p2;
+            if (p3 != null) return error.InvalidCli;
+        },
+
+        .simulate_versioned_idl_invoke,
+        .send_versioned_idl_invoke,
+        .send_versioned_idl_invoke_and_confirm,
+        => {
+            parsed.idl_spec_arg = p0;
+            parsed.idl_instruction_arg = p1;
+            parsed.program_invoke_signer_keypair_paths_arg = p2;
+            parsed.program_invoke_lookup_tables_arg = p3;
+            if (p4 != null) return error.InvalidCli;
+        },
+
+        .send_program_invoke,
+        .send_program_invoke_and_confirm,
+        .simulate_program_invoke,
+        .send_versioned_program_invoke,
+        .send_versioned_program_invoke_and_confirm,
+        .simulate_versioned_program_invoke,
+        => {
+            parsed.program_invoke_program_id_arg = p0;
+            parsed.program_invoke_accounts_arg = p1;
+            parsed.program_invoke_data_arg = p2;
+            parsed.program_invoke_data_encoding_arg = p3;
+            parsed.program_invoke_signer_keypair_paths_arg = p4;
+            parsed.program_invoke_lookup_tables_arg = p5;
+            if (tail.len != 0) return error.InvalidCli;
+        },
+
+        .raw_rpc => {
+            parsed.raw_rpc_method_arg = p0;
+            parsed.raw_rpc_params_arg = p1;
+            if (p2 != null) return error.InvalidCli;
+        },
+
+        .transfer => {
+            if (parsed.sender_keypair_path_arg == null and parsed.sender_secret_key_arg == null) {
+                parsed.sender_secret_key_arg = p0;
+                parsed.account = p1;
+                parsed.lamports_arg = p2;
+                if (p3 != null) return error.InvalidCli;
             } else {
-                return error.InvalidCli;
-            },
+                parsed.account = p0;
+                parsed.lamports_arg = p1;
+                if (p2 != null) return error.InvalidCli;
+            }
+        },
 
-            .status, .confirm_transaction, .signature_status, .transaction, .blocks_since_signature_confirmation => if (parsed.signature == null) {
-                parsed.signature = arg;
-            } else {
-                return error.InvalidCli;
-            },
+        .balance, .poll_balance, .account_data, .ui_account, .account_info => {
+            parsed.account = p0;
+            if (p1 != null) return error.InvalidCli;
+        },
 
-            .poll_for_signature_confirmation => if (parsed.signature == null) {
-                parsed.signature = arg;
-            } else if (parsed.confirmation_blocks_arg == null) {
-                parsed.confirmation_blocks_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
+        .wait_for_balance => {
+            parsed.account = p0;
+            parsed.expected_balance_arg = p1;
+            if (p2 != null) return error.InvalidCli;
+        },
 
-            .signature_statuses => {
-                parsed.signature_statuses.append(allocator, arg) catch return error.InvalidCli;
-            },
+        .request_airdrop => {
+            parsed.account = p0;
+            parsed.lamports_arg = p1;
+            if (p2 != null) return error.InvalidCli;
+        },
 
-            .send_transaction, .send_transaction_and_confirm, .simulate_transaction => if (parsed.signed_tx_arg == null) {
-                parsed.signed_tx_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
+        .multiple_accounts, .multiple_ui_accounts, .inflation_reward => {
+            try appendPositionals(allocator, &parsed.multiple_accounts, &.{ p0, p1, p2, p3, p4, p5 }, tail);
+        },
 
-            .send_instructions,
-            .send_instructions_and_confirm,
-            .send_versioned_instructions,
-            .send_versioned_instructions_and_confirm,
-            .simulate_instructions,
-            .simulate_versioned_instructions,
-            => if (parsed.instructions_spec_arg == null) {
-                parsed.instructions_spec_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
+        .recent_prioritization_fees => {
+            try appendPositionals(allocator, &parsed.multiple_accounts, &.{ p0, p1, p2, p3, p4, p5 }, tail);
+        },
 
-            .simulate_idl_invoke,
-            .send_idl_invoke,
-            .send_idl_invoke_and_confirm,
-            => if (parsed.idl_spec_arg == null) {
-                parsed.idl_spec_arg = arg;
-            } else if (parsed.idl_instruction_arg == null) {
-                parsed.idl_instruction_arg = arg;
-            } else if (parsed.program_invoke_signer_keypair_paths_arg == null) {
-                parsed.program_invoke_signer_keypair_paths_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
+        .program_accounts,
+        .program_ui_accounts,
+        .token_account_balance,
+        .token_account,
+        .token_supply,
+        .token_largest_accounts,
+        .token_accounts_by_owner,
+        .token_accounts_by_delegate,
+        => {
+            parsed.account = p0;
+            if (p1 != null) return error.InvalidCli;
+        },
 
-            .simulate_versioned_idl_invoke,
-            .send_versioned_idl_invoke,
-            .send_versioned_idl_invoke_and_confirm,
-            => if (parsed.idl_spec_arg == null) {
-                parsed.idl_spec_arg = arg;
-            } else if (parsed.idl_instruction_arg == null) {
-                parsed.idl_instruction_arg = arg;
-            } else if (parsed.program_invoke_signer_keypair_paths_arg == null) {
-                parsed.program_invoke_signer_keypair_paths_arg = arg;
-            } else if (parsed.program_invoke_lookup_tables_arg == null) {
-                parsed.program_invoke_lookup_tables_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
+        .minimum_rent_exemption => {
+            parsed.rent_bytes_arg = p0;
+            if (p1 != null) return error.InvalidCli;
+        },
 
-            .send_program_invoke,
-            .send_program_invoke_and_confirm,
-            .simulate_program_invoke,
-            .send_versioned_program_invoke,
-            .send_versioned_program_invoke_and_confirm,
-            .simulate_versioned_program_invoke,
-            => if (parsed.program_invoke_program_id_arg == null) {
-                parsed.program_invoke_program_id_arg = arg;
-            } else if (parsed.program_invoke_accounts_arg == null) {
-                parsed.program_invoke_accounts_arg = arg;
-            } else if (parsed.program_invoke_data_arg == null) {
-                parsed.program_invoke_data_arg = arg;
-            } else if (parsed.program_invoke_data_encoding_arg == null) {
-                parsed.program_invoke_data_encoding_arg = arg;
-            } else if (parsed.program_invoke_signer_keypair_paths_arg == null) {
-                parsed.program_invoke_signer_keypair_paths_arg = arg;
-            } else if (parsed.program_invoke_lookup_tables_arg == null) {
-                parsed.program_invoke_lookup_tables_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
+        .new_latest_blockhash, .blockhash_valid => {
+            parsed.blockhash_arg = p0;
+            if (p1 != null) return error.InvalidCli;
+        },
 
-            .raw_rpc => if (parsed.raw_rpc_method_arg == null) {
-                parsed.raw_rpc_method_arg = arg;
-            } else if (parsed.raw_rpc_params_arg == null) {
-                parsed.raw_rpc_params_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
+        .feature_activation_slot => {
+            parsed.feature_key_arg = p0;
+            if (p1 != null) return error.InvalidCli;
+        },
 
-            .transfer => if (parsed.sender_keypair_path_arg == null and parsed.sender_secret_key_arg == null) {
-                parsed.sender_secret_key_arg = arg;
-            } else if (parsed.account == null) {
-                parsed.account = arg;
-            } else if (parsed.lamports_arg == null) {
-                parsed.lamports_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
+        .block_time, .block_commitment, .block => {
+            parsed.slot_arg = p0;
+            if (p1 != null) return error.InvalidCli;
+        },
 
-            .balance, .poll_balance, .account_data, .ui_account => if (parsed.account == null) {
-                parsed.account = arg;
-            } else {
-                return error.InvalidCli;
-            },
+        .fee_for_message => {
+            parsed.message_arg = p0;
+            if (p1 != null) return error.InvalidCli;
+        },
 
-            .wait_for_balance => if (parsed.account == null) {
-                parsed.account = arg;
-            } else if (parsed.expected_balance_arg == null) {
-                parsed.expected_balance_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
+        .recent_performance_samples => {
+            parsed.performance_limit_arg = p0;
+            if (p1 != null) return error.InvalidCli;
+        },
 
-            .request_airdrop => if (parsed.account == null) {
-                parsed.account = arg;
-            } else if (parsed.lamports_arg == null) {
-                parsed.lamports_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
+        .blocks => {
+            parsed.slot_arg = p0;
+            parsed.blocks_end_slot_arg = p1;
+            if (p2 != null) return error.InvalidCli;
+        },
 
-            .account_info => if (parsed.account == null) {
-                parsed.account = arg;
-            } else {
-                return error.InvalidCli;
-            },
+        .blocks_with_limit => {
+            parsed.slot_arg = p0;
+            parsed.blocks_limit_arg = p1;
+            if (p2 != null) return error.InvalidCli;
+        },
 
-            .multiple_accounts, .multiple_ui_accounts, .inflation_reward, .recent_prioritization_fees => {
-                parsed.multiple_accounts.append(allocator, arg) catch return error.InvalidCli;
-            },
+        .slot_leaders => {
+            parsed.slot_arg = p0;
+            parsed.slot_leaders_limit_arg = p1;
+            if (p2 != null) return error.InvalidCli;
+        },
 
-            .program_accounts, .program_ui_accounts, .token_account_balance, .token_account, .token_supply, .token_largest_accounts, .token_accounts_by_owner, .token_accounts_by_delegate => if (parsed.account == null) {
-                parsed.account = arg;
-            } else {
-                return error.InvalidCli;
-            },
-
-            .minimum_rent_exemption => if (parsed.rent_bytes_arg == null) {
-                parsed.rent_bytes_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
-
-            .new_latest_blockhash, .blockhash_valid => if (parsed.blockhash_arg == null) {
-                parsed.blockhash_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
-
-            .feature_activation_slot => if (parsed.feature_key_arg == null) {
-                parsed.feature_key_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
-
-            .block_time => if (parsed.slot_arg == null) {
-                parsed.slot_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
-
-            .block_commitment => if (parsed.slot_arg == null) {
-                parsed.slot_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
-
-            .block => if (parsed.slot_arg == null) {
-                parsed.slot_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
-
-            .fee_for_message => if (parsed.message_arg == null) {
-                parsed.message_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
-
-            .recent_performance_samples => if (parsed.performance_limit_arg == null) {
-                parsed.performance_limit_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
-
-            .blocks => if (parsed.slot_arg == null) {
-                parsed.slot_arg = arg;
-            } else if (parsed.blocks_end_slot_arg == null) {
-                parsed.blocks_end_slot_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
-
-            .blocks_with_limit => if (parsed.slot_arg == null) {
-                parsed.slot_arg = arg;
-            } else if (parsed.blocks_limit_arg == null) {
-                parsed.blocks_limit_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
-
-            .slot_leaders => if (parsed.slot_arg == null) {
-                parsed.slot_arg = arg;
-            } else if (parsed.slot_leaders_limit_arg == null) {
-                parsed.slot_leaders_limit_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
-
-            .leader_schedule => if (parsed.leader_schedule_slot_arg == null) {
-                parsed.leader_schedule_slot_arg = arg;
-            } else if (parsed.leader_schedule_identity_arg == null) {
-                parsed.leader_schedule_identity_arg = arg;
-            } else {
-                return error.InvalidCli;
-            },
-        }
+        .leader_schedule => {
+            parsed.leader_schedule_slot_arg = p0;
+            parsed.leader_schedule_identity_arg = p1;
+            if (p2 != null) return error.InvalidCli;
+        },
     }
 }
 
