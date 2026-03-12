@@ -44,7 +44,10 @@ fn run(allocator: std.mem.Allocator) !u8 {
     cli.applySolanaCliConfigDefaults(&parsed, &solana_cli_config);
 
     if (parsed.show_usage or !parsed.has_command) {
-        try cli.printUsageToFile(.stderr());
+        if (parsed.help_command) |command|
+            try cli.printCommandUsageToFile(.stderr(), command)
+        else
+            try cli.printUsageToFile(.stderr());
         return 0;
     }
 

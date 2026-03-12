@@ -540,10 +540,24 @@ pub fn printUsage(out: *std.Io.Writer) !void {
     try clap.help(out, clap.Help, &cli_option_help_params, .{});
 }
 
+pub fn printCommandUsage(out: *std.Io.Writer, command: Command) !void {
+    try out.writeAll("Usage:\n");
+    try writeCommandUsageEntry(out, commandUsageEntry(command));
+    try out.writeAll("\nOptional flags:\n");
+    try clap.help(out, clap.Help, &cli_option_help_params, .{});
+}
+
 pub fn printUsageToFile(file: std.fs.File) !void {
     var buf: [2048]u8 = undefined;
     var writer = file.writer(&buf);
     try printUsage(&writer.interface);
+    try writer.interface.flush();
+}
+
+pub fn printCommandUsageToFile(file: std.fs.File, command: Command) !void {
+    var buf: [2048]u8 = undefined;
+    var writer = file.writer(&buf);
+    try printCommandUsage(&writer.interface, command);
     try writer.interface.flush();
 }
 
@@ -937,6 +951,7 @@ pub fn applySolanaCliConfigDefaults(parsed: *ParsedArgs, config: *const SolanaCl
 
 pub const ParsedArgs = struct {
     command: Command,
+    help_command: ?Command,
     has_command: bool,
     show_usage: bool,
     rpc_url: []const u8,
@@ -1317,6 +1332,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
 
     var parsed = ParsedArgs{
         .command = .latest_blockhash,
+        .help_command = null,
         .has_command = false,
         .show_usage = false,
         .rpc_url = default_solana_rpc_url,
@@ -1502,10 +1518,16 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
             .help => {
                 parsed.show_usage = true;
                 parsed.has_command = true;
+                switch (result.positionals[1].len) {
+                    0 => {},
+                    1 => parsed.help_command = commandFromArg(result.positionals[1][0]) orelse return error.InvalidCli,
+                    else => return error.InvalidCli,
+                }
             },
             .command => |command| {
                 parsed.command = command;
                 parsed.has_command = true;
+                if (parsed.show_usage) parsed.help_command = command;
                 try parseCommandPositionals(allocator, &parsed, result.positionals[1]);
             },
         }
@@ -1910,6 +1932,25 @@ test "cli.parseCliArgs enables usage for help flag" {
 
     try std.testing.expect(parsed.show_usage);
     try std.testing.expect(!parsed.has_command);
+    try std.testing.expect(parsed.help_command == null);
+}
+
+test "cli.parseCliArgs captures help subcommand target" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{ "help", "transfer" });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expect(parsed.show_usage);
+    try std.testing.expect(parsed.has_command);
+    try std.testing.expectEqual(Command.transfer, parsed.help_command.?);
+}
+
+test "cli.parseCliArgs captures command help target from help flag" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{ "transfer", "--help" });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expect(parsed.show_usage);
+    try std.testing.expect(parsed.has_command);
+    try std.testing.expectEqual(Command.transfer, parsed.help_command.?);
 }
 
 test "cli.parseCliArgs does not reinterpret positional args as commands" {
