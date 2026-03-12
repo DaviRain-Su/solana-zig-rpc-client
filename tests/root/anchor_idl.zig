@@ -324,6 +324,189 @@ test "root.anchor_idl_invoke.buildOwnedInstruction resolves relation binding pat
     try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(authority));
 }
 
+test "root.anchor_idl_invoke.buildOwnedInstruction resolves event cpi accounts automatically" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{54} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"emit","discriminator":[10,10,10,10,10,10,10,10],"accounts":[{{"name":"eventAuthority"}},{{"name":"program"}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "emit",
+        .{},
+    );
+    defer owned.deinit(allocator);
+
+    const expected_event_authority = try findProgramAddress(allocator, &.{"__event_authority"}, program_id);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(expected_event_authority));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(program_id));
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction resolves nested event cpi accounts automatically" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{55} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"emit","discriminator":[11,11,11,11,11,11,11,11],"accounts":[{{"name":"event","accounts":[{{"name":"eventAuthority"}},{{"name":"program"}}]}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "emit",
+        .{},
+    );
+    defer owned.deinit(allocator);
+
+    const expected_event_authority = try findProgramAddress(allocator, &.{"__event_authority"}, program_id);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(expected_event_authority));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(program_id));
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction resolves snake_case event cpi accounts automatically" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{56} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"emit","discriminator":[12,12,12,12,12,12,12,12],"accounts":[{{"name":"event_authority"}},{{"name":"program"}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "emit",
+        .{},
+    );
+    defer owned.deinit(allocator);
+
+    const expected_event_authority = try findProgramAddress(allocator, &.{"__event_authority"}, program_id);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(expected_event_authority));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(program_id));
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction reuses auto-resolved accounts in later pda resolution" {
+    const allocator = std.testing.allocator;
+    const payer = client.Pubkey.fromBytes(.{57} ** 32);
+    const program_id = client.Pubkey.fromBytes(.{58} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[13,13,13,13,13,13,13,13],"accounts":[{{"name":"authority","signer":true}},{{"name":"vault","pda":{{"seeds":[{{"kind":"account","path":"authority"}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "initialize",
+        .{
+            .default_signer = payer,
+        },
+    );
+    defer owned.deinit(allocator);
+
+    const expected_vault = try findProgramAddress(allocator, &.{payer.bytes[0..]}, program_id);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(payer));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(expected_vault));
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction resolves forward relation through nested auto-resolved signer" {
+    const allocator = std.testing.allocator;
+    const payer = client.Pubkey.fromBytes(.{59} ** 32);
+    const program_id = client.Pubkey.fromBytes(.{60} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[14,14,14,14,14,14,14,14],"accounts":[{{"name":"vault","pda":{{"seeds":[{{"kind":"account","path":"authority"}}]}}}},{{"name":"state","accounts":[{{"name":"authority","signer":true}}]}},{{"name":"authority","relations":["state"]}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "initialize",
+        .{
+            .default_signer = payer,
+        },
+    );
+    defer owned.deinit(allocator);
+
+    const expected_vault = try findProgramAddress(allocator, &.{payer.bytes[0..]}, program_id);
+
+    try std.testing.expectEqual(@as(usize, 3), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(expected_vault));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(payer));
+    try std.testing.expect(owned.instruction.accounts[2].pubkey.eql(payer));
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction resolves forward nested event cpi accounts in pda program" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{61} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"emit","discriminator":[15,15,15,15,15,15,15,15],"accounts":[{{"name":"vault","pda":{{"program":{{"kind":"account","path":"event.program"}},"seeds":[{{"kind":"const","value":[118,97,117,108,116]}}]}}}},{{"name":"event","accounts":[{{"name":"eventAuthority"}},{{"name":"program"}}]}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "emit",
+        .{},
+    );
+    defer owned.deinit(allocator);
+
+    const expected_vault = try findProgramAddress(allocator, &.{"vault"}, program_id);
+    const expected_event_authority = try findProgramAddress(allocator, &.{"__event_authority"}, program_id);
+
+    try std.testing.expectEqual(@as(usize, 3), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(expected_vault));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(expected_event_authority));
+    try std.testing.expect(owned.instruction.accounts[2].pubkey.eql(program_id));
+}
+
 test "root.anchor_idl_invoke.buildOwnedInstruction returns unsupported account feature for scalar account seed pda" {
     const allocator = std.testing.allocator;
     const program_id = client.Pubkey.fromBytes(.{52} ** 32);
