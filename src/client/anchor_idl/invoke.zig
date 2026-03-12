@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const ParseIdlError = @typeInfo(@typeInfo(@TypeOf(idl_types.parseJson)).@"fn".return_type.?).error_union.error_set;
 const EncodeInstructionDataError = @typeInfo(@typeInfo(@TypeOf(idl_encode.encodeInstructionDataNamed)).@"fn".return_type.?).error_union.error_set;
+const SignLegacyMessageError = @typeInfo(@typeInfo(@TypeOf(sdk.OwnedLegacyMessage.sign)).@"fn".return_type.?).error_union.error_set;
 
 pub const BuildError = Allocator.Error || ParseIdlError || EncodeInstructionDataError || error{
     MissingAnchorIdlProgramId,
@@ -14,6 +15,8 @@ pub const BuildError = Allocator.Error || ParseIdlError || EncodeInstructionData
     InvalidAnchorIdlAccountSpec,
     UnsupportedAnchorIdlAccountFeature,
 };
+
+pub const BuildLegacyTransactionError = BuildError || SignLegacyMessageError;
 
 pub const AccountBinding = struct {
     path: []const u8,
@@ -1426,6 +1429,13 @@ pub const BuildLegacyMessageOptions = struct {
     instruction_options: BuildInstructionOptions = .{},
 };
 
+pub const BuildLegacyTransactionOptions = struct {
+    payer: sdk.Pubkey,
+    recent_blockhash: sdk.Hash,
+    signers: []const sdk.Keypair,
+    instruction_options: BuildInstructionOptions = .{},
+};
+
 pub fn buildOwnedLegacyMessage(
     allocator: Allocator,
     idl: *const idl_types.Idl,
@@ -1458,4 +1468,61 @@ pub fn buildOwnedLegacyMessageFromJson(
     defer parsed_idl.deinit();
 
     return try buildOwnedLegacyMessage(allocator, &parsed_idl.value, instruction_name, options);
+}
+
+pub fn buildSignedLegacyTransaction(
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    options: BuildLegacyTransactionOptions,
+) BuildLegacyTransactionError!sdk.SignedLegacyTransaction {
+    var owned_message = try buildOwnedLegacyMessage(
+        allocator,
+        idl,
+        instruction_name,
+        .{
+            .payer = options.payer,
+            .recent_blockhash = options.recent_blockhash,
+            .instruction_options = options.instruction_options,
+        },
+    );
+    defer owned_message.deinit(allocator);
+
+    return try owned_message.sign(allocator, options.signers);
+}
+
+pub fn buildSignedLegacyTransactionFromJson(
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    options: BuildLegacyTransactionOptions,
+) BuildLegacyTransactionError!sdk.SignedLegacyTransaction {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildSignedLegacyTransaction(allocator, &parsed_idl.value, instruction_name, options);
+}
+
+pub fn buildLegacyTransactionBase64(
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    options: BuildLegacyTransactionOptions,
+) BuildLegacyTransactionError![]u8 {
+    var signed = try buildSignedLegacyTransaction(allocator, idl, instruction_name, options);
+    defer signed.deinit(allocator);
+
+    return try signed.toBase64(allocator);
+}
+
+pub fn buildLegacyTransactionBase64FromJson(
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    options: BuildLegacyTransactionOptions,
+) BuildLegacyTransactionError![]u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildLegacyTransactionBase64(allocator, &parsed_idl.value, instruction_name, options);
 }

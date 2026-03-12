@@ -416,3 +416,75 @@ test "root.anchor_idl_invoke.buildOwnedLegacyMessageFromJson builds typed legacy
     try std.testing.expectEqual(@as(usize, 16), instruction.data.len);
     try std.testing.expectEqual(@as(u64, 42), std.mem.readInt(u64, instruction.data[8..16], .little));
 }
+
+test "root.anchor_idl_invoke.buildSignedLegacyTransactionFromJson signs and encodes transaction" {
+    const allocator = std.testing.allocator;
+    const signer_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{7} ** 32);
+    const signer = try client.Keypair.fromSecretKeyBytes(signer_raw.secret_key.toBytes());
+    const target_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{8} ** 32);
+    const target = client.Pubkey.fromBytes(target_raw.public_key.toBytes());
+    const recent_blockhash = client.Hash.fromBytes([_]u8{0x11} ** 32);
+    const idl_json =
+        \\{
+        \\  "address": "11111111111111111111111111111111",
+        \\  "instructions": [
+        \\    {
+        \\      "name": "setValue",
+        \\      "discriminator": [1, 2, 3, 4, 5, 6, 7, 8],
+        \\      "accounts": [
+        \\        { "name": "authority", "writable": true, "signer": true },
+        \\        { "name": "target", "writable": true }
+        \\      ],
+        \\      "args": [
+        \\        { "name": "value", "type": "u64" }
+        \\      ]
+        \\    }
+        \\  ]
+        \\}
+    ;
+
+    var signed = try client.anchor_idl_invoke.buildSignedLegacyTransactionFromJson(
+        allocator,
+        idl_json,
+        "setValue",
+        .{
+            .payer = signer.public_key,
+            .recent_blockhash = recent_blockhash,
+            .signers = &.{signer},
+            .instruction_options = .{
+                .args_json = "{\"value\":42}",
+                .account_bindings = &.{
+                    .{ .path = "authority", .pubkey = signer.public_key },
+                    .{ .path = "target", .pubkey = target },
+                },
+            },
+        },
+    );
+    defer signed.deinit(allocator);
+
+    const direct_base64 = try signed.toBase64(allocator);
+    defer allocator.free(direct_base64);
+
+    const helper_base64 = try client.anchor_idl_invoke.buildLegacyTransactionBase64FromJson(
+        allocator,
+        idl_json,
+        "setValue",
+        .{
+            .payer = signer.public_key,
+            .recent_blockhash = recent_blockhash,
+            .signers = &.{signer},
+            .instruction_options = .{
+                .args_json = "{\"value\":42}",
+                .account_bindings = &.{
+                    .{ .path = "authority", .pubkey = signer.public_key },
+                    .{ .path = "target", .pubkey = target },
+                },
+            },
+        },
+    );
+    defer allocator.free(helper_base64);
+
+    try std.testing.expect(signed.firstSignature() != null);
+    try std.testing.expect(direct_base64.len > 0);
+    try std.testing.expectEqualSlices(u8, direct_base64, helper_base64);
+}
