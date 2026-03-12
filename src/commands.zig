@@ -2389,10 +2389,12 @@ fn parseCliRemainingAccountMeta(raw: []const u8) !CliInstructionAccountMeta {
 const ParsedCliAnchorInvokeBindings = struct {
     typed_bindings: []client.anchor_idl_invoke.AccountBinding,
     explicit_null_paths: []const []const u8,
+    json_overlay_source: ?[]u8,
 
     fn deinit(self: *ParsedCliAnchorInvokeBindings, allocator: Allocator) void {
         allocator.free(self.typed_bindings);
         allocator.free(self.explicit_null_paths);
+        if (self.json_overlay_source) |value| allocator.free(value);
         self.* = undefined;
     }
 };
@@ -2405,6 +2407,11 @@ fn parseCliAnchorInvokeBindings(
     errdefer typed_bindings.deinit(allocator);
     var explicit_null_paths = std.ArrayListUnmanaged([]const u8){};
     errdefer explicit_null_paths.deinit(allocator);
+    var overlay_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer overlay_buffer.deinit();
+    var has_overlay_entries = false;
+
+    try overlay_buffer.writer.writeByte('{');
 
     for (account_bindings) |binding| {
         const equals_index = std.mem.indexOfScalar(u8, binding, '=') orelse return error.InvalidCli;
@@ -2414,14 +2421,35 @@ fn parseCliAnchorInvokeBindings(
         const value = binding[equals_index + 1 ..];
         if (std.mem.eql(u8, value, "null")) {
             try explicit_null_paths.append(allocator, path);
+            if (has_overlay_entries) try overlay_buffer.writer.writeByte(',');
+            try std.json.Stringify.value(std.json.Value{ .string = path }, .{}, &overlay_buffer.writer);
+            try overlay_buffer.writer.writeByte(':');
+            try overlay_buffer.writer.writeAll("null");
+            has_overlay_entries = true;
             continue;
         }
 
-        try typed_bindings.append(allocator, .{
-            .path = path,
-            .pubkey = try client.Pubkey.fromBase58(allocator, value),
-        });
+        if (client.Pubkey.fromBase58(allocator, value)) |pubkey| {
+            try typed_bindings.append(allocator, .{
+                .path = path,
+                .pubkey = pubkey,
+            });
+        } else |_| {
+            if (has_overlay_entries) try overlay_buffer.writer.writeByte(',');
+            try std.json.Stringify.value(std.json.Value{ .string = path }, .{}, &overlay_buffer.writer);
+            try overlay_buffer.writer.writeByte(':');
+            if (std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "false") or
+                (value.len != 0 and (value[0] == '{' or value[0] == '[' or value[0] == '"')))
+            {
+                try overlay_buffer.writer.writeAll(value);
+            } else {
+                try std.json.Stringify.value(std.json.Value{ .string = value }, .{}, &overlay_buffer.writer);
+            }
+            has_overlay_entries = true;
+        }
     }
+
+    try overlay_buffer.writer.writeByte('}');
 
     const typed_bindings_slice = try typed_bindings.toOwnedSlice(allocator);
     errdefer allocator.free(typed_bindings_slice);
@@ -2429,18 +2457,22 @@ fn parseCliAnchorInvokeBindings(
     return .{
         .typed_bindings = typed_bindings_slice,
         .explicit_null_paths = explicit_null_paths_slice,
+        .json_overlay_source = if (has_overlay_entries) try allocator.dupe(u8, overlay_buffer.written()) else null,
     };
 }
 
 fn mergeAnchorInvokeAccountBindingsJson(
     allocator: Allocator,
     base_json_source: ?[]const u8,
-    explicit_null_paths: []const []const u8,
+    overlay_json_source: ?[]const u8,
 ) !?[]u8 {
-    if (explicit_null_paths.len == 0) return null;
+    const overlay_source = overlay_json_source orelse return null;
 
     var parsed_base: ?std.json.Parsed(std.json.Value) = null;
     defer if (parsed_base) |*value| value.deinit();
+    var parsed_overlay = std.json.parseFromSlice(std.json.Value, allocator, overlay_source, .{}) catch return error.InvalidCli;
+    defer parsed_overlay.deinit();
+    if (parsed_overlay.value != .object) return error.InvalidCli;
 
     var standalone_object = std.json.ObjectMap.init(allocator);
     defer if (parsed_base == null) standalone_object.deinit();
@@ -2457,10 +2489,11 @@ fn mergeAnchorInvokeAccountBindingsJson(
         inserted_keys.deinit(allocator);
     }
 
-    for (explicit_null_paths) |path| {
-        const key_copy = try allocator.dupe(u8, path);
+    var overlay_iterator = parsed_overlay.value.object.iterator();
+    while (overlay_iterator.next()) |entry| {
+        const key_copy = try allocator.dupe(u8, entry.key_ptr.*);
         try inserted_keys.append(allocator, key_copy);
-        try root_object.put(key_copy, .null);
+        try root_object.put(key_copy, entry.value_ptr.*);
     }
 
     var json_buffer: std.io.Writer.Allocating = .init(allocator);
@@ -2606,47 +2639,7 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) !LoadedCliInstructionSpec {
-    const can_use_reusable_builder = true;
-
-    if (can_use_reusable_builder) {
-        return loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(
-            allocator,
-            idl_arg,
-            instruction_name,
-            program_id_override_arg,
-            args_json_arg,
-            accounts_json_arg,
-            account_bindings,
-            remaining_accounts,
-            remaining_accounts_json_arg,
-            payer_keypair_path_arg,
-            payer_secret_key_arg,
-            signer_keypair_paths_arg,
-            lookup_tables_arg,
-            nonce_account_arg,
-            nonce_authority_keypair_path_arg,
-            additional_signer_secret_keys_arg,
-        ) catch loadAnchorIdlInvokeInstructionSpecLegacyWithPayerSecret(
-            allocator,
-            idl_arg,
-            instruction_name,
-            program_id_override_arg,
-            args_json_arg,
-            accounts_json_arg,
-            account_bindings,
-            remaining_accounts,
-            remaining_accounts_json_arg,
-            payer_keypair_path_arg,
-            payer_secret_key_arg,
-            signer_keypair_paths_arg,
-            lookup_tables_arg,
-            nonce_account_arg,
-            nonce_authority_keypair_path_arg,
-            additional_signer_secret_keys_arg,
-        );
-    }
-
-    return loadAnchorIdlInvokeInstructionSpecLegacyWithPayerSecret(
+    return loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(
         allocator,
         idl_arg,
         instruction_name,
@@ -2744,7 +2737,7 @@ fn loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(
     const merged_accounts_json_source = mergeAnchorInvokeAccountBindingsJson(
         allocator,
         accounts_json_source,
-        parsed_cli_account_bindings.explicit_null_paths,
+        parsed_cli_account_bindings.json_overlay_source,
     ) catch return error.InvalidCli;
     defer if (merged_accounts_json_source) |value| allocator.free(value);
 

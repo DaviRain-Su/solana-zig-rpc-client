@@ -372,10 +372,10 @@ fn appendAccountBindingsFromJsonValue(
             return;
         }
         if (value == .string) {
-            if (try parseAccountBindingPubkeyValue(allocator, value)) |pubkey| {
+            if (sdk.Pubkey.fromBase58(allocator, value.string) catch null) |pubkey| {
                 try appendJsonAccountBinding(allocator, bindings, owned_paths, path_value, pubkey);
-                return;
             }
+            return;
         } else if (try parseAccountBindingLiteralObject(allocator, value)) |literal| {
             consumed_literal_field_name = literal.field_name;
             if (literal.pubkey) |pubkey| {
@@ -1184,6 +1184,89 @@ fn resolutionStackContains(resolution_stack: *const std.ArrayListUnmanaged([]u8)
     return false;
 }
 
+fn isPubkeySeedType(type_spec: std.json.Value) bool {
+    return type_spec == .string and
+        (std.mem.eql(u8, type_spec.string, "pubkey") or
+            std.mem.eql(u8, type_spec.string, "publicKey") or
+            std.mem.eql(u8, type_spec.string, "public_key"));
+}
+
+fn resolveBuiltinAccountAliasSeedType(account_name: []const u8, child_path: []const u8) ?std.json.Value {
+    const field_name, const rest = if (std.mem.indexOfScalar(u8, child_path, '.')) |dot_index|
+        .{ child_path[0..dot_index], child_path[dot_index + 1 ..] }
+    else
+        .{ child_path, "" };
+
+    if (pathSegmentMatches(account_name, "tokenAccount")) {
+        if (rest.len != 0 and pathSegmentMatches(field_name, "signers")) return null;
+        if (pathSegmentMatches(field_name, "mint")) return .{ .string = "pubkey" };
+        if (pathSegmentMatches(field_name, "owner")) return .{ .string = "pubkey" };
+        if (pathSegmentMatches(field_name, "amount")) return .{ .string = "u64" };
+        if (pathSegmentMatches(field_name, "delegate")) return .{ .string = "pubkey" };
+        if (pathSegmentMatches(field_name, "state")) return .{ .string = "u8" };
+        if (pathSegmentMatches(field_name, "isNative") or pathSegmentMatches(field_name, "is_native")) return .{ .string = "u64" };
+        if (pathSegmentMatches(field_name, "delegatedAmount") or pathSegmentMatches(field_name, "delegated_amount")) return .{ .string = "u64" };
+        if (pathSegmentMatches(field_name, "closeAuthority") or pathSegmentMatches(field_name, "close_authority")) return .{ .string = "pubkey" };
+        return null;
+    }
+
+    if (pathSegmentMatches(account_name, "mint")) {
+        if (pathSegmentMatches(field_name, "mintAuthority") or pathSegmentMatches(field_name, "mint_authority")) return .{ .string = "pubkey" };
+        if (pathSegmentMatches(field_name, "supply")) return .{ .string = "u64" };
+        if (pathSegmentMatches(field_name, "decimals")) return .{ .string = "u8" };
+        if (pathSegmentMatches(field_name, "isInitialized") or pathSegmentMatches(field_name, "is_initialized")) return .{ .string = "bool" };
+        if (pathSegmentMatches(field_name, "freezeAuthority") or pathSegmentMatches(field_name, "freeze_authority")) return .{ .string = "pubkey" };
+        return null;
+    }
+
+    if (pathSegmentMatches(account_name, "multisig")) {
+        if (pathSegmentMatches(field_name, "m")) return .{ .string = "u8" };
+        if (pathSegmentMatches(field_name, "n")) return .{ .string = "u8" };
+        if (pathSegmentMatches(field_name, "isInitialized") or pathSegmentMatches(field_name, "is_initialized")) return .{ .string = "bool" };
+        if (pathSegmentMatches(field_name, "signers") and rest.len != 0) return .{ .string = "pubkey" };
+        return null;
+    }
+
+    return null;
+}
+
+fn resolveAccountSeedType(
+    idl: *const idl_types.Idl,
+    seed_value: std.json.Value,
+    path: []const u8,
+) BuildError!?std.json.Value {
+    if (seed_value != .object) return error.InvalidAnchorIdlAccountSpec;
+    if (seed_value.object.get("type")) |type_spec| {
+        return try resolvePdaSeedType(idl, type_spec, "");
+    }
+
+    const child_path = if (std.mem.indexOfScalar(u8, path, '.')) |dot_index|
+        path[dot_index + 1 ..]
+    else
+        "";
+
+    if (seed_value.object.get("account")) |account_value| {
+        if (account_value != .string) return error.InvalidAnchorIdlAccountSpec;
+        if (idl_types.findType(idl, account_value.string)) |type_def| {
+            return try resolvePdaSeedType(idl, type_def.type, child_path);
+        }
+        if (resolveBuiltinAccountAliasSeedType(account_value.string, child_path)) |builtin_type| {
+            return builtin_type;
+        }
+        return error.InvalidAnchorIdlAccountSpec;
+    }
+
+    const account_name = if (std.mem.indexOfScalar(u8, path, '.')) |dot_index|
+        path[0..dot_index]
+    else
+        path;
+    if (idl_types.findType(idl, account_name)) |type_def| {
+        return try resolvePdaSeedType(idl, type_def.type, child_path);
+    }
+
+    return null;
+}
+
 fn encodePdaAccountSeed(
     allocator: Allocator,
     idl: *const idl_types.Idl,
@@ -1191,6 +1274,7 @@ fn encodePdaAccountSeed(
     seed_value: std.json.Value,
     parsed_args: ?*const std.json.Value,
     account_bindings: []const AccountBinding,
+    account_binding_values: ?*const std.json.Value,
     explicit_null_paths: []const []const u8,
     program_id: sdk.Pubkey,
     default_signer_pubkey: ?sdk.Pubkey,
@@ -1203,13 +1287,17 @@ fn encodePdaAccountSeed(
         seed_value.object.get("account") orelse return error.InvalidAnchorIdlAccountSpec;
     if (path_value != .string) return error.InvalidAnchorIdlAccountSpec;
 
-    if (seed_value.object.get("type")) |type_spec| {
-        const resolved_type_spec = try resolvePdaSeedType(idl, type_spec, "");
-        if (!(resolved_type_spec == .string and
-            (std.mem.eql(u8, resolved_type_spec.string, "pubkey") or
-                std.mem.eql(u8, resolved_type_spec.string, "publicKey") or
-                std.mem.eql(u8, resolved_type_spec.string, "public_key"))))
-        {
+    if (try resolveAccountSeedType(idl, seed_value, path_value.string)) |resolved_type_spec| {
+        if (account_binding_values) |bindings_value| {
+            if (findJsonValue(bindings_value, path_value.string)) |bound_value| {
+                var bytes: std.ArrayListUnmanaged(u8) = .{};
+                defer bytes.deinit(allocator);
+                try appendPdaScalarSeed(allocator, &bytes, idl, resolved_type_spec, bound_value);
+                return try allocator.dupe(u8, bytes.items);
+            }
+        }
+
+        if (!isPubkeySeedType(resolved_type_spec)) {
             return error.UnsupportedAnchorIdlAccountFeature;
         }
     }
@@ -1221,6 +1309,7 @@ fn encodePdaAccountSeed(
         instruction.accounts,
         parsed_args,
         account_bindings,
+        account_binding_values,
         explicit_null_paths,
         path_value.string,
         program_id,
@@ -1237,6 +1326,7 @@ fn derivePda(
     pda_value: std.json.Value,
     parsed_args: ?*const std.json.Value,
     account_bindings: []const AccountBinding,
+    account_binding_values: ?*const std.json.Value,
     explicit_null_paths: []const []const u8,
     program_id: sdk.Pubkey,
     default_signer_pubkey: ?sdk.Pubkey,
@@ -1272,6 +1362,7 @@ fn derivePda(
                         program_value,
                         parsed_args,
                         account_bindings,
+                        account_binding_values,
                         explicit_null_paths,
                         program_id,
                         default_signer_pubkey,
@@ -1314,6 +1405,7 @@ fn derivePda(
                 seed_value,
                 parsed_args,
                 account_bindings,
+                account_binding_values,
                 explicit_null_paths,
                 program_id,
                 default_signer_pubkey,
@@ -1337,6 +1429,7 @@ fn tryResolveNamedAccountPubkeyFromAccounts(
     accounts: []const std.json.Value,
     parsed_args: ?*const std.json.Value,
     account_bindings: []const AccountBinding,
+    account_binding_values: ?*const std.json.Value,
     explicit_null_paths: []const []const u8,
     path: []const u8,
     program_id: sdk.Pubkey,
@@ -1358,6 +1451,7 @@ fn tryResolveNamedAccountPubkeyFromAccounts(
             accounts,
             parsed_args,
             account_bindings,
+            account_binding_values,
             explicit_null_paths,
             account_path,
             program_id,
@@ -1373,6 +1467,7 @@ fn tryResolveNamedAccountPubkeyFromAccounts(
             accounts,
             parsed_args,
             account_bindings,
+            account_binding_values,
             explicit_null_paths,
             path,
             program_id,
@@ -1390,6 +1485,7 @@ fn resolveNamedAccountPubkeyFromAccounts(
     accounts: []const std.json.Value,
     parsed_args: ?*const std.json.Value,
     account_bindings: []const AccountBinding,
+    account_binding_values: ?*const std.json.Value,
     explicit_null_paths: []const []const u8,
     path: []const u8,
     program_id: sdk.Pubkey,
@@ -1403,6 +1499,7 @@ fn resolveNamedAccountPubkeyFromAccounts(
         accounts,
         parsed_args,
         account_bindings,
+        account_binding_values,
         explicit_null_paths,
         path,
         program_id,
@@ -1419,6 +1516,7 @@ fn resolveNamedAccountPubkeyFromAccounts(
             accounts,
             parsed_args,
             account_bindings,
+            account_binding_values,
             explicit_null_paths,
             normalized_path,
             program_id,
@@ -1437,6 +1535,7 @@ fn resolveNamedAccountPubkeyAtPath(
     accounts: []const std.json.Value,
     parsed_args: ?*const std.json.Value,
     account_bindings: []const AccountBinding,
+    account_binding_values: ?*const std.json.Value,
     explicit_null_paths: []const []const u8,
     path: []const u8,
     program_id: sdk.Pubkey,
@@ -1461,7 +1560,7 @@ fn resolveNamedAccountPubkeyAtPath(
     }
     if (try findLiteralPubkey(allocator, account_value)) |pubkey| return .{ .pubkey = pubkey };
     if (account_value.object.get("pda")) |pda_value| {
-        return .{ .pubkey = try derivePda(allocator, idl, instruction, pda_value, parsed_args, account_bindings, explicit_null_paths, program_id, default_signer_pubkey, resolution_stack) };
+        return .{ .pubkey = try derivePda(allocator, idl, instruction, pda_value, parsed_args, account_bindings, account_binding_values, explicit_null_paths, program_id, default_signer_pubkey, resolution_stack) };
     }
 
     const parent_path = if (std.mem.lastIndexOfScalar(u8, path, '.')) |dot_index| path[0..dot_index] else null;
@@ -1480,6 +1579,7 @@ fn resolveNamedAccountPubkeyAtPath(
                     accounts,
                     parsed_args,
                     account_bindings,
+                    account_binding_values,
                     explicit_null_paths,
                     nested_relation_path,
                     program_id,
@@ -1497,6 +1597,7 @@ fn resolveNamedAccountPubkeyAtPath(
                 accounts,
                 parsed_args,
                 account_bindings,
+                account_binding_values,
                 explicit_null_paths,
                 relation_path,
                 program_id,
@@ -1768,6 +1869,7 @@ fn appendInstructionAccounts(
     accounts: []const std.json.Value,
     parsed_args: ?*const std.json.Value,
     bindings: []const AccountBinding,
+    account_binding_values: ?*const std.json.Value,
     explicit_null_paths: []const []const u8,
     default_signer: ?sdk.Pubkey,
     program_id: sdk.Pubkey,
@@ -1796,6 +1898,7 @@ fn appendInstructionAccounts(
                 nested_value.array.items,
                 parsed_args,
                 bindings,
+                account_binding_values,
                 explicit_null_paths,
                 default_signer,
                 program_id,
@@ -1816,6 +1919,7 @@ fn appendInstructionAccounts(
             instruction.accounts,
             parsed_args,
             bindings,
+            account_binding_values,
             explicit_null_paths,
             full_name,
             program_id,
@@ -1853,6 +1957,11 @@ pub fn buildOwnedInstruction(
     else
         null;
     defer if (parsed_args) |*value| value.deinit();
+    const parsed_account_binding_values = if (options.account_bindings_json) |value|
+        try std.json.parseFromSlice(std.json.Value, allocator, value, .{})
+    else
+        null;
+    defer if (parsed_account_binding_values) |*value| value.deinit();
 
     var json_account_bindings = if (options.account_bindings_json) |value|
         try parseAccountBindingsJson(allocator, value)
@@ -1913,6 +2022,7 @@ pub fn buildOwnedInstruction(
         instruction.accounts,
         if (parsed_args) |value| &value.value else null,
         resolved_account_bindings,
+        if (parsed_account_binding_values) |value| &value.value else null,
         resolved_explicit_null_paths,
         options.default_signer,
         program_id,
