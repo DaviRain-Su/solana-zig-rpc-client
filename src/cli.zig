@@ -145,6 +145,7 @@ pub const usage_text =
     "  --airdrop-recent-blockhash <blockhash> Recent blockhash override for request-airdrop\n" ++
     "  --sender-keypair <path> Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)\n" ++
     "  --sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer secret key (base58)\n" ++
+    "  --additional-signer-secret-key <additional-signer-secret-key> Additional signer secret key (base58, repeatable)\n" ++
     "  --transfer-recent-blockhash <blockhash> Recent blockhash override for transfer\n" ++
     "  --epoch <epoch>          Epoch override for inflation-reward\n" ++
     "  --encoding <mode>        json|jsonParsed|base58|base64 (block and transaction)\n" ++
@@ -354,6 +355,7 @@ pub const ParsedArgs = struct {
     program_invoke_data_arg: ?[]const u8,
     program_invoke_data_encoding_arg: ?[]const u8,
     program_invoke_signer_keypair_paths_arg: ?[]const u8,
+    program_invoke_additional_signer_secret_keys: std.ArrayListUnmanaged([]const u8),
     program_invoke_lookup_tables_arg: ?[]const u8,
     program_invoke_nonce_account_arg: ?[]const u8,
     program_invoke_nonce_authority_keypair_path_arg: ?[]const u8,
@@ -408,6 +410,7 @@ pub const ParsedArgs = struct {
         self.simulation_accounts.deinit(allocator);
         self.idl_account_bindings.deinit(allocator);
         self.idl_remaining_accounts.deinit(allocator);
+        self.program_invoke_additional_signer_secret_keys.deinit(allocator);
     }
 };
 
@@ -460,6 +463,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .program_invoke_data_arg = null,
         .program_invoke_data_encoding_arg = null,
         .program_invoke_signer_keypair_paths_arg = null,
+        .program_invoke_additional_signer_secret_keys = .{},
         .program_invoke_lookup_tables_arg = null,
         .program_invoke_nonce_account_arg = null,
         .program_invoke_nonce_authority_keypair_path_arg = null,
@@ -794,6 +798,13 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         if (std.mem.eql(u8, arg, "--sender-secret-key")) {
             if (index >= args.len or parsed.sender_secret_key_arg != null or parsed.sender_keypair_path_arg != null) return error.InvalidCli;
             parsed.sender_secret_key_arg = args[index];
+            index += 1;
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--additional-signer-secret-key")) {
+            if (index >= args.len) return error.InvalidCli;
+            try parsed.program_invoke_additional_signer_secret_keys.append(allocator, args[index]);
             index += 1;
             continue;
         }
@@ -2335,6 +2346,38 @@ test "cli.parseCliArgs parses send-program-invoke with sender-secret-key" {
     try std.testing.expectEqual(Command.send_program_invoke, parsed.command);
     try std.testing.expect(parsed.sender_keypair_path_arg == null);
     try std.testing.expectEqualStrings("Secret11111111111111111111111111111111", parsed.sender_secret_key_arg orelse "");
+    try std.testing.expectEqualStrings("11111111111111111111111111111111", parsed.program_invoke_program_id_arg orelse "");
+    try std.testing.expectEqualStrings("[{\"pubkey\":\"22222222222222222222222222222222\",\"is_signer\":true}]", parsed.program_invoke_accounts_arg orelse "");
+}
+
+test "cli.parseCliArgs parses send-program-invoke with additional-signer-secret-key" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "send-program-invoke",
+        "--sender-secret-key",
+        "Secret11111111111111111111111111111111",
+        "--additional-signer-secret-key",
+        "ExtraSigner11111111111111111111111111111111",
+        "--additional-signer-secret-key",
+        "ExtraSigner22222222222222222222222222222222",
+        "11111111111111111111111111111111",
+        "[{\"pubkey\":\"22222222222222222222222222222222\",\"is_signer\":true}]",
+        "ping",
+        "utf8",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.send_program_invoke, parsed.command);
+    try std.testing.expect(parsed.sender_keypair_path_arg == null);
+    try std.testing.expectEqualStrings("Secret11111111111111111111111111111111", parsed.sender_secret_key_arg orelse "");
+    try std.testing.expectEqual(@as(usize, 2), parsed.program_invoke_additional_signer_secret_keys.items.len);
+    try std.testing.expectEqualStrings(
+        "ExtraSigner11111111111111111111111111111111",
+        parsed.program_invoke_additional_signer_secret_keys.items[0],
+    );
+    try std.testing.expectEqualStrings(
+        "ExtraSigner22222222222222222222222222222222",
+        parsed.program_invoke_additional_signer_secret_keys.items[1],
+    );
     try std.testing.expectEqualStrings("11111111111111111111111111111111", parsed.program_invoke_program_id_arg orelse "");
     try std.testing.expectEqualStrings("[{\"pubkey\":\"22222222222222222222222222222222\",\"is_signer\":true}]", parsed.program_invoke_accounts_arg orelse "");
 }
