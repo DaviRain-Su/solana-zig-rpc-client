@@ -143,8 +143,8 @@ pub const usage_text =
     "  --max-retries <count>    Max tx retries before giving up\n" ++
     "  --preflight-commitment <level>  Commitment for tx preflight checks\n" ++
     "  --airdrop-recent-blockhash <blockhash> Recent blockhash override for request-airdrop\n" ++
-    "  --sender-keypair <path> Transfer/program-invoke/idl/send-instructions/simulate-instructions payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)\n" ++
-    "  --sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions/simulate-instructions payer secret key (base58)\n" ++
+    "  --sender-keypair <path> Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)\n" ++
+    "  --sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer secret key (base58)\n" ++
     "  --transfer-recent-blockhash <blockhash> Recent blockhash override for transfer\n" ++
     "  --epoch <epoch>          Epoch override for inflation-reward\n" ++
     "  --encoding <mode>        json|jsonParsed|base58|base64 (block and transaction)\n" ++
@@ -1851,8 +1851,8 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "--airdrop-recent-blockhash <blockhash>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--rpc <url>             RPC endpoint to use (default: Solana CLI config json_rpc_url or mainnet-beta)") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--commitment <level>     processed|confirmed|finalized (default: Solana CLI config commitment when present)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-keypair <path> Transfer/program-invoke/idl/send-instructions/simulate-instructions payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions/simulate-instructions payer secret key (base58)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-keypair <path> Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer secret key (base58)") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--transfer-recent-blockhash <blockhash>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--epoch <epoch>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--encoding <mode>") != null);
@@ -2130,6 +2130,74 @@ test "cli.parseCliArgs parses simulate-versioned-instructions spec" {
         "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
         parsed.instructions_spec_arg orelse "",
     );
+}
+
+test "cli.parseCliArgs parses simulate-idl-invoke with sender-secret-key" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "simulate-idl-invoke",
+        "--sender-secret-key",
+        "Secret11111111111111111111111111111111",
+        "{\"address\":\"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt\",\"instructions\":[{\"name\":\"initialize\",\"discriminator\":[1,2,3,4,5,6,7,8],\"accounts\":[],\"args\":[]}]}",
+        "initialize",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.simulate_idl_invoke, parsed.command);
+    try std.testing.expect(parsed.sender_keypair_path_arg == null);
+    try std.testing.expectEqualStrings("Secret11111111111111111111111111111111", parsed.sender_secret_key_arg orelse "");
+}
+
+test "cli.parseCliArgs parses simulate-versioned-idl-invoke with sender-secret-key" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "simulate-versioned-idl-invoke",
+        "--sender-secret-key",
+        "Secret22222222222222222222222222222222",
+        "{\"address\":\"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt\",\"instructions\":[{\"name\":\"initialize\",\"discriminator\":[1,2,3,4,5,6,7,8],\"accounts\":[],\"args\":[]}]}",
+        "initialize",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.simulate_versioned_idl_invoke, parsed.command);
+    try std.testing.expect(parsed.sender_keypair_path_arg == null);
+    try std.testing.expectEqualStrings("Secret22222222222222222222222222222222", parsed.sender_secret_key_arg orelse "");
+}
+
+test "cli.parseCliArgs parses simulate-program-invoke with sender-secret-key" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "simulate-program-invoke",
+        "--sender-secret-key",
+        "Secret11111111111111111111111111111111",
+        "11111111111111111111111111111111",
+        "[{\"pubkey\":\"22222222222222222222222222222222\",\"is_signer\":true}]",
+        "ping",
+        "utf8",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.simulate_program_invoke, parsed.command);
+    try std.testing.expect(parsed.sender_keypair_path_arg == null);
+    try std.testing.expectEqualStrings("Secret11111111111111111111111111111111", parsed.sender_secret_key_arg orelse "");
+    try std.testing.expectEqualStrings("11111111111111111111111111111111", parsed.program_invoke_program_id_arg orelse "");
+    try std.testing.expectEqualStrings("[{\"pubkey\":\"22222222222222222222222222222222\",\"is_signer\":true}]", parsed.program_invoke_accounts_arg orelse "");
+}
+
+test "cli.parseCliArgs parses simulate-versioned-program-invoke with sender-secret-key" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "simulate-versioned-program-invoke",
+        "--sender-secret-key",
+        "Secret33333333333333333333333333333333",
+        "11111111111111111111111111111111",
+        "[{\"pubkey\":\"22222222222222222222222222222222\",\"is_signer\":true}]",
+        "ping",
+        "utf8",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.simulate_versioned_program_invoke, parsed.command);
+    try std.testing.expect(parsed.sender_keypair_path_arg == null);
+    try std.testing.expectEqualStrings("Secret33333333333333333333333333333333", parsed.sender_secret_key_arg orelse "");
+    try std.testing.expectEqualStrings("11111111111111111111111111111111", parsed.program_invoke_program_id_arg orelse "");
+    try std.testing.expectEqualStrings("[{\"pubkey\":\"22222222222222222222222222222222\",\"is_signer\":true}]", parsed.program_invoke_accounts_arg orelse "");
 }
 
 test "cli.parseCliArgs parses simulate-idl-invoke args" {
