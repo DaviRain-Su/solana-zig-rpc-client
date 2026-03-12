@@ -3020,6 +3020,91 @@ test "root.anchor_idl_invoke.buildOwnedInstruction accepts nested account_bindin
     try std.testing.expect(owned.instruction.accounts[2].pubkey.eql(system_program));
 }
 
+test "root.anchor_idl_invoke.buildOwnedInstruction resolves related account from nested binding object with parent pubkey" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{65} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const state = client.Pubkey.fromBytes(.{66} ** 32);
+    const authority = client.Pubkey.fromBytes(.{67} ** 32);
+    const state_base58 = try state.toBase58(allocator);
+    defer allocator.free(state_base58);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"update","discriminator":[19,19,19,19,19,19,19,19],"accounts":[{{"name":"state","writable":true}},{{"name":"authority","signer":true,"relations":["state"]}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const account_bindings_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"state\":{{\"publicKey\":\"{s}\",\"authority\":\"{s}\"}}}}",
+        .{ state_base58, authority_base58 },
+    );
+    defer allocator.free(account_bindings_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "update",
+        .{
+            .account_bindings_json = account_bindings_json,
+        },
+    );
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(state));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(authority));
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction derives pda seed from nested binding object with parent pubkey" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{68} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const state = client.Pubkey.fromBytes(.{69} ** 32);
+    const authority = client.Pubkey.fromBytes(.{70} ** 32);
+    const state_base58 = try state.toBase58(allocator);
+    defer allocator.free(state_base58);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[20,20,20,20,20,20,20,20],"accounts":[{{"name":"state","writable":true}},{{"name":"vault","pda":{{"seeds":[{{"kind":"account","path":"state.authority","type":"publicKey"}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const account_bindings_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"state\":{{\"address\":\"{s}\",\"authority\":\"{s}\"}}}}",
+        .{ state_base58, authority_base58 },
+    );
+    defer allocator.free(account_bindings_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "initialize",
+        .{
+            .account_bindings_json = account_bindings_json,
+        },
+    );
+    defer owned.deinit(allocator);
+
+    const expected_vault = try findProgramAddress(allocator, &.{authority.bytes[0..]}, program_id);
+    try std.testing.expectEqual(@as(usize, 2), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(state));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(expected_vault));
+}
+
 test "root.anchor_idl_invoke.buildOwnedInstruction prefers explicit account_bindings over account_bindings_json" {
     const allocator = std.testing.allocator;
     const program_id = client.Pubkey.fromBytes(.{80} ** 32);

@@ -283,6 +283,21 @@ fn appendJsonAccountBinding(
     });
 }
 
+fn isAccountBindingLiteralFieldName(field_name: []const u8) bool {
+    inline for ([_][]const u8{
+        "pubkey",
+        "publicKey",
+        "public_key",
+        "address",
+        "key",
+        "programId",
+        "program_id",
+    }) |expected| {
+        if (pathSegmentMatches(expected, field_name)) return true;
+    }
+    return false;
+}
+
 fn appendAccountBindingsFromJsonValue(
     allocator: Allocator,
     bindings: *std.ArrayListUnmanaged(AccountBinding),
@@ -293,7 +308,6 @@ fn appendAccountBindingsFromJsonValue(
     if (path) |path_value| {
         if (try parseAccountBindingPubkeyValue(allocator, value)) |pubkey| {
             try appendJsonAccountBinding(allocator, bindings, owned_paths, path_value, pubkey);
-            return;
         }
         if (value == .null) return;
     } else if (value == .null) {
@@ -304,6 +318,8 @@ fn appendAccountBindingsFromJsonValue(
         .object => {
             var iterator = value.object.iterator();
             while (iterator.next()) |entry| {
+                if (path != null and isAccountBindingLiteralFieldName(entry.key_ptr.*)) continue;
+
                 const child_path = if (path) |path_value|
                     try std.fmt.allocPrint(allocator, "{s}.{s}", .{ path_value, entry.key_ptr.* })
                 else
