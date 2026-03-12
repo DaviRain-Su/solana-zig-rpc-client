@@ -2431,6 +2431,42 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
     nonce_account_arg: ?[]const u8,
     nonce_authority_keypair_path_arg: ?[]const u8,
 ) !LoadedCliInstructionSpec {
+    return loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
+        allocator,
+        idl_arg,
+        instruction_name,
+        program_id_override_arg,
+        args_json_arg,
+        accounts_json_arg,
+        account_bindings,
+        remaining_accounts,
+        remaining_accounts_json_arg,
+        payer_keypair_path_arg,
+        null,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+        nonce_account_arg,
+        nonce_authority_keypair_path_arg,
+    );
+}
+
+fn loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
+    allocator: Allocator,
+    idl_arg: []const u8,
+    instruction_name: []const u8,
+    program_id_override_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    accounts_json_arg: ?[]const u8,
+    account_bindings: []const []const u8,
+    remaining_accounts: []const []const u8,
+    remaining_accounts_json_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+) !LoadedCliInstructionSpec {
     const idl_source = loadInstructionSpecSource(allocator, idl_arg) catch return error.InvalidCli;
     defer allocator.free(idl_source);
 
@@ -2517,10 +2553,11 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
     defer allocator.free(encoded_data);
 
     const program_id_pubkey = try client.Pubkey.fromBase58(allocator, program_id);
-    const default_signer_pubkey = if (payer_keypair_path_arg) |value|
-        (try loadInstructionKeypairFromPath(allocator, value)).public_key
+    const payer_keypair = if (payer_secret_key_arg != null or payer_keypair_path_arg != null)
+        try resolveOptionalInstructionKeypair(allocator, payer_secret_key_arg, payer_keypair_path_arg)
     else
         null;
+    const default_signer_pubkey = if (payer_keypair) |value| value.public_key else null;
     const leaf_account_count = try countAnchorIdlLeafAccounts(instruction.accounts);
     const json_remaining_account_count = if (parsed_remaining_accounts) |value| value.value.len else 0;
     const cli_accounts = try allocator.alloc(CliInstructionAccountMeta, leaf_account_count + remaining_accounts.len + json_remaining_account_count);
@@ -2587,6 +2624,7 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptions(
         },
     };
     const spec = CliSimulateInstructionsSpec{
+        .payer_secret_key = payer_secret_key_arg,
         .payer_keypair_path = payer_keypair_path_arg,
         .nonce_account = nonce_account_arg,
         .nonce_authority_keypair_path = nonce_authority_keypair_path_arg,
@@ -2898,6 +2936,34 @@ fn loadProgramInvokeInstructionSpec(
     nonce_account_arg: ?[]const u8,
     nonce_authority_keypair_path_arg: ?[]const u8,
 ) !LoadedCliInstructionSpec {
+    return loadProgramInvokeInstructionSpecWithPayerSecret(
+        allocator,
+        program_id,
+        accounts_arg,
+        data_arg,
+        data_encoding_arg,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+        payer_keypair_path_arg,
+        null,
+        nonce_account_arg,
+        nonce_authority_keypair_path_arg,
+    );
+}
+
+fn loadProgramInvokeInstructionSpecWithPayerSecret(
+    allocator: Allocator,
+    program_id: []const u8,
+    accounts_arg: []const u8,
+    data_arg: ?[]const u8,
+    data_encoding_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+) !LoadedCliInstructionSpec {
     const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch return error.InvalidCli;
     defer allocator.free(accounts_source);
 
@@ -2954,6 +3020,7 @@ fn loadProgramInvokeInstructionSpec(
         },
     };
     const spec = CliSimulateInstructionsSpec{
+        .payer_secret_key = payer_secret_key_arg,
         .payer_keypair_path = payer_keypair_path_arg,
         .nonce_account = nonce_account_arg,
         .nonce_authority_keypair_path = nonce_authority_keypair_path_arg,
@@ -3210,7 +3277,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    if (sender_keypair_path_arg != null and
+    if ((sender_keypair_path_arg != null or sender_secret_key_arg != null) and
         command != .transfer and
         command != .send_program_invoke and
         command != .send_program_invoke_and_confirm and
@@ -3225,9 +3292,14 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_idl_invoke and
         command != .send_versioned_idl_invoke_and_confirm)
     {
-        reportInvalidCliMessage("error: --sender-keypair requires transfer, program-invoke, or idl-invoke commands\n", .{});
+        reportInvalidCliMessage("error: --sender-keypair/--sender-secret-key requires transfer, program-invoke, or idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
+
+    const effective_sender_keypair_path = if (sender_secret_key_arg == null)
+        sender_keypair_path_arg orelse default_sender_keypair_path_arg
+    else
+        null;
 
     if (idl_args_json_arg != null and
         command != .simulate_idl_invoke and
@@ -3899,7 +3971,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadProgramInvokeInstructionSpec(
+            var loaded = loadProgramInvokeInstructionSpecWithPayerSecret(
                 allocator,
                 program_id,
                 accounts_arg,
@@ -3907,7 +3979,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_data_encoding_arg,
                 program_invoke_signer_keypair_paths_arg,
                 null,
-                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                effective_sender_keypair_path,
+                sender_secret_key_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
@@ -3951,7 +4024,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadProgramInvokeInstructionSpec(
+            var loaded = loadProgramInvokeInstructionSpecWithPayerSecret(
                 allocator,
                 program_id,
                 accounts_arg,
@@ -3959,7 +4032,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_data_encoding_arg,
                 program_invoke_signer_keypair_paths_arg,
                 null,
-                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                effective_sender_keypair_path,
+                sender_secret_key_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
@@ -4007,7 +4081,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadProgramInvokeInstructionSpec(
+            var loaded = loadProgramInvokeInstructionSpecWithPayerSecret(
                 allocator,
                 program_id,
                 accounts_arg,
@@ -4015,7 +4089,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_data_encoding_arg,
                 program_invoke_signer_keypair_paths_arg,
                 program_invoke_lookup_tables_arg,
-                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                effective_sender_keypair_path,
+                sender_secret_key_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
@@ -4060,7 +4135,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadProgramInvokeInstructionSpec(
+            var loaded = loadProgramInvokeInstructionSpecWithPayerSecret(
                 allocator,
                 program_id,
                 accounts_arg,
@@ -4068,7 +4143,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_data_encoding_arg,
                 program_invoke_signer_keypair_paths_arg,
                 program_invoke_lookup_tables_arg,
-                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                effective_sender_keypair_path,
+                sender_secret_key_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
@@ -4117,7 +4193,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptions(
+            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -4127,7 +4203,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_account_bindings.items,
                 idl_remaining_accounts.items,
                 args.idl_remaining_accounts_json_arg,
-                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                effective_sender_keypair_path,
+                sender_secret_key_arg,
                 program_invoke_signer_keypair_paths_arg,
                 null,
                 program_invoke_nonce_account_arg,
@@ -4173,7 +4250,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptions(
+            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -4183,7 +4260,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_account_bindings.items,
                 idl_remaining_accounts.items,
                 args.idl_remaining_accounts_json_arg,
-                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                effective_sender_keypair_path,
+                sender_secret_key_arg,
                 program_invoke_signer_keypair_paths_arg,
                 null,
                 program_invoke_nonce_account_arg,
@@ -4233,7 +4311,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptions(
+            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -4243,7 +4321,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_account_bindings.items,
                 idl_remaining_accounts.items,
                 args.idl_remaining_accounts_json_arg,
-                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                effective_sender_keypair_path,
+                sender_secret_key_arg,
                 program_invoke_signer_keypair_paths_arg,
                 program_invoke_lookup_tables_arg,
                 program_invoke_nonce_account_arg,
@@ -4290,7 +4369,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptions(
+            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -4300,7 +4379,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_account_bindings.items,
                 idl_remaining_accounts.items,
                 args.idl_remaining_accounts_json_arg,
-                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                effective_sender_keypair_path,
+                sender_secret_key_arg,
                 program_invoke_signer_keypair_paths_arg,
                 program_invoke_lookup_tables_arg,
                 program_invoke_nonce_account_arg,
@@ -4679,7 +4759,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadProgramInvokeInstructionSpec(
+            var loaded = loadProgramInvokeInstructionSpecWithPayerSecret(
                 allocator,
                 program_id,
                 accounts_arg,
@@ -4687,7 +4767,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_data_encoding_arg,
                 program_invoke_signer_keypair_paths_arg,
                 null,
-                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                effective_sender_keypair_path,
+                sender_secret_key_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
@@ -4767,7 +4848,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadProgramInvokeInstructionSpec(
+            var loaded = loadProgramInvokeInstructionSpecWithPayerSecret(
                 allocator,
                 program_id,
                 accounts_arg,
@@ -4775,7 +4856,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_data_encoding_arg,
                 program_invoke_signer_keypair_paths_arg,
                 program_invoke_lookup_tables_arg,
-                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                effective_sender_keypair_path,
+                sender_secret_key_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
             ) catch {
@@ -4856,7 +4938,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptions(
+            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -4866,7 +4948,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_account_bindings.items,
                 idl_remaining_accounts.items,
                 args.idl_remaining_accounts_json_arg,
-                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                effective_sender_keypair_path,
+                sender_secret_key_arg,
                 program_invoke_signer_keypair_paths_arg,
                 null,
                 program_invoke_nonce_account_arg,
@@ -4948,7 +5031,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptions(
+            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -4958,7 +5041,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 idl_account_bindings.items,
                 idl_remaining_accounts.items,
                 args.idl_remaining_accounts_json_arg,
-                sender_keypair_path_arg orelse default_sender_keypair_path_arg,
+                effective_sender_keypair_path,
+                sender_secret_key_arg,
                 program_invoke_signer_keypair_paths_arg,
                 program_invoke_lookup_tables_arg,
                 program_invoke_nonce_account_arg,
@@ -9947,6 +10031,82 @@ test "runCommand send-program-invoke sends instruction built from args" {
     );
 }
 
+test "runCommand send-program-invoke accepts sender-secret-key" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var latest_blockhash_bytes: [32]u8 = undefined;
+    for (&latest_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 44);
+    const latest_blockhash = try client.encodeBase58(allocator, &latest_blockhash_bytes);
+    defer allocator.free(latest_blockhash);
+    try sender_context.sender.pushLatestBlockhashResponse(
+        46,
+        latest_blockhash,
+        108,
+    );
+    try sender_context.sender.pushResultJson("\"SigSecret1212121212121212121212121212121212121212121212121212121212121212\"");
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-program-invoke-secret" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{17} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
+    ,
+        .{ payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-program-invoke",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "11111111111111111111111111111111",
+        accounts_json,
+        "ping",
+        "utf8",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "signature: SigSecret1212121212121212121212121212121212121212121212121212121212121212\n",
+        captured,
+    );
+}
+
 test "runCommand simulate-program-invoke simulates instruction built from args" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
@@ -10054,6 +10214,81 @@ test "runCommand simulate-program-invoke simulates instruction built from args" 
     try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: invoke-ok") != null);
+}
+
+test "runCommand simulate-program-invoke accepts sender-secret-key" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var latest_blockhash_bytes: [32]u8 = undefined;
+    for (&latest_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 77);
+    const latest_blockhash = try client.encodeBase58(allocator, &latest_blockhash_bytes);
+    defer allocator.free(latest_blockhash);
+    try sender_context.sender.pushLatestBlockhashResponse(
+        46,
+        latest_blockhash,
+        108,
+    );
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":18},"value":{"accounts":[],"err":null,"fee":120,"unitsConsumed":22,"logs":["Program log: secret-invoke-ok"]}}
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://simulate-program-invoke-secret" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{13} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
+    ,
+        .{ payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-program-invoke",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "11111111111111111111111111111111",
+        accounts_json,
+        "ping",
+        "utf8",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: secret-invoke-ok") != null);
 }
 
 test "runCommand simulate-program-invoke supports zero-account instructions" {
@@ -18631,6 +18866,68 @@ test "runCommand send-idl-invoke sends zero-account anchor instruction" {
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature: SigIdl1111111111111111111111111111111111111111111111111111111111111111\n",
+        captured,
+    );
+}
+
+test "runCommand send-idl-invoke accepts sender-secret-key" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        "\"SigIdlSecret1111111111111111111111111111111111111111111111111111111111111\"",
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-idl-invoke-secret" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{54} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 201);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-idl-invoke",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "signature: SigIdlSecret1111111111111111111111111111111111111111111111111111111111111\n",
         captured,
     );
 }
