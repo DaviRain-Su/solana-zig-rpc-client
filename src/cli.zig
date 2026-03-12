@@ -551,6 +551,53 @@ pub const usage_text =
     "  --mint <mint>            Token account filter by mint (token-accounts-by-*)\n" ++
     "  --token-program-id <program-id> Token account filter by token program (token-accounts-by-*)\n";
 
+const signature_command_usage_params = clap.parseParamsComptime(
+    \\<signature>
+    \\
+);
+
+const signature_statuses_command_usage_params = clap.parseParamsComptime(
+    \\<signature-1>
+    \\
+);
+
+const signed_transaction_command_usage_params = clap.parseParamsComptime(
+    \\<signed-tx-base64>
+    \\
+);
+
+const raw_rpc_command_usage_params = clap.parseParamsComptime(
+    \\<method>
+    \\
+);
+
+const account_list_command_usage_params = clap.parseParamsComptime(
+    \\<account-1>
+    \\
+);
+
+const address_command_usage_params = clap.parseParamsComptime(
+    \\<address>
+    \\
+);
+
+const inflation_reward_command_usage_params = clap.parseParamsComptime(
+    \\<address-1>
+    \\
+);
+
+const signatures_for_address_usage_option_params = clap.parseParamsComptime(
+    \\    --before <signature>
+    \\    --until <signature>
+    \\    --limit <count>
+    \\
+);
+
+const inflation_reward_usage_option_params = clap.parseParamsComptime(
+    \\    --epoch <epoch>
+    \\
+);
+
 pub fn printUsage(out: *std.Io.Writer) !void {
     try out.writeAll("Quick usage:\n  solana_client_zig ");
     try clap.usage(out, clap.Help, &cli_params);
@@ -581,6 +628,25 @@ fn writeCommandUsageLine(out: *std.Io.Writer, command_name: []const u8, comptime
     try out.writeAll(" ");
     try clap.usage(out, clap.Help, params);
     if (suffix) |value| try out.writeAll(value);
+    try out.writeByte('\n');
+}
+
+fn writeCommandUsageLineWithOptionSuffix(
+    out: *std.Io.Writer,
+    command_name: []const u8,
+    comptime positional_params: []const clap.Param(clap.Help),
+    positional_suffix: ?[]const u8,
+    comptime option_params: []const clap.Param(clap.Help),
+) !void {
+    try out.writeAll(usage_command_line_prefix);
+    try out.writeAll(command_name);
+    try out.writeAll(" ");
+    try clap.usage(out, clap.Help, positional_params);
+    if (positional_suffix) |value| try out.writeAll(value);
+    if (option_params.len != 0) {
+        try out.writeAll(" ");
+        try clap.usage(out, clap.Help, option_params);
+    }
     try out.writeByte('\n');
 }
 
@@ -657,6 +723,80 @@ fn maybeWriteGeneratedCommandUsageLine(out: *std.Io.Writer, line: []const u8) !b
     }
     if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-idl-invoke ")) {
         try writeCommandUsageLine(out, "simulate-idl-invoke", &idl_invoke_command_usage_params, " [additional-signer-keypair-paths-json|@path]");
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "confirm-transaction ")) {
+        try writeCommandUsageLine(out, "confirm-transaction", &signature_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "signature-status ")) {
+        try writeCommandUsageLine(out, "signature-status", &signature_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "signature-statuses ")) {
+        try writeCommandUsageLine(out, "signature-statuses", &signature_statuses_command_usage_params, " [signature-2 ...]");
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "status ")) {
+        try writeCommandUsageLine(out, "status", &signature_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "transaction ")) {
+        try writeCommandUsageLine(out, "transaction", &signature_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "blocks-since-signature-confirmation ")) {
+        try writeCommandUsageLine(out, "blocks-since-signature-confirmation", &signature_command_usage_params, null);
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-transaction-and-confirm ")) {
+        try writeCommandUsageLine(out, "send-transaction-and-confirm", &signed_transaction_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-transaction ")) {
+        try writeCommandUsageLine(out, "send-transaction", &signed_transaction_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-transaction ")) {
+        try writeCommandUsageLine(out, "simulate-transaction", &signed_transaction_command_usage_params, null);
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "raw-rpc ")) {
+        try writeCommandUsageLine(out, "raw-rpc", &raw_rpc_command_usage_params, " [params-json]");
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "multiple-accounts ")) {
+        try writeCommandUsageLine(out, "multiple-accounts", &account_list_command_usage_params, " [account-2 ...]");
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "multiple-ui-accounts ")) {
+        try writeCommandUsageLine(out, "multiple-ui-accounts", &account_list_command_usage_params, " [account-2 ...]");
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "signatures-for-address ")) {
+        try writeCommandUsageLineWithOptionSuffix(
+            out,
+            "signatures-for-address",
+            &address_command_usage_params,
+            null,
+            &signatures_for_address_usage_option_params,
+        );
+        return true;
+    }
+
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "inflation-reward ")) {
+        try writeCommandUsageLineWithOptionSuffix(
+            out,
+            "inflation-reward",
+            &inflation_reward_command_usage_params,
+            " [address-2 ...]",
+            &inflation_reward_usage_option_params,
+        );
         return true;
     }
 
