@@ -605,376 +605,167 @@ fn writeCommandUsageLiteralSuffix(out: *std.Io.Writer, command_name: []const u8,
     try out.writeByte('\n');
 }
 
-const command_usage_lines = [_][]const u8{
-    usage_command_line_prefix ++ "latest-blockhash",
-    usage_command_line_prefix ++ "new-latest-blockhash <blockhash>",
-    usage_command_line_prefix ++ "status <signature>",
-    usage_command_line_prefix ++ "confirm-transaction <signature>",
-    usage_command_line_prefix ++ "signature-status <signature>",
-    usage_command_line_prefix ++ "signature-statuses <signature-1> [signature-2 ...]",
-    usage_command_line_prefix ++ "send-transaction <signed-tx-base64>",
-    usage_command_line_prefix ++ "send-transaction-and-confirm <signed-tx-base64>",
-    usage_command_line_prefix ++ "send-instructions <instruction-spec-json|@path>",
-    usage_command_line_prefix ++ "send-instructions-and-confirm <instruction-spec-json|@path>",
-    usage_command_line_prefix ++ "send-versioned-instructions <instruction-spec-json|@path>",
-    usage_command_line_prefix ++ "send-versioned-instructions-and-confirm <instruction-spec-json|@path>",
-    usage_command_line_prefix ++ "send-program-invoke <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]",
-    usage_command_line_prefix ++ "send-program-invoke-and-confirm <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]",
-    usage_command_line_prefix ++ "send-versioned-program-invoke <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]",
-    usage_command_line_prefix ++ "send-versioned-program-invoke-and-confirm <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]",
-    usage_command_line_prefix ++ "transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>",
-    usage_command_line_prefix ++ "simulate-transaction <signed-tx-base64>",
-    usage_command_line_prefix ++ "simulate-instructions <instruction-spec-json|@path>",
-    usage_command_line_prefix ++ "simulate-versioned-instructions <instruction-spec-json|@path>",
-    usage_command_line_prefix ++ "simulate-program-invoke <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]",
-    usage_command_line_prefix ++ "simulate-versioned-program-invoke <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]",
-    usage_command_line_prefix ++ "simulate-idl-invoke <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]",
-    usage_command_line_prefix ++ "simulate-versioned-idl-invoke <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]",
-    usage_command_line_prefix ++ "send-idl-invoke <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]",
-    usage_command_line_prefix ++ "send-idl-invoke-and-confirm <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]",
-    usage_command_line_prefix ++ "send-versioned-idl-invoke <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]",
-    usage_command_line_prefix ++ "send-versioned-idl-invoke-and-confirm <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]",
-    usage_command_line_prefix ++ "raw-rpc <method> [params-json]",
-    usage_command_line_prefix ++ "slot",
-    usage_command_line_prefix ++ "block-height",
-    usage_command_line_prefix ++ "transaction-count",
-    usage_command_line_prefix ++ "transaction <signature>",
-    usage_command_line_prefix ++ "balance <account>",
-    usage_command_line_prefix ++ "poll-balance <account>",
-    usage_command_line_prefix ++ "wait-for-balance <account> <expected-lamports>",
-    usage_command_line_prefix ++ "account-info <account>",
-    usage_command_line_prefix ++ "account-data <account>",
-    usage_command_line_prefix ++ "ui-account <account>",
-    usage_command_line_prefix ++ "multiple-accounts <account-1> [account-2 ...]",
-    usage_command_line_prefix ++ "multiple-ui-accounts <account-1> [account-2 ...]",
-    usage_command_line_prefix ++ "program-accounts <program-id>",
-    usage_command_line_prefix ++ "program-ui-accounts <program-id>",
-    usage_command_line_prefix ++ "request-airdrop <account> <lamports>",
-    usage_command_line_prefix ++ "minimum-rent-exemption <bytes>",
-    usage_command_line_prefix ++ "version",
-    usage_command_line_prefix ++ "epoch-info",
-    usage_command_line_prefix ++ "health",
-    usage_command_line_prefix ++ "genesis-hash",
-    usage_command_line_prefix ++ "inflation-reward <address-1> [address-2 ...] [--epoch <epoch>]",
-    usage_command_line_prefix ++ "supply",
-    usage_command_line_prefix ++ "epoch-schedule",
-    usage_command_line_prefix ++ "inflation-rate",
-    usage_command_line_prefix ++ "block-time <slot>",
-    usage_command_line_prefix ++ "block-commitment <slot>",
-    usage_command_line_prefix ++ "block <slot>",
-    usage_command_line_prefix ++ "blocks-with-limit <start-slot> <limit>",
-    usage_command_line_prefix ++ "poll-for-signature-confirmation <signature> <min-confirmed-blocks>",
-    usage_command_line_prefix ++ "blocks-since-signature-confirmation <signature>",
-    usage_command_line_prefix ++ "signatures-for-address <address> [--before <signature>] [--until <signature>] [--limit <count>]",
-    usage_command_line_prefix ++ "feature-activation-slot <feature-pubkey>",
-    usage_command_line_prefix ++ "stake-minimum-delegation",
-    usage_command_line_prefix ++ "largest-accounts",
-    usage_command_line_prefix ++ "token-account-balance <token-account>",
-    usage_command_line_prefix ++ "token-account <token-account>",
-    usage_command_line_prefix ++ "token-supply <mint>",
-    usage_command_line_prefix ++ "token-largest-accounts <mint>",
-    usage_command_line_prefix ++ "token-accounts-by-owner <owner> (--mint <mint> | --token-program-id <program-id>)",
-    usage_command_line_prefix ++ "token-accounts-by-delegate <delegate> (--mint <mint> | --token-program-id <program-id>)",
-    usage_command_line_prefix ++ "fee-for-message <base64-message>",
-    usage_command_line_prefix ++ "recent-performance-samples [limit]",
-    usage_command_line_prefix ++ "highest-snapshot-slot",
-    usage_command_line_prefix ++ "blocks <start-slot> [end-slot]",
-    usage_command_line_prefix ++ "slot-leader",
-    usage_command_line_prefix ++ "slot-leaders <start-slot> <limit>",
-    usage_command_line_prefix ++ "recent-prioritization-fees [account-1 ...]",
-    usage_command_line_prefix ++ "cluster-nodes",
-    usage_command_line_prefix ++ "leader-schedule [slot] [identity]",
-    usage_command_line_prefix ++ "identity",
-    usage_command_line_prefix ++ "vote-accounts",
-    usage_command_line_prefix ++ "block-production",
-    usage_command_line_prefix ++ "inflation-governor",
-    usage_command_line_prefix ++ "minimum-ledger-slot",
-    usage_command_line_prefix ++ "max-retransmit-slot",
-    usage_command_line_prefix ++ "max-shred-insert-slot",
-    usage_command_line_prefix ++ "first-available-block",
-    usage_command_line_prefix ++ "blockhash-valid <blockhash>",
+const CommandUsageStyle = enum {
+    literal,
+    signature,
+    signature_list,
+    signed_transaction,
+    instruction,
+    program_invoke,
+    idl_invoke,
+    raw_rpc,
+    account,
+    account_expected_balance,
+    account_lamports,
+    account_list,
+    program_id,
+    token_account,
+    mint,
+    owner_token_accounts,
+    delegate_token_accounts,
+    address_history,
+    inflation_reward,
+    poll_for_signature_confirmation,
+    bytes,
+    blockhash,
+    feature_pubkey,
+    slot,
+    base64_message,
+    start_slot_limit,
+    start_slot,
 };
 
-fn maybeWriteGeneratedCommandUsageLine(out: *std.Io.Writer, line: []const u8) !bool {
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-versioned-instructions-and-confirm ")) {
-        try writeCommandUsageLine(out, "send-versioned-instructions-and-confirm", &instruction_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-versioned-instructions ")) {
-        try writeCommandUsageLine(out, "send-versioned-instructions", &instruction_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-instructions-and-confirm ")) {
-        try writeCommandUsageLine(out, "send-instructions-and-confirm", &instruction_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-instructions ")) {
-        try writeCommandUsageLine(out, "send-instructions", &instruction_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-versioned-instructions ")) {
-        try writeCommandUsageLine(out, "simulate-versioned-instructions", &instruction_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-instructions ")) {
-        try writeCommandUsageLine(out, "simulate-instructions", &instruction_command_usage_params, null);
-        return true;
-    }
+const CommandUsageEntry = struct {
+    command_name: []const u8,
+    style: CommandUsageStyle,
+    suffix: ?[]const u8 = null,
+};
 
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-versioned-program-invoke-and-confirm ")) {
-        try writeCommandUsageLine(out, "send-versioned-program-invoke-and-confirm", &program_invoke_command_usage_params, " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]");
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-versioned-program-invoke ")) {
-        try writeCommandUsageLine(out, "send-versioned-program-invoke", &program_invoke_command_usage_params, " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]");
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-program-invoke-and-confirm ")) {
-        try writeCommandUsageLine(out, "send-program-invoke-and-confirm", &program_invoke_command_usage_params, " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]");
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-program-invoke ")) {
-        try writeCommandUsageLine(out, "send-program-invoke", &program_invoke_command_usage_params, " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]");
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-versioned-program-invoke ")) {
-        try writeCommandUsageLine(out, "simulate-versioned-program-invoke", &program_invoke_command_usage_params, " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]");
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-program-invoke ")) {
-        try writeCommandUsageLine(out, "simulate-program-invoke", &program_invoke_command_usage_params, " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]");
-        return true;
-    }
+const command_usage_entries = [_]CommandUsageEntry{
+    .{ .command_name = "latest-blockhash", .style = .literal },
+    .{ .command_name = "new-latest-blockhash", .style = .blockhash },
+    .{ .command_name = "status", .style = .signature },
+    .{ .command_name = "confirm-transaction", .style = .signature },
+    .{ .command_name = "signature-status", .style = .signature },
+    .{ .command_name = "signature-statuses", .style = .signature_list, .suffix = " [signature-2 ...]" },
+    .{ .command_name = "send-transaction", .style = .signed_transaction },
+    .{ .command_name = "send-transaction-and-confirm", .style = .signed_transaction },
+    .{ .command_name = "send-instructions", .style = .instruction },
+    .{ .command_name = "send-instructions-and-confirm", .style = .instruction },
+    .{ .command_name = "send-versioned-instructions", .style = .instruction },
+    .{ .command_name = "send-versioned-instructions-and-confirm", .style = .instruction },
+    .{ .command_name = "send-program-invoke", .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]" },
+    .{ .command_name = "send-program-invoke-and-confirm", .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]" },
+    .{ .command_name = "send-versioned-program-invoke", .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
+    .{ .command_name = "send-versioned-program-invoke-and-confirm", .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
+    .{ .command_name = "transfer", .style = .literal, .suffix = "[--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>" },
+    .{ .command_name = "simulate-transaction", .style = .signed_transaction },
+    .{ .command_name = "simulate-instructions", .style = .instruction },
+    .{ .command_name = "simulate-versioned-instructions", .style = .instruction },
+    .{ .command_name = "simulate-program-invoke", .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]" },
+    .{ .command_name = "simulate-versioned-program-invoke", .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
+    .{ .command_name = "simulate-idl-invoke", .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path]" },
+    .{ .command_name = "simulate-versioned-idl-invoke", .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
+    .{ .command_name = "send-idl-invoke", .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path]" },
+    .{ .command_name = "send-idl-invoke-and-confirm", .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path]" },
+    .{ .command_name = "send-versioned-idl-invoke", .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
+    .{ .command_name = "send-versioned-idl-invoke-and-confirm", .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
+    .{ .command_name = "raw-rpc", .style = .raw_rpc, .suffix = " [params-json]" },
+    .{ .command_name = "slot", .style = .literal },
+    .{ .command_name = "block-height", .style = .literal },
+    .{ .command_name = "transaction-count", .style = .literal },
+    .{ .command_name = "transaction", .style = .signature },
+    .{ .command_name = "balance", .style = .account },
+    .{ .command_name = "poll-balance", .style = .account },
+    .{ .command_name = "wait-for-balance", .style = .account_expected_balance },
+    .{ .command_name = "account-info", .style = .account },
+    .{ .command_name = "account-data", .style = .account },
+    .{ .command_name = "ui-account", .style = .account },
+    .{ .command_name = "multiple-accounts", .style = .account_list, .suffix = " [account-2 ...]" },
+    .{ .command_name = "multiple-ui-accounts", .style = .account_list, .suffix = " [account-2 ...]" },
+    .{ .command_name = "program-accounts", .style = .program_id },
+    .{ .command_name = "program-ui-accounts", .style = .program_id },
+    .{ .command_name = "request-airdrop", .style = .account_lamports },
+    .{ .command_name = "minimum-rent-exemption", .style = .bytes },
+    .{ .command_name = "version", .style = .literal },
+    .{ .command_name = "epoch-info", .style = .literal },
+    .{ .command_name = "health", .style = .literal },
+    .{ .command_name = "genesis-hash", .style = .literal },
+    .{ .command_name = "inflation-reward", .style = .inflation_reward, .suffix = " [address-2 ...]" },
+    .{ .command_name = "supply", .style = .literal },
+    .{ .command_name = "epoch-schedule", .style = .literal },
+    .{ .command_name = "inflation-rate", .style = .literal },
+    .{ .command_name = "block-time", .style = .slot },
+    .{ .command_name = "block-commitment", .style = .slot },
+    .{ .command_name = "block", .style = .slot },
+    .{ .command_name = "blocks-with-limit", .style = .start_slot_limit },
+    .{ .command_name = "poll-for-signature-confirmation", .style = .poll_for_signature_confirmation },
+    .{ .command_name = "blocks-since-signature-confirmation", .style = .signature },
+    .{ .command_name = "signatures-for-address", .style = .address_history },
+    .{ .command_name = "feature-activation-slot", .style = .feature_pubkey },
+    .{ .command_name = "stake-minimum-delegation", .style = .literal },
+    .{ .command_name = "largest-accounts", .style = .literal },
+    .{ .command_name = "token-account-balance", .style = .token_account },
+    .{ .command_name = "token-account", .style = .token_account },
+    .{ .command_name = "token-supply", .style = .mint },
+    .{ .command_name = "token-largest-accounts", .style = .mint },
+    .{ .command_name = "token-accounts-by-owner", .style = .owner_token_accounts, .suffix = " (--mint <mint> | --token-program-id <program-id>)" },
+    .{ .command_name = "token-accounts-by-delegate", .style = .delegate_token_accounts, .suffix = " (--mint <mint> | --token-program-id <program-id>)" },
+    .{ .command_name = "fee-for-message", .style = .base64_message },
+    .{ .command_name = "recent-performance-samples", .style = .literal, .suffix = "[limit]" },
+    .{ .command_name = "highest-snapshot-slot", .style = .literal },
+    .{ .command_name = "blocks", .style = .start_slot, .suffix = " [end-slot]" },
+    .{ .command_name = "slot-leader", .style = .literal },
+    .{ .command_name = "slot-leaders", .style = .start_slot_limit },
+    .{ .command_name = "recent-prioritization-fees", .style = .literal, .suffix = "[account-1 ...]" },
+    .{ .command_name = "cluster-nodes", .style = .literal },
+    .{ .command_name = "leader-schedule", .style = .literal, .suffix = "[slot] [identity]" },
+    .{ .command_name = "identity", .style = .literal },
+    .{ .command_name = "vote-accounts", .style = .literal },
+    .{ .command_name = "block-production", .style = .literal },
+    .{ .command_name = "inflation-governor", .style = .literal },
+    .{ .command_name = "minimum-ledger-slot", .style = .literal },
+    .{ .command_name = "max-retransmit-slot", .style = .literal },
+    .{ .command_name = "max-shred-insert-slot", .style = .literal },
+    .{ .command_name = "first-available-block", .style = .literal },
+    .{ .command_name = "blockhash-valid", .style = .blockhash },
+};
 
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-versioned-idl-invoke-and-confirm ")) {
-        try writeCommandUsageLine(out, "send-versioned-idl-invoke-and-confirm", &idl_invoke_command_usage_params, " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]");
-        return true;
+fn writeCommandUsageEntry(out: *std.Io.Writer, entry: CommandUsageEntry) !void {
+    switch (entry.style) {
+        .literal => try writeCommandUsageLiteralSuffix(out, entry.command_name, entry.suffix),
+        .signature => try writeCommandUsageLine(out, entry.command_name, &signature_command_usage_params, entry.suffix),
+        .signature_list => try writeCommandUsageLine(out, entry.command_name, &signature_statuses_command_usage_params, entry.suffix),
+        .signed_transaction => try writeCommandUsageLine(out, entry.command_name, &signed_transaction_command_usage_params, entry.suffix),
+        .instruction => try writeCommandUsageLine(out, entry.command_name, &instruction_command_usage_params, entry.suffix),
+        .program_invoke => try writeCommandUsageLine(out, entry.command_name, &program_invoke_command_usage_params, entry.suffix),
+        .idl_invoke => try writeCommandUsageLine(out, entry.command_name, &idl_invoke_command_usage_params, entry.suffix),
+        .raw_rpc => try writeCommandUsageLine(out, entry.command_name, &raw_rpc_command_usage_params, entry.suffix),
+        .account => try writeCommandUsageLine(out, entry.command_name, &account_command_usage_params, entry.suffix),
+        .account_expected_balance => try writeCommandUsageLine(out, entry.command_name, &account_expected_balance_command_usage_params, entry.suffix),
+        .account_lamports => try writeCommandUsageLine(out, entry.command_name, &account_lamports_command_usage_params, entry.suffix),
+        .account_list => try writeCommandUsageLine(out, entry.command_name, &account_list_command_usage_params, entry.suffix),
+        .program_id => try writeCommandUsageLine(out, entry.command_name, &program_id_command_usage_params, entry.suffix),
+        .token_account => try writeCommandUsageLine(out, entry.command_name, &token_account_command_usage_params, entry.suffix),
+        .mint => try writeCommandUsageLine(out, entry.command_name, &mint_command_usage_params, entry.suffix),
+        .owner_token_accounts => try writeCommandUsageLine(out, entry.command_name, &owner_command_usage_params, entry.suffix),
+        .delegate_token_accounts => try writeCommandUsageLine(out, entry.command_name, &delegate_command_usage_params, entry.suffix),
+        .address_history => try writeCommandUsageLineWithOptionSuffix(out, entry.command_name, &address_command_usage_params, entry.suffix, &signatures_for_address_usage_option_params),
+        .inflation_reward => try writeCommandUsageLineWithOptionSuffix(out, entry.command_name, &inflation_reward_command_usage_params, entry.suffix, &inflation_reward_usage_option_params),
+        .poll_for_signature_confirmation => try writeCommandUsageLine(out, entry.command_name, &poll_for_signature_confirmation_command_usage_params, entry.suffix),
+        .bytes => try writeCommandUsageLine(out, entry.command_name, &bytes_command_usage_params, entry.suffix),
+        .blockhash => try writeCommandUsageLine(out, entry.command_name, &blockhash_command_usage_params, entry.suffix),
+        .feature_pubkey => try writeCommandUsageLine(out, entry.command_name, &feature_pubkey_command_usage_params, entry.suffix),
+        .slot => try writeCommandUsageLine(out, entry.command_name, &slot_command_usage_params, entry.suffix),
+        .base64_message => try writeCommandUsageLine(out, entry.command_name, &message_command_usage_params, entry.suffix),
+        .start_slot_limit => try writeCommandUsageLine(out, entry.command_name, &start_slot_limit_command_usage_params, entry.suffix),
+        .start_slot => try writeCommandUsageLine(out, entry.command_name, &start_slot_command_usage_params, entry.suffix),
     }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-versioned-idl-invoke ")) {
-        try writeCommandUsageLine(out, "send-versioned-idl-invoke", &idl_invoke_command_usage_params, " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]");
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-idl-invoke-and-confirm ")) {
-        try writeCommandUsageLine(out, "send-idl-invoke-and-confirm", &idl_invoke_command_usage_params, " [additional-signer-keypair-paths-json|@path]");
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-idl-invoke ")) {
-        try writeCommandUsageLine(out, "send-idl-invoke", &idl_invoke_command_usage_params, " [additional-signer-keypair-paths-json|@path]");
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-versioned-idl-invoke ")) {
-        try writeCommandUsageLine(out, "simulate-versioned-idl-invoke", &idl_invoke_command_usage_params, " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]");
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-idl-invoke ")) {
-        try writeCommandUsageLine(out, "simulate-idl-invoke", &idl_invoke_command_usage_params, " [additional-signer-keypair-paths-json|@path]");
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "confirm-transaction ")) {
-        try writeCommandUsageLine(out, "confirm-transaction", &signature_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "signature-status ")) {
-        try writeCommandUsageLine(out, "signature-status", &signature_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "signature-statuses ")) {
-        try writeCommandUsageLine(out, "signature-statuses", &signature_statuses_command_usage_params, " [signature-2 ...]");
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "status ")) {
-        try writeCommandUsageLine(out, "status", &signature_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "transaction ")) {
-        try writeCommandUsageLine(out, "transaction", &signature_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "blocks-since-signature-confirmation ")) {
-        try writeCommandUsageLine(out, "blocks-since-signature-confirmation", &signature_command_usage_params, null);
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-transaction-and-confirm ")) {
-        try writeCommandUsageLine(out, "send-transaction-and-confirm", &signed_transaction_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-transaction ")) {
-        try writeCommandUsageLine(out, "send-transaction", &signed_transaction_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "simulate-transaction ")) {
-        try writeCommandUsageLine(out, "simulate-transaction", &signed_transaction_command_usage_params, null);
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "raw-rpc ")) {
-        try writeCommandUsageLine(out, "raw-rpc", &raw_rpc_command_usage_params, " [params-json]");
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "multiple-accounts ")) {
-        try writeCommandUsageLine(out, "multiple-accounts", &account_list_command_usage_params, " [account-2 ...]");
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "multiple-ui-accounts ")) {
-        try writeCommandUsageLine(out, "multiple-ui-accounts", &account_list_command_usage_params, " [account-2 ...]");
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "signatures-for-address ")) {
-        try writeCommandUsageLineWithOptionSuffix(
-            out,
-            "signatures-for-address",
-            &address_command_usage_params,
-            null,
-            &signatures_for_address_usage_option_params,
-        );
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "inflation-reward ")) {
-        try writeCommandUsageLineWithOptionSuffix(
-            out,
-            "inflation-reward",
-            &inflation_reward_command_usage_params,
-            " [address-2 ...]",
-            &inflation_reward_usage_option_params,
-        );
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "account-info ")) {
-        try writeCommandUsageLine(out, "account-info", &account_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "account-data ")) {
-        try writeCommandUsageLine(out, "account-data", &account_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "ui-account ")) {
-        try writeCommandUsageLine(out, "ui-account", &account_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "balance ")) {
-        try writeCommandUsageLine(out, "balance", &account_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "poll-balance ")) {
-        try writeCommandUsageLine(out, "poll-balance", &account_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "wait-for-balance ")) {
-        try writeCommandUsageLine(out, "wait-for-balance", &account_expected_balance_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "request-airdrop ")) {
-        try writeCommandUsageLine(out, "request-airdrop", &account_lamports_command_usage_params, null);
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "program-accounts ")) {
-        try writeCommandUsageLine(out, "program-accounts", &program_id_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "program-ui-accounts ")) {
-        try writeCommandUsageLine(out, "program-ui-accounts", &program_id_command_usage_params, null);
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "token-account-balance ")) {
-        try writeCommandUsageLine(out, "token-account-balance", &token_account_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "token-account ")) {
-        try writeCommandUsageLine(out, "token-account", &token_account_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "token-supply ")) {
-        try writeCommandUsageLine(out, "token-supply", &mint_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "token-largest-accounts ")) {
-        try writeCommandUsageLine(out, "token-largest-accounts", &mint_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "token-accounts-by-owner ")) {
-        try writeCommandUsageLine(out, "token-accounts-by-owner", &owner_command_usage_params, " (--mint <mint> | --token-program-id <program-id>)");
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "token-accounts-by-delegate ")) {
-        try writeCommandUsageLine(out, "token-accounts-by-delegate", &delegate_command_usage_params, " (--mint <mint> | --token-program-id <program-id>)");
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "poll-for-signature-confirmation ")) {
-        try writeCommandUsageLine(out, "poll-for-signature-confirmation", &poll_for_signature_confirmation_command_usage_params, null);
-        return true;
-    }
-
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "minimum-rent-exemption ")) {
-        try writeCommandUsageLine(out, "minimum-rent-exemption", &bytes_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "new-latest-blockhash ")) {
-        try writeCommandUsageLine(out, "new-latest-blockhash", &blockhash_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "blockhash-valid ")) {
-        try writeCommandUsageLine(out, "blockhash-valid", &blockhash_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "feature-activation-slot ")) {
-        try writeCommandUsageLine(out, "feature-activation-slot", &feature_pubkey_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "block-time ")) {
-        try writeCommandUsageLine(out, "block-time", &slot_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "block-commitment ")) {
-        try writeCommandUsageLine(out, "block-commitment", &slot_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "block ")) {
-        try writeCommandUsageLine(out, "block", &slot_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "fee-for-message ")) {
-        try writeCommandUsageLine(out, "fee-for-message", &message_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "blocks-with-limit ")) {
-        try writeCommandUsageLine(out, "blocks-with-limit", &start_slot_limit_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "blocks ")) {
-        try writeCommandUsageLine(out, "blocks", &start_slot_command_usage_params, " [end-slot]");
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "recent-performance-samples ")) {
-        try writeCommandUsageLiteralSuffix(out, "recent-performance-samples", "[limit]");
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "slot-leaders ")) {
-        try writeCommandUsageLine(out, "slot-leaders", &start_slot_limit_command_usage_params, null);
-        return true;
-    }
-    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "leader-schedule ")) {
-        try writeCommandUsageLiteralSuffix(out, "leader-schedule", "[slot] [identity]");
-        return true;
-    }
-
-    return false;
 }
 
 fn writeCommandUsageSection(out: *std.Io.Writer) !void {
-    for (command_usage_lines) |line| {
-        if (try maybeWriteGeneratedCommandUsageLine(out, line)) continue;
-
-        try out.writeAll(line);
-        try out.writeByte('\n');
+    for (command_usage_entries) |entry| {
+        try writeCommandUsageEntry(out, entry);
     }
 }
 
