@@ -658,6 +658,7 @@ const CommandPositionalStyle = enum {
     idl_invoke_versioned,
     program_invoke_legacy,
     program_invoke_versioned,
+    transfer,
     signature,
     signature_list,
     signatures_for_address,
@@ -703,7 +704,7 @@ const command_usage_entries = [_]CommandUsageEntry{
     .{ .command = .send_program_invoke_and_confirm, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]", .parse_style = .program_invoke_legacy },
     .{ .command = .send_versioned_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
     .{ .command = .send_versioned_program_invoke_and_confirm, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
-    .{ .command = .transfer, .style = .literal, .suffix = "[--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>" },
+    .{ .command = .transfer, .style = .literal, .suffix = "[--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>", .parse_style = .transfer },
     .{ .command = .simulate_transaction, .style = .signed_transaction, .parse_style = .signed_transaction },
     .{ .command = .simulate_instructions, .style = .instruction, .parse_style = .instruction },
     .{ .command = .simulate_versioned_instructions, .style = .instruction, .parse_style = .instruction },
@@ -1165,6 +1166,24 @@ fn parseCommandPositionalsFromMetadata(allocator: Allocator, parsed: *ParsedArgs
             parsed.program_invoke_lookup_tables_arg = command_result.positionals[5];
             if (command_result.positionals[6].len != 0) return error.InvalidCli;
         },
+        .transfer => {
+            if (parsed.sender_keypair_path_arg == null and parsed.sender_secret_key_arg == null) {
+                var command_result = try parsePositionalsWithClap(&transfer_with_default_sender_command_positionals_params, allocator, positionals);
+                defer command_result.deinit();
+
+                parsed.sender_secret_key_arg = command_result.positionals[0];
+                parsed.account = command_result.positionals[1];
+                parsed.lamports_arg = command_result.positionals[2];
+                if (command_result.positionals[3].len != 0) return error.InvalidCli;
+            } else {
+                var command_result = try parsePositionalsWithClap(&transfer_with_explicit_sender_command_positionals_params, allocator, positionals);
+                defer command_result.deinit();
+
+                parsed.account = command_result.positionals[0];
+                parsed.lamports_arg = command_result.positionals[1];
+                if (command_result.positionals[2].len != 0) return error.InvalidCli;
+            }
+        },
         .signature => {
             var command_result = try parsePositionalsWithClap(&signature_command_positionals_params, allocator, positionals);
             defer command_result.deinit();
@@ -1316,26 +1335,6 @@ fn parseCommandPositionals(allocator: Allocator, parsed: *ParsedArgs, positional
     if (try parseCommandPositionalsFromMetadata(allocator, parsed, positionals)) return;
 
     switch (parsed.command) {
-        .transfer => {
-            if (parsed.sender_keypair_path_arg == null and parsed.sender_secret_key_arg == null) {
-                var command_result = try parsePositionalsWithClap(&transfer_with_default_sender_command_positionals_params, allocator, positionals);
-                defer command_result.deinit();
-
-                parsed.sender_secret_key_arg = command_result.positionals[0];
-                parsed.account = command_result.positionals[1];
-                parsed.lamports_arg = command_result.positionals[2];
-                if (command_result.positionals[3].len != 0) return error.InvalidCli;
-            } else {
-                var command_result = try parsePositionalsWithClap(&transfer_with_explicit_sender_command_positionals_params, allocator, positionals);
-                defer command_result.deinit();
-
-                parsed.account = command_result.positionals[0];
-                parsed.lamports_arg = command_result.positionals[1];
-                if (command_result.positionals[2].len != 0) return error.InvalidCli;
-            }
-
-            return;
-        },
         else => {},
     }
 
