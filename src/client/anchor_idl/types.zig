@@ -37,6 +37,12 @@ pub const Instruction = struct {
     }
 };
 
+pub fn parseJson(allocator: std.mem.Allocator, source: []const u8) !std.json.Parsed(Idl) {
+    return try std.json.parseFromSlice(Idl, allocator, source, .{
+        .ignore_unknown_fields = true,
+    });
+}
+
 fn anchorIdlNameMatches(expected_name: []const u8, provided_name: []const u8) bool {
     if (std.mem.eql(u8, expected_name, provided_name)) return true;
     if (expected_name.len == 0 or provided_name.len == 0) return false;

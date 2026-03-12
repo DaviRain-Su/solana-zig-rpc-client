@@ -2472,9 +2472,7 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
     const idl_source = loadInstructionSpecSource(allocator, idl_arg) catch return error.InvalidCli;
     defer allocator.free(idl_source);
 
-    const parsed_idl = std.json.parseFromSlice(anchor_idl.Idl, allocator, idl_source, .{
-        .ignore_unknown_fields = true,
-    }) catch return error.InvalidCli;
+    const parsed_idl = anchor_idl.parseJson(allocator, idl_source) catch return error.InvalidCli;
     defer parsed_idl.deinit();
 
     const program_id = program_id_override_arg orelse anchor_idl.programAddress(&parsed_idl.value) orelse return error.InvalidCli;

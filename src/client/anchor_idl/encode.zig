@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 pub const EncodeError = error{
     InvalidAnchorIdlArgsJson,
     MissingAnchorIdlArg,
+    MissingAnchorIdlInstruction,
     UnsupportedAnchorIdlType,
     InvalidAnchorIdlArgValue,
 };
@@ -520,6 +521,28 @@ fn encodeArgValue(
     }
 
     return error.UnsupportedAnchorIdlType;
+}
+
+pub fn encodeInstructionDataNamed(
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    args_json_source: ?[]const u8,
+) ![]u8 {
+    const instruction = idl_types.findInstruction(idl, instruction_name) orelse return error.MissingAnchorIdlInstruction;
+    return try encodeInstructionData(allocator, idl, &instruction, args_json_source);
+}
+
+pub fn encodeInstructionDataFromJson(
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    args_json_source: ?[]const u8,
+) ![]u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try encodeInstructionDataNamed(allocator, &parsed_idl.value, instruction_name, args_json_source);
 }
 
 pub fn encodeInstructionData(

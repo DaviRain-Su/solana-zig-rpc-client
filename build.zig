@@ -203,6 +203,7 @@ pub fn build(b: *std.Build) void {
     mock_sender_assertions_module.addOptions("std_options", test_log_options);
 
     const root_test_sources = [_][]const u8{
+        "tests/root/anchor_idl.zig",
         "tests/root/sdk.zig",
         "tests/root/ledger.zig",
         "tests/root/network.zig",
