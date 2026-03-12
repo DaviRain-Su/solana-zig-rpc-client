@@ -1595,6 +1595,44 @@ pub fn buildOwnedLegacyMessageWithBlockhashQueryFromJson(
     );
 }
 
+pub fn buildLegacyMessageBytesWithBlockhashQuery(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    options: BuildLegacyMessageWithBlockhashQueryOptions,
+) ![]u8 {
+    var owned = try buildOwnedLegacyMessageWithBlockhashQuery(
+        rpc,
+        allocator,
+        idl,
+        instruction_name,
+        options,
+    );
+    defer owned.deinit(allocator);
+
+    return try owned.serialize(allocator);
+}
+
+pub fn buildLegacyMessageBytesWithBlockhashQueryFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    options: BuildLegacyMessageWithBlockhashQueryOptions,
+) ![]u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildLegacyMessageBytesWithBlockhashQuery(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        options,
+    );
+}
+
 pub fn buildLegacyMessageBase64WithBlockhashQuery(
     rpc: anytype,
     allocator: Allocator,
@@ -1764,6 +1802,44 @@ pub fn buildOwnedVersionedMessageWithBlockhashQueryFromJson(
     defer parsed_idl.deinit();
 
     return try buildOwnedVersionedMessageWithBlockhashQuery(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        options,
+    );
+}
+
+pub fn buildVersionedMessageBytesWithBlockhashQuery(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    options: BuildVersionedMessageWithBlockhashQueryOptions,
+) ![]u8 {
+    var owned = try buildOwnedVersionedMessageWithBlockhashQuery(
+        rpc,
+        allocator,
+        idl,
+        instruction_name,
+        options,
+    );
+    defer owned.deinit(allocator);
+
+    return try owned.serialize(allocator);
+}
+
+pub fn buildVersionedMessageBytesWithBlockhashQueryFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    options: BuildVersionedMessageWithBlockhashQueryOptions,
+) ![]u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildVersionedMessageBytesWithBlockhashQuery(
         rpc,
         allocator,
         &parsed_idl.value,
