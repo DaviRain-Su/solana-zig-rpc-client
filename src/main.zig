@@ -44,7 +44,7 @@ fn run(allocator: std.mem.Allocator) !u8 {
     cli.applySolanaCliConfigDefaults(&parsed, &solana_cli_config);
 
     if (parsed.show_usage or !parsed.has_command) {
-        std.debug.print("{s}", .{cli.usage_text});
+        try cli.printUsageToFile(.stderr());
         return 0;
     }
 
@@ -71,7 +71,8 @@ fn run(allocator: std.mem.Allocator) !u8 {
 }
 
 fn printCliError(message: []const u8) u8 {
-    std.debug.print("{s}\n{s}", .{ message, cli.usage_text });
+    std.debug.print("{s}", .{message});
+    cli.printUsageToFile(.stderr()) catch {};
     return 1;
 }
 

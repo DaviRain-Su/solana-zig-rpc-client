@@ -3,6 +3,11 @@ const clap = @import("clap");
 
 const Allocator = std.mem.Allocator;
 
+const ParsedTopLevelCommand = union(enum) {
+    help,
+    command: Command,
+};
+
 comptime {
     @setEvalBranchQuota(20_000);
 }
@@ -66,6 +71,7 @@ const cli_params = clap.parseParamsComptime(
     \\    --limit <string>...
     \\    --mint <string>...
     \\    --token-program-id <string>...
+    \\<command>
     \\<arg>...
     \\
 );
@@ -75,6 +81,7 @@ const cli_parsers = .{
     .commitment = clap.parsers.enumeration(Commitment),
     .u64 = clap.parsers.int(u64, 10),
     .u32 = clap.parsers.int(u32, 10),
+    .command = parseTopLevelCommand,
     .arg = clap.parsers.string,
 };
 
@@ -265,7 +272,17 @@ pub const usage_text =
     "  --token-program-id <program-id> Token account filter by token program (token-accounts-by-*)\n";
 
 pub fn printUsage(out: *std.Io.Writer) !void {
+    try out.writeAll("Quick usage:\n  solana_client_zig ");
+    try clap.usage(out, clap.Help, &cli_params);
+    try out.writeAll("\n\n");
     try out.print("{s}", .{usage_text});
+}
+
+pub fn printUsageToFile(file: std.fs.File) !void {
+    var buf: [2048]u8 = undefined;
+    var writer = file.writer(&buf);
+    try printUsage(&writer.interface);
+    try writer.interface.flush();
 }
 
 pub fn parseCommitment(value: []const u8) ?Commitment {
@@ -561,6 +578,11 @@ fn commandFromArg(arg: []const u8) ?Command {
     }
 
     return std.meta.stringToEnum(Command, normalized[0..arg.len]);
+}
+
+fn parseTopLevelCommand(arg: []const u8) !ParsedTopLevelCommand {
+    if (std.mem.eql(u8, arg, "help")) return .help;
+    return .{ .command = commandFromArg(arg) orelse return error.InvalidCli };
 }
 
 fn parseCommandPositionals(allocator: Allocator, parsed: *ParsedArgs, positionals: []const []const u8) !void {
@@ -974,17 +996,19 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
     try appendStringArgs(allocator, &parsed.idl_account_bindings, @field(result.args, "account"));
     try appendStringArgs(allocator, &parsed.idl_remaining_accounts, @field(result.args, "remaining-account"));
 
-    const positionals = result.positionals[0];
-    if (positionals.len != 0) {
-        if (std.mem.eql(u8, positionals[0], "help")) {
-            parsed.show_usage = true;
-            parsed.has_command = true;
-        } else {
-            parsed.command = commandFromArg(positionals[0]) orelse return error.InvalidCli;
-            parsed.has_command = true;
+    const top_level_command = result.positionals[0];
+    if (top_level_command) |value| {
+        switch (value) {
+            .help => {
+                parsed.show_usage = true;
+                parsed.has_command = true;
+            },
+            .command => |command| {
+                parsed.command = command;
+                parsed.has_command = true;
+                try parseCommandPositionals(allocator, &parsed, result.positionals[1]);
+            },
         }
-
-        try parseCommandPositionals(allocator, &parsed, positionals[1..]);
     }
 
     if (parsed.command == .transfer and
