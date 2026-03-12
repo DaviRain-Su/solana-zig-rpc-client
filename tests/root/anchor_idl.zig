@@ -5,6 +5,41 @@ pub const std_options = struct {
     pub const log_level = std.log.Level.err;
 };
 
+fn createProgramAddress(seeds: []const []const u8, program_id: client.Pubkey) !client.Pubkey {
+    for (seeds) |seed| {
+        if (seed.len > 32) return error.InvalidSeed;
+    }
+
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    for (seeds) |seed| hasher.update(seed);
+    hasher.update(&program_id.bytes);
+    hasher.update("ProgramDerivedAddress");
+
+    var hash: [32]u8 = undefined;
+    hasher.final(&hash);
+    if (std.crypto.ecc.Edwards25519.fromBytes(hash)) |_| {
+        return error.InvalidSeed;
+    } else |_| {}
+    return client.Pubkey.fromBytes(hash);
+}
+
+fn findProgramAddress(allocator: std.mem.Allocator, seeds: []const []const u8, program_id: client.Pubkey) !client.Pubkey {
+    const search_seeds = try allocator.alloc([]const u8, seeds.len + 1);
+    defer allocator.free(search_seeds);
+    @memcpy(search_seeds[0..seeds.len], seeds);
+
+    var bump_seed: [1]u8 = undefined;
+    search_seeds[seeds.len] = bump_seed[0..];
+
+    var bump: i16 = 255;
+    while (bump >= 0) : (bump -= 1) {
+        bump_seed[0] = @intCast(bump);
+        const candidate = createProgramAddress(search_seeds, program_id) catch continue;
+        return candidate;
+    }
+    return error.InvalidSeed;
+}
+
 test "root.anchor_idl.parseJson ignores unknown fields and resolves metadata program id" {
     const allocator = std.testing.allocator;
     const parsed = try client.anchor_idl.parseJson(allocator,
@@ -193,15 +228,112 @@ test "root.anchor_idl_invoke.buildOwnedInstruction fills missing optional accoun
     try std.testing.expect(!owned.instruction.accounts[1].is_writable);
 }
 
-test "root.anchor_idl_invoke.buildOwnedInstruction returns unsupported account feature for unresolved pda" {
+test "root.anchor_idl_invoke.buildOwnedInstruction derives const seed pda" {
     const allocator = std.testing.allocator;
     const program_id = client.Pubkey.fromBytes(.{46} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const payer = client.Pubkey.fromBytes(.{47} ** 32);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[9,9,9,9,9,9,9,9],"accounts":[{{"name":"vault","pda":{{"seeds":[{{"kind":"const","value":[118,97,117,108,116]}}]}},"writable":true}},{{"name":"payer","signer":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "initialize",
+        .{
+            .default_signer = payer,
+        },
+    );
+    defer owned.deinit(allocator);
+
+    const expected_vault = try findProgramAddress(allocator, &.{"vault"}, program_id);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(expected_vault));
+    try std.testing.expect(owned.instruction.accounts[0].is_writable);
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(payer));
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction derives arg seed pda" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{48} ** 32);
     const program_id_base58 = try program_id.toBase58(allocator);
     defer allocator.free(program_id_base58);
 
     const idl_json = try std.fmt.allocPrint(
         allocator,
-        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[9,9,9,9,9,9,9,9],"accounts":[{{"name":"vault","pda":{{"seeds":[{{"kind":"const","value":[118,97,117,108,116]}}]}}}}],"args":[]}}]}}
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[7,7,7,7,7,7,7,7],"accounts":[{{"name":"vault","pda":{{"seeds":[{{"kind":"const","value":"vault"}},{{"kind":"arg","path":"label"}}]}}}}],"args":[{{"name":"label","type":"string"}}]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "initialize",
+        .{
+            .args_json = "{\"label\":\"main\"}",
+        },
+    );
+    defer owned.deinit(allocator);
+
+    const expected_vault = try findProgramAddress(allocator, &.{ "vault", "main" }, program_id);
+    try std.testing.expectEqual(@as(usize, 1), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(expected_vault));
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction resolves relation binding path" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{49} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const vault = client.Pubkey.fromBytes(.{50} ** 32);
+    const authority = client.Pubkey.fromBytes(.{51} ** 32);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"update","discriminator":[6,6,6,6,6,6,6,6],"accounts":[{{"name":"vault","writable":true}},{{"name":"authority","signer":true,"relations":["vault"]}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "update",
+        .{
+            .account_bindings = &.{
+                .{ .path = "vault", .pubkey = vault },
+                .{ .path = "vault.authority", .pubkey = authority },
+            },
+        },
+    );
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(vault));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(authority));
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction returns unsupported account feature for scalar account seed pda" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{52} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const config = client.Pubkey.fromBytes(.{53} ** 32);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[9,9,9,9,9,9,9,9],"accounts":[{{"name":"config"}},{{"name":"vault","pda":{{"seeds":[{{"kind":"account","path":"config.counter","type":"u64"}}]}}}}],"args":[]}}]}}
     ,
         .{program_id_base58},
     );
@@ -216,7 +348,11 @@ test "root.anchor_idl_invoke.buildOwnedInstruction returns unsupported account f
             allocator,
             &parsed.value,
             "initialize",
-            .{},
+            .{
+                .account_bindings = &.{
+                    .{ .path = "config", .pubkey = config },
+                },
+            },
         ),
     );
 }
