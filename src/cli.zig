@@ -53,8 +53,8 @@ pub const usage_text =
     "  solana_client_zig [--rpc <url>] send-versioned-program-invoke-and-confirm [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]\n" ++
     "  solana_client_zig [--rpc <url>] transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-transaction <signed-tx-base64>\n" ++
-    "  solana_client_zig [--rpc <url>] simulate-instructions [--recent-blockhash <base58>] <instruction-spec-json|@path>\n" ++
-    "  solana_client_zig [--rpc <url>] simulate-versioned-instructions [--recent-blockhash <base58>] <instruction-spec-json|@path>\n" ++
+    "  solana_client_zig [--rpc <url>] simulate-instructions [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>\n" ++
+    "  solana_client_zig [--rpc <url>] simulate-versioned-instructions [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>\n" ++
     "  solana_client_zig [--rpc <url>] simulate-program-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]\n" ++
     "  solana_client_zig [--rpc <url>] simulate-versioned-program-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]\n" ++
     "  solana_client_zig [--rpc <url>] simulate-idl-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]\n" ++
@@ -143,8 +143,8 @@ pub const usage_text =
     "  --max-retries <count>    Max tx retries before giving up\n" ++
     "  --preflight-commitment <level>  Commitment for tx preflight checks\n" ++
     "  --airdrop-recent-blockhash <blockhash> Recent blockhash override for request-airdrop\n" ++
-    "  --sender-keypair <path> Transfer/program-invoke/idl/send-instructions payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)\n" ++
-    "  --sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions payer secret key (base58)\n" ++
+    "  --sender-keypair <path> Transfer/program-invoke/idl/send-instructions/simulate-instructions payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)\n" ++
+    "  --sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions/simulate-instructions payer secret key (base58)\n" ++
     "  --transfer-recent-blockhash <blockhash> Recent blockhash override for transfer\n" ++
     "  --epoch <epoch>          Epoch override for inflation-reward\n" ++
     "  --encoding <mode>        json|jsonParsed|base58|base64 (block and transaction)\n" ++
@@ -1819,8 +1819,8 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke-and-confirm [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke-and-confirm [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-instructions [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-instructions [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-instructions [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-instructions [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-program-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-program-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-idl-invoke [--sender-keypair <path> | --sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>]... [--remaining-account <pubkey[,is_signer,is_writable]>]... [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
@@ -1851,8 +1851,8 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "--airdrop-recent-blockhash <blockhash>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--rpc <url>             RPC endpoint to use (default: Solana CLI config json_rpc_url or mainnet-beta)") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--commitment <level>     processed|confirmed|finalized (default: Solana CLI config commitment when present)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-keypair <path> Transfer/program-invoke/idl/send-instructions payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions payer secret key (base58)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-keypair <path> Transfer/program-invoke/idl/send-instructions/simulate-instructions payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions/simulate-instructions payer secret key (base58)") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--transfer-recent-blockhash <blockhash>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--epoch <epoch>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--encoding <mode>") != null);
