@@ -566,6 +566,11 @@ const account_command_usage_params = clap.parseParamsComptime(
     \\
 );
 
+const start_slot_command_usage_params = clap.parseParamsComptime(
+    \\<start-slot>
+    \\
+);
+
 const account_lamports_command_usage_params = clap.parseParamsComptime(
     \\<account>
     \\<lamports>
@@ -725,6 +730,18 @@ fn writeCommandUsageLineWithOptionSuffix(
     if (option_params.len != 0) {
         try out.writeAll(" ");
         try clap.usage(out, clap.Help, option_params);
+    }
+    try out.writeByte('\n');
+}
+
+fn writeCommandUsageLiteralSuffix(out: *std.Io.Writer, command_name: []const u8, suffix: ?[]const u8) !void {
+    try out.writeAll(usage_command_line_prefix);
+    try out.writeAll(command_name);
+    if (suffix) |value| {
+        if (value.len != 0) {
+            try out.writeAll(" ");
+            try out.writeAll(value);
+        }
     }
     try out.writeByte('\n');
 }
@@ -983,8 +1000,20 @@ fn maybeWriteGeneratedCommandUsageLine(out: *std.Io.Writer, line: []const u8) !b
         try writeCommandUsageLine(out, "blocks-with-limit", &start_slot_limit_command_usage_params, null);
         return true;
     }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "blocks ")) {
+        try writeCommandUsageLine(out, "blocks", &start_slot_command_usage_params, " [end-slot]");
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "recent-performance-samples ")) {
+        try writeCommandUsageLiteralSuffix(out, "recent-performance-samples", "[limit]");
+        return true;
+    }
     if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "slot-leaders ")) {
         try writeCommandUsageLine(out, "slot-leaders", &start_slot_limit_command_usage_params, null);
+        return true;
+    }
+    if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "leader-schedule ")) {
+        try writeCommandUsageLiteralSuffix(out, "leader-schedule", "[slot] [identity]");
         return true;
     }
 
