@@ -3344,6 +3344,35 @@ fn parseInstructionDataEncodingArg(value: ?[]const u8) !InstructionDataEncoding 
     return error.InvalidCli;
 }
 
+fn loadProgramInvokeDataArg(
+    allocator: Allocator,
+    data_arg: ?[]const u8,
+    data_encoding_arg: ?[]const u8,
+) ![]u8 {
+    const data_encoding = try parseInstructionDataEncodingArg(data_encoding_arg);
+    const data_path = if (data_arg) |value|
+        if (std.mem.startsWith(u8, value, "@")) blk: {
+            if (value.len == 1) return error.InvalidCli;
+            break :blk value[1..];
+        } else null
+    else
+        null;
+    const inline_data = if (data_arg) |value|
+        if (data_path == null) value else null
+    else
+        null;
+
+    return loadCliInstructionData(
+        allocator,
+        .{
+            .program_id = "",
+            .data = inline_data,
+            .data_path = data_path,
+            .data_encoding = data_encoding,
+        },
+    );
+}
+
 fn loadProgramInvokeInstructionSpec(
     allocator: Allocator,
     program_id: []const u8,
@@ -4499,17 +4528,38 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-program-invoke arguments are invalid\n", .{});
                 return error.InvalidCli;
             };
+            const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch {
+                reportInvalidCliMessage("error: send-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(accounts_source);
+            const instruction_data = loadProgramInvokeDataArg(
+                allocator,
+                program_invoke_data_arg,
+                program_invoke_data_encoding_arg,
+            ) catch {
+                reportInvalidCliMessage("error: send-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(instruction_data);
 
-            const tx_signature = try rpc.sendLegacyInstructionsWithOptions(
-                loaded.payer,
-                loaded.owned_instructions.instructions,
-                loaded.signers,
+            const tx_signature = try client.program_invoke.sendLegacyTransactionFromJson(
+                rpc,
+                program_id,
                 .{
-                    .recent_blockhash = build_context.recent_blockhash,
-                    .blockhash_commitment = build_context.blockhash_commitment,
-                    .blockhash_query = build_context.blockhash_query,
-                    .nonce_authority = build_context.nonce_authority,
-                    .send_transaction_options = send_transaction_options,
+                    .payer = loaded.payer,
+                    .signers = loaded.signers,
+                    .instruction = .{
+                        .accounts_json = accounts_source,
+                        .data_bytes = instruction_data,
+                    },
+                    .rpc = .{
+                        .recent_blockhash = build_context.recent_blockhash,
+                        .blockhash_commitment = build_context.blockhash_commitment,
+                        .blockhash_query = build_context.blockhash_query,
+                        .nonce_authority = build_context.nonce_authority,
+                        .send_transaction_options = send_transaction_options,
+                    },
                 },
             );
             defer allocator.free(tx_signature);
@@ -4553,21 +4603,42 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-program-invoke-and-confirm arguments are invalid\n", .{});
                 return error.InvalidCli;
             };
+            const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch {
+                reportInvalidCliMessage("error: send-program-invoke-and-confirm arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(accounts_source);
+            const instruction_data = loadProgramInvokeDataArg(
+                allocator,
+                program_invoke_data_arg,
+                program_invoke_data_encoding_arg,
+            ) catch {
+                reportInvalidCliMessage("error: send-program-invoke-and-confirm arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(instruction_data);
 
-            const tx_signature = try rpc.sendAndConfirmLegacyInstructionsWithOptions(
-                loaded.payer,
-                loaded.owned_instructions.instructions,
-                loaded.signers,
+            const tx_signature = try client.program_invoke.sendAndConfirmLegacyTransactionFromJson(
+                rpc,
+                program_id,
                 .{
-                    .recent_blockhash = build_context.recent_blockhash,
-                    .blockhash_commitment = build_context.blockhash_commitment,
-                    .blockhash_query = build_context.blockhash_query,
-                    .nonce_authority = build_context.nonce_authority,
-                    .send_transaction_options = send_transaction_options,
-                    .commitment = commitment,
-                    .search_transaction_history = search_transaction_history,
-                    .timeout_ms = status_timeout_ms,
-                    .poll_interval_ms = status_poll_ms,
+                    .payer = loaded.payer,
+                    .signers = loaded.signers,
+                    .instruction = .{
+                        .accounts_json = accounts_source,
+                        .data_bytes = instruction_data,
+                    },
+                    .rpc = .{
+                        .recent_blockhash = build_context.recent_blockhash,
+                        .blockhash_commitment = build_context.blockhash_commitment,
+                        .blockhash_query = build_context.blockhash_query,
+                        .nonce_authority = build_context.nonce_authority,
+                        .send_transaction_options = send_transaction_options,
+                        .commitment = commitment,
+                        .search_transaction_history = search_transaction_history,
+                        .timeout_ms = status_timeout_ms,
+                        .poll_interval_ms = status_poll_ms,
+                    },
                 },
             );
             defer allocator.free(tx_signature);
@@ -4611,18 +4682,39 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-versioned-program-invoke arguments are invalid\n", .{});
                 return error.InvalidCli;
             };
+            const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch {
+                reportInvalidCliMessage("error: send-versioned-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(accounts_source);
+            const instruction_data = loadProgramInvokeDataArg(
+                allocator,
+                program_invoke_data_arg,
+                program_invoke_data_encoding_arg,
+            ) catch {
+                reportInvalidCliMessage("error: send-versioned-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(instruction_data);
 
-            const tx_signature = try rpc.sendVersionedInstructionsWithOptions(
-                loaded.payer,
-                loaded.owned_instructions.instructions,
-                loaded.address_lookup_tables,
-                loaded.signers,
+            const tx_signature = try client.program_invoke.sendVersionedTransactionFromJson(
+                rpc,
+                program_id,
                 .{
-                    .recent_blockhash = build_context.recent_blockhash,
-                    .blockhash_commitment = build_context.blockhash_commitment,
-                    .blockhash_query = build_context.blockhash_query,
-                    .nonce_authority = build_context.nonce_authority,
-                    .send_transaction_options = send_transaction_options,
+                    .payer = loaded.payer,
+                    .address_lookup_tables = loaded.address_lookup_tables,
+                    .signers = loaded.signers,
+                    .instruction = .{
+                        .accounts_json = accounts_source,
+                        .data_bytes = instruction_data,
+                    },
+                    .rpc = .{
+                        .recent_blockhash = build_context.recent_blockhash,
+                        .blockhash_commitment = build_context.blockhash_commitment,
+                        .blockhash_query = build_context.blockhash_query,
+                        .nonce_authority = build_context.nonce_authority,
+                        .send_transaction_options = send_transaction_options,
+                    },
                 },
             );
             defer allocator.free(tx_signature);
@@ -4666,22 +4758,43 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-versioned-program-invoke-and-confirm arguments are invalid\n", .{});
                 return error.InvalidCli;
             };
+            const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch {
+                reportInvalidCliMessage("error: send-versioned-program-invoke-and-confirm arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(accounts_source);
+            const instruction_data = loadProgramInvokeDataArg(
+                allocator,
+                program_invoke_data_arg,
+                program_invoke_data_encoding_arg,
+            ) catch {
+                reportInvalidCliMessage("error: send-versioned-program-invoke-and-confirm arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(instruction_data);
 
-            const tx_signature = try rpc.sendAndConfirmVersionedInstructionsWithOptions(
-                loaded.payer,
-                loaded.owned_instructions.instructions,
-                loaded.address_lookup_tables,
-                loaded.signers,
+            const tx_signature = try client.program_invoke.sendAndConfirmVersionedTransactionFromJson(
+                rpc,
+                program_id,
                 .{
-                    .recent_blockhash = build_context.recent_blockhash,
-                    .blockhash_commitment = build_context.blockhash_commitment,
-                    .blockhash_query = build_context.blockhash_query,
-                    .nonce_authority = build_context.nonce_authority,
-                    .send_transaction_options = send_transaction_options,
-                    .commitment = commitment,
-                    .search_transaction_history = search_transaction_history,
-                    .timeout_ms = status_timeout_ms,
-                    .poll_interval_ms = status_poll_ms,
+                    .payer = loaded.payer,
+                    .address_lookup_tables = loaded.address_lookup_tables,
+                    .signers = loaded.signers,
+                    .instruction = .{
+                        .accounts_json = accounts_source,
+                        .data_bytes = instruction_data,
+                    },
+                    .rpc = .{
+                        .recent_blockhash = build_context.recent_blockhash,
+                        .blockhash_commitment = build_context.blockhash_commitment,
+                        .blockhash_query = build_context.blockhash_query,
+                        .nonce_authority = build_context.nonce_authority,
+                        .send_transaction_options = send_transaction_options,
+                        .commitment = commitment,
+                        .search_transaction_history = search_transaction_history,
+                        .timeout_ms = status_timeout_ms,
+                        .poll_interval_ms = status_poll_ms,
+                    },
                 },
             );
             defer allocator.free(tx_signature);
@@ -5348,13 +5461,34 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             else
                 null;
+            const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch {
+                reportInvalidCliMessage("error: simulate-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(accounts_source);
+            const instruction_data = loadProgramInvokeDataArg(
+                allocator,
+                program_invoke_data_arg,
+                program_invoke_data_encoding_arg,
+            ) catch {
+                reportInvalidCliMessage("error: simulate-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(instruction_data);
 
-            const simulation = try rpc.simulateLegacyInstructionsWithOptions(
-                loaded.payer,
-                loaded.owned_instructions.instructions,
-                loaded.signers,
-                build_options,
-                options,
+            const simulation = try client.program_invoke.simulateLegacyTransactionFromJson(
+                rpc,
+                program_id,
+                .{
+                    .payer = loaded.payer,
+                    .signers = loaded.signers,
+                    .instruction = .{
+                        .accounts_json = accounts_source,
+                        .data_bytes = instruction_data,
+                    },
+                    .build = build_options,
+                    .rpc = options,
+                },
             );
             defer freeSimulatedTransaction(allocator, simulation);
 
@@ -5438,14 +5572,35 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             else
                 null;
+            const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch {
+                reportInvalidCliMessage("error: simulate-versioned-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(accounts_source);
+            const instruction_data = loadProgramInvokeDataArg(
+                allocator,
+                program_invoke_data_arg,
+                program_invoke_data_encoding_arg,
+            ) catch {
+                reportInvalidCliMessage("error: simulate-versioned-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer allocator.free(instruction_data);
 
-            const simulation = try rpc.simulateVersionedInstructionsWithOptions(
-                loaded.payer,
-                loaded.owned_instructions.instructions,
-                loaded.address_lookup_tables,
-                loaded.signers,
-                build_options,
-                options,
+            const simulation = try client.program_invoke.simulateVersionedTransactionFromJson(
+                rpc,
+                program_id,
+                .{
+                    .payer = loaded.payer,
+                    .address_lookup_tables = loaded.address_lookup_tables,
+                    .signers = loaded.signers,
+                    .instruction = .{
+                        .accounts_json = accounts_source,
+                        .data_bytes = instruction_data,
+                    },
+                    .build = build_options,
+                    .rpc = options,
+                },
             );
             defer freeSimulatedTransaction(allocator, simulation);
 
