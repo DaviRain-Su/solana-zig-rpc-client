@@ -2606,12 +2606,7 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) !LoadedCliInstructionSpec {
-    const can_use_reusable_builder = blk: {
-        if (account_bindings.len != 0 or remaining_accounts.len != 0 or remaining_accounts_json_arg != null) {
-            break :blk false;
-        }
-        break :blk true;
-    };
+    const can_use_reusable_builder = true;
 
     if (can_use_reusable_builder) {
         return loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(

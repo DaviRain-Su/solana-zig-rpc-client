@@ -1444,6 +1444,9 @@ fn resolveNamedAccountPubkeyAtPath(
     resolution_stack: *std.ArrayListUnmanaged([]u8),
 ) BuildError!ResolvedAccountPubkey {
     const leaf_name = if (std.mem.lastIndexOfScalar(u8, path, '.')) |dot_index| path[dot_index + 1 ..] else path;
+    if (findBoundPubkey(account_bindings, path, leaf_name)) |pubkey| {
+        return .{ .pubkey = pubkey };
+    }
     if (resolutionStackContains(resolution_stack, path)) return error.InvalidAnchorIdlAccountSpec;
     const owned_path = try allocator.dupe(u8, path);
     try resolution_stack.append(allocator, owned_path);
