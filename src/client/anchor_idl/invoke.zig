@@ -1448,6 +1448,21 @@ pub const BuildVersionedMessageOptions = struct {
     instruction_options: BuildInstructionOptions = .{},
 };
 
+pub const BuildLegacyMessageWithBlockhashQueryOptions = struct {
+    payer: sdk.Pubkey,
+    instruction_options: BuildInstructionOptions = .{},
+    blockhash_query: rpc_types.BlockhashQuery,
+    nonce_authority: ?sdk.Pubkey = null,
+};
+
+pub const BuildVersionedMessageWithBlockhashQueryOptions = struct {
+    payer: sdk.Pubkey,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    instruction_options: BuildInstructionOptions = .{},
+    blockhash_query: rpc_types.BlockhashQuery,
+    nonce_authority: ?sdk.Pubkey = null,
+};
+
 pub const BuildVersionedTransactionOptions = struct {
     payer: sdk.Pubkey,
     recent_blockhash: sdk.Hash,
@@ -1536,6 +1551,90 @@ pub fn buildOwnedLegacyMessageFromJson(
     defer parsed_idl.deinit();
 
     return try buildOwnedLegacyMessage(allocator, &parsed_idl.value, instruction_name, options);
+}
+
+pub fn buildOwnedLegacyMessageWithBlockhashQuery(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    options: BuildLegacyMessageWithBlockhashQueryOptions,
+) !sdk.OwnedLegacyMessage {
+    var owned_instruction = try buildOwnedInstruction(
+        allocator,
+        idl,
+        instruction_name,
+        options.instruction_options,
+    );
+    defer owned_instruction.deinit(allocator);
+
+    return try rpc.buildOwnedLegacyMessageWithBlockhashQuery(
+        options.payer,
+        &.{owned_instruction.instruction},
+        options.blockhash_query,
+        options.nonce_authority,
+    );
+}
+
+pub fn buildOwnedLegacyMessageWithBlockhashQueryFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    options: BuildLegacyMessageWithBlockhashQueryOptions,
+) !sdk.OwnedLegacyMessage {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildOwnedLegacyMessageWithBlockhashQuery(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        options,
+    );
+}
+
+pub fn buildLegacyMessageBase64WithBlockhashQuery(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    options: BuildLegacyMessageWithBlockhashQueryOptions,
+) ![]u8 {
+    var owned_instruction = try buildOwnedInstruction(
+        allocator,
+        idl,
+        instruction_name,
+        options.instruction_options,
+    );
+    defer owned_instruction.deinit(allocator);
+
+    return try rpc.buildLegacyMessageBase64WithBlockhashQuery(
+        options.payer,
+        &.{owned_instruction.instruction},
+        options.blockhash_query,
+        options.nonce_authority,
+    );
+}
+
+pub fn buildLegacyMessageBase64WithBlockhashQueryFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    options: BuildLegacyMessageWithBlockhashQueryOptions,
+) ![]u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildLegacyMessageBase64WithBlockhashQuery(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        options,
+    );
 }
 
 pub fn buildSignedLegacyTransaction(
@@ -1628,6 +1727,92 @@ pub fn buildOwnedVersionedMessageFromJson(
     defer parsed_idl.deinit();
 
     return try buildOwnedVersionedMessage(allocator, &parsed_idl.value, instruction_name, options);
+}
+
+pub fn buildOwnedVersionedMessageWithBlockhashQuery(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    options: BuildVersionedMessageWithBlockhashQueryOptions,
+) !sdk.OwnedVersionedMessageV0 {
+    var owned_instruction = try buildOwnedInstruction(
+        allocator,
+        idl,
+        instruction_name,
+        options.instruction_options,
+    );
+    defer owned_instruction.deinit(allocator);
+
+    return try rpc.buildOwnedVersionedMessageWithBlockhashQuery(
+        options.payer,
+        &.{owned_instruction.instruction},
+        options.address_lookup_tables,
+        options.blockhash_query,
+        options.nonce_authority,
+    );
+}
+
+pub fn buildOwnedVersionedMessageWithBlockhashQueryFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    options: BuildVersionedMessageWithBlockhashQueryOptions,
+) !sdk.OwnedVersionedMessageV0 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildOwnedVersionedMessageWithBlockhashQuery(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        options,
+    );
+}
+
+pub fn buildVersionedMessageBase64WithBlockhashQuery(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    options: BuildVersionedMessageWithBlockhashQueryOptions,
+) ![]u8 {
+    var owned_instruction = try buildOwnedInstruction(
+        allocator,
+        idl,
+        instruction_name,
+        options.instruction_options,
+    );
+    defer owned_instruction.deinit(allocator);
+
+    return try rpc.buildVersionedMessageBase64WithBlockhashQuery(
+        options.payer,
+        &.{owned_instruction.instruction},
+        options.address_lookup_tables,
+        options.blockhash_query,
+        options.nonce_authority,
+    );
+}
+
+pub fn buildVersionedMessageBase64WithBlockhashQueryFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    options: BuildVersionedMessageWithBlockhashQueryOptions,
+) ![]u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try buildVersionedMessageBase64WithBlockhashQuery(
+        rpc,
+        allocator,
+        &parsed_idl.value,
+        instruction_name,
+        options,
+    );
 }
 
 pub fn buildSignedVersionedTransaction(
