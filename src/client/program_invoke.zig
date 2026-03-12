@@ -140,12 +140,6 @@ pub const OwnedInstruction = struct {
     }
 };
 
-const JsonAccountMeta = struct {
-    pubkey: []const u8,
-    is_signer: bool = false,
-    is_writable: bool = false,
-};
-
 const OwnedAccounts = struct {
     metas: []sdk.AccountMeta,
 
@@ -155,24 +149,86 @@ const OwnedAccounts = struct {
     }
 };
 
+fn findJsonObjectField(object: std.json.ObjectMap, comptime names: []const []const u8) ?std.json.Value {
+    inline for (names) |name| {
+        if (object.get(name)) |value| return value;
+    }
+    return null;
+}
+
+fn parseJsonBool(value: std.json.Value) BuildError!bool {
+    return switch (value) {
+        .bool => value.bool,
+        else => error.InvalidProgramInvokeSpec,
+    };
+}
+
+fn parseJsonPubkey(allocator: Allocator, value: std.json.Value) BuildError!sdk.Pubkey {
+    return switch (value) {
+        .string => sdk.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidProgramInvokeSpec,
+        else => error.InvalidProgramInvokeSpec,
+    };
+}
+
+fn parseJsonAccountMeta(allocator: Allocator, value: std.json.Value) BuildError!sdk.AccountMeta {
+    return switch (value) {
+        .string => .{
+            .pubkey = sdk.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidProgramInvokeSpec,
+            .is_signer = false,
+            .is_writable = false,
+        },
+        .object => blk: {
+            const pubkey_value = findJsonObjectField(value.object, &.{
+                "pubkey",
+                "publicKey",
+                "public_key",
+                "address",
+                "key",
+            }) orelse return error.InvalidProgramInvokeSpec;
+
+            var is_signer = false;
+            if (findJsonObjectField(value.object, &.{ "isSigner", "is_signer", "signer" })) |field| {
+                is_signer = try parseJsonBool(field);
+            }
+
+            var is_writable = false;
+            if (findJsonObjectField(value.object, &.{ "isWritable", "is_writable", "writable" })) |field| {
+                is_writable = try parseJsonBool(field);
+            }
+
+            break :blk .{
+                .pubkey = try parseJsonPubkey(allocator, pubkey_value),
+                .is_signer = is_signer,
+                .is_writable = is_writable,
+            };
+        },
+        else => error.InvalidProgramInvokeSpec,
+    };
+}
+
 fn parseAccountsJson(allocator: Allocator, json_source: []const u8) BuildError!OwnedAccounts {
-    const parsed = std.json.parseFromSlice([]JsonAccountMeta, allocator, json_source, .{
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_source, .{
         .ignore_unknown_fields = true,
     }) catch return error.InvalidProgramInvokeSpec;
     defer parsed.deinit();
 
-    const metas = try allocator.alloc(sdk.AccountMeta, parsed.value.len);
+    const items = switch (parsed.value) {
+        .array => parsed.value.array.items,
+        else => return error.InvalidProgramInvokeSpec,
+    };
+
+    const metas = try allocator.alloc(sdk.AccountMeta, items.len);
     errdefer allocator.free(metas);
 
-    for (parsed.value, 0..) |account, index| {
-        metas[index] = sdk.AccountMeta.init(
-            sdk.Pubkey.fromBase58(allocator, account.pubkey) catch return error.InvalidProgramInvokeSpec,
-            account.is_signer,
-            account.is_writable,
-        );
+    for (items, 0..) |account, index| {
+        metas[index] = try parseJsonAccountMeta(allocator, account);
     }
 
     return .{ .metas = metas };
+}
+
+fn parseProgramId(allocator: Allocator, program_id: []const u8) BuildError!sdk.Pubkey {
+    return sdk.Pubkey.fromBase58(allocator, program_id) catch return error.InvalidProgramInvokeSpec;
 }
 
 fn decodeInstructionData(
@@ -254,8 +310,7 @@ pub fn buildOwnedInstructionFromJson(
     program_id: []const u8,
     options: BuildInstructionOptions,
 ) BuildError!OwnedInstruction {
-    const program_pubkey = sdk.Pubkey.fromBase58(allocator, program_id) catch return error.InvalidProgramInvokeSpec;
-    return try buildOwnedInstruction(allocator, program_pubkey, options);
+    return try buildOwnedInstruction(allocator, try parseProgramId(allocator, program_id), options);
 }
 
 pub fn buildOwnedLegacyMessage(
@@ -275,6 +330,14 @@ pub fn buildOwnedLegacyMessage(
     );
 }
 
+pub fn buildOwnedLegacyMessageFromJson(
+    allocator: Allocator,
+    program_id: []const u8,
+    options: BuildLegacyMessageOptions,
+) !sdk.OwnedLegacyMessage {
+    return try buildOwnedLegacyMessage(allocator, try parseProgramId(allocator, program_id), options);
+}
+
 pub fn buildLegacyMessageBytes(
     allocator: Allocator,
     program_id: sdk.Pubkey,
@@ -292,6 +355,14 @@ pub fn buildLegacyMessageBytes(
     );
 }
 
+pub fn buildLegacyMessageBytesFromJson(
+    allocator: Allocator,
+    program_id: []const u8,
+    options: BuildLegacyMessageOptions,
+) ![]u8 {
+    return try buildLegacyMessageBytes(allocator, try parseProgramId(allocator, program_id), options);
+}
+
 pub fn buildLegacyMessageBase64(
     allocator: Allocator,
     program_id: sdk.Pubkey,
@@ -307,6 +378,14 @@ pub fn buildLegacyMessageBase64(
         options.recent_blockhash,
         instructions[0..],
     );
+}
+
+pub fn buildLegacyMessageBase64FromJson(
+    allocator: Allocator,
+    program_id: []const u8,
+    options: BuildLegacyMessageOptions,
+) ![]u8 {
+    return try buildLegacyMessageBase64(allocator, try parseProgramId(allocator, program_id), options);
 }
 
 pub fn buildSignedLegacyTransaction(
@@ -327,6 +406,14 @@ pub fn buildSignedLegacyTransaction(
     );
 }
 
+pub fn buildSignedLegacyTransactionFromJson(
+    allocator: Allocator,
+    program_id: []const u8,
+    options: BuildLegacyTransactionOptions,
+) !sdk.SignedLegacyTransaction {
+    return try buildSignedLegacyTransaction(allocator, try parseProgramId(allocator, program_id), options);
+}
+
 pub fn buildLegacyTransactionBase64(
     allocator: Allocator,
     program_id: sdk.Pubkey,
@@ -343,6 +430,14 @@ pub fn buildLegacyTransactionBase64(
         instructions[0..],
         options.signers,
     );
+}
+
+pub fn buildLegacyTransactionBase64FromJson(
+    allocator: Allocator,
+    program_id: []const u8,
+    options: BuildLegacyTransactionOptions,
+) ![]u8 {
+    return try buildLegacyTransactionBase64(allocator, try parseProgramId(allocator, program_id), options);
 }
 
 pub fn buildOwnedVersionedMessage(
@@ -363,6 +458,14 @@ pub fn buildOwnedVersionedMessage(
     );
 }
 
+pub fn buildOwnedVersionedMessageFromJson(
+    allocator: Allocator,
+    program_id: []const u8,
+    options: BuildVersionedMessageOptions,
+) !sdk.OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedMessage(allocator, try parseProgramId(allocator, program_id), options);
+}
+
 pub fn buildVersionedMessageBytes(
     allocator: Allocator,
     program_id: sdk.Pubkey,
@@ -381,6 +484,14 @@ pub fn buildVersionedMessageBytes(
     );
 }
 
+pub fn buildVersionedMessageBytesFromJson(
+    allocator: Allocator,
+    program_id: []const u8,
+    options: BuildVersionedMessageOptions,
+) ![]u8 {
+    return try buildVersionedMessageBytes(allocator, try parseProgramId(allocator, program_id), options);
+}
+
 pub fn buildVersionedMessageBase64(
     allocator: Allocator,
     program_id: sdk.Pubkey,
@@ -397,6 +508,14 @@ pub fn buildVersionedMessageBase64(
         instructions[0..],
         options.address_lookup_tables,
     );
+}
+
+pub fn buildVersionedMessageBase64FromJson(
+    allocator: Allocator,
+    program_id: []const u8,
+    options: BuildVersionedMessageOptions,
+) ![]u8 {
+    return try buildVersionedMessageBase64(allocator, try parseProgramId(allocator, program_id), options);
 }
 
 pub fn buildSignedVersionedTransaction(
@@ -418,6 +537,14 @@ pub fn buildSignedVersionedTransaction(
     );
 }
 
+pub fn buildSignedVersionedTransactionFromJson(
+    allocator: Allocator,
+    program_id: []const u8,
+    options: BuildVersionedTransactionOptions,
+) !sdk.SignedVersionedTransaction {
+    return try buildSignedVersionedTransaction(allocator, try parseProgramId(allocator, program_id), options);
+}
+
 pub fn buildVersionedTransactionBase64(
     allocator: Allocator,
     program_id: sdk.Pubkey,
@@ -437,6 +564,14 @@ pub fn buildVersionedTransactionBase64(
     );
 }
 
+pub fn buildVersionedTransactionBase64FromJson(
+    allocator: Allocator,
+    program_id: []const u8,
+    options: BuildVersionedTransactionOptions,
+) ![]u8 {
+    return try buildVersionedTransactionBase64(allocator, try parseProgramId(allocator, program_id), options);
+}
+
 pub fn sendLegacyTransaction(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -452,6 +587,14 @@ pub fn sendLegacyTransaction(
         options.signers,
         options.rpc,
     );
+}
+
+pub fn sendLegacyTransactionFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendLegacyTransactionOptions,
+) ![]const u8 {
+    return try sendLegacyTransaction(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn simulateLegacyTransaction(
@@ -472,6 +615,14 @@ pub fn simulateLegacyTransaction(
     );
 }
 
+pub fn simulateLegacyTransactionFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SimulateLegacyTransactionOptions,
+) !rpc_types.SimulatedTransaction {
+    return try simulateLegacyTransaction(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn sendAndConfirmLegacyTransaction(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -487,6 +638,14 @@ pub fn sendAndConfirmLegacyTransaction(
         options.signers,
         options.rpc,
     );
+}
+
+pub fn sendAndConfirmLegacyTransactionFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendAndConfirmLegacyTransactionOptions,
+) ![]const u8 {
+    return try sendAndConfirmLegacyTransaction(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn sendVersionedTransaction(
@@ -505,6 +664,14 @@ pub fn sendVersionedTransaction(
         options.signers,
         options.rpc,
     );
+}
+
+pub fn sendVersionedTransactionFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendVersionedTransactionOptions,
+) ![]const u8 {
+    return try sendVersionedTransaction(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn simulateVersionedTransaction(
@@ -526,6 +693,14 @@ pub fn simulateVersionedTransaction(
     );
 }
 
+pub fn simulateVersionedTransactionFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SimulateVersionedTransactionOptions,
+) !rpc_types.SimulatedTransaction {
+    return try simulateVersionedTransaction(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn sendAndConfirmVersionedTransaction(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -544,6 +719,14 @@ pub fn sendAndConfirmVersionedTransaction(
     );
 }
 
+pub fn sendAndConfirmVersionedTransactionFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendAndConfirmVersionedTransactionOptions,
+) ![]const u8 {
+    return try sendAndConfirmVersionedTransaction(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildOwnedLegacyMessageWithOptions(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -560,6 +743,14 @@ pub fn buildOwnedLegacyMessageWithOptions(
     );
 }
 
+pub fn buildOwnedLegacyMessageWithOptionsFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyMessageRpcOptions,
+) !sdk.OwnedLegacyMessage {
+    return try buildOwnedLegacyMessageWithOptions(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildLegacyMessageBytesWithOptions(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -570,6 +761,14 @@ pub fn buildLegacyMessageBytesWithOptions(
     return try owned_message.serialize(self.allocator);
 }
 
+pub fn buildLegacyMessageBytesWithOptionsFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyMessageRpcOptions,
+) ![]u8 {
+    return try buildLegacyMessageBytesWithOptions(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildLegacyMessageBase64WithOptions(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -578,6 +777,14 @@ pub fn buildLegacyMessageBase64WithOptions(
     var owned_message = try buildOwnedLegacyMessageWithOptions(self, program_id, options);
     defer owned_message.deinit(self.allocator);
     return try owned_message.toBase64(self.allocator);
+}
+
+pub fn buildLegacyMessageBase64WithOptionsFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyMessageRpcOptions,
+) ![]u8 {
+    return try buildLegacyMessageBase64WithOptions(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn buildSignedLegacyTransactionWithOptions(
@@ -597,6 +804,14 @@ pub fn buildSignedLegacyTransactionWithOptions(
     );
 }
 
+pub fn buildSignedLegacyTransactionWithOptionsFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyTransactionRpcOptions,
+) !sdk.SignedLegacyTransaction {
+    return try buildSignedLegacyTransactionWithOptions(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildLegacyTransactionBase64WithOptions(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -605,6 +820,14 @@ pub fn buildLegacyTransactionBase64WithOptions(
     var signed = try buildSignedLegacyTransactionWithOptions(self, program_id, options);
     defer signed.deinit(self.allocator);
     return try signed.toBase64(self.allocator);
+}
+
+pub fn buildLegacyTransactionBase64WithOptionsFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildLegacyTransactionRpcOptions,
+) ![]u8 {
+    return try buildLegacyTransactionBase64WithOptions(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn buildOwnedVersionedMessageWithOptions(
@@ -624,6 +847,14 @@ pub fn buildOwnedVersionedMessageWithOptions(
     );
 }
 
+pub fn buildOwnedVersionedMessageWithOptionsFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedMessageRpcOptions,
+) !sdk.OwnedVersionedMessageV0 {
+    return try buildOwnedVersionedMessageWithOptions(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildVersionedMessageBytesWithOptions(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -634,6 +865,14 @@ pub fn buildVersionedMessageBytesWithOptions(
     return try owned_message.serialize(self.allocator);
 }
 
+pub fn buildVersionedMessageBytesWithOptionsFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedMessageRpcOptions,
+) ![]u8 {
+    return try buildVersionedMessageBytesWithOptions(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildVersionedMessageBase64WithOptions(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -642,6 +881,14 @@ pub fn buildVersionedMessageBase64WithOptions(
     var owned_message = try buildOwnedVersionedMessageWithOptions(self, program_id, options);
     defer owned_message.deinit(self.allocator);
     return try owned_message.toBase64(self.allocator);
+}
+
+pub fn buildVersionedMessageBase64WithOptionsFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedMessageRpcOptions,
+) ![]u8 {
+    return try buildVersionedMessageBase64WithOptions(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn buildSignedVersionedTransactionWithOptions(
@@ -662,6 +909,14 @@ pub fn buildSignedVersionedTransactionWithOptions(
     );
 }
 
+pub fn buildSignedVersionedTransactionWithOptionsFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedTransactionRpcOptions,
+) !sdk.SignedVersionedTransaction {
+    return try buildSignedVersionedTransactionWithOptions(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn buildVersionedTransactionBase64WithOptions(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -670,6 +925,14 @@ pub fn buildVersionedTransactionBase64WithOptions(
     var signed = try buildSignedVersionedTransactionWithOptions(self, program_id, options);
     defer signed.deinit(self.allocator);
     return try signed.toBase64(self.allocator);
+}
+
+pub fn buildVersionedTransactionBase64WithOptionsFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: BuildVersionedTransactionRpcOptions,
+) ![]u8 {
+    return try buildVersionedTransactionBase64WithOptions(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn sendAndConfirmLegacyTransactionWithSpinner(
@@ -687,6 +950,14 @@ pub fn sendAndConfirmLegacyTransactionWithSpinner(
         options.signers,
         options.rpc,
     );
+}
+
+pub fn sendAndConfirmLegacyTransactionWithSpinnerFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendAndConfirmLegacyTransactionOptions,
+) ![]const u8 {
+    return try sendAndConfirmLegacyTransactionWithSpinner(self, try parseProgramId(self.allocator, program_id), options);
 }
 
 pub fn sendAndConfirmVersionedTransactionWithSpinner(
@@ -707,6 +978,14 @@ pub fn sendAndConfirmVersionedTransactionWithSpinner(
     );
 }
 
+pub fn sendAndConfirmVersionedTransactionWithSpinnerFromJson(
+    self: anytype,
+    program_id: []const u8,
+    options: SendAndConfirmVersionedTransactionOptions,
+) ![]const u8 {
+    return try sendAndConfirmVersionedTransactionWithSpinner(self, try parseProgramId(self.allocator, program_id), options);
+}
+
 pub fn getFeeForLegacyMessageWithOptions(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -718,6 +997,15 @@ pub fn getFeeForLegacyMessageWithOptions(
     return try self.getFeeForMessage(encoded, fee_options.commitment);
 }
 
+pub fn getFeeForLegacyMessageWithOptionsFromJson(
+    self: anytype,
+    program_id: []const u8,
+    message_options: BuildLegacyMessageRpcOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    return try getFeeForLegacyMessageWithOptions(self, try parseProgramId(self.allocator, program_id), message_options, fee_options);
+}
+
 pub fn getFeeForVersionedMessageWithOptions(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -727,6 +1015,15 @@ pub fn getFeeForVersionedMessageWithOptions(
     const encoded = try buildVersionedMessageBase64WithOptions(self, program_id, message_options);
     defer self.allocator.free(encoded);
     return try self.getFeeForMessage(encoded, fee_options.commitment);
+}
+
+pub fn getFeeForVersionedMessageWithOptionsFromJson(
+    self: anytype,
+    program_id: []const u8,
+    message_options: BuildVersionedMessageRpcOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    return try getFeeForVersionedMessageWithOptions(self, try parseProgramId(self.allocator, program_id), message_options, fee_options);
 }
 
 test "program_invoke.buildOwnedInstructionFromJson builds utf8 instruction from accounts json" {
@@ -827,6 +1124,44 @@ test "program_invoke.buildOwnedInstruction decodes base64 data" {
 
     try std.testing.expectEqual(@as(usize, 0), owned_instruction.instruction.accounts.len);
     try std.testing.expectEqualStrings("ping", owned_instruction.instruction.data);
+}
+
+test "program_invoke.buildOwnedInstruction accepts flexible json account forms" {
+    const allocator = std.testing.allocator;
+
+    const program_id = sdk.Pubkey.fromBytes(.{108} ** 32);
+    const readonly = sdk.Pubkey.fromBytes(.{109} ** 32);
+    const readonly_base58 = try readonly.toBase58(allocator);
+    defer allocator.free(readonly_base58);
+    const signer = sdk.Pubkey.fromBytes(.{110} ** 32);
+    const signer_base58 = try signer.toBase58(allocator);
+    defer allocator.free(signer_base58);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[\"{s}\",{{\"address\":\"{s}\",\"signer\":true,\"writable\":true}}]",
+        .{ readonly_base58, signer_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var owned_instruction = try buildOwnedInstruction(
+        allocator,
+        program_id,
+        .{
+            .accounts_json = accounts_json,
+            .data = "ping",
+            .data_encoding = .utf8,
+        },
+    );
+    defer owned_instruction.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), owned_instruction.instruction.accounts.len);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].pubkey.eql(readonly));
+    try std.testing.expect(!owned_instruction.instruction.accounts[0].is_signer);
+    try std.testing.expect(!owned_instruction.instruction.accounts[0].is_writable);
+    try std.testing.expect(owned_instruction.instruction.accounts[1].pubkey.eql(signer));
+    try std.testing.expect(owned_instruction.instruction.accounts[1].is_signer);
+    try std.testing.expect(owned_instruction.instruction.accounts[1].is_writable);
 }
 
 test "program_invoke.buildOwnedLegacyMessage builds reusable legacy message" {
@@ -983,6 +1318,54 @@ test "program_invoke.sendLegacyTransaction delegates built instruction to rpc cl
     try std.testing.expectEqual(@as(usize, 1), mock.captured_account_count);
     try std.testing.expectEqual(@as(usize, 0), mock.captured_signer_count);
     try std.testing.expectEqualStrings("ping", mock.captured_data.?);
+}
+
+test "program_invoke.sendLegacyTransactionFromJson parses program id string" {
+    const allocator = std.testing.allocator;
+
+    const MockLegacyClient = struct {
+        allocator: Allocator,
+        captured_program_id: ?sdk.Pubkey = null,
+
+        pub fn sendLegacyInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            options: ?rpc_types.SendLegacyInstructionsOptions,
+        ) ![]const u8 {
+            _ = self.allocator;
+            _ = payer;
+            _ = signers;
+            _ = options;
+            try std.testing.expectEqual(@as(usize, 1), instructions.len);
+            self.captured_program_id = instructions[0].program_id;
+            return "mock-signature-from-json";
+        }
+    };
+
+    var mock = MockLegacyClient{ .allocator = allocator };
+    const program_id = sdk.Pubkey.fromBytes(.{111} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const payer = sdk.Pubkey.fromBytes(.{112} ** 32);
+
+    const signature = try sendLegacyTransactionFromJson(
+        &mock,
+        program_id_base58,
+        .{
+            .payer = payer,
+            .signers = &.{},
+            .instruction = .{
+                .data = "ping",
+                .data_encoding = .utf8,
+            },
+            .rpc = .{ .recent_blockhash = "ignored-by-mock" },
+        },
+    );
+
+    try std.testing.expectEqualStrings("mock-signature-from-json", signature);
+    try std.testing.expect(mock.captured_program_id.?.eql(program_id));
 }
 
 test "program_invoke.simulateVersionedTransaction delegates instruction and options" {
