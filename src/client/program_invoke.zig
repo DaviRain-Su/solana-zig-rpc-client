@@ -98,6 +98,38 @@ pub const SendAndConfirmVersionedTransactionOptions = struct {
     rpc: ?rpc_types.VersionedInstructionsOptions = null,
 };
 
+pub const BuildLegacyMessageRpcOptions = struct {
+    payer: sdk.Pubkey,
+    instruction: BuildInstructionOptions = .{},
+    build: ?rpc_types.LegacyInstructionsBuildOptions = null,
+};
+
+pub const BuildLegacyTransactionRpcOptions = struct {
+    payer: sdk.Pubkey,
+    signers: []const sdk.Keypair,
+    instruction: BuildInstructionOptions = .{},
+    build: ?rpc_types.LegacyInstructionsBuildOptions = null,
+};
+
+pub const BuildVersionedMessageRpcOptions = struct {
+    payer: sdk.Pubkey,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    instruction: BuildInstructionOptions = .{},
+    build: ?rpc_types.VersionedInstructionsBuildOptions = null,
+};
+
+pub const BuildVersionedTransactionRpcOptions = struct {
+    payer: sdk.Pubkey,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+    instruction: BuildInstructionOptions = .{},
+    build: ?rpc_types.VersionedInstructionsBuildOptions = null,
+};
+
+pub const GetFeeOptions = struct {
+    commitment: ?rpc_types.Commitment = null,
+};
+
 pub const OwnedInstruction = struct {
     instruction: sdk.Instruction,
 
@@ -512,6 +544,191 @@ pub fn sendAndConfirmVersionedTransaction(
     );
 }
 
+pub fn buildOwnedLegacyMessageWithOptions(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildLegacyMessageRpcOptions,
+) !sdk.OwnedLegacyMessage {
+    var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
+    defer owned_instruction.deinit(self.allocator);
+
+    const instructions = [_]sdk.Instruction{owned_instruction.instruction};
+    return try self.buildOwnedLegacyMessageWithOptions(
+        options.payer,
+        instructions[0..],
+        options.build,
+    );
+}
+
+pub fn buildLegacyMessageBytesWithOptions(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildLegacyMessageRpcOptions,
+) ![]u8 {
+    var owned_message = try buildOwnedLegacyMessageWithOptions(self, program_id, options);
+    defer owned_message.deinit(self.allocator);
+    return try owned_message.serialize(self.allocator);
+}
+
+pub fn buildLegacyMessageBase64WithOptions(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildLegacyMessageRpcOptions,
+) ![]u8 {
+    var owned_message = try buildOwnedLegacyMessageWithOptions(self, program_id, options);
+    defer owned_message.deinit(self.allocator);
+    return try owned_message.toBase64(self.allocator);
+}
+
+pub fn buildSignedLegacyTransactionWithOptions(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildLegacyTransactionRpcOptions,
+) !sdk.SignedLegacyTransaction {
+    var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
+    defer owned_instruction.deinit(self.allocator);
+
+    const instructions = [_]sdk.Instruction{owned_instruction.instruction};
+    return try self.buildSignedLegacyTransactionWithOptions(
+        options.payer,
+        instructions[0..],
+        options.signers,
+        options.build,
+    );
+}
+
+pub fn buildLegacyTransactionBase64WithOptions(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildLegacyTransactionRpcOptions,
+) ![]u8 {
+    var signed = try buildSignedLegacyTransactionWithOptions(self, program_id, options);
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
+}
+
+pub fn buildOwnedVersionedMessageWithOptions(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildVersionedMessageRpcOptions,
+) !sdk.OwnedVersionedMessageV0 {
+    var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
+    defer owned_instruction.deinit(self.allocator);
+
+    const instructions = [_]sdk.Instruction{owned_instruction.instruction};
+    return try self.buildOwnedVersionedMessageWithOptions(
+        options.payer,
+        instructions[0..],
+        options.address_lookup_tables,
+        options.build,
+    );
+}
+
+pub fn buildVersionedMessageBytesWithOptions(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildVersionedMessageRpcOptions,
+) ![]u8 {
+    var owned_message = try buildOwnedVersionedMessageWithOptions(self, program_id, options);
+    defer owned_message.deinit(self.allocator);
+    return try owned_message.serialize(self.allocator);
+}
+
+pub fn buildVersionedMessageBase64WithOptions(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildVersionedMessageRpcOptions,
+) ![]u8 {
+    var owned_message = try buildOwnedVersionedMessageWithOptions(self, program_id, options);
+    defer owned_message.deinit(self.allocator);
+    return try owned_message.toBase64(self.allocator);
+}
+
+pub fn buildSignedVersionedTransactionWithOptions(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildVersionedTransactionRpcOptions,
+) !sdk.SignedVersionedTransaction {
+    var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
+    defer owned_instruction.deinit(self.allocator);
+
+    const instructions = [_]sdk.Instruction{owned_instruction.instruction};
+    return try self.buildSignedVersionedTransactionWithOptions(
+        options.payer,
+        instructions[0..],
+        options.address_lookup_tables,
+        options.signers,
+        options.build,
+    );
+}
+
+pub fn buildVersionedTransactionBase64WithOptions(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildVersionedTransactionRpcOptions,
+) ![]u8 {
+    var signed = try buildSignedVersionedTransactionWithOptions(self, program_id, options);
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
+}
+
+pub fn sendAndConfirmLegacyTransactionWithSpinner(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: SendAndConfirmLegacyTransactionOptions,
+) ![]const u8 {
+    var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
+    defer owned_instruction.deinit(self.allocator);
+
+    const instructions = [_]sdk.Instruction{owned_instruction.instruction};
+    return try self.sendAndConfirmLegacyInstructionsWithSpinnerAndOptions(
+        options.payer,
+        instructions[0..],
+        options.signers,
+        options.rpc,
+    );
+}
+
+pub fn sendAndConfirmVersionedTransactionWithSpinner(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: SendAndConfirmVersionedTransactionOptions,
+) ![]const u8 {
+    var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
+    defer owned_instruction.deinit(self.allocator);
+
+    const instructions = [_]sdk.Instruction{owned_instruction.instruction};
+    return try self.sendAndConfirmVersionedInstructionsWithSpinnerAndOptions(
+        options.payer,
+        instructions[0..],
+        options.address_lookup_tables,
+        options.signers,
+        options.rpc,
+    );
+}
+
+pub fn getFeeForLegacyMessageWithOptions(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    message_options: BuildLegacyMessageRpcOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    const encoded = try buildLegacyMessageBase64WithOptions(self, program_id, message_options);
+    defer self.allocator.free(encoded);
+    return try self.getFeeForMessage(encoded, fee_options.commitment);
+}
+
+pub fn getFeeForVersionedMessageWithOptions(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    message_options: BuildVersionedMessageRpcOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    const encoded = try buildVersionedMessageBase64WithOptions(self, program_id, message_options);
+    defer self.allocator.free(encoded);
+    return try self.getFeeForMessage(encoded, fee_options.commitment);
+}
+
 test "program_invoke.buildOwnedInstructionFromJson builds utf8 instruction from accounts json" {
     const allocator = std.testing.allocator;
 
@@ -832,4 +1049,215 @@ test "program_invoke.simulateVersionedTransaction delegates instruction and opti
     try std.testing.expectEqual(@as(usize, 0), mock.captured_signer_count);
     try std.testing.expectEqualStrings("ping", mock.captured_data.?);
     try std.testing.expectEqual(@as(?u64, 7), simulated.units_consumed);
+}
+
+test "program_invoke.buildLegacyMessageBase64WithOptions bridges blockhash-aware builder" {
+    const allocator = std.testing.allocator;
+
+    const MockLegacyBuilder = struct {
+        allocator: Allocator,
+        captured_payer: ?sdk.Pubkey = null,
+        captured_program_id: ?sdk.Pubkey = null,
+        captured_recent_blockhash: ?[]const u8 = null,
+        captured_data: ?[]u8 = null,
+
+        fn deinit(self: *@This()) void {
+            if (self.captured_data) |value| self.allocator.free(value);
+        }
+
+        pub fn buildOwnedLegacyMessageWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            build_options: ?rpc_types.LegacyInstructionsBuildOptions,
+        ) !sdk.OwnedLegacyMessage {
+            try std.testing.expectEqual(@as(usize, 1), instructions.len);
+            try std.testing.expect(build_options != null);
+            self.captured_payer = payer;
+            self.captured_program_id = instructions[0].program_id;
+            self.captured_recent_blockhash = build_options.?.recent_blockhash;
+            self.captured_data = try self.allocator.dupe(u8, instructions[0].data);
+            return try sdk.buildOwnedLegacyMessage(
+                self.allocator,
+                payer,
+                sdk.Hash.fromBytes(.{100} ** 32),
+                instructions,
+            );
+        }
+    };
+
+    var mock = MockLegacyBuilder{ .allocator = allocator };
+    defer mock.deinit();
+
+    const program_id = sdk.Pubkey.fromBytes(.{101} ** 32);
+    const payer = sdk.Pubkey.fromBytes(.{102} ** 32);
+
+    const encoded = try buildLegacyMessageBase64WithOptions(
+        &mock,
+        program_id,
+        .{
+            .payer = payer,
+            .instruction = .{
+                .data = "ping",
+                .data_encoding = .utf8,
+            },
+            .build = .{ .recent_blockhash = "mock-blockhash" },
+        },
+    );
+    defer allocator.free(encoded);
+
+    var owned_instruction = try buildOwnedInstruction(
+        allocator,
+        program_id,
+        .{
+            .data = "ping",
+            .data_encoding = .utf8,
+        },
+    );
+    defer owned_instruction.deinit(allocator);
+
+    const instructions = [_]sdk.Instruction{owned_instruction.instruction};
+    const expected = try sdk.buildLegacyMessageBase64(
+        allocator,
+        payer,
+        sdk.Hash.fromBytes(.{100} ** 32),
+        instructions[0..],
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expect(mock.captured_payer.?.eql(payer));
+    try std.testing.expect(mock.captured_program_id.?.eql(program_id));
+    try std.testing.expectEqualStrings("mock-blockhash", mock.captured_recent_blockhash.?);
+    try std.testing.expectEqualStrings("ping", mock.captured_data.?);
+    try std.testing.expectEqualStrings(expected, encoded);
+}
+
+test "program_invoke.sendAndConfirmLegacyTransactionWithSpinner delegates spinner path" {
+    const allocator = std.testing.allocator;
+
+    const MockLegacySpinnerClient = struct {
+        allocator: Allocator,
+        captured_payer: ?sdk.Pubkey = null,
+        captured_program_id: ?sdk.Pubkey = null,
+        captured_data: ?[]u8 = null,
+
+        fn deinit(self: *@This()) void {
+            if (self.captured_data) |value| self.allocator.free(value);
+        }
+
+        pub fn sendAndConfirmLegacyInstructionsWithSpinnerAndOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            options: ?rpc_types.LegacyInstructionsOptions,
+        ) ![]const u8 {
+            try std.testing.expectEqual(@as(usize, 1), instructions.len);
+            try std.testing.expectEqual(@as(usize, 0), signers.len);
+            try std.testing.expect(options != null);
+            self.captured_payer = payer;
+            self.captured_program_id = instructions[0].program_id;
+            self.captured_data = try self.allocator.dupe(u8, instructions[0].data);
+            return "mock-spinner-signature";
+        }
+    };
+
+    var mock = MockLegacySpinnerClient{ .allocator = allocator };
+    defer mock.deinit();
+
+    const program_id = sdk.Pubkey.fromBytes(.{103} ** 32);
+    const payer = sdk.Pubkey.fromBytes(.{104} ** 32);
+
+    const signature = try sendAndConfirmLegacyTransactionWithSpinner(
+        &mock,
+        program_id,
+        .{
+            .payer = payer,
+            .signers = &.{},
+            .instruction = .{
+                .data = "cGluZw==",
+                .data_encoding = .base64,
+            },
+            .rpc = .{ .recent_blockhash = "mock-blockhash" },
+        },
+    );
+
+    try std.testing.expectEqualStrings("mock-spinner-signature", signature);
+    try std.testing.expect(mock.captured_payer.?.eql(payer));
+    try std.testing.expect(mock.captured_program_id.?.eql(program_id));
+    try std.testing.expectEqualStrings("ping", mock.captured_data.?);
+}
+
+test "program_invoke.getFeeForVersionedMessageWithOptions builds message then queries fee" {
+    const allocator = std.testing.allocator;
+
+    const MockVersionedFeeClient = struct {
+        allocator: Allocator,
+        captured_payer: ?sdk.Pubkey = null,
+        captured_program_id: ?sdk.Pubkey = null,
+        captured_commitment: ?rpc_types.Commitment = null,
+        captured_message: ?[]u8 = null,
+
+        fn deinit(self: *@This()) void {
+            if (self.captured_message) |value| self.allocator.free(value);
+        }
+
+        pub fn buildOwnedVersionedMessageWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            address_lookup_tables: []const sdk.AddressLookupTableAccount,
+            build_options: ?rpc_types.VersionedInstructionsBuildOptions,
+        ) !sdk.OwnedVersionedMessageV0 {
+            _ = build_options;
+            try std.testing.expectEqual(@as(usize, 1), instructions.len);
+            try std.testing.expectEqual(@as(usize, 0), address_lookup_tables.len);
+            self.captured_payer = payer;
+            self.captured_program_id = instructions[0].program_id;
+            return try sdk.buildOwnedVersionedMessage(
+                self.allocator,
+                payer,
+                sdk.Hash.fromBytes(.{105} ** 32),
+                instructions,
+                address_lookup_tables,
+            );
+        }
+
+        pub fn getFeeForMessage(
+            self: *@This(),
+            encoded_message: []const u8,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            self.captured_commitment = commitment;
+            self.captured_message = try self.allocator.dupe(u8, encoded_message);
+            return .{ .context_slot = 9, .value = 1234 };
+        }
+    };
+
+    var mock = MockVersionedFeeClient{ .allocator = allocator };
+    defer mock.deinit();
+
+    const program_id = sdk.Pubkey.fromBytes(.{106} ** 32);
+    const payer = sdk.Pubkey.fromBytes(.{107} ** 32);
+
+    const fee = try getFeeForVersionedMessageWithOptions(
+        &mock,
+        program_id,
+        .{
+            .payer = payer,
+            .instruction = .{
+                .data = "70696e67",
+                .data_encoding = .hex,
+            },
+            .build = .{ .recent_blockhash = "ignored-by-mock" },
+        },
+        .{ .commitment = .confirmed },
+    );
+
+    try std.testing.expect(mock.captured_payer.?.eql(payer));
+    try std.testing.expect(mock.captured_program_id.?.eql(program_id));
+    try std.testing.expectEqual(rpc_types.Commitment.confirmed, mock.captured_commitment.?);
+    try std.testing.expect(mock.captured_message.?.len > 0);
+    try std.testing.expectEqual(@as(u64, 9), fee.context_slot);
+    try std.testing.expectEqual(@as(?u64, 1234), fee.value);
 }
