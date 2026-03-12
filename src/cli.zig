@@ -685,10 +685,10 @@ const inflation_reward_usage_option_params = clap.parseParamsComptime(
 pub fn printUsage(out: *std.Io.Writer) !void {
     try out.writeAll("Quick usage:\n  solana_client_zig ");
     try clap.usage(out, clap.Help, &cli_params);
-    try out.writeAll("\n\n");
+    try out.writeAll("\n\nUsage:\n");
 
     try writeCommandUsageSection(out);
-    try out.writeAll(optional_flags_marker[1..]);
+    try out.writeAll("\nOptional flags:\n");
     try clap.help(out, clap.Help, &cli_option_help_params, .{});
 }
 
@@ -745,6 +745,96 @@ fn writeCommandUsageLiteralSuffix(out: *std.Io.Writer, command_name: []const u8,
     }
     try out.writeByte('\n');
 }
+
+const command_usage_lines = [_][]const u8{
+    usage_command_line_prefix ++ "latest-blockhash",
+    usage_command_line_prefix ++ "new-latest-blockhash <blockhash>",
+    usage_command_line_prefix ++ "status <signature>",
+    usage_command_line_prefix ++ "confirm-transaction <signature>",
+    usage_command_line_prefix ++ "signature-status <signature>",
+    usage_command_line_prefix ++ "signature-statuses <signature-1> [signature-2 ...]",
+    usage_command_line_prefix ++ "send-transaction <signed-tx-base64>",
+    usage_command_line_prefix ++ "send-transaction-and-confirm <signed-tx-base64>",
+    usage_command_line_prefix ++ "send-instructions <instruction-spec-json|@path>",
+    usage_command_line_prefix ++ "send-instructions-and-confirm <instruction-spec-json|@path>",
+    usage_command_line_prefix ++ "send-versioned-instructions <instruction-spec-json|@path>",
+    usage_command_line_prefix ++ "send-versioned-instructions-and-confirm <instruction-spec-json|@path>",
+    usage_command_line_prefix ++ "send-program-invoke <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]",
+    usage_command_line_prefix ++ "send-program-invoke-and-confirm <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]",
+    usage_command_line_prefix ++ "send-versioned-program-invoke <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]",
+    usage_command_line_prefix ++ "send-versioned-program-invoke-and-confirm <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]",
+    usage_command_line_prefix ++ "transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>",
+    usage_command_line_prefix ++ "simulate-transaction <signed-tx-base64>",
+    usage_command_line_prefix ++ "simulate-instructions <instruction-spec-json|@path>",
+    usage_command_line_prefix ++ "simulate-versioned-instructions <instruction-spec-json|@path>",
+    usage_command_line_prefix ++ "simulate-program-invoke <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]",
+    usage_command_line_prefix ++ "simulate-versioned-program-invoke <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]",
+    usage_command_line_prefix ++ "simulate-idl-invoke <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]",
+    usage_command_line_prefix ++ "simulate-versioned-idl-invoke <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]",
+    usage_command_line_prefix ++ "send-idl-invoke <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]",
+    usage_command_line_prefix ++ "send-idl-invoke-and-confirm <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]",
+    usage_command_line_prefix ++ "send-versioned-idl-invoke <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]",
+    usage_command_line_prefix ++ "send-versioned-idl-invoke-and-confirm <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]",
+    usage_command_line_prefix ++ "raw-rpc <method> [params-json]",
+    usage_command_line_prefix ++ "slot",
+    usage_command_line_prefix ++ "block-height",
+    usage_command_line_prefix ++ "transaction-count",
+    usage_command_line_prefix ++ "transaction <signature>",
+    usage_command_line_prefix ++ "balance <account>",
+    usage_command_line_prefix ++ "poll-balance <account>",
+    usage_command_line_prefix ++ "wait-for-balance <account> <expected-lamports>",
+    usage_command_line_prefix ++ "account-info <account>",
+    usage_command_line_prefix ++ "account-data <account>",
+    usage_command_line_prefix ++ "ui-account <account>",
+    usage_command_line_prefix ++ "multiple-accounts <account-1> [account-2 ...]",
+    usage_command_line_prefix ++ "multiple-ui-accounts <account-1> [account-2 ...]",
+    usage_command_line_prefix ++ "program-accounts <program-id>",
+    usage_command_line_prefix ++ "program-ui-accounts <program-id>",
+    usage_command_line_prefix ++ "request-airdrop <account> <lamports>",
+    usage_command_line_prefix ++ "minimum-rent-exemption <bytes>",
+    usage_command_line_prefix ++ "version",
+    usage_command_line_prefix ++ "epoch-info",
+    usage_command_line_prefix ++ "health",
+    usage_command_line_prefix ++ "genesis-hash",
+    usage_command_line_prefix ++ "inflation-reward <address-1> [address-2 ...] [--epoch <epoch>]",
+    usage_command_line_prefix ++ "supply",
+    usage_command_line_prefix ++ "epoch-schedule",
+    usage_command_line_prefix ++ "inflation-rate",
+    usage_command_line_prefix ++ "block-time <slot>",
+    usage_command_line_prefix ++ "block-commitment <slot>",
+    usage_command_line_prefix ++ "block <slot>",
+    usage_command_line_prefix ++ "blocks-with-limit <start-slot> <limit>",
+    usage_command_line_prefix ++ "poll-for-signature-confirmation <signature> <min-confirmed-blocks>",
+    usage_command_line_prefix ++ "blocks-since-signature-confirmation <signature>",
+    usage_command_line_prefix ++ "signatures-for-address <address> [--before <signature>] [--until <signature>] [--limit <count>]",
+    usage_command_line_prefix ++ "feature-activation-slot <feature-pubkey>",
+    usage_command_line_prefix ++ "stake-minimum-delegation",
+    usage_command_line_prefix ++ "largest-accounts",
+    usage_command_line_prefix ++ "token-account-balance <token-account>",
+    usage_command_line_prefix ++ "token-account <token-account>",
+    usage_command_line_prefix ++ "token-supply <mint>",
+    usage_command_line_prefix ++ "token-largest-accounts <mint>",
+    usage_command_line_prefix ++ "token-accounts-by-owner <owner> (--mint <mint> | --token-program-id <program-id>)",
+    usage_command_line_prefix ++ "token-accounts-by-delegate <delegate> (--mint <mint> | --token-program-id <program-id>)",
+    usage_command_line_prefix ++ "fee-for-message <base64-message>",
+    usage_command_line_prefix ++ "recent-performance-samples [limit]",
+    usage_command_line_prefix ++ "highest-snapshot-slot",
+    usage_command_line_prefix ++ "blocks <start-slot> [end-slot]",
+    usage_command_line_prefix ++ "slot-leader",
+    usage_command_line_prefix ++ "slot-leaders <start-slot> <limit>",
+    usage_command_line_prefix ++ "recent-prioritization-fees [account-1 ...]",
+    usage_command_line_prefix ++ "cluster-nodes",
+    usage_command_line_prefix ++ "leader-schedule [slot] [identity]",
+    usage_command_line_prefix ++ "identity",
+    usage_command_line_prefix ++ "vote-accounts",
+    usage_command_line_prefix ++ "block-production",
+    usage_command_line_prefix ++ "inflation-governor",
+    usage_command_line_prefix ++ "minimum-ledger-slot",
+    usage_command_line_prefix ++ "max-retransmit-slot",
+    usage_command_line_prefix ++ "max-shred-insert-slot",
+    usage_command_line_prefix ++ "first-available-block",
+    usage_command_line_prefix ++ "blockhash-valid <blockhash>",
+};
 
 fn maybeWriteGeneratedCommandUsageLine(out: *std.Io.Writer, line: []const u8) !bool {
     if (std.mem.startsWith(u8, line, usage_command_line_prefix ++ "send-versioned-instructions-and-confirm ")) {
@@ -1021,14 +1111,7 @@ fn maybeWriteGeneratedCommandUsageLine(out: *std.Io.Writer, line: []const u8) !b
 }
 
 fn writeCommandUsageSection(out: *std.Io.Writer) !void {
-    const marker_index = std.mem.indexOf(u8, usage_text, optional_flags_marker) orelse usage_text.len;
-    var lines = std.mem.splitScalar(u8, usage_text[0..marker_index], '\n');
-    while (lines.next()) |line| {
-        if (line.len == 0) {
-            try out.writeByte('\n');
-            continue;
-        }
-
+    for (command_usage_lines) |line| {
         if (try maybeWriteGeneratedCommandUsageLine(out, line)) continue;
 
         try out.writeAll(line);
