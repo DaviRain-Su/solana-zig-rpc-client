@@ -653,6 +653,11 @@ const CommandUsageStyle = enum {
 };
 
 const CommandPositionalStyle = enum {
+    instruction,
+    idl_invoke_legacy,
+    idl_invoke_versioned,
+    program_invoke_legacy,
+    program_invoke_versioned,
     signature,
     signature_list,
     signatures_for_address,
@@ -690,26 +695,26 @@ const command_usage_entries = [_]CommandUsageEntry{
     .{ .command = .signature_statuses, .style = .signature_list, .suffix = " [signature-2 ...]", .parse_style = .signature_list },
     .{ .command = .send_transaction, .style = .signed_transaction, .parse_style = .signed_transaction },
     .{ .command = .send_transaction_and_confirm, .style = .signed_transaction, .parse_style = .signed_transaction },
-    .{ .command = .send_instructions, .style = .instruction },
-    .{ .command = .send_instructions_and_confirm, .style = .instruction },
-    .{ .command = .send_versioned_instructions, .style = .instruction },
-    .{ .command = .send_versioned_instructions_and_confirm, .style = .instruction },
-    .{ .command = .send_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]" },
-    .{ .command = .send_program_invoke_and_confirm, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]" },
-    .{ .command = .send_versioned_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
-    .{ .command = .send_versioned_program_invoke_and_confirm, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
+    .{ .command = .send_instructions, .style = .instruction, .parse_style = .instruction },
+    .{ .command = .send_instructions_and_confirm, .style = .instruction, .parse_style = .instruction },
+    .{ .command = .send_versioned_instructions, .style = .instruction, .parse_style = .instruction },
+    .{ .command = .send_versioned_instructions_and_confirm, .style = .instruction, .parse_style = .instruction },
+    .{ .command = .send_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]", .parse_style = .program_invoke_legacy },
+    .{ .command = .send_program_invoke_and_confirm, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]", .parse_style = .program_invoke_legacy },
+    .{ .command = .send_versioned_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
+    .{ .command = .send_versioned_program_invoke_and_confirm, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
     .{ .command = .transfer, .style = .literal, .suffix = "[--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>" },
     .{ .command = .simulate_transaction, .style = .signed_transaction, .parse_style = .signed_transaction },
-    .{ .command = .simulate_instructions, .style = .instruction },
-    .{ .command = .simulate_versioned_instructions, .style = .instruction },
-    .{ .command = .simulate_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]" },
-    .{ .command = .simulate_versioned_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
-    .{ .command = .simulate_idl_invoke, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path]" },
-    .{ .command = .simulate_versioned_idl_invoke, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
-    .{ .command = .send_idl_invoke, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path]" },
-    .{ .command = .send_idl_invoke_and_confirm, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path]" },
-    .{ .command = .send_versioned_idl_invoke, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
-    .{ .command = .send_versioned_idl_invoke_and_confirm, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]" },
+    .{ .command = .simulate_instructions, .style = .instruction, .parse_style = .instruction },
+    .{ .command = .simulate_versioned_instructions, .style = .instruction, .parse_style = .instruction },
+    .{ .command = .simulate_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]", .parse_style = .program_invoke_legacy },
+    .{ .command = .simulate_versioned_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
+    .{ .command = .simulate_idl_invoke, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path]", .parse_style = .idl_invoke_legacy },
+    .{ .command = .simulate_versioned_idl_invoke, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .idl_invoke_versioned },
+    .{ .command = .send_idl_invoke, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path]", .parse_style = .idl_invoke_legacy },
+    .{ .command = .send_idl_invoke_and_confirm, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path]", .parse_style = .idl_invoke_legacy },
+    .{ .command = .send_versioned_idl_invoke, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .idl_invoke_versioned },
+    .{ .command = .send_versioned_idl_invoke_and_confirm, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .idl_invoke_versioned },
     .{ .command = .raw_rpc, .style = .raw_rpc, .suffix = " [params-json]", .parse_style = .raw_rpc },
     .{ .command = .slot, .style = .literal },
     .{ .command = .block_height, .style = .literal },
@@ -1111,6 +1116,55 @@ fn parseCommandPositionalsFromMetadata(allocator: Allocator, parsed: *ParsedArgs
     const parse_style = commandUsageEntry(parsed.command).parse_style orelse return false;
 
     switch (parse_style) {
+        .instruction => {
+            var command_result = try parsePositionalsWithClap(&instruction_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.instructions_spec_arg = command_result.positionals[0];
+            if (command_result.positionals[1].len != 0) return error.InvalidCli;
+        },
+        .idl_invoke_legacy => {
+            var command_result = try parsePositionalsWithClap(&idl_invoke_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.idl_spec_arg = command_result.positionals[0];
+            parsed.idl_instruction_arg = command_result.positionals[1];
+            parsed.program_invoke_signer_keypair_paths_arg = command_result.positionals[2];
+            if (command_result.positionals[3] != null or command_result.positionals[4].len != 0) return error.InvalidCli;
+        },
+        .idl_invoke_versioned => {
+            var command_result = try parsePositionalsWithClap(&idl_invoke_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.idl_spec_arg = command_result.positionals[0];
+            parsed.idl_instruction_arg = command_result.positionals[1];
+            parsed.program_invoke_signer_keypair_paths_arg = command_result.positionals[2];
+            parsed.program_invoke_lookup_tables_arg = command_result.positionals[3];
+            if (command_result.positionals[4].len != 0) return error.InvalidCli;
+        },
+        .program_invoke_legacy => {
+            var command_result = try parsePositionalsWithClap(&program_invoke_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.program_invoke_program_id_arg = command_result.positionals[0];
+            parsed.program_invoke_accounts_arg = command_result.positionals[1];
+            parsed.program_invoke_data_arg = command_result.positionals[2];
+            parsed.program_invoke_data_encoding_arg = command_result.positionals[3];
+            parsed.program_invoke_signer_keypair_paths_arg = command_result.positionals[4];
+            if (command_result.positionals[5] != null or command_result.positionals[6].len != 0) return error.InvalidCli;
+        },
+        .program_invoke_versioned => {
+            var command_result = try parsePositionalsWithClap(&program_invoke_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.program_invoke_program_id_arg = command_result.positionals[0];
+            parsed.program_invoke_accounts_arg = command_result.positionals[1];
+            parsed.program_invoke_data_arg = command_result.positionals[2];
+            parsed.program_invoke_data_encoding_arg = command_result.positionals[3];
+            parsed.program_invoke_signer_keypair_paths_arg = command_result.positionals[4];
+            parsed.program_invoke_lookup_tables_arg = command_result.positionals[5];
+            if (command_result.positionals[6].len != 0) return error.InvalidCli;
+        },
         .signature => {
             var command_result = try parsePositionalsWithClap(&signature_command_positionals_params, allocator, positionals);
             defer command_result.deinit();
@@ -1262,78 +1316,6 @@ fn parseCommandPositionals(allocator: Allocator, parsed: *ParsedArgs, positional
     if (try parseCommandPositionalsFromMetadata(allocator, parsed, positionals)) return;
 
     switch (parsed.command) {
-        .send_instructions,
-        .send_instructions_and_confirm,
-        .send_versioned_instructions,
-        .send_versioned_instructions_and_confirm,
-        .simulate_instructions,
-        .simulate_versioned_instructions,
-        => {
-            var command_result = try parsePositionalsWithClap(&instruction_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.instructions_spec_arg = command_result.positionals[0];
-            if (command_result.positionals[1].len != 0) return error.InvalidCli;
-            return;
-        },
-
-        .simulate_idl_invoke,
-        .send_idl_invoke,
-        .send_idl_invoke_and_confirm,
-        .simulate_versioned_idl_invoke,
-        .send_versioned_idl_invoke,
-        .send_versioned_idl_invoke_and_confirm,
-        => {
-            var command_result = try parsePositionalsWithClap(&idl_invoke_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.idl_spec_arg = command_result.positionals[0];
-            parsed.idl_instruction_arg = command_result.positionals[1];
-            parsed.program_invoke_signer_keypair_paths_arg = command_result.positionals[2];
-
-            switch (parsed.command) {
-                .simulate_idl_invoke, .send_idl_invoke, .send_idl_invoke_and_confirm => {
-                    if (command_result.positionals[3] != null or command_result.positionals[4].len != 0) return error.InvalidCli;
-                },
-                .simulate_versioned_idl_invoke, .send_versioned_idl_invoke, .send_versioned_idl_invoke_and_confirm => {
-                    parsed.program_invoke_lookup_tables_arg = command_result.positionals[3];
-                    if (command_result.positionals[4].len != 0) return error.InvalidCli;
-                },
-                else => unreachable,
-            }
-
-            return;
-        },
-
-        .send_program_invoke,
-        .send_program_invoke_and_confirm,
-        .simulate_program_invoke,
-        .send_versioned_program_invoke,
-        .send_versioned_program_invoke_and_confirm,
-        .simulate_versioned_program_invoke,
-        => {
-            var command_result = try parsePositionalsWithClap(&program_invoke_command_positionals_params, allocator, positionals);
-            defer command_result.deinit();
-
-            parsed.program_invoke_program_id_arg = command_result.positionals[0];
-            parsed.program_invoke_accounts_arg = command_result.positionals[1];
-            parsed.program_invoke_data_arg = command_result.positionals[2];
-            parsed.program_invoke_data_encoding_arg = command_result.positionals[3];
-            parsed.program_invoke_signer_keypair_paths_arg = command_result.positionals[4];
-
-            switch (parsed.command) {
-                .send_program_invoke, .send_program_invoke_and_confirm, .simulate_program_invoke => {
-                    if (command_result.positionals[5] != null or command_result.positionals[6].len != 0) return error.InvalidCli;
-                },
-                .send_versioned_program_invoke, .send_versioned_program_invoke_and_confirm, .simulate_versioned_program_invoke => {
-                    parsed.program_invoke_lookup_tables_arg = command_result.positionals[5];
-                    if (command_result.positionals[6].len != 0) return error.InvalidCli;
-                },
-                else => unreachable,
-            }
-
-            return;
-        },
         .transfer => {
             if (parsed.sender_keypair_path_arg == null and parsed.sender_secret_key_arg == null) {
                 var command_result = try parsePositionalsWithClap(&transfer_with_default_sender_command_positionals_params, allocator, positionals);
