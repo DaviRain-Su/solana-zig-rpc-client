@@ -51,10 +51,15 @@ pub const OwnedInstruction = struct {
 const OwnedAccountBindings = struct {
     bindings: []AccountBinding,
     owned_paths: [][]u8,
+    explicit_null_paths: []const []const u8,
+    owned_explicit_null_paths: [][]u8,
 
     pub fn deinit(self: *OwnedAccountBindings, allocator: Allocator) void {
         for (self.owned_paths) |path| allocator.free(path);
         allocator.free(self.owned_paths);
+        for (self.owned_explicit_null_paths) |path| allocator.free(path);
+        allocator.free(self.owned_explicit_null_paths);
+        allocator.free(self.explicit_null_paths);
         allocator.free(self.bindings);
         self.* = undefined;
     }
@@ -190,6 +195,20 @@ fn findBoundPubkey(bindings: []const AccountBinding, full_name: []const u8, leaf
     return null;
 }
 
+fn hasExplicitNullBinding(explicit_null_paths: []const []const u8, full_name: []const u8, leaf_name: []const u8) bool {
+    for (explicit_null_paths) |path| {
+        if (fullPathMatches(path, full_name) or fullPathMatches(path, leaf_name)) return true;
+
+        const normalized_path = normalizeAccountPath(path);
+        if (!std.mem.eql(u8, normalized_path, path)) {
+            if (fullPathMatches(normalized_path, full_name) or fullPathMatches(normalized_path, leaf_name)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 fn parseAccountBindingPubkeyValue(allocator: Allocator, value: std.json.Value) BuildError!?sdk.Pubkey {
     switch (value) {
         .null => return null,
@@ -283,7 +302,32 @@ fn appendJsonAccountBinding(
     });
 }
 
-fn isAccountBindingLiteralFieldName(field_name: []const u8) bool {
+fn appendExplicitNullPath(
+    allocator: Allocator,
+    explicit_null_paths: *std.ArrayListUnmanaged([]const u8),
+    owned_explicit_null_paths: *std.ArrayListUnmanaged([]u8),
+    path: []const u8,
+) BuildError!void {
+    const owned_path = try allocator.dupe(u8, path);
+    errdefer allocator.free(owned_path);
+
+    try owned_explicit_null_paths.append(allocator, owned_path);
+    errdefer _ = owned_explicit_null_paths.pop();
+
+    try explicit_null_paths.append(allocator, owned_path);
+}
+
+const ParsedJsonAccountBindingLiteral = struct {
+    field_name: []const u8,
+    pubkey: ?sdk.Pubkey = null,
+};
+
+fn parseAccountBindingLiteralObject(
+    allocator: Allocator,
+    value: std.json.Value,
+) BuildError!?ParsedJsonAccountBindingLiteral {
+    if (value != .object) return null;
+
     inline for ([_][]const u8{
         "pubkey",
         "publicKey",
@@ -292,24 +336,57 @@ fn isAccountBindingLiteralFieldName(field_name: []const u8) bool {
         "key",
         "programId",
         "program_id",
-    }) |expected| {
-        if (pathSegmentMatches(expected, field_name)) return true;
+    }) |field_name| {
+        if (findJsonObjectField(value.object, field_name)) |field_value| {
+            return switch (field_value) {
+                .null => .{
+                    .field_name = field_name,
+                    .pubkey = null,
+                },
+                .string => .{
+                    .field_name = field_name,
+                    .pubkey = sdk.Pubkey.fromBase58(allocator, field_value.string) catch return error.InvalidAnchorIdlAccountSpec,
+                },
+                else => return error.InvalidAnchorIdlAccountSpec,
+            };
+        }
     }
-    return false;
+
+    return null;
 }
 
 fn appendAccountBindingsFromJsonValue(
     allocator: Allocator,
     bindings: *std.ArrayListUnmanaged(AccountBinding),
     owned_paths: *std.ArrayListUnmanaged([]u8),
+    explicit_null_paths: *std.ArrayListUnmanaged([]const u8),
+    owned_explicit_null_paths: *std.ArrayListUnmanaged([]u8),
     path: ?[]const u8,
     value: std.json.Value,
 ) BuildError!void {
+    var consumed_literal_field_name: ?[]const u8 = null;
+
     if (path) |path_value| {
-        if (try parseAccountBindingPubkeyValue(allocator, value)) |pubkey| {
-            try appendJsonAccountBinding(allocator, bindings, owned_paths, path_value, pubkey);
+        if (value == .null) {
+            try appendExplicitNullPath(allocator, explicit_null_paths, owned_explicit_null_paths, path_value);
+            return;
         }
-        if (value == .null) return;
+        if (value == .string) {
+            if (try parseAccountBindingPubkeyValue(allocator, value)) |pubkey| {
+                try appendJsonAccountBinding(allocator, bindings, owned_paths, path_value, pubkey);
+                return;
+            }
+        } else if (try parseAccountBindingLiteralObject(allocator, value)) |literal| {
+            consumed_literal_field_name = literal.field_name;
+            if (literal.pubkey) |pubkey| {
+                try appendJsonAccountBinding(allocator, bindings, owned_paths, path_value, pubkey);
+            } else {
+                try appendExplicitNullPath(allocator, explicit_null_paths, owned_explicit_null_paths, path_value);
+            }
+        } else if (try parseAccountBindingPubkeyValue(allocator, value)) |pubkey| {
+            try appendJsonAccountBinding(allocator, bindings, owned_paths, path_value, pubkey);
+            return;
+        }
     } else if (value == .null) {
         return;
     }
@@ -318,7 +395,9 @@ fn appendAccountBindingsFromJsonValue(
         .object => {
             var iterator = value.object.iterator();
             while (iterator.next()) |entry| {
-                if (path != null and isAccountBindingLiteralFieldName(entry.key_ptr.*)) continue;
+                if (consumed_literal_field_name) |field_name| {
+                    if (pathSegmentMatches(field_name, entry.key_ptr.*)) continue;
+                }
 
                 const child_path = if (path) |path_value|
                     try std.fmt.allocPrint(allocator, "{s}.{s}", .{ path_value, entry.key_ptr.* })
@@ -330,6 +409,8 @@ fn appendAccountBindingsFromJsonValue(
                     allocator,
                     bindings,
                     owned_paths,
+                    explicit_null_paths,
+                    owned_explicit_null_paths,
                     child_path,
                     entry.value_ptr.*,
                 );
@@ -347,6 +428,8 @@ fn appendAccountBindingsFromJsonValue(
                     allocator,
                     bindings,
                     owned_paths,
+                    explicit_null_paths,
+                    owned_explicit_null_paths,
                     child_path,
                     item,
                 );
@@ -373,21 +456,44 @@ fn parseAccountBindingsJson(allocator: Allocator, json_source: []const u8) Build
         for (owned_paths.items) |path| allocator.free(path);
         owned_paths.deinit(allocator);
     }
+    var explicit_null_paths: std.ArrayListUnmanaged([]const u8) = .{};
+    errdefer explicit_null_paths.deinit(allocator);
+    var owned_explicit_null_paths: std.ArrayListUnmanaged([]u8) = .{};
+    errdefer {
+        for (owned_explicit_null_paths.items) |path| allocator.free(path);
+        owned_explicit_null_paths.deinit(allocator);
+    }
 
     try appendAccountBindingsFromJsonValue(
         allocator,
         &bindings,
         &owned_paths,
+        &explicit_null_paths,
+        &owned_explicit_null_paths,
         null,
         parsed.value,
     );
 
     const owned_bindings = try bindings.toOwnedSlice(allocator);
     errdefer allocator.free(owned_bindings);
+    const owned_paths_slice = try owned_paths.toOwnedSlice(allocator);
+    errdefer {
+        for (owned_paths_slice) |path| allocator.free(path);
+        allocator.free(owned_paths_slice);
+    }
+    const explicit_null_paths_slice = try explicit_null_paths.toOwnedSlice(allocator);
+    errdefer allocator.free(explicit_null_paths_slice);
+    const owned_explicit_null_paths_slice = try owned_explicit_null_paths.toOwnedSlice(allocator);
+    errdefer {
+        for (owned_explicit_null_paths_slice) |path| allocator.free(path);
+        allocator.free(owned_explicit_null_paths_slice);
+    }
 
     return .{
         .bindings = owned_bindings,
-        .owned_paths = try owned_paths.toOwnedSlice(allocator),
+        .owned_paths = owned_paths_slice,
+        .explicit_null_paths = explicit_null_paths_slice,
+        .owned_explicit_null_paths = owned_explicit_null_paths_slice,
     };
 }
 
@@ -1085,6 +1191,7 @@ fn encodePdaAccountSeed(
     seed_value: std.json.Value,
     parsed_args: ?*const std.json.Value,
     account_bindings: []const AccountBinding,
+    explicit_null_paths: []const []const u8,
     program_id: sdk.Pubkey,
     default_signer_pubkey: ?sdk.Pubkey,
     resolution_stack: *std.ArrayListUnmanaged([]u8),
@@ -1114,6 +1221,7 @@ fn encodePdaAccountSeed(
         instruction.accounts,
         parsed_args,
         account_bindings,
+        explicit_null_paths,
         path_value.string,
         program_id,
         default_signer_pubkey,
@@ -1129,6 +1237,7 @@ fn derivePda(
     pda_value: std.json.Value,
     parsed_args: ?*const std.json.Value,
     account_bindings: []const AccountBinding,
+    explicit_null_paths: []const []const u8,
     program_id: sdk.Pubkey,
     default_signer_pubkey: ?sdk.Pubkey,
     resolution_stack: *std.ArrayListUnmanaged([]u8),
@@ -1163,6 +1272,7 @@ fn derivePda(
                         program_value,
                         parsed_args,
                         account_bindings,
+                        explicit_null_paths,
                         program_id,
                         default_signer_pubkey,
                         resolution_stack,
@@ -1204,6 +1314,7 @@ fn derivePda(
                 seed_value,
                 parsed_args,
                 account_bindings,
+                explicit_null_paths,
                 program_id,
                 default_signer_pubkey,
                 resolution_stack,
@@ -1226,6 +1337,7 @@ fn tryResolveNamedAccountPubkeyFromAccounts(
     accounts: []const std.json.Value,
     parsed_args: ?*const std.json.Value,
     account_bindings: []const AccountBinding,
+    explicit_null_paths: []const []const u8,
     path: []const u8,
     program_id: sdk.Pubkey,
     default_signer_pubkey: ?sdk.Pubkey,
@@ -1246,6 +1358,7 @@ fn tryResolveNamedAccountPubkeyFromAccounts(
             accounts,
             parsed_args,
             account_bindings,
+            explicit_null_paths,
             account_path,
             program_id,
             default_signer_pubkey,
@@ -1260,6 +1373,7 @@ fn tryResolveNamedAccountPubkeyFromAccounts(
             accounts,
             parsed_args,
             account_bindings,
+            explicit_null_paths,
             path,
             program_id,
             default_signer_pubkey,
@@ -1276,6 +1390,7 @@ fn resolveNamedAccountPubkeyFromAccounts(
     accounts: []const std.json.Value,
     parsed_args: ?*const std.json.Value,
     account_bindings: []const AccountBinding,
+    explicit_null_paths: []const []const u8,
     path: []const u8,
     program_id: sdk.Pubkey,
     default_signer_pubkey: ?sdk.Pubkey,
@@ -1288,6 +1403,7 @@ fn resolveNamedAccountPubkeyFromAccounts(
         accounts,
         parsed_args,
         account_bindings,
+        explicit_null_paths,
         path,
         program_id,
         default_signer_pubkey,
@@ -1303,6 +1419,7 @@ fn resolveNamedAccountPubkeyFromAccounts(
             accounts,
             parsed_args,
             account_bindings,
+            explicit_null_paths,
             normalized_path,
             program_id,
             default_signer_pubkey,
@@ -1320,6 +1437,7 @@ fn resolveNamedAccountPubkeyAtPath(
     accounts: []const std.json.Value,
     parsed_args: ?*const std.json.Value,
     account_bindings: []const AccountBinding,
+    explicit_null_paths: []const []const u8,
     path: []const u8,
     program_id: sdk.Pubkey,
     default_signer_pubkey: ?sdk.Pubkey,
@@ -1333,9 +1451,14 @@ fn resolveNamedAccountPubkeyAtPath(
 
     const account_value = findAccountValue(accounts, path) orelse return error.MissingAnchorIdlAccountBinding;
     if (account_value != .object or account_value.object.get("accounts") != null) return error.InvalidAnchorIdlAccountSpec;
+    const is_optional = try isOptionalAccount(account_value);
+    if (hasExplicitNullBinding(explicit_null_paths, path, leaf_name)) {
+        if (is_optional) return .{ .pubkey = program_id, .missing_optional = true };
+        return error.MissingAnchorIdlAccountBinding;
+    }
     if (try findLiteralPubkey(allocator, account_value)) |pubkey| return .{ .pubkey = pubkey };
     if (account_value.object.get("pda")) |pda_value| {
-        return .{ .pubkey = try derivePda(allocator, idl, instruction, pda_value, parsed_args, account_bindings, program_id, default_signer_pubkey, resolution_stack) };
+        return .{ .pubkey = try derivePda(allocator, idl, instruction, pda_value, parsed_args, account_bindings, explicit_null_paths, program_id, default_signer_pubkey, resolution_stack) };
     }
 
     const parent_path = if (std.mem.lastIndexOfScalar(u8, path, '.')) |dot_index| path[0..dot_index] else null;
@@ -1354,6 +1477,7 @@ fn resolveNamedAccountPubkeyAtPath(
                     accounts,
                     parsed_args,
                     account_bindings,
+                    explicit_null_paths,
                     nested_relation_path,
                     program_id,
                     default_signer_pubkey,
@@ -1370,6 +1494,7 @@ fn resolveNamedAccountPubkeyAtPath(
                 accounts,
                 parsed_args,
                 account_bindings,
+                explicit_null_paths,
                 relation_path,
                 program_id,
                 default_signer_pubkey,
@@ -1378,7 +1503,6 @@ fn resolveNamedAccountPubkeyAtPath(
         }
     }
 
-    const is_optional = try isOptionalAccount(account_value);
     const is_signer = try isSignerAccount(account_value);
     if (try findAccountContext(accounts, path)) |context| {
         if (try isEventCpiAccount(context.siblings, context.account_index, "eventAuthority")) {
@@ -1641,6 +1765,7 @@ fn appendInstructionAccounts(
     accounts: []const std.json.Value,
     parsed_args: ?*const std.json.Value,
     bindings: []const AccountBinding,
+    explicit_null_paths: []const []const u8,
     default_signer: ?sdk.Pubkey,
     program_id: sdk.Pubkey,
     metas: []sdk.AccountMeta,
@@ -1668,6 +1793,7 @@ fn appendInstructionAccounts(
                 nested_value.array.items,
                 parsed_args,
                 bindings,
+                explicit_null_paths,
                 default_signer,
                 program_id,
                 metas,
@@ -1687,6 +1813,7 @@ fn appendInstructionAccounts(
             instruction.accounts,
             parsed_args,
             bindings,
+            explicit_null_paths,
             full_name,
             program_id,
             default_signer,
@@ -1742,6 +1869,10 @@ pub fn buildOwnedInstruction(
         @memcpy(merged[options.account_bindings.len..], value.bindings);
         break :blk merged;
     } else options.account_bindings;
+    const resolved_explicit_null_paths: []const []const u8 = if (json_account_bindings) |value|
+        value.explicit_null_paths
+    else
+        &.{};
 
     var json_remaining_accounts = if (options.remaining_accounts_json) |value|
         try parseRemainingAccountsJson(allocator, value)
@@ -1779,6 +1910,7 @@ pub fn buildOwnedInstruction(
         instruction.accounts,
         if (parsed_args) |value| &value.value else null,
         resolved_account_bindings,
+        resolved_explicit_null_paths,
         options.default_signer,
         program_id,
         accounts,

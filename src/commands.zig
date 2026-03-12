@@ -2607,7 +2607,7 @@ fn loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
     additional_signer_secret_keys_arg: []const []const u8,
 ) !LoadedCliInstructionSpec {
     const can_use_reusable_builder = blk: {
-        if (accounts_json_arg != null or account_bindings.len != 0 or remaining_accounts.len != 0 or remaining_accounts_json_arg != null) {
+        if (account_bindings.len != 0 or remaining_accounts.len != 0 or remaining_accounts_json_arg != null) {
             break :blk false;
         }
         break :blk true;

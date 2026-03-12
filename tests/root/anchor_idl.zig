@@ -3105,6 +3105,112 @@ test "root.anchor_idl_invoke.buildOwnedInstruction derives pda seed from nested 
     try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(expected_vault));
 }
 
+test "root.anchor_idl_invoke.buildOwnedInstruction derives pda with pda program account field from nested binding object" {
+    const allocator = std.testing.allocator;
+    const authority = client.Pubkey.fromBytes(.{71} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+    const pda_program = client.Pubkey.fromBytes(.{72} ** 32);
+    const pda_program_base58 = try pda_program.toBase58(allocator);
+    defer allocator.free(pda_program_base58);
+    const program_id = client.Pubkey.fromBytes(.{73} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"init","discriminator":[21,21,21,21,21,21,21,21],"accounts":[{{"name":"authority"}},{{"name":"vault","writable":true,"pda":{{"seeds":[{{"kind":"const","value":[118,97,117,108,116]}}],"program":{{"kind":"account","path":"authority.programId","type":"publicKey"}}}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const account_bindings_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"authority\":{{\"address\":\"{s}\",\"programId\":\"{s}\"}}}}",
+        .{ authority_base58, pda_program_base58 },
+    );
+    defer allocator.free(account_bindings_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "init",
+        .{
+            .account_bindings_json = account_bindings_json,
+        },
+    );
+    defer owned.deinit(allocator);
+
+    const expected_pda = try findProgramAddress(allocator, &.{"vault"}, pda_program);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(authority));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(expected_pda));
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction treats publicKey object null optional account as missing" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{74} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const payer = client.Pubkey.fromBytes(.{75} ** 32);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"configure","discriminator":[22,22,22,22,22,22,22,22],"accounts":[{{"name":"payer","signer":true,"writable":true}},{{"name":"delegate","optional":true,"signer":true,"writable":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "configure",
+        .{
+            .default_signer = payer,
+            .account_bindings_json = "{\"delegate\":{\"publicKey\":null}}",
+        },
+    );
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(payer));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(program_id));
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction treats address object null optional account as missing" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{76} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const payer = client.Pubkey.fromBytes(.{77} ** 32);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"configure","discriminator":[23,23,23,23,23,23,23,23],"accounts":[{{"name":"payer","signer":true,"writable":true}},{{"name":"delegate","optional":true,"signer":true,"writable":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "configure",
+        .{
+            .default_signer = payer,
+            .account_bindings_json = "{\"delegate\":{\"address\":null}}",
+        },
+    );
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(payer));
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(program_id));
+}
+
 test "root.anchor_idl_invoke.buildOwnedInstruction prefers explicit account_bindings over account_bindings_json" {
     const allocator = std.testing.allocator;
     const program_id = client.Pubkey.fromBytes(.{80} ** 32);
