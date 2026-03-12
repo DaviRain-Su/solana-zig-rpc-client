@@ -1241,6 +1241,16 @@ pub fn buildLegacyMessageBase64WithBlockhashQuery(
     return try owned_message.toBase64(self.allocator);
 }
 
+pub fn buildLegacyMessageBytesWithBlockhashQuery(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildLegacyMessageWithBlockhashQueryOptions,
+) ![]u8 {
+    var owned_message = try buildOwnedLegacyMessageWithBlockhashQuery(self, program_id, options);
+    defer owned_message.deinit(self.allocator);
+    return try owned_message.serialize(self.allocator);
+}
+
 pub fn buildSignedLegacyTransactionWithBlockhashQuery(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1257,6 +1267,16 @@ pub fn buildSignedLegacyTransactionWithBlockhashQuery(
         options.blockhash_query,
         options.nonce_authority,
     );
+}
+
+pub fn buildLegacyTransactionBase64WithBlockhashQuery(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildLegacyTransactionWithBlockhashQueryOptions,
+) ![]u8 {
+    var signed = try buildSignedLegacyTransactionWithBlockhashQuery(self, program_id, options);
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
 }
 
 pub fn buildOwnedVersionedMessageWithBlockhashQuery(
@@ -1287,6 +1307,16 @@ pub fn buildVersionedMessageBase64WithBlockhashQuery(
     return try owned_message.toBase64(self.allocator);
 }
 
+pub fn buildVersionedMessageBytesWithBlockhashQuery(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildVersionedMessageWithBlockhashQueryOptions,
+) ![]u8 {
+    var owned_message = try buildOwnedVersionedMessageWithBlockhashQuery(self, program_id, options);
+    defer owned_message.deinit(self.allocator);
+    return try owned_message.serialize(self.allocator);
+}
+
 pub fn buildSignedVersionedTransactionWithBlockhashQuery(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1304,6 +1334,16 @@ pub fn buildSignedVersionedTransactionWithBlockhashQuery(
         options.blockhash_query,
         options.nonce_authority,
     );
+}
+
+pub fn buildVersionedTransactionBase64WithBlockhashQuery(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildVersionedTransactionWithBlockhashQueryOptions,
+) ![]u8 {
+    var signed = try buildSignedVersionedTransactionWithBlockhashQuery(self, program_id, options);
+    defer signed.deinit(self.allocator);
+    return try signed.toBase64(self.allocator);
 }
 
 pub fn sendLegacyTransactionWithBlockhashQuery(
@@ -1534,12 +1574,45 @@ pub fn buildLegacyMessageBase64WithLatestBlockhash(
     );
 }
 
+pub fn buildLegacyMessageBytesWithLatestBlockhash(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildLegacyMessageWithLatestBlockhashOptions,
+) ![]u8 {
+    return try buildLegacyMessageBytesWithBlockhashQuery(
+        self,
+        program_id,
+        .{
+            .payer = options.payer,
+            .blockhash_query = latestBlockhashQuery(options.blockhash_commitment),
+            .instruction = options.instruction,
+        },
+    );
+}
+
 pub fn buildSignedLegacyTransactionWithLatestBlockhash(
     self: anytype,
     program_id: sdk.Pubkey,
     options: BuildLegacyTransactionWithLatestBlockhashOptions,
 ) !sdk.SignedLegacyTransaction {
     return try buildSignedLegacyTransactionWithBlockhashQuery(
+        self,
+        program_id,
+        .{
+            .payer = options.payer,
+            .signers = options.signers,
+            .blockhash_query = latestBlockhashQuery(options.blockhash_commitment),
+            .instruction = options.instruction,
+        },
+    );
+}
+
+pub fn buildLegacyTransactionBase64WithLatestBlockhash(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildLegacyTransactionWithLatestBlockhashOptions,
+) ![]u8 {
+    return try buildLegacyTransactionBase64WithBlockhashQuery(
         self,
         program_id,
         .{
@@ -1585,12 +1658,47 @@ pub fn buildVersionedMessageBase64WithLatestBlockhash(
     );
 }
 
+pub fn buildVersionedMessageBytesWithLatestBlockhash(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildVersionedMessageWithLatestBlockhashOptions,
+) ![]u8 {
+    return try buildVersionedMessageBytesWithBlockhashQuery(
+        self,
+        program_id,
+        .{
+            .payer = options.payer,
+            .address_lookup_tables = options.address_lookup_tables,
+            .blockhash_query = latestBlockhashQuery(options.blockhash_commitment),
+            .instruction = options.instruction,
+        },
+    );
+}
+
 pub fn buildSignedVersionedTransactionWithLatestBlockhash(
     self: anytype,
     program_id: sdk.Pubkey,
     options: BuildVersionedTransactionWithLatestBlockhashOptions,
 ) !sdk.SignedVersionedTransaction {
     return try buildSignedVersionedTransactionWithBlockhashQuery(
+        self,
+        program_id,
+        .{
+            .payer = options.payer,
+            .address_lookup_tables = options.address_lookup_tables,
+            .signers = options.signers,
+            .blockhash_query = latestBlockhashQuery(options.blockhash_commitment),
+            .instruction = options.instruction,
+        },
+    );
+}
+
+pub fn buildVersionedTransactionBase64WithLatestBlockhash(
+    self: anytype,
+    program_id: sdk.Pubkey,
+    options: BuildVersionedTransactionWithLatestBlockhashOptions,
+) ![]u8 {
+    return try buildVersionedTransactionBase64WithBlockhashQuery(
         self,
         program_id,
         .{
@@ -2525,6 +2633,146 @@ test "program_invoke.getFeeForVersionedMessageWithLatestBlockhash uses latest cl
     try std.testing.expectEqual(rpc_types.Commitment.processed, mock.captured_commitment.?);
     try std.testing.expectEqual(@as(u64, 8), fee.context_slot);
     try std.testing.expectEqual(@as(?u64, 555), fee.value);
+}
+
+test "program_invoke.buildLegacyTransactionBase64WithBlockhashQuery matches sdk encoding" {
+    const allocator = std.testing.allocator;
+
+    const MockLegacyQueryTxBuilder = struct {
+        allocator: Allocator,
+        captured_query: ?rpc_types.BlockhashQuery = null,
+
+        pub fn buildSignedLegacyTransactionWithBlockhashQuery(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            blockhash_query: rpc_types.BlockhashQuery,
+            nonce_authority: ?sdk.Pubkey,
+        ) !sdk.SignedLegacyTransaction {
+            _ = nonce_authority;
+            self.captured_query = blockhash_query;
+            return try sdk.buildSignedLegacyTransaction(
+                self.allocator,
+                payer,
+                sdk.Hash.fromBytes(.{129} ** 32),
+                instructions,
+                signers,
+            );
+        }
+    };
+
+    const payer_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic(.{130} ** 32);
+    const payer_secret = payer_raw.secret_key.toBytes();
+    const payer_signer = try sdk.Keypair.fromSecretKeyBytes(payer_secret);
+    const payer = sdk.Pubkey.fromBytes(payer_raw.public_key.toBytes());
+    const signers = [_]sdk.Keypair{payer_signer};
+
+    var mock = MockLegacyQueryTxBuilder{ .allocator = allocator };
+    const program_id = sdk.Pubkey.fromBytes(.{131} ** 32);
+    const actual = try buildLegacyTransactionBase64WithBlockhashQuery(
+        &mock,
+        program_id,
+        .{
+            .payer = payer,
+            .signers = &signers,
+            .blockhash_query = .{ .fixed = "legacy-fixed-blockhash" },
+            .instruction = .{
+                .data = "ping",
+                .data_encoding = .utf8,
+            },
+        },
+    );
+    defer allocator.free(actual);
+
+    var owned_instruction = try buildOwnedInstruction(
+        allocator,
+        program_id,
+        .{
+            .data = "ping",
+            .data_encoding = .utf8,
+        },
+    );
+    defer owned_instruction.deinit(allocator);
+    const instructions = [_]sdk.Instruction{owned_instruction.instruction};
+    const expected = try sdk.buildLegacyTransactionBase64(
+        allocator,
+        payer,
+        sdk.Hash.fromBytes(.{129} ** 32),
+        instructions[0..],
+        &signers,
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings("legacy-fixed-blockhash", mock.captured_query.?.fixed);
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
+test "program_invoke.buildVersionedMessageBytesWithLatestBlockhash matches sdk serialization" {
+    const allocator = std.testing.allocator;
+
+    const MockVersionedLatestBytesBuilder = struct {
+        allocator: Allocator,
+        captured_query: ?rpc_types.BlockhashQuery = null,
+
+        pub fn buildOwnedVersionedMessageWithBlockhashQuery(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            address_lookup_tables: []const sdk.AddressLookupTableAccount,
+            blockhash_query: rpc_types.BlockhashQuery,
+            nonce_authority: ?sdk.Pubkey,
+        ) !sdk.OwnedVersionedMessageV0 {
+            _ = nonce_authority;
+            self.captured_query = blockhash_query;
+            return try sdk.buildOwnedVersionedMessage(
+                self.allocator,
+                payer,
+                sdk.Hash.fromBytes(.{132} ** 32),
+                instructions,
+                address_lookup_tables,
+            );
+        }
+    };
+
+    var mock = MockVersionedLatestBytesBuilder{ .allocator = allocator };
+    const program_id = sdk.Pubkey.fromBytes(.{133} ** 32);
+    const payer = sdk.Pubkey.fromBytes(.{134} ** 32);
+    const actual = try buildVersionedMessageBytesWithLatestBlockhash(
+        &mock,
+        program_id,
+        .{
+            .payer = payer,
+            .blockhash_commitment = .confirmed,
+            .instruction = .{
+                .data = "70696e67",
+                .data_encoding = .hex,
+            },
+        },
+    );
+    defer allocator.free(actual);
+
+    var owned_instruction = try buildOwnedInstruction(
+        allocator,
+        program_id,
+        .{
+            .data = "70696e67",
+            .data_encoding = .hex,
+        },
+    );
+    defer owned_instruction.deinit(allocator);
+    const instructions = [_]sdk.Instruction{owned_instruction.instruction};
+    const expected = try sdk.buildVersionedMessageBytes(
+        allocator,
+        payer,
+        sdk.Hash.fromBytes(.{132} ** 32),
+        instructions[0..],
+        &.{},
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqual(rpc_types.Commitment.confirmed, mock.captured_query.?.cluster.commitment.?);
+    try std.testing.expectEqualSlices(u8, expected, actual);
 }
 
 test "program_invoke.simulateVersionedTransaction delegates instruction and options" {
