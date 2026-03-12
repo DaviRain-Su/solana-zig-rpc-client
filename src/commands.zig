@@ -3418,11 +3418,6 @@ fn loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
     const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch return error.InvalidCli;
     defer allocator.free(accounts_source);
 
-    const parsed_accounts = std.json.parseFromSlice([]CliInstructionAccountMeta, allocator, accounts_source, .{
-        .ignore_unknown_fields = true,
-    }) catch return error.InvalidCli;
-    defer parsed_accounts.deinit();
-
     var parsed_signer_keypair_paths: ?std.json.Parsed([]const []const u8) = null;
     defer if (parsed_signer_keypair_paths) |*value| value.deinit();
 
@@ -3461,13 +3456,37 @@ fn loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
     else
         null;
 
-    const instruction_specs = [_]CliInstructionSpec{
+    const decoded_instruction_data = loadCliInstructionData(
+        allocator,
         .{
-            .program_id = program_id,
-            .accounts = parsed_accounts.value,
+            .program_id = "",
             .data = instruction_data,
             .data_path = data_path,
             .data_encoding = data_encoding,
+        },
+    ) catch return error.InvalidCli;
+    defer allocator.free(decoded_instruction_data);
+
+    const program_id_pubkey = client.Pubkey.fromBase58(allocator, program_id) catch return error.InvalidCli;
+    var owned_instruction = client.program_invoke.buildOwnedInstruction(
+        allocator,
+        program_id_pubkey,
+        .{
+            .accounts_json = accounts_source,
+            .data_bytes = decoded_instruction_data,
+        },
+    ) catch return error.InvalidCli;
+    defer owned_instruction.deinit(allocator);
+
+    var serialized_instruction = try serializeCliInstruction(allocator, owned_instruction.instruction);
+    defer serialized_instruction.deinit(allocator);
+
+    const instruction_specs = [_]CliInstructionSpec{
+        .{
+            .program_id = serialized_instruction.program_id,
+            .accounts = serialized_instruction.accounts,
+            .data = serialized_instruction.data_hex,
+            .data_encoding = .hex,
         },
     };
     const spec = CliSimulateInstructionsSpec{
