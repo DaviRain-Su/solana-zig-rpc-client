@@ -69,6 +69,8 @@ pub fn build(b: *std.Build) void {
 
     const websocket_dep = b.dependency("websocket", .{});
     const websocket_module = websocket_dep.module("websocket");
+    const clap_dep = b.dependency("clap", .{});
+    const clap_module = clap_dep.module("clap");
     const test_log_options = b.addOptions();
     test_log_options.addOption(std.log.Level, "log_level", .err);
     websocket_module.addOptions("std_options", test_log_options);
@@ -97,6 +99,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .imports = &.{
             .{ .name = "websocket", .module = websocket_module },
+            .{ .name = "clap", .module = clap_module },
         },
     });
     mod.addOptions("std_options", test_log_options);
@@ -139,6 +142,7 @@ pub fn build(b: *std.Build) void {
                 // can be extremely useful in case of collisions (which can happen
                 // importing modules from different packages).
                 .{ .name = "solana_client_zig", .module = mod },
+                .{ .name = "clap", .module = clap_module },
             },
         }),
     });
@@ -244,6 +248,9 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/cli.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "clap", .module = clap_module },
+        },
     });
     cli_tests_module.addOptions("std_options", test_log_options);
 
@@ -272,6 +279,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "solana_client_zig", .module = mod },
             .{ .name = "command_test_support", .module = command_test_support_module },
             .{ .name = "mock_sender_assertions", .module = mock_sender_assertions_module },
+            .{ .name = "clap", .module = clap_module },
         },
     });
     commands_tests_module.addOptions("std_options", test_log_options);

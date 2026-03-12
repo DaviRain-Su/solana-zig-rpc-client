@@ -1,6 +1,82 @@
 const std = @import("std");
+const clap = @import("clap");
 
 const Allocator = std.mem.Allocator;
+
+comptime {
+    @setEvalBranchQuota(20_000);
+}
+
+const cli_params = clap.parseParamsComptime(
+    \\-h, --help
+    \\    --rpc <string>...
+    \\    --commitment <commitment>...
+    \\    --timeout-ms <u64>...
+    \\    --poll-ms <u64>...
+    \\    --skip-preflight
+    \\    --search-transaction-history
+    \\    --sig-verify
+    \\    --replace-recent-blockhash
+    \\    --inner-instructions
+    \\    --keep-unstaked-delinquents
+    \\    --exclude-non-circulating-accounts-list
+    \\    --max-retries <u32>...
+    \\    --min-context-slot <string>...
+    \\    --epoch <string>...
+    \\    --encoding <string>...
+    \\    --max-supported-transaction-version <string>...
+    \\    --transaction-details <string>...
+    \\    --rewards <string>...
+    \\    --vote-pubkey <string>...
+    \\    --delinquent-slot-distance <string>...
+    \\    --largest-filter <string>...
+    \\    --block-production-identity <string>...
+    \\    --range-first-slot <string>...
+    \\    --range-last-slot <string>...
+    \\    --program-data-size <string>...
+    \\    --program-memcmp-offset <string>...
+    \\    --program-memcmp-bytes <string>...
+    \\    --program-data-slice-offset <string>...
+    \\    --program-data-slice-length <string>...
+    \\    --with-context
+    \\    --sort-results
+    \\    --account-encoding <string>...
+    \\    --account-data-slice-offset <string>...
+    \\    --account-data-slice-length <string>...
+    \\    --simulation-account <string>...
+    \\    --simulation-account-encoding <string>...
+    \\    --simulation-min-context-slot <string>...
+    \\    --preflight-commitment <commitment>...
+    \\    --airdrop-recent-blockhash <string>...
+    \\    --recent-blockhash <string>...
+    \\    --sender-keypair <string>...
+    \\    --sender-secret-key <string>...
+    \\    --additional-signer-secret-key <string>...
+    \\    --program-id <string>...
+    \\    --idl-args-json <string>...
+    \\    --accounts-json <string>...
+    \\    --account <string>...
+    \\    --remaining-account <string>...
+    \\    --remaining-accounts-json <string>...
+    \\    --nonce-account <string>...
+    \\    --nonce-authority-keypair <string>...
+    \\    --transfer-recent-blockhash <string>...
+    \\    --before <string>...
+    \\    --until <string>...
+    \\    --limit <string>...
+    \\    --mint <string>...
+    \\    --token-program-id <string>...
+    \\<arg>...
+    \\
+);
+
+const cli_parsers = .{
+    .string = clap.parsers.string,
+    .commitment = clap.parsers.enumeration(Commitment),
+    .u64 = clap.parsers.int(u64, 10),
+    .u32 = clap.parsers.int(u32, 10),
+    .arg = clap.parsers.string,
+};
 
 pub const default_solana_rpc_url = "https://api.mainnet-beta.solana.com";
 pub const default_solana_cli_config_path = ".config/solana/cli/config.yml";
@@ -414,1029 +490,33 @@ pub const ParsedArgs = struct {
     }
 };
 
-pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs {
-    var parsed = ParsedArgs{
-        .command = .latest_blockhash,
-        .has_command = false,
-        .show_usage = false,
-        .rpc_url = default_solana_rpc_url,
-        .rpc_url_overridden = false,
-        .signature = null,
-        .account = null,
-        .expected_balance_arg = null,
-        .airdrop_recent_blockhash_arg = null,
-        .recent_blockhash_arg = null,
-        .account_data_slice_length_arg = null,
-        .account_data_slice_offset_arg = null,
-        .account_encoding_arg = null,
-        .blockhash_arg = null,
-        .block_production_identity_arg = null,
-        .block_production_first_slot_arg = null,
-        .block_production_last_slot_arg = null,
-        .confirmation_blocks_arg = null,
-        .delinquent_slot_distance_arg = null,
-        .encoding_arg = null,
-        .epoch_arg = null,
-        .feature_key_arg = null,
-        .largest_filter_arg = null,
-        .max_supported_transaction_version_arg = null,
-        .min_context_slot_arg = null,
-        .program_data_size_arg = null,
-        .program_data_slice_length_arg = null,
-        .program_data_slice_offset_arg = null,
-        .program_memcmp_bytes_arg = null,
-        .program_memcmp_offset_arg = null,
-        .program_sort_results = false,
-        .program_with_context = false,
-        .signatures_for_address_arg = null,
-        .signatures_for_address_before_arg = null,
-        .signatures_for_address_until_arg = null,
-        .signatures_for_address_limit_arg = null,
-        .rewards_arg = null,
-        .slot_arg = null,
-        .blocks_end_slot_arg = null,
-        .blocks_limit_arg = null,
-        .message_arg = null,
-        .instructions_spec_arg = null,
-        .program_invoke_program_id_arg = null,
-        .program_invoke_accounts_arg = null,
-        .program_invoke_data_arg = null,
-        .program_invoke_data_encoding_arg = null,
-        .program_invoke_signer_keypair_paths_arg = null,
-        .program_invoke_additional_signer_secret_keys = .{},
-        .program_invoke_lookup_tables_arg = null,
-        .program_invoke_nonce_account_arg = null,
-        .program_invoke_nonce_authority_keypair_path_arg = null,
-        .idl_program_id_arg = null,
-        .idl_spec_arg = null,
-        .idl_instruction_arg = null,
-        .idl_args_json_arg = null,
-        .idl_accounts_json_arg = null,
-        .idl_remaining_accounts_json_arg = null,
-        .raw_rpc_method_arg = null,
-        .raw_rpc_params_arg = null,
-        .slot_leaders_limit_arg = null,
-        .performance_limit_arg = null,
-        .leader_schedule_slot_arg = null,
-        .leader_schedule_identity_arg = null,
-        .lamports_arg = null,
-        .default_sender_keypair_path = null,
-        .mint_arg = null,
-        .rent_bytes_arg = null,
-        .sender_keypair_path_arg = null,
-        .sender_secret_key_arg = null,
-        .signed_tx_arg = null,
-        .simulation_account_encoding_arg = null,
-        .simulation_min_context_slot_arg = null,
-        .supply_exclude_non_circulating_accounts_list = false,
-        .token_program_id_arg = null,
-        .transfer_recent_blockhash_arg = null,
-        .transaction_details_arg = null,
-        .vote_pubkey_arg = null,
-        .signature_statuses = .{},
-        .multiple_accounts = .{},
-        .simulation_accounts = .{},
-        .idl_account_bindings = .{},
-        .idl_remaining_accounts = .{},
-        .commitment = null,
-        .status_timeout_ms = 30_000,
-        .status_poll_ms = 500,
-        .timeout_ms_overridden = false,
-        .poll_ms_overridden = false,
-        .search_transaction_history = false,
-        .send_skip_preflight = false,
-        .simulate_inner_instructions = false,
-        .simulate_replace_recent_blockhash = false,
-        .simulate_sig_verify = false,
-        .vote_keep_unstaked_delinquents = false,
-        .send_max_retries = null,
-        .send_preflight_commitment = null,
+fn requireZeroOrOne(values: anytype) !?std.meta.Child(@TypeOf(values)) {
+    return switch (values.len) {
+        0 => null,
+        1 => values[0],
+        else => error.InvalidCli,
     };
-
-    var index: usize = 0;
-    while (index < args.len) {
-        const arg = args[index];
-        index += 1;
-
-        if (std.mem.eql(u8, arg, "--rpc")) {
-            if (index >= args.len) return error.InvalidCli;
-            parsed.rpc_url = args[index];
-            parsed.rpc_url_overridden = true;
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-            parsed.show_usage = true;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--commitment")) {
-            if (index >= args.len) return error.InvalidCli;
-            parsed.commitment = parseCommitment(args[index]) orelse return error.InvalidCli;
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--timeout-ms")) {
-            if (index >= args.len) return error.InvalidCli;
-            parsed.status_timeout_ms = std.fmt.parseInt(u64, args[index], 10) catch return error.InvalidCli;
-            parsed.timeout_ms_overridden = true;
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--poll-ms")) {
-            if (index >= args.len) return error.InvalidCli;
-            parsed.status_poll_ms = std.fmt.parseInt(u64, args[index], 10) catch return error.InvalidCli;
-            parsed.poll_ms_overridden = true;
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--skip-preflight")) {
-            parsed.send_skip_preflight = true;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--search-transaction-history")) {
-            parsed.search_transaction_history = true;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--sig-verify")) {
-            parsed.simulate_sig_verify = true;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--replace-recent-blockhash")) {
-            parsed.simulate_replace_recent_blockhash = true;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--inner-instructions")) {
-            parsed.simulate_inner_instructions = true;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--keep-unstaked-delinquents")) {
-            parsed.vote_keep_unstaked_delinquents = true;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--exclude-non-circulating-accounts-list")) {
-            parsed.supply_exclude_non_circulating_accounts_list = true;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--max-retries")) {
-            if (index >= args.len) return error.InvalidCli;
-            parsed.send_max_retries = std.fmt.parseInt(u32, args[index], 10) catch return error.InvalidCli;
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--min-context-slot")) {
-            if (index >= args.len or parsed.min_context_slot_arg != null) return error.InvalidCli;
-            parsed.min_context_slot_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--epoch")) {
-            if (index >= args.len or parsed.epoch_arg != null) return error.InvalidCli;
-            parsed.epoch_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--encoding")) {
-            if (index >= args.len or parsed.encoding_arg != null) return error.InvalidCli;
-            parsed.encoding_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--max-supported-transaction-version")) {
-            if (index >= args.len or parsed.max_supported_transaction_version_arg != null) return error.InvalidCli;
-            parsed.max_supported_transaction_version_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--transaction-details")) {
-            if (index >= args.len or parsed.transaction_details_arg != null) return error.InvalidCli;
-            parsed.transaction_details_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--rewards")) {
-            if (index >= args.len or parsed.rewards_arg != null) return error.InvalidCli;
-            parsed.rewards_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--vote-pubkey")) {
-            if (index >= args.len or parsed.vote_pubkey_arg != null) return error.InvalidCli;
-            parsed.vote_pubkey_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--delinquent-slot-distance")) {
-            if (index >= args.len or parsed.delinquent_slot_distance_arg != null) return error.InvalidCli;
-            parsed.delinquent_slot_distance_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--largest-filter")) {
-            if (index >= args.len or parsed.largest_filter_arg != null) return error.InvalidCli;
-            parsed.largest_filter_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--block-production-identity")) {
-            if (index >= args.len or parsed.block_production_identity_arg != null) return error.InvalidCli;
-            parsed.block_production_identity_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--range-first-slot")) {
-            if (index >= args.len or parsed.block_production_first_slot_arg != null) return error.InvalidCli;
-            parsed.block_production_first_slot_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--range-last-slot")) {
-            if (index >= args.len or parsed.block_production_last_slot_arg != null) return error.InvalidCli;
-            parsed.block_production_last_slot_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--program-data-size")) {
-            if (index >= args.len or parsed.program_data_size_arg != null) return error.InvalidCli;
-            parsed.program_data_size_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--program-memcmp-offset")) {
-            if (index >= args.len or parsed.program_memcmp_offset_arg != null) return error.InvalidCli;
-            parsed.program_memcmp_offset_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--program-memcmp-bytes")) {
-            if (index >= args.len or parsed.program_memcmp_bytes_arg != null) return error.InvalidCli;
-            parsed.program_memcmp_bytes_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--program-data-slice-offset")) {
-            if (index >= args.len or parsed.program_data_slice_offset_arg != null) return error.InvalidCli;
-            parsed.program_data_slice_offset_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--program-data-slice-length")) {
-            if (index >= args.len or parsed.program_data_slice_length_arg != null) return error.InvalidCli;
-            parsed.program_data_slice_length_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--with-context")) {
-            parsed.program_with_context = true;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--sort-results")) {
-            parsed.program_sort_results = true;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--account-encoding")) {
-            if (index >= args.len or parsed.account_encoding_arg != null) return error.InvalidCli;
-            parsed.account_encoding_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--account-data-slice-offset")) {
-            if (index >= args.len or parsed.account_data_slice_offset_arg != null) return error.InvalidCli;
-            parsed.account_data_slice_offset_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--account-data-slice-length")) {
-            if (index >= args.len or parsed.account_data_slice_length_arg != null) return error.InvalidCli;
-            parsed.account_data_slice_length_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--simulation-account")) {
-            if (index >= args.len) return error.InvalidCli;
-            try parsed.simulation_accounts.append(allocator, args[index]);
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--simulation-account-encoding")) {
-            if (index >= args.len or parsed.simulation_account_encoding_arg != null) return error.InvalidCli;
-            parsed.simulation_account_encoding_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--simulation-min-context-slot")) {
-            if (index >= args.len or parsed.simulation_min_context_slot_arg != null) return error.InvalidCli;
-            parsed.simulation_min_context_slot_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--preflight-commitment")) {
-            if (index >= args.len) return error.InvalidCli;
-            parsed.send_preflight_commitment = parseCommitment(args[index]) orelse return error.InvalidCli;
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--airdrop-recent-blockhash")) {
-            if (index >= args.len or parsed.airdrop_recent_blockhash_arg != null) return error.InvalidCli;
-            parsed.airdrop_recent_blockhash_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--recent-blockhash")) {
-            if (index >= args.len or parsed.recent_blockhash_arg != null) return error.InvalidCli;
-            parsed.recent_blockhash_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--sender-keypair")) {
-            if (index >= args.len or parsed.sender_keypair_path_arg != null) return error.InvalidCli;
-            parsed.sender_keypair_path_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--sender-secret-key")) {
-            if (index >= args.len or parsed.sender_secret_key_arg != null or parsed.sender_keypair_path_arg != null) return error.InvalidCli;
-            parsed.sender_secret_key_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--additional-signer-secret-key")) {
-            if (index >= args.len) return error.InvalidCli;
-            try parsed.program_invoke_additional_signer_secret_keys.append(allocator, args[index]);
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--program-id")) {
-            if (index >= args.len or parsed.idl_program_id_arg != null) return error.InvalidCli;
-            parsed.idl_program_id_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--idl-args-json")) {
-            if (index >= args.len or parsed.idl_args_json_arg != null) return error.InvalidCli;
-            parsed.idl_args_json_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--accounts-json")) {
-            if (index >= args.len or parsed.idl_accounts_json_arg != null) return error.InvalidCli;
-            parsed.idl_accounts_json_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--account")) {
-            if (index >= args.len) return error.InvalidCli;
-            try parsed.idl_account_bindings.append(allocator, args[index]);
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--remaining-account")) {
-            if (index >= args.len) return error.InvalidCli;
-            try parsed.idl_remaining_accounts.append(allocator, args[index]);
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--remaining-accounts-json")) {
-            if (index >= args.len or parsed.idl_remaining_accounts_json_arg != null) return error.InvalidCli;
-            parsed.idl_remaining_accounts_json_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--nonce-account")) {
-            if (index >= args.len or parsed.program_invoke_nonce_account_arg != null) return error.InvalidCli;
-            parsed.program_invoke_nonce_account_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--nonce-authority-keypair")) {
-            if (index >= args.len or parsed.program_invoke_nonce_authority_keypair_path_arg != null) return error.InvalidCli;
-            parsed.program_invoke_nonce_authority_keypair_path_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--transfer-recent-blockhash")) {
-            if (index >= args.len or parsed.transfer_recent_blockhash_arg != null) return error.InvalidCli;
-            parsed.transfer_recent_blockhash_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--before")) {
-            if (index >= args.len or parsed.signatures_for_address_before_arg != null) return error.InvalidCli;
-            parsed.signatures_for_address_before_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--until")) {
-            if (index >= args.len or parsed.signatures_for_address_until_arg != null) return error.InvalidCli;
-            parsed.signatures_for_address_until_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--limit")) {
-            if (index >= args.len or parsed.signatures_for_address_limit_arg != null) return error.InvalidCli;
-            parsed.signatures_for_address_limit_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--mint")) {
-            if (index >= args.len or parsed.mint_arg != null) return error.InvalidCli;
-            parsed.mint_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "--token-program-id")) {
-            if (index >= args.len or parsed.token_program_id_arg != null) return error.InvalidCli;
-            parsed.token_program_id_arg = args[index];
-            index += 1;
-            continue;
-        }
-
-        if (!parsed.has_command) {
-            if (std.mem.eql(u8, arg, "latest-blockhash")) {
-                parsed.command = .latest_blockhash;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "new-latest-blockhash")) {
-                parsed.command = .new_latest_blockhash;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "status")) {
-                parsed.command = .status;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "confirm-transaction")) {
-                parsed.command = .confirm_transaction;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "signature-status")) {
-                parsed.command = .signature_status;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "signature-statuses")) {
-                parsed.command = .signature_statuses;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "send-transaction")) {
-                parsed.command = .send_transaction;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "send-transaction-and-confirm")) {
-                parsed.command = .send_transaction_and_confirm;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "send-instructions")) {
-                parsed.command = .send_instructions;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "send-instructions-and-confirm")) {
-                parsed.command = .send_instructions_and_confirm;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "send-versioned-instructions")) {
-                parsed.command = .send_versioned_instructions;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "send-versioned-instructions-and-confirm")) {
-                parsed.command = .send_versioned_instructions_and_confirm;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "send-program-invoke")) {
-                parsed.command = .send_program_invoke;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "send-program-invoke-and-confirm")) {
-                parsed.command = .send_program_invoke_and_confirm;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "send-versioned-program-invoke")) {
-                parsed.command = .send_versioned_program_invoke;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "send-versioned-program-invoke-and-confirm")) {
-                parsed.command = .send_versioned_program_invoke_and_confirm;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "send-idl-invoke")) {
-                parsed.command = .send_idl_invoke;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "send-idl-invoke-and-confirm")) {
-                parsed.command = .send_idl_invoke_and_confirm;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "send-versioned-idl-invoke")) {
-                parsed.command = .send_versioned_idl_invoke;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "send-versioned-idl-invoke-and-confirm")) {
-                parsed.command = .send_versioned_idl_invoke_and_confirm;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "transfer")) {
-                parsed.command = .transfer;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "simulate-transaction")) {
-                parsed.command = .simulate_transaction;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "simulate-instructions")) {
-                parsed.command = .simulate_instructions;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "simulate-versioned-instructions")) {
-                parsed.command = .simulate_versioned_instructions;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "simulate-program-invoke")) {
-                parsed.command = .simulate_program_invoke;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "simulate-versioned-program-invoke")) {
-                parsed.command = .simulate_versioned_program_invoke;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "simulate-idl-invoke")) {
-                parsed.command = .simulate_idl_invoke;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "simulate-versioned-idl-invoke")) {
-                parsed.command = .simulate_versioned_idl_invoke;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "raw-rpc")) {
-                parsed.command = .raw_rpc;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "slot")) {
-                parsed.command = .slot;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "block-height")) {
-                parsed.command = .block_height;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "transaction-count")) {
-                parsed.command = .transaction_count;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "transaction")) {
-                parsed.command = .transaction;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "balance")) {
-                parsed.command = .balance;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "poll-balance")) {
-                parsed.command = .poll_balance;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "wait-for-balance")) {
-                parsed.command = .wait_for_balance;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "account-data")) {
-                parsed.command = .account_data;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "request-airdrop")) {
-                parsed.command = .request_airdrop;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "account-info")) {
-                parsed.command = .account_info;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "ui-account")) {
-                parsed.command = .ui_account;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "multiple-accounts")) {
-                parsed.command = .multiple_accounts;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "multiple-ui-accounts")) {
-                parsed.command = .multiple_ui_accounts;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "program-accounts")) {
-                parsed.command = .program_accounts;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "program-ui-accounts")) {
-                parsed.command = .program_ui_accounts;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "minimum-rent-exemption")) {
-                parsed.command = .minimum_rent_exemption;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "version")) {
-                parsed.command = .version;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "epoch-info")) {
-                parsed.command = .epoch_info;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "health")) {
-                parsed.command = .health;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "genesis-hash")) {
-                parsed.command = .genesis_hash;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "inflation-reward")) {
-                parsed.command = .inflation_reward;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "supply")) {
-                parsed.command = .supply;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "epoch-schedule")) {
-                parsed.command = .epoch_schedule;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "inflation-rate")) {
-                parsed.command = .inflation_rate;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "block-time")) {
-                parsed.command = .block_time;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "block-commitment")) {
-                parsed.command = .block_commitment;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "block")) {
-                parsed.command = .block;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "fee-for-message")) {
-                parsed.command = .fee_for_message;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "recent-performance-samples")) {
-                parsed.command = .recent_performance_samples;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "blocks")) {
-                parsed.command = .blocks;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "blocks-with-limit")) {
-                parsed.command = .blocks_with_limit;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "poll-for-signature-confirmation")) {
-                parsed.command = .poll_for_signature_confirmation;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "blocks-since-signature-confirmation")) {
-                parsed.command = .blocks_since_signature_confirmation;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "slot-leader")) {
-                parsed.command = .slot_leader;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "slot-leaders")) {
-                parsed.command = .slot_leaders;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "recent-prioritization-fees")) {
-                parsed.command = .recent_prioritization_fees;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "cluster-nodes")) {
-                parsed.command = .cluster_nodes;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "leader-schedule")) {
-                parsed.command = .leader_schedule;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "identity")) {
-                parsed.command = .identity;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "vote-accounts")) {
-                parsed.command = .vote_accounts;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "block-production")) {
-                parsed.command = .block_production;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "inflation-governor")) {
-                parsed.command = .inflation_governor;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "minimum-ledger-slot")) {
-                parsed.command = .minimum_ledger_slot;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "max-retransmit-slot")) {
-                parsed.command = .max_retransmit_slot;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "max-shred-insert-slot")) {
-                parsed.command = .max_shred_insert_slot;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "highest-snapshot-slot")) {
-                parsed.command = .highest_snapshot_slot;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "first-available-block")) {
-                parsed.command = .first_available_block;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "blockhash-valid")) {
-                parsed.command = .blockhash_valid;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "feature-activation-slot")) {
-                parsed.command = .feature_activation_slot;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "signatures-for-address")) {
-                parsed.command = .signatures_for_address;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "stake-minimum-delegation")) {
-                parsed.command = .stake_minimum_delegation;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "largest-accounts")) {
-                parsed.command = .largest_accounts;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "token-account-balance")) {
-                parsed.command = .token_account_balance;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "token-account")) {
-                parsed.command = .token_account;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "token-supply")) {
-                parsed.command = .token_supply;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "token-largest-accounts")) {
-                parsed.command = .token_largest_accounts;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "token-accounts-by-owner")) {
-                parsed.command = .token_accounts_by_owner;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "token-accounts-by-delegate")) {
-                parsed.command = .token_accounts_by_delegate;
-                parsed.has_command = true;
-                continue;
-            }
-
-            if (std.mem.eql(u8, arg, "help")) {
-                parsed.show_usage = true;
-                parsed.has_command = true;
-                continue;
-            }
-        }
-
+}
+
+fn appendStringArgs(allocator: Allocator, dest: *std.ArrayListUnmanaged([]const u8), values: []const []const u8) !void {
+    for (values) |value| {
+        dest.append(allocator, value) catch return error.InvalidCli;
+    }
+}
+
+fn commandFromArg(arg: []const u8) ?Command {
+    var normalized: [128]u8 = undefined;
+    if (arg.len == 0 or arg.len > normalized.len) return null;
+
+    for (arg, 0..) |char, index| {
+        normalized[index] = if (char == '-') '_' else char;
+    }
+
+    return std.meta.stringToEnum(Command, normalized[0..arg.len]);
+}
+
+fn parseCommandPositionals(allocator: Allocator, parsed: *ParsedArgs, positionals: []const []const u8) !void {
+    for (positionals) |arg| {
         switch (parsed.command) {
             .latest_blockhash, .slot, .block_height, .transaction_count, .version, .epoch_info, .health, .genesis_hash, .supply, .epoch_schedule, .inflation_rate, .highest_snapshot_slot, .first_available_block, .identity, .cluster_nodes, .vote_accounts, .block_production, .inflation_governor, .minimum_ledger_slot, .max_retransmit_slot, .max_shred_insert_slot, .largest_accounts, .slot_leader => return error.InvalidCli,
 
@@ -1670,6 +750,206 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
                 return error.InvalidCli;
             },
         }
+    }
+}
+
+pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs {
+    comptime {
+        @setEvalBranchQuota(20_000);
+    }
+
+    var parsed = ParsedArgs{
+        .command = .latest_blockhash,
+        .has_command = false,
+        .show_usage = false,
+        .rpc_url = default_solana_rpc_url,
+        .rpc_url_overridden = false,
+        .signature = null,
+        .account = null,
+        .expected_balance_arg = null,
+        .airdrop_recent_blockhash_arg = null,
+        .recent_blockhash_arg = null,
+        .account_data_slice_length_arg = null,
+        .account_data_slice_offset_arg = null,
+        .account_encoding_arg = null,
+        .blockhash_arg = null,
+        .block_production_identity_arg = null,
+        .block_production_first_slot_arg = null,
+        .block_production_last_slot_arg = null,
+        .confirmation_blocks_arg = null,
+        .delinquent_slot_distance_arg = null,
+        .encoding_arg = null,
+        .epoch_arg = null,
+        .feature_key_arg = null,
+        .largest_filter_arg = null,
+        .max_supported_transaction_version_arg = null,
+        .min_context_slot_arg = null,
+        .program_data_size_arg = null,
+        .program_data_slice_length_arg = null,
+        .program_data_slice_offset_arg = null,
+        .program_memcmp_bytes_arg = null,
+        .program_memcmp_offset_arg = null,
+        .program_sort_results = false,
+        .program_with_context = false,
+        .signatures_for_address_arg = null,
+        .signatures_for_address_before_arg = null,
+        .signatures_for_address_until_arg = null,
+        .signatures_for_address_limit_arg = null,
+        .rewards_arg = null,
+        .slot_arg = null,
+        .blocks_end_slot_arg = null,
+        .blocks_limit_arg = null,
+        .message_arg = null,
+        .instructions_spec_arg = null,
+        .program_invoke_program_id_arg = null,
+        .program_invoke_accounts_arg = null,
+        .program_invoke_data_arg = null,
+        .program_invoke_data_encoding_arg = null,
+        .program_invoke_signer_keypair_paths_arg = null,
+        .program_invoke_additional_signer_secret_keys = .{},
+        .program_invoke_lookup_tables_arg = null,
+        .program_invoke_nonce_account_arg = null,
+        .program_invoke_nonce_authority_keypair_path_arg = null,
+        .idl_program_id_arg = null,
+        .idl_spec_arg = null,
+        .idl_instruction_arg = null,
+        .idl_args_json_arg = null,
+        .idl_accounts_json_arg = null,
+        .idl_remaining_accounts_json_arg = null,
+        .raw_rpc_method_arg = null,
+        .raw_rpc_params_arg = null,
+        .slot_leaders_limit_arg = null,
+        .performance_limit_arg = null,
+        .leader_schedule_slot_arg = null,
+        .leader_schedule_identity_arg = null,
+        .lamports_arg = null,
+        .default_sender_keypair_path = null,
+        .mint_arg = null,
+        .rent_bytes_arg = null,
+        .sender_keypair_path_arg = null,
+        .sender_secret_key_arg = null,
+        .signed_tx_arg = null,
+        .simulation_account_encoding_arg = null,
+        .simulation_min_context_slot_arg = null,
+        .supply_exclude_non_circulating_accounts_list = false,
+        .token_program_id_arg = null,
+        .transfer_recent_blockhash_arg = null,
+        .transaction_details_arg = null,
+        .vote_pubkey_arg = null,
+        .signature_statuses = .{},
+        .multiple_accounts = .{},
+        .simulation_accounts = .{},
+        .idl_account_bindings = .{},
+        .idl_remaining_accounts = .{},
+        .commitment = null,
+        .status_timeout_ms = 30_000,
+        .status_poll_ms = 500,
+        .timeout_ms_overridden = false,
+        .poll_ms_overridden = false,
+        .search_transaction_history = false,
+        .send_skip_preflight = false,
+        .simulate_inner_instructions = false,
+        .simulate_replace_recent_blockhash = false,
+        .simulate_sig_verify = false,
+        .vote_keep_unstaked_delinquents = false,
+        .send_max_retries = null,
+        .send_preflight_commitment = null,
+    };
+
+    var iter = clap.args.SliceIterator{ .args = args };
+    var result = clap.parseEx(clap.Help, &cli_params, cli_parsers, &iter, .{
+        .allocator = allocator,
+    }) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return error.InvalidCli,
+    };
+    defer result.deinit();
+
+    parsed.show_usage = @field(result.args, "help") != 0;
+    parsed.send_skip_preflight = @field(result.args, "skip-preflight") != 0;
+    parsed.search_transaction_history = @field(result.args, "search-transaction-history") != 0;
+    parsed.simulate_sig_verify = @field(result.args, "sig-verify") != 0;
+    parsed.simulate_replace_recent_blockhash = @field(result.args, "replace-recent-blockhash") != 0;
+    parsed.simulate_inner_instructions = @field(result.args, "inner-instructions") != 0;
+    parsed.vote_keep_unstaked_delinquents = @field(result.args, "keep-unstaked-delinquents") != 0;
+    parsed.supply_exclude_non_circulating_accounts_list = @field(result.args, "exclude-non-circulating-accounts-list") != 0;
+    parsed.program_with_context = @field(result.args, "with-context") != 0;
+    parsed.program_sort_results = @field(result.args, "sort-results") != 0;
+
+    if (try requireZeroOrOne(@field(result.args, "rpc"))) |value| {
+        parsed.rpc_url = value;
+        parsed.rpc_url_overridden = true;
+    }
+    if (try requireZeroOrOne(@field(result.args, "commitment"))) |value| parsed.commitment = value;
+    if (try requireZeroOrOne(@field(result.args, "timeout-ms"))) |value| {
+        parsed.status_timeout_ms = value;
+        parsed.timeout_ms_overridden = true;
+    }
+    if (try requireZeroOrOne(@field(result.args, "poll-ms"))) |value| {
+        parsed.status_poll_ms = value;
+        parsed.poll_ms_overridden = true;
+    }
+    if (try requireZeroOrOne(@field(result.args, "max-retries"))) |value| parsed.send_max_retries = value;
+    if (try requireZeroOrOne(@field(result.args, "min-context-slot"))) |value| parsed.min_context_slot_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "epoch"))) |value| parsed.epoch_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "encoding"))) |value| parsed.encoding_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "max-supported-transaction-version"))) |value| parsed.max_supported_transaction_version_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "transaction-details"))) |value| parsed.transaction_details_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "rewards"))) |value| parsed.rewards_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "vote-pubkey"))) |value| parsed.vote_pubkey_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "delinquent-slot-distance"))) |value| parsed.delinquent_slot_distance_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "largest-filter"))) |value| parsed.largest_filter_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "block-production-identity"))) |value| parsed.block_production_identity_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "range-first-slot"))) |value| parsed.block_production_first_slot_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "range-last-slot"))) |value| parsed.block_production_last_slot_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "program-data-size"))) |value| parsed.program_data_size_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "program-memcmp-offset"))) |value| parsed.program_memcmp_offset_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "program-memcmp-bytes"))) |value| parsed.program_memcmp_bytes_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "program-data-slice-offset"))) |value| parsed.program_data_slice_offset_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "program-data-slice-length"))) |value| parsed.program_data_slice_length_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "account-encoding"))) |value| parsed.account_encoding_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "account-data-slice-offset"))) |value| parsed.account_data_slice_offset_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "account-data-slice-length"))) |value| parsed.account_data_slice_length_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "simulation-account-encoding"))) |value| parsed.simulation_account_encoding_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "simulation-min-context-slot"))) |value| parsed.simulation_min_context_slot_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "preflight-commitment"))) |value| parsed.send_preflight_commitment = value;
+    if (try requireZeroOrOne(@field(result.args, "airdrop-recent-blockhash"))) |value| parsed.airdrop_recent_blockhash_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "recent-blockhash"))) |value| parsed.recent_blockhash_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "sender-keypair"))) |value| parsed.sender_keypair_path_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "sender-secret-key"))) |value| parsed.sender_secret_key_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "program-id"))) |value| parsed.idl_program_id_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "idl-args-json"))) |value| parsed.idl_args_json_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "accounts-json"))) |value| parsed.idl_accounts_json_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "remaining-accounts-json"))) |value| parsed.idl_remaining_accounts_json_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "nonce-account"))) |value| parsed.program_invoke_nonce_account_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "nonce-authority-keypair"))) |value| parsed.program_invoke_nonce_authority_keypair_path_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "transfer-recent-blockhash"))) |value| parsed.transfer_recent_blockhash_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "before"))) |value| parsed.signatures_for_address_before_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "until"))) |value| parsed.signatures_for_address_until_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "limit"))) |value| parsed.signatures_for_address_limit_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "mint"))) |value| parsed.mint_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "token-program-id"))) |value| parsed.token_program_id_arg = value;
+
+    if (parsed.sender_keypair_path_arg != null and parsed.sender_secret_key_arg != null) {
+        return error.InvalidCli;
+    }
+
+    try appendStringArgs(allocator, &parsed.simulation_accounts, @field(result.args, "simulation-account"));
+    try appendStringArgs(allocator, &parsed.program_invoke_additional_signer_secret_keys, @field(result.args, "additional-signer-secret-key"));
+    try appendStringArgs(allocator, &parsed.idl_account_bindings, @field(result.args, "account"));
+    try appendStringArgs(allocator, &parsed.idl_remaining_accounts, @field(result.args, "remaining-account"));
+
+    const positionals = result.positionals[0];
+    if (positionals.len != 0) {
+        if (std.mem.eql(u8, positionals[0], "help")) {
+            parsed.show_usage = true;
+            parsed.has_command = true;
+        } else {
+            parsed.command = commandFromArg(positionals[0]) orelse return error.InvalidCli;
+            parsed.has_command = true;
+        }
+
+        try parseCommandPositionals(allocator, &parsed, positionals[1..]);
     }
 
     if (parsed.command == .transfer and

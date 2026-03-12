@@ -32,6 +32,9 @@
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
     .dependencies = .{
+        .clap = .{
+            .path = "vendor/zig-clap",
+        },
         .websocket = .{
             .path = "vendor/websocket",
         },
@@ -40,6 +43,7 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        "vendor",
         // For example...
         //"LICENSE",
         //"README.md",
