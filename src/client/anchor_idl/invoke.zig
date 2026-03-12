@@ -1,5 +1,6 @@
 const std = @import("std");
 const sdk = @import("../sdk.zig");
+const rpc_types = @import("../rpc_types.zig");
 const idl_types = @import("./types.zig");
 const idl_encode = @import("./encode.zig");
 
@@ -1455,6 +1456,22 @@ pub const BuildVersionedTransactionOptions = struct {
     instruction_options: BuildInstructionOptions = .{},
 };
 
+pub const SendOptions = struct {
+    transaction_options: ?rpc_types.SendTransactionOptions = null,
+};
+
+pub const SimulateOptions = struct {
+    transaction_options: ?rpc_types.SimulateTransactionOptions = null,
+};
+
+pub const SendAndConfirmOptions = struct {
+    transaction_options: ?rpc_types.SendTransactionOptions = null,
+    commitment: ?rpc_types.Commitment = null,
+    search_transaction_history: bool = true,
+    timeout_ms: u64 = sdk.poll_for_signature_confirmation_timeout_ms,
+    poll_interval_ms: u64 = sdk.signature_poll_interval_ms,
+};
+
 pub fn buildOwnedLegacyMessage(
     allocator: Allocator,
     idl: *const idl_types.Idl,
@@ -1637,4 +1654,186 @@ pub fn buildVersionedTransactionBase64FromJson(
     defer parsed_idl.deinit();
 
     return try buildVersionedTransactionBase64(allocator, &parsed_idl.value, instruction_name, options);
+}
+
+pub fn sendLegacyTransaction(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionOptions,
+    options: SendOptions,
+) ![]const u8 {
+    var signed = try buildSignedLegacyTransaction(allocator, idl, instruction_name, build_options);
+    defer signed.deinit(allocator);
+
+    return try rpc.sendTransactionTyped(signed, options.transaction_options);
+}
+
+pub fn sendLegacyTransactionFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionOptions,
+    options: SendOptions,
+) ![]const u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try sendLegacyTransaction(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
+}
+
+pub fn simulateLegacyTransaction(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionOptions,
+    options: SimulateOptions,
+) !rpc_types.SimulatedTransaction {
+    var signed = try buildSignedLegacyTransaction(allocator, idl, instruction_name, build_options);
+    defer signed.deinit(allocator);
+
+    return try rpc.simulateTransactionTyped(signed, options.transaction_options);
+}
+
+pub fn simulateLegacyTransactionFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionOptions,
+    options: SimulateOptions,
+) !rpc_types.SimulatedTransaction {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try simulateLegacyTransaction(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
+}
+
+pub fn sendAndConfirmLegacyTransaction(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    var signed = try buildSignedLegacyTransaction(allocator, idl, instruction_name, build_options);
+    defer signed.deinit(allocator);
+
+    return try rpc.sendTransactionAndConfirmTyped(
+        signed,
+        options.transaction_options,
+        options.commitment,
+        options.search_transaction_history,
+        options.timeout_ms,
+        options.poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmLegacyTransactionFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildLegacyTransactionOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try sendAndConfirmLegacyTransaction(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
+}
+
+pub fn sendVersionedTransaction(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionOptions,
+    options: SendOptions,
+) ![]const u8 {
+    var signed = try buildSignedVersionedTransaction(allocator, idl, instruction_name, build_options);
+    defer signed.deinit(allocator);
+
+    return try rpc.sendVersionedTransactionTyped(signed, options.transaction_options);
+}
+
+pub fn sendVersionedTransactionFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionOptions,
+    options: SendOptions,
+) ![]const u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try sendVersionedTransaction(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
+}
+
+pub fn simulateVersionedTransaction(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionOptions,
+    options: SimulateOptions,
+) !rpc_types.SimulatedTransaction {
+    var signed = try buildSignedVersionedTransaction(allocator, idl, instruction_name, build_options);
+    defer signed.deinit(allocator);
+
+    return try rpc.simulateVersionedTransactionTyped(signed, options.transaction_options);
+}
+
+pub fn simulateVersionedTransactionFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionOptions,
+    options: SimulateOptions,
+) !rpc_types.SimulatedTransaction {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try simulateVersionedTransaction(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
+}
+
+pub fn sendAndConfirmVersionedTransaction(
+    rpc: anytype,
+    allocator: Allocator,
+    idl: *const idl_types.Idl,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    var signed = try buildSignedVersionedTransaction(allocator, idl, instruction_name, build_options);
+    defer signed.deinit(allocator);
+
+    return try rpc.sendAndConfirmVersionedTransactionTyped(
+        signed,
+        options.transaction_options,
+        options.commitment,
+        options.search_transaction_history,
+        options.timeout_ms,
+        options.poll_interval_ms,
+    );
+}
+
+pub fn sendAndConfirmVersionedTransactionFromJson(
+    rpc: anytype,
+    allocator: Allocator,
+    idl_json_source: []const u8,
+    instruction_name: []const u8,
+    build_options: BuildVersionedTransactionOptions,
+    options: SendAndConfirmOptions,
+) ![]const u8 {
+    const parsed_idl = try idl_types.parseJson(allocator, idl_json_source);
+    defer parsed_idl.deinit();
+
+    return try sendAndConfirmVersionedTransaction(rpc, allocator, &parsed_idl.value, instruction_name, build_options, options);
 }
