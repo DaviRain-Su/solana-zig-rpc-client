@@ -11569,6 +11569,92 @@ test "runCommand simulate-versioned-idl-invoke accepts sender-secret-key" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: versioned-idl-secret-ok") != null);
 }
 
+test "runCommand simulate-versioned-idl-invoke accepts additional-signer-secret-key" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var latest_blockhash_bytes: [32]u8 = undefined;
+    for (&latest_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 200);
+    const latest_blockhash = try client.encodeBase58(allocator, &latest_blockhash_bytes);
+    defer allocator.free(latest_blockhash);
+    try sender_context.sender.pushLatestBlockhashResponse(
+        60,
+        latest_blockhash,
+        124,
+    );
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":60},"value":{"accounts":[],"err":null,"fee":212,"unitsConsumed":23,"logs":["Program log: versioned-idl-extra-signer-ok"]}}
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://simulate-versioned-idl-invoke-extra-signer-secret" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{75} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{76} ** 32);
+    const extra_signer_secret_key = extra_signer_raw.secret_key.toBytes();
+    const extra_signer_secret_key_base58 = try client.encodeBase58(allocator, &extra_signer_secret_key);
+    defer allocator.free(extra_signer_secret_key_base58);
+    const extra_signer_pubkey_bytes = extra_signer_raw.public_key.toBytes();
+    const extra_signer_pubkey_base58 = try client.encodeBase58(allocator, &extra_signer_pubkey_bytes);
+    defer allocator.free(extra_signer_pubkey_base58);
+
+    const state_pubkey = client.Pubkey.fromBytes(.{34} ** 32);
+    const state_pubkey_base58 = try state_pubkey.toBase58(allocator);
+    defer allocator.free(state_pubkey_base58);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"setFlag","discriminator":[9,8,7,6,5,4,3,2],"accounts":[{"name":"state","writable":true},{"name":"authority","signer":true}],"args":[{"name":"enabled","type":"bool"}]}]}
+    ;
+
+    const state_binding = try std.fmt.allocPrint(allocator, "state={s}", .{state_pubkey_base58});
+    defer allocator.free(state_binding);
+    const authority_binding = try std.fmt.allocPrint(allocator, "authority={s}", .{extra_signer_pubkey_base58});
+    defer allocator.free(authority_binding);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-versioned-idl-invoke",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--additional-signer-secret-key",
+        extra_signer_secret_key_base58,
+        "--idl-args-json",
+        "{\"enabled\":true}",
+        "--account",
+        state_binding,
+        "--account",
+        authority_binding,
+        idl_json,
+        "setFlag",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: versioned-idl-extra-signer-ok") != null);
+}
+
 test "runCommand simulate-idl-invoke encodes scalar anchor args" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
@@ -19962,6 +20048,287 @@ test "runCommand send-idl-invoke accepts additional-signer-secret-key" {
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature: SigIdlExtraSig11111111111111111111111111111111111111111111111111111111111111\n",
+        captured,
+    );
+}
+
+test "runCommand send-idl-invoke-and-confirm accepts additional-signer-secret-key" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushSendAndSignatureStatusPollFlow(
+        "SigIdlConfirm3333333333333333333333333333333333333333333333333333333333333333",
+        &.{
+            .{ .context_slot = 155, .status = .{
+                .slot = 155,
+                .confirmations = 1,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-idl-invoke-and-confirm-extra-signer-secret" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{60} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{61} ** 32);
+    const extra_signer_secret_key = extra_signer_raw.secret_key.toBytes();
+    const extra_signer_secret_key_base58 = try client.encodeBase58(allocator, &extra_signer_secret_key);
+    defer allocator.free(extra_signer_secret_key_base58);
+    const extra_signer_pubkey_bytes = extra_signer_raw.public_key.toBytes();
+    const extra_signer_pubkey_base58 = try client.encodeBase58(allocator, &extra_signer_pubkey_bytes);
+    defer allocator.free(extra_signer_pubkey_base58);
+
+    const state_pubkey = client.Pubkey.fromBytes(.{31} ** 32);
+    const state_pubkey_base58 = try state_pubkey.toBase58(allocator);
+    defer allocator.free(state_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 185);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"setFlag","discriminator":[9,8,7,6,5,4,3,2],"accounts":[{"name":"state","writable":true},{"name":"authority","signer":true}],"args":[{"name":"enabled","type":"bool"}]}]}
+    ;
+
+    const state_binding = try std.fmt.allocPrint(allocator, "state={s}", .{state_pubkey_base58});
+    defer allocator.free(state_binding);
+    const authority_binding = try std.fmt.allocPrint(allocator, "authority={s}", .{extra_signer_pubkey_base58});
+    defer allocator.free(authority_binding);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-idl-invoke-and-confirm",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--additional-signer-secret-key",
+        extra_signer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--commitment",
+        "confirmed",
+        "--idl-args-json",
+        "{\"enabled\":true}",
+        "--account",
+        state_binding,
+        "--account",
+        authority_binding,
+        idl_json,
+        "setFlag",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "confirmed signature: SigIdlConfirm3333333333333333333333333333333333333333333333333333333333333333\n",
+        captured,
+    );
+}
+
+test "runCommand send-versioned-idl-invoke accepts additional-signer-secret-key" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        "\"SigVerIdlExtraSig11111111111111111111111111111111111111111111111111111111111111\"",
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-versioned-idl-invoke-extra-signer-secret" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{71} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{72} ** 32);
+    const extra_signer_secret_key = extra_signer_raw.secret_key.toBytes();
+    const extra_signer_secret_key_base58 = try client.encodeBase58(allocator, &extra_signer_secret_key);
+    defer allocator.free(extra_signer_secret_key_base58);
+    const extra_signer_pubkey_bytes = extra_signer_raw.public_key.toBytes();
+    const extra_signer_pubkey_base58 = try client.encodeBase58(allocator, &extra_signer_pubkey_bytes);
+    defer allocator.free(extra_signer_pubkey_base58);
+
+    const state_pubkey = client.Pubkey.fromBytes(.{32} ** 32);
+    const state_pubkey_base58 = try state_pubkey.toBase58(allocator);
+    defer allocator.free(state_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 186);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"setFlag","discriminator":[9,8,7,6,5,4,3,2],"accounts":[{"name":"state","writable":true},{"name":"authority","signer":true}],"args":[{"name":"enabled","type":"bool"}]}]}
+    ;
+
+    const state_binding = try std.fmt.allocPrint(allocator, "state={s}", .{state_pubkey_base58});
+    defer allocator.free(state_binding);
+    const authority_binding = try std.fmt.allocPrint(allocator, "authority={s}", .{extra_signer_pubkey_base58});
+    defer allocator.free(authority_binding);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-versioned-idl-invoke",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--additional-signer-secret-key",
+        extra_signer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--idl-args-json",
+        "{\"enabled\":true}",
+        "--account",
+        state_binding,
+        "--account",
+        authority_binding,
+        idl_json,
+        "setFlag",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "signature: SigVerIdlExtraSig11111111111111111111111111111111111111111111111111111111111111\n",
+        captured,
+    );
+}
+
+test "runCommand send-versioned-idl-invoke-and-confirm accepts additional-signer-secret-key" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushSendAndSignatureStatusPollFlow(
+        "SigVerIdlConfirm4444444444444444444444444444444444444444444444444444444444444444",
+        &.{
+            .{ .context_slot = 162, .status = .{
+                .slot = 162,
+                .confirmations = 1,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-versioned-idl-invoke-and-confirm-extra-signer-secret" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{73} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{74} ** 32);
+    const extra_signer_secret_key = extra_signer_raw.secret_key.toBytes();
+    const extra_signer_secret_key_base58 = try client.encodeBase58(allocator, &extra_signer_secret_key);
+    defer allocator.free(extra_signer_secret_key_base58);
+    const extra_signer_pubkey_bytes = extra_signer_raw.public_key.toBytes();
+    const extra_signer_pubkey_base58 = try client.encodeBase58(allocator, &extra_signer_pubkey_bytes);
+    defer allocator.free(extra_signer_pubkey_base58);
+
+    const state_pubkey = client.Pubkey.fromBytes(.{33} ** 32);
+    const state_pubkey_base58 = try state_pubkey.toBase58(allocator);
+    defer allocator.free(state_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 187);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"setFlag","discriminator":[9,8,7,6,5,4,3,2],"accounts":[{"name":"state","writable":true},{"name":"authority","signer":true}],"args":[{"name":"enabled","type":"bool"}]}]}
+    ;
+
+    const state_binding = try std.fmt.allocPrint(allocator, "state={s}", .{state_pubkey_base58});
+    defer allocator.free(state_binding);
+    const authority_binding = try std.fmt.allocPrint(allocator, "authority={s}", .{extra_signer_pubkey_base58});
+    defer allocator.free(authority_binding);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-versioned-idl-invoke-and-confirm",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--additional-signer-secret-key",
+        extra_signer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--commitment",
+        "confirmed",
+        "--idl-args-json",
+        "{\"enabled\":true}",
+        "--account",
+        state_binding,
+        "--account",
+        authority_binding,
+        idl_json,
+        "setFlag",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getSignatureStatuses");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "confirmed signature: SigVerIdlConfirm4444444444444444444444444444444444444444444444444444444444444444\n",
         captured,
     );
 }
