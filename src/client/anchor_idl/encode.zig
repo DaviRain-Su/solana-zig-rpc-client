@@ -3,6 +3,7 @@ const sdk = @import("../sdk.zig");
 const idl_types = @import("./types.zig");
 
 const Allocator = std.mem.Allocator;
+const Sha256 = std.crypto.hash.sha2.Sha256;
 
 pub const EncodeError = error{
     InvalidAnchorIdlArgsJson,
@@ -523,6 +524,17 @@ fn encodeArgValue(
     return error.UnsupportedAnchorIdlType;
 }
 
+fn instructionDiscriminator(allocator: Allocator, instruction: *const idl_types.Instruction) ![]u8 {
+    if (instruction.discriminator.len > 0) return try allocator.dupe(u8, instruction.discriminator);
+
+    const preimage = try std.fmt.allocPrint(allocator, "global:{s}", .{instruction.name});
+    defer allocator.free(preimage);
+
+    var digest: [32]u8 = undefined;
+    Sha256.hash(preimage, &digest, .{});
+    return try allocator.dupe(u8, digest[0..8]);
+}
+
 pub fn encodeInstructionDataNamed(
     allocator: Allocator,
     idl: *const idl_types.Idl,
@@ -554,7 +566,9 @@ pub fn encodeInstructionData(
     var bytes: std.ArrayListUnmanaged(u8) = .{};
     defer bytes.deinit(allocator);
 
-    try bytes.appendSlice(allocator, instruction.discriminator);
+    const discriminator = try instructionDiscriminator(allocator, instruction);
+    defer allocator.free(discriminator);
+    try bytes.appendSlice(allocator, discriminator);
     if (instruction.args.len == 0) return try allocator.dupe(u8, bytes.items);
 
     const source = args_json_source orelse return error.MissingAnchorIdlArg;

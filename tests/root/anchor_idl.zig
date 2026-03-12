@@ -84,3 +84,139 @@ test "root.anchor_idl_encode.encodeInstructionDataNamed returns missing instruct
         ),
     );
 }
+
+test "root.anchor_idl_encode.encodeInstructionDataNamed computes missing discriminator" {
+    const allocator = std.testing.allocator;
+    const parsed = try client.anchor_idl.parseJson(allocator,
+        \\{"instructions":[{"name":"initializeConfig","args":[{"name":"count","type":"u8"}]}]}
+    );
+    defer parsed.deinit();
+
+    const encoded = try client.anchor_idl_encode.encodeInstructionDataNamed(
+        allocator,
+        &parsed.value,
+        "initialize_config",
+        "{\"count\":7}",
+    );
+    defer allocator.free(encoded);
+
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash("global:initializeConfig", &digest, .{});
+
+    try std.testing.expectEqualSlices(u8, digest[0..8], encoded[0..8]);
+    try std.testing.expectEqual(@as(u8, 7), encoded[8]);
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction resolves bindings default signer and builtins" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{41} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const state = client.Pubkey.fromBytes(.{42} ** 32);
+    const signer = client.Pubkey.fromBytes(.{43} ** 32);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"setFlag","discriminator":[1,2,3,4,5,6,7,8],"accounts":[{{"name":"state","writable":true}},{{"name":"authority","signer":true}},{{"name":"systemProgram"}}],"args":[{{"name":"enabled","type":"bool"}}]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const parsed = try client.anchor_idl.parseJson(allocator, idl_json);
+    defer parsed.deinit();
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstruction(
+        allocator,
+        &parsed.value,
+        "set_flag",
+        .{
+            .args_json = "{\"enabled\":true}",
+            .account_bindings = &.{
+                .{ .path = "state", .pubkey = state },
+            },
+            .default_signer = signer,
+        },
+    );
+    defer owned.deinit(allocator);
+
+    const system_program = try client.Pubkey.fromBase58(allocator, "11111111111111111111111111111111");
+
+    try std.testing.expect(owned.instruction.program_id.eql(program_id));
+    try std.testing.expectEqual(@as(usize, 3), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(state));
+    try std.testing.expect(!owned.instruction.accounts[0].is_signer);
+    try std.testing.expect(owned.instruction.accounts[0].is_writable);
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(signer));
+    try std.testing.expect(owned.instruction.accounts[1].is_signer);
+    try std.testing.expect(!owned.instruction.accounts[1].is_writable);
+    try std.testing.expect(owned.instruction.accounts[2].pubkey.eql(system_program));
+    try std.testing.expect(!owned.instruction.accounts[2].is_signer);
+    try std.testing.expect(!owned.instruction.accounts[2].is_writable);
+
+    const expected = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 1 };
+    try std.testing.expectEqualSlices(u8, &expected, owned.instruction.data);
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction fills missing optional accounts with program id" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{44} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const payer = client.Pubkey.fromBytes(.{45} ** 32);
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"configure","discriminator":[8,7,6,5,4,3,2,1],"accounts":[{{"name":"payer","signer":true,"writable":true}},{{"name":"delegate","optional":true,"signer":true,"writable":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    var owned = try client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "configure",
+        .{
+            .default_signer = payer,
+        },
+    );
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.instruction.accounts.len);
+    try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(payer));
+    try std.testing.expect(owned.instruction.accounts[0].is_signer);
+    try std.testing.expect(owned.instruction.accounts[0].is_writable);
+    try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(program_id));
+    try std.testing.expect(!owned.instruction.accounts[1].is_signer);
+    try std.testing.expect(!owned.instruction.accounts[1].is_writable);
+}
+
+test "root.anchor_idl_invoke.buildOwnedInstruction returns unsupported account feature for unresolved pda" {
+    const allocator = std.testing.allocator;
+    const program_id = client.Pubkey.fromBytes(.{46} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"initialize","discriminator":[9,9,9,9,9,9,9,9],"accounts":[{{"name":"vault","pda":{{"seeds":[{{"kind":"const","value":[118,97,117,108,116]}}]}}}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const parsed = try client.anchor_idl.parseJson(allocator, idl_json);
+    defer parsed.deinit();
+
+    try std.testing.expectError(
+        client.anchor_idl_invoke.BuildError.UnsupportedAnchorIdlAccountFeature,
+        client.anchor_idl_invoke.buildOwnedInstruction(
+            allocator,
+            &parsed.value,
+            "initialize",
+            .{},
+        ),
+    );
+}
