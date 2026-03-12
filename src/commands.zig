@@ -2941,6 +2941,44 @@ fn loadCliInstructionSpecWithSender(
     return loadCliInstructionSpec(allocator, &resolved);
 }
 
+fn mergeAdditionalSignerSecretKeys(
+    allocator: Allocator,
+    base: []const []const u8,
+    extra: []const []const u8,
+) ![]const []const u8 {
+    if (extra.len == 0) return base;
+
+    const merged = try allocator.alloc([]const u8, base.len + extra.len);
+    @memcpy(merged[0..base.len], base);
+    @memcpy(merged[base.len..], extra);
+    return merged;
+}
+
+fn loadCliInstructionSpecWithSenderAndAdditionalSigners(
+    allocator: Allocator,
+    spec: *const CliSimulateInstructionsSpec,
+    sender_keypair_path_arg: ?[]const u8,
+    sender_secret_key_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+) !LoadedCliInstructionSpec {
+    const merged_additional_signer_secret_keys = try mergeAdditionalSignerSecretKeys(
+        allocator,
+        spec.additional_signer_secret_keys,
+        additional_signer_secret_keys_arg,
+    );
+    defer if (additional_signer_secret_keys_arg.len > 0) allocator.free(merged_additional_signer_secret_keys);
+
+    var resolved_spec = spec.*;
+    resolved_spec.additional_signer_secret_keys = merged_additional_signer_secret_keys;
+
+    return try loadCliInstructionSpecWithSender(
+        allocator,
+        &resolved_spec,
+        sender_keypair_path_arg,
+        sender_secret_key_arg,
+    );
+}
+
 fn parseInstructionDataEncodingArg(value: ?[]const u8) !InstructionDataEncoding {
     const raw = value orelse return .utf8;
 
@@ -3831,11 +3869,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer parsed_spec.deinit();
 
-            var loaded = loadCliInstructionSpecWithSender(
+            var loaded = loadCliInstructionSpecWithSenderAndAdditionalSigners(
                 allocator,
                 &parsed_spec.value,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
+                program_invoke_additional_signer_secret_keys_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-instructions spec is invalid\n", .{});
                 return error.InvalidCli;
@@ -3887,11 +3926,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer parsed_spec.deinit();
 
-            var loaded = loadCliInstructionSpecWithSender(
+            var loaded = loadCliInstructionSpecWithSenderAndAdditionalSigners(
                 allocator,
                 &parsed_spec.value,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
+                program_invoke_additional_signer_secret_keys_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-instructions-and-confirm spec is invalid\n", .{});
                 return error.InvalidCli;
@@ -3947,11 +3987,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer parsed_spec.deinit();
 
-            var loaded = loadCliInstructionSpecWithSender(
+            var loaded = loadCliInstructionSpecWithSenderAndAdditionalSigners(
                 allocator,
                 &parsed_spec.value,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
+                program_invoke_additional_signer_secret_keys_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-versioned-instructions spec is invalid\n", .{});
                 return error.InvalidCli;
@@ -4004,11 +4045,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer parsed_spec.deinit();
 
-            var loaded = loadCliInstructionSpecWithSender(
+            var loaded = loadCliInstructionSpecWithSenderAndAdditionalSigners(
                 allocator,
                 &parsed_spec.value,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
+                program_invoke_additional_signer_secret_keys_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-versioned-instructions-and-confirm spec is invalid\n", .{});
                 return error.InvalidCli;
@@ -4686,11 +4728,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer parsed_spec.deinit();
 
-            var loaded = loadCliInstructionSpecWithSender(
+            var loaded = loadCliInstructionSpecWithSenderAndAdditionalSigners(
                 allocator,
                 &parsed_spec.value,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
+                program_invoke_additional_signer_secret_keys_arg,
             ) catch {
                 reportInvalidCliMessage("error: simulate-instructions spec is invalid\n", .{});
                 return error.InvalidCli;
@@ -4778,11 +4821,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer parsed_spec.deinit();
 
-            var loaded = loadCliInstructionSpecWithSender(
+            var loaded = loadCliInstructionSpecWithSenderAndAdditionalSigners(
                 allocator,
                 &parsed_spec.value,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
+                program_invoke_additional_signer_secret_keys_arg,
             ) catch {
                 reportInvalidCliMessage("error: simulate-versioned-instructions spec is invalid\n", .{});
                 return error.InvalidCli;
@@ -9872,6 +9916,83 @@ test "runCommand simulate-instructions supports sender-secret-key flag" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: ok") != null);
 }
 
+test "runCommand simulate-instructions accepts additional-signer-secret-key" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":10},"value":{"accounts":[],"err":null,"fee":120,"unitsConsumed":42,"logs":["Program log: ok"]}}
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://simulate-instructions-extra-signer-secret" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{8} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{19} ** 32);
+    const extra_signer_secret_key = extra_signer_raw.secret_key.toBytes();
+    const extra_signer_secret_key_base58 = try client.encodeBase58(allocator, &extra_signer_secret_key);
+    defer allocator.free(extra_signer_secret_key_base58);
+    const extra_signer_pubkey_bytes = extra_signer_raw.public_key.toBytes();
+    const extra_signer_pubkey_base58 = try client.encodeBase58(allocator, &extra_signer_pubkey_bytes);
+    defer allocator.free(extra_signer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 65);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","recent_blockhash":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":true,"is_writable":false}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"ping","data_encoding":"utf8"}}]}}
+    ,
+        .{ payer_secret_key_base58, recent_blockhash, payer_pubkey_base58, extra_signer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-instructions",
+        "--additional-signer-secret-key",
+        extra_signer_secret_key_base58,
+        spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 2048);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "simulation: slot=10 err=null fee=120 units_consumed=42") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: ok") != null);
+}
+
 test "runCommand send-instructions sends generic instruction spec" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
@@ -10012,6 +10133,83 @@ test "runCommand send-instructions supports sender-secret-key flag" {
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature: Sig131313131313131313131313131313131313131313131313131313131313131313\n",
+        captured,
+    );
+}
+
+test "runCommand send-instructions accepts additional-signer-secret-key" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson("\"Sig151515151515151515151515151515151515151515151515151515151515151515\"");
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-instructions-extra-signer-secret" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{18} ** 32);
+    const extra_signer_secret_key = extra_signer_raw.secret_key.toBytes();
+    const extra_signer_secret_key_base58 = try client.encodeBase58(allocator, &extra_signer_secret_key);
+    defer allocator.free(extra_signer_secret_key_base58);
+    const extra_signer_pubkey_bytes = extra_signer_raw.public_key.toBytes();
+    const extra_signer_pubkey_base58 = try client.encodeBase58(allocator, &extra_signer_pubkey_bytes);
+    defer allocator.free(extra_signer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 65);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","recent_blockhash":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":true,"is_writable":false}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"ping","data_encoding":"utf8"}}]}}
+    ,
+        .{ payer_secret_key_base58, recent_blockhash, payer_pubkey_base58, extra_signer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-instructions",
+        "--additional-signer-secret-key",
+        extra_signer_secret_key_base58,
+        spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "signature: Sig151515151515151515151515151515151515151515151515151515151515151515\n",
         captured,
     );
 }
