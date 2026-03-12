@@ -72,6 +72,81 @@ pub const BuildVersionedTransactionFromJsonOptions = struct {
     signers: []const sdk.Keypair,
 };
 
+pub const BuildLegacyMessageRpcFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    build: ?rpc_types.LegacyInstructionsBuildOptions = null,
+};
+
+pub const BuildLegacyTransactionRpcFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    signers: []const sdk.Keypair,
+    build: ?rpc_types.LegacyInstructionsBuildOptions = null,
+};
+
+pub const BuildVersionedMessageRpcFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    build: ?rpc_types.VersionedInstructionsBuildOptions = null,
+};
+
+pub const BuildVersionedTransactionRpcFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+    build: ?rpc_types.VersionedInstructionsBuildOptions = null,
+};
+
+pub const SendLegacyTransactionFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    signers: []const sdk.Keypair,
+    rpc: ?rpc_types.SendLegacyInstructionsOptions = null,
+};
+
+pub const SimulateLegacyTransactionFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    signers: []const sdk.Keypair,
+    build: ?rpc_types.LegacyInstructionsBuildOptions = null,
+    rpc: ?rpc_types.SimulateTransactionOptions = null,
+};
+
+pub const SendAndConfirmLegacyTransactionFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    signers: []const sdk.Keypair,
+    rpc: ?rpc_types.LegacyInstructionsOptions = null,
+};
+
+pub const SendVersionedTransactionFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+    rpc: ?rpc_types.SendVersionedInstructionsOptions = null,
+};
+
+pub const SimulateVersionedTransactionFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+    build: ?rpc_types.VersionedInstructionsBuildOptions = null,
+    rpc: ?rpc_types.SimulateTransactionOptions = null,
+};
+
+pub const SendAndConfirmVersionedTransactionFromJsonOptions = struct {
+    payer: sdk.Pubkey,
+    instructions_json: []const u8,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    signers: []const sdk.Keypair,
+    rpc: ?rpc_types.VersionedInstructionsOptions = null,
+};
+
 pub const SendLegacyTransactionOptions = struct {
     payer: sdk.Pubkey,
     instructions: []const sdk.Instruction,
@@ -838,6 +913,312 @@ pub fn buildVersionedTransactionBase64FromJson(
         .address_lookup_tables = options.address_lookup_tables,
         .signers = options.signers,
     });
+}
+
+pub fn buildOwnedLegacyMessageWithOptionsFromJson(
+    self: anytype,
+    options: BuildLegacyMessageRpcFromJsonOptions,
+) !sdk.OwnedLegacyMessage {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildOwnedLegacyMessageWithOptions(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .build = options.build,
+    });
+}
+
+pub fn buildLegacyMessageBytesWithOptionsFromJson(
+    self: anytype,
+    options: BuildLegacyMessageRpcFromJsonOptions,
+) ![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildLegacyMessageBytesWithOptions(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .build = options.build,
+    });
+}
+
+pub fn buildLegacyMessageBase64WithOptionsFromJson(
+    self: anytype,
+    options: BuildLegacyMessageRpcFromJsonOptions,
+) ![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildLegacyMessageBase64WithOptions(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .build = options.build,
+    });
+}
+
+pub fn buildSignedLegacyTransactionWithOptionsFromJson(
+    self: anytype,
+    options: BuildLegacyTransactionRpcFromJsonOptions,
+) !sdk.SignedLegacyTransaction {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildSignedLegacyTransactionWithOptions(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .build = options.build,
+    });
+}
+
+pub fn buildLegacyTransactionBase64WithOptionsFromJson(
+    self: anytype,
+    options: BuildLegacyTransactionRpcFromJsonOptions,
+) ![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildLegacyTransactionBase64WithOptions(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .build = options.build,
+    });
+}
+
+pub fn buildOwnedVersionedMessageWithOptionsFromJson(
+    self: anytype,
+    options: BuildVersionedMessageRpcFromJsonOptions,
+) !sdk.OwnedVersionedMessageV0 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildOwnedVersionedMessageWithOptions(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .build = options.build,
+    });
+}
+
+pub fn buildVersionedMessageBytesWithOptionsFromJson(
+    self: anytype,
+    options: BuildVersionedMessageRpcFromJsonOptions,
+) ![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildVersionedMessageBytesWithOptions(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .build = options.build,
+    });
+}
+
+pub fn buildVersionedMessageBase64WithOptionsFromJson(
+    self: anytype,
+    options: BuildVersionedMessageRpcFromJsonOptions,
+) ![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildVersionedMessageBase64WithOptions(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .build = options.build,
+    });
+}
+
+pub fn buildSignedVersionedTransactionWithOptionsFromJson(
+    self: anytype,
+    options: BuildVersionedTransactionRpcFromJsonOptions,
+) !sdk.SignedVersionedTransaction {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildSignedVersionedTransactionWithOptions(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .build = options.build,
+    });
+}
+
+pub fn buildVersionedTransactionBase64WithOptionsFromJson(
+    self: anytype,
+    options: BuildVersionedTransactionRpcFromJsonOptions,
+) ![]u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try buildVersionedTransactionBase64WithOptions(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .build = options.build,
+    });
+}
+
+pub fn sendLegacyTransactionFromJson(
+    self: anytype,
+    options: SendLegacyTransactionFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendLegacyTransaction(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .rpc = options.rpc,
+    });
+}
+
+pub fn simulateLegacyTransactionFromJson(
+    self: anytype,
+    options: SimulateLegacyTransactionFromJsonOptions,
+) !rpc_types.SimulatedTransaction {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try simulateLegacyTransaction(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .build = options.build,
+        .rpc = options.rpc,
+    });
+}
+
+pub fn sendAndConfirmLegacyTransactionFromJson(
+    self: anytype,
+    options: SendAndConfirmLegacyTransactionFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendAndConfirmLegacyTransaction(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .rpc = options.rpc,
+    });
+}
+
+pub fn sendAndConfirmLegacyTransactionWithSpinnerFromJson(
+    self: anytype,
+    options: SendAndConfirmLegacyTransactionFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendAndConfirmLegacyTransactionWithSpinner(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .signers = options.signers,
+        .rpc = options.rpc,
+    });
+}
+
+pub fn sendVersionedTransactionFromJson(
+    self: anytype,
+    options: SendVersionedTransactionFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendVersionedTransaction(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .rpc = options.rpc,
+    });
+}
+
+pub fn simulateVersionedTransactionFromJson(
+    self: anytype,
+    options: SimulateVersionedTransactionFromJsonOptions,
+) !rpc_types.SimulatedTransaction {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try simulateVersionedTransaction(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .build = options.build,
+        .rpc = options.rpc,
+    });
+}
+
+pub fn sendAndConfirmVersionedTransactionFromJson(
+    self: anytype,
+    options: SendAndConfirmVersionedTransactionFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendAndConfirmVersionedTransaction(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .rpc = options.rpc,
+    });
+}
+
+pub fn sendAndConfirmVersionedTransactionWithSpinnerFromJson(
+    self: anytype,
+    options: SendAndConfirmVersionedTransactionFromJsonOptions,
+) ![]const u8 {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try sendAndConfirmVersionedTransactionWithSpinner(self, .{
+        .payer = options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = options.address_lookup_tables,
+        .signers = options.signers,
+        .rpc = options.rpc,
+    });
+}
+
+pub fn getFeeForLegacyMessageWithOptionsFromJson(
+    self: anytype,
+    message_options: BuildLegacyMessageRpcFromJsonOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, message_options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try getFeeForLegacyMessageWithOptions(self, .{
+        .payer = message_options.payer,
+        .instructions = owned_instructions.instructions,
+        .build = message_options.build,
+    }, fee_options);
+}
+
+pub fn getFeeForVersionedMessageWithOptionsFromJson(
+    self: anytype,
+    message_options: BuildVersionedMessageRpcFromJsonOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    var owned_instructions = try buildOwnedInstructionsFromJson(self.allocator, message_options.instructions_json);
+    defer owned_instructions.deinit(self.allocator);
+
+    return try getFeeForVersionedMessageWithOptions(self, .{
+        .payer = message_options.payer,
+        .instructions = owned_instructions.instructions,
+        .address_lookup_tables = message_options.address_lookup_tables,
+        .build = message_options.build,
+    }, fee_options);
 }
 
 pub fn sendLegacyTransaction(
@@ -1880,6 +2261,239 @@ test "instructions_invoke.buildVersionedMessageBytesFromJson matches typed helpe
     defer allocator.free(expected);
 
     try std.testing.expectEqualSlices(u8, expected, encoded);
+}
+
+test "instructions_invoke.buildLegacyMessageBase64WithOptionsFromJson forwards parsed instructions and build options" {
+    const allocator = std.testing.allocator;
+    const payer = sdk.Pubkey.fromBytes([_]u8{33} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{34} ** 32);
+    const account = sdk.Pubkey.fromBytes([_]u8{35} ** 32);
+
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_base58 = try account.toBase58(allocator);
+    defer allocator.free(account_base58);
+
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{
+        \\  "programId":"{s}",
+        \\  "accounts":[{{"pubkey":"{s}","isSigner":false,"isWritable":true}}],
+        \\  "data":"6869",
+        \\  "dataEncoding":"hex"
+        \\}}]
+    ,
+        .{ program_id_base58, account_base58 },
+    );
+    defer allocator.free(instructions_json);
+
+    const MockRpc = struct {
+        allocator: Allocator,
+        captured_instruction_count: usize = 0,
+        captured_program_id: ?sdk.Pubkey = null,
+        captured_build_options: ?rpc_types.LegacyInstructionsBuildOptions = null,
+
+        fn buildLegacyMessageBase64WithOptions(
+            self: *@This(),
+            payer_arg: sdk.Pubkey,
+            instructions_arg: []const sdk.Instruction,
+            options_arg: ?rpc_types.LegacyInstructionsBuildOptions,
+        ) ![]u8 {
+            _ = payer_arg;
+            self.captured_instruction_count = instructions_arg.len;
+            self.captured_program_id = instructions_arg[0].program_id;
+            self.captured_build_options = options_arg;
+            return try self.allocator.dupe(u8, "legacy-json-base64");
+        }
+    };
+
+    var rpc = MockRpc{ .allocator = allocator };
+    const encoded = try buildLegacyMessageBase64WithOptionsFromJson(&rpc, .{
+        .payer = payer,
+        .instructions_json = instructions_json,
+        .build = .{ .blockhash_commitment = .confirmed },
+    });
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualStrings("legacy-json-base64", encoded);
+    try std.testing.expectEqual(@as(usize, 1), rpc.captured_instruction_count);
+    try std.testing.expectEqual(program_id, rpc.captured_program_id.?);
+    try std.testing.expectEqual(.confirmed, rpc.captured_build_options.?.blockhash_commitment.?);
+}
+
+test "instructions_invoke.sendLegacyTransactionFromJson forwards parsed instructions and rpc options" {
+    const allocator = std.testing.allocator;
+    const payer = sdk.Pubkey.fromBytes([_]u8{36} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{37} ** 32);
+    const signer_secret_key = [_]u8{38} ** 32;
+    const signer = try sdk.Keypair.fromSecretKeySlice(signer_secret_key[0..]);
+
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"programId":"{s}","data":"hello","dataEncoding":"utf8"}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(instructions_json);
+
+    const MockRpc = struct {
+        allocator: Allocator,
+        captured_instruction_count: usize = 0,
+        captured_signer_count: usize = 0,
+        captured_options: ?rpc_types.SendLegacyInstructionsOptions = null,
+
+        fn sendLegacyInstructionsWithOptions(
+            self: *@This(),
+            payer_arg: sdk.Pubkey,
+            instructions_arg: []const sdk.Instruction,
+            signers_arg: []const sdk.Keypair,
+            options_arg: ?rpc_types.SendLegacyInstructionsOptions,
+        ) ![]const u8 {
+            _ = payer_arg;
+            self.captured_instruction_count = instructions_arg.len;
+            self.captured_signer_count = signers_arg.len;
+            self.captured_options = options_arg;
+            return try self.allocator.dupe(u8, "sig-json-legacy");
+        }
+    };
+
+    var rpc = MockRpc{ .allocator = allocator };
+    const signature = try sendLegacyTransactionFromJson(&rpc, .{
+        .payer = payer,
+        .instructions_json = instructions_json,
+        .signers = &.{signer},
+        .rpc = .{ .send_transaction_options = .{ .skip_preflight = true } },
+    });
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings("sig-json-legacy", signature);
+    try std.testing.expectEqual(@as(usize, 1), rpc.captured_instruction_count);
+    try std.testing.expectEqual(@as(usize, 1), rpc.captured_signer_count);
+    try std.testing.expect(rpc.captured_options.?.send_transaction_options.?.skip_preflight);
+}
+
+test "instructions_invoke.sendAndConfirmVersionedTransactionWithSpinnerFromJson forwards parsed instructions and options" {
+    const allocator = std.testing.allocator;
+    const payer = sdk.Pubkey.fromBytes([_]u8{39} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{40} ** 32);
+    const signer_secret_key = [_]u8{41} ** 32;
+    const signer = try sdk.Keypair.fromSecretKeySlice(signer_secret_key[0..]);
+
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"programId":"{s}","data":"AQID","dataEncoding":"base64"}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(instructions_json);
+
+    const MockRpc = struct {
+        allocator: Allocator,
+        captured_instruction_count: usize = 0,
+        captured_lookup_count: usize = 0,
+        captured_signer_count: usize = 0,
+        captured_options: ?rpc_types.VersionedInstructionsOptions = null,
+
+        fn sendAndConfirmVersionedInstructionsWithSpinnerAndOptions(
+            self: *@This(),
+            payer_arg: sdk.Pubkey,
+            instructions_arg: []const sdk.Instruction,
+            address_lookup_tables_arg: []const sdk.AddressLookupTableAccount,
+            signers_arg: []const sdk.Keypair,
+            options_arg: ?rpc_types.VersionedInstructionsOptions,
+        ) ![]const u8 {
+            _ = payer_arg;
+            self.captured_instruction_count = instructions_arg.len;
+            self.captured_lookup_count = address_lookup_tables_arg.len;
+            self.captured_signer_count = signers_arg.len;
+            self.captured_options = options_arg;
+            return try self.allocator.dupe(u8, "sig-json-versioned-spinner");
+        }
+    };
+
+    var rpc = MockRpc{ .allocator = allocator };
+    const signature = try sendAndConfirmVersionedTransactionWithSpinnerFromJson(&rpc, .{
+        .payer = payer,
+        .instructions_json = instructions_json,
+        .signers = &.{signer},
+        .rpc = .{
+            .blockhash_commitment = .processed,
+            .commitment = .finalized,
+            .timeout_ms = 456,
+        },
+    });
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings("sig-json-versioned-spinner", signature);
+    try std.testing.expectEqual(@as(usize, 1), rpc.captured_instruction_count);
+    try std.testing.expectEqual(@as(usize, 0), rpc.captured_lookup_count);
+    try std.testing.expectEqual(@as(usize, 1), rpc.captured_signer_count);
+    try std.testing.expectEqual(.processed, rpc.captured_options.?.blockhash_commitment.?);
+    try std.testing.expectEqual(.finalized, rpc.captured_options.?.commitment.?);
+    try std.testing.expectEqual(@as(u64, 456), rpc.captured_options.?.timeout_ms);
+}
+
+test "instructions_invoke.getFeeForVersionedMessageWithOptionsFromJson forwards parsed instructions and fee options" {
+    const allocator = std.testing.allocator;
+    const payer = sdk.Pubkey.fromBytes([_]u8{42} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{43} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"programId":"{s}","dataBytes":[9,8,7]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(instructions_json);
+
+    const MockRpc = struct {
+        captured_instruction_count: usize = 0,
+        captured_lookup_count: usize = 0,
+        captured_program_id: ?sdk.Pubkey = null,
+        captured_build_options: ?rpc_types.VersionedInstructionsBuildOptions = null,
+        captured_commitment: ?rpc_types.Commitment = null,
+
+        fn getFeeForVersionedInstructionsWithOptions(
+            self: *@This(),
+            payer_arg: sdk.Pubkey,
+            instructions_arg: []const sdk.Instruction,
+            address_lookup_tables_arg: []const sdk.AddressLookupTableAccount,
+            options_arg: ?rpc_types.VersionedInstructionsBuildOptions,
+            commitment_arg: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = payer_arg;
+            self.captured_instruction_count = instructions_arg.len;
+            self.captured_lookup_count = address_lookup_tables_arg.len;
+            self.captured_program_id = instructions_arg[0].program_id;
+            self.captured_build_options = options_arg;
+            self.captured_commitment = commitment_arg;
+            return .{ .value = 999 };
+        }
+    };
+
+    var rpc = MockRpc{};
+    const fee = try getFeeForVersionedMessageWithOptionsFromJson(&rpc, .{
+        .payer = payer,
+        .instructions_json = instructions_json,
+        .build = .{ .blockhash_commitment = .confirmed },
+    }, .{
+        .commitment = .finalized,
+    });
+
+    try std.testing.expectEqual(@as(u64, 999), fee.value.?);
+    try std.testing.expectEqual(@as(usize, 1), rpc.captured_instruction_count);
+    try std.testing.expectEqual(@as(usize, 0), rpc.captured_lookup_count);
+    try std.testing.expectEqual(program_id, rpc.captured_program_id.?);
+    try std.testing.expectEqual(.confirmed, rpc.captured_build_options.?.blockhash_commitment.?);
+    try std.testing.expectEqual(.finalized, rpc.captured_commitment.?);
 }
 
 test "instructions_invoke.buildVersionedTransactionBase64 matches sdk helper" {
