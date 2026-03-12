@@ -137,7 +137,7 @@ const cli_option_help_params = clap.parseParamsComptime(
     \\    --token-program-id <program-id>     Token account filter by token program (token-accounts-by-*)
 );
 
-const command_positionals_params = clap.parseParamsComptime(
+const generic_command_positionals_params = clap.parseParamsComptime(
     \\<string>
     \\<string>
     \\<string>
@@ -148,8 +148,44 @@ const command_positionals_params = clap.parseParamsComptime(
     \\
 );
 
+const instruction_command_positionals_params = clap.parseParamsComptime(
+    \\<instruction-spec-json|@path>
+    \\<extra>...
+    \\
+);
+
+const idl_invoke_command_positionals_params = clap.parseParamsComptime(
+    \\<idl-json|@path>
+    \\<instruction-name>
+    \\<additional-signer-keypair-paths-json|@path>
+    \\<address-lookup-tables-json|@path>
+    \\<extra>...
+    \\
+);
+
+const program_invoke_command_positionals_params = clap.parseParamsComptime(
+    \\<program-id>
+    \\<accounts-json|@path>
+    \\<data|@path>
+    \\<data-encoding>
+    \\<additional-signer-keypair-paths-json|@path>
+    \\<address-lookup-tables-json|@path>
+    \\<extra>...
+    \\
+);
+
 const positional_only_parsers = .{
     .string = clap.parsers.string,
+    .@"instruction-spec-json|@path" = clap.parsers.string,
+    .extra = clap.parsers.string,
+    .@"idl-json|@path" = clap.parsers.string,
+    .@"instruction-name" = clap.parsers.string,
+    .@"additional-signer-keypair-paths-json|@path" = clap.parsers.string,
+    .@"address-lookup-tables-json|@path" = clap.parsers.string,
+    .@"program-id" = clap.parsers.string,
+    .@"accounts-json|@path" = clap.parsers.string,
+    .@"data|@path" = clap.parsers.string,
+    .@"data-encoding" = clap.parsers.string,
 };
 
 pub const default_solana_rpc_url = "https://api.mainnet-beta.solana.com";
@@ -643,7 +679,84 @@ fn parseTopLevelCommand(arg: []const u8) !ParsedTopLevelCommand {
 }
 
 fn parseCommandPositionals(allocator: Allocator, parsed: *ParsedArgs, positionals: []const []const u8) !void {
-    var result = try parsePositionalsWithClap(&command_positionals_params, allocator, positionals);
+    switch (parsed.command) {
+        .send_instructions,
+        .send_instructions_and_confirm,
+        .send_versioned_instructions,
+        .send_versioned_instructions_and_confirm,
+        .simulate_instructions,
+        .simulate_versioned_instructions,
+        => {
+            var command_result = try parsePositionalsWithClap(&instruction_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.instructions_spec_arg = command_result.positionals[0];
+            if (command_result.positionals[1].len != 0) return error.InvalidCli;
+            return;
+        },
+
+        .simulate_idl_invoke,
+        .send_idl_invoke,
+        .send_idl_invoke_and_confirm,
+        .simulate_versioned_idl_invoke,
+        .send_versioned_idl_invoke,
+        .send_versioned_idl_invoke_and_confirm,
+        => {
+            var command_result = try parsePositionalsWithClap(&idl_invoke_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.idl_spec_arg = command_result.positionals[0];
+            parsed.idl_instruction_arg = command_result.positionals[1];
+            parsed.program_invoke_signer_keypair_paths_arg = command_result.positionals[2];
+
+            switch (parsed.command) {
+                .simulate_idl_invoke, .send_idl_invoke, .send_idl_invoke_and_confirm => {
+                    if (command_result.positionals[3] != null or command_result.positionals[4].len != 0) return error.InvalidCli;
+                },
+                .simulate_versioned_idl_invoke, .send_versioned_idl_invoke, .send_versioned_idl_invoke_and_confirm => {
+                    parsed.program_invoke_lookup_tables_arg = command_result.positionals[3];
+                    if (command_result.positionals[4].len != 0) return error.InvalidCli;
+                },
+                else => unreachable,
+            }
+
+            return;
+        },
+
+        .send_program_invoke,
+        .send_program_invoke_and_confirm,
+        .simulate_program_invoke,
+        .send_versioned_program_invoke,
+        .send_versioned_program_invoke_and_confirm,
+        .simulate_versioned_program_invoke,
+        => {
+            var command_result = try parsePositionalsWithClap(&program_invoke_command_positionals_params, allocator, positionals);
+            defer command_result.deinit();
+
+            parsed.program_invoke_program_id_arg = command_result.positionals[0];
+            parsed.program_invoke_accounts_arg = command_result.positionals[1];
+            parsed.program_invoke_data_arg = command_result.positionals[2];
+            parsed.program_invoke_data_encoding_arg = command_result.positionals[3];
+            parsed.program_invoke_signer_keypair_paths_arg = command_result.positionals[4];
+
+            switch (parsed.command) {
+                .send_program_invoke, .send_program_invoke_and_confirm, .simulate_program_invoke => {
+                    if (command_result.positionals[5] != null or command_result.positionals[6].len != 0) return error.InvalidCli;
+                },
+                .send_versioned_program_invoke, .send_versioned_program_invoke_and_confirm, .simulate_versioned_program_invoke => {
+                    parsed.program_invoke_lookup_tables_arg = command_result.positionals[5];
+                    if (command_result.positionals[6].len != 0) return error.InvalidCli;
+                },
+                else => unreachable,
+            }
+
+            return;
+        },
+
+        else => {},
+    }
+
+    var result = try parsePositionalsWithClap(&generic_command_positionals_params, allocator, positionals);
     defer result.deinit();
 
     const p0 = result.positionals[0];
