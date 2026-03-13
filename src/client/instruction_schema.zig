@@ -58,6 +58,11 @@ fn findJsonObjectField(object: std.json.ObjectMap, comptime names: []const []con
 fn parseJsonBool(value: std.json.Value) EncodeError!bool {
     return switch (value) {
         .bool => value.bool,
+        .string => {
+            if (std.ascii.eqlIgnoreCase(value.string, "true")) return true;
+            if (std.ascii.eqlIgnoreCase(value.string, "false")) return false;
+            return error.InvalidInstructionSchema;
+        },
         else => error.InvalidInstructionSchema,
     };
 }
@@ -65,6 +70,12 @@ fn parseJsonBool(value: std.json.Value) EncodeError!bool {
 fn parseJsonPubkey(allocator: Allocator, value: std.json.Value) EncodeError!sdk.Pubkey {
     return switch (value) {
         .string => sdk.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidInstructionSchema,
+        .object => blk: {
+            const field = findJsonObjectField(value.object, &.{ "pubkey", "publicKey", "public_key", "address", "key" }) orelse
+                return error.InvalidInstructionSchema;
+            if (field != .string) return error.InvalidInstructionSchema;
+            break :blk sdk.Pubkey.fromBase58(allocator, field.string) catch return error.InvalidInstructionSchema;
+        },
         else => error.InvalidInstructionSchema,
     };
 }
@@ -108,7 +119,11 @@ fn parseSchemaUnsigned(comptime T: type, value: std.json.Value) EncodeError!T {
             if (value.integer < 0) return error.InvalidInstructionSchema;
             return std.math.cast(T, value.integer) orelse return error.InvalidInstructionSchema;
         },
-        .string => std.fmt.parseInt(T, value.string, 10) catch return error.InvalidInstructionSchema,
+        .string => {
+            const base: u8 = if (std.mem.startsWith(u8, value.string, "0x") or std.mem.startsWith(u8, value.string, "0X")) 16 else 10;
+            const digits = if (base == 16) value.string[2..] else value.string;
+            return std.fmt.parseInt(T, digits, base) catch return error.InvalidInstructionSchema;
+        },
         else => error.InvalidInstructionSchema,
     };
 }
@@ -116,7 +131,19 @@ fn parseSchemaUnsigned(comptime T: type, value: std.json.Value) EncodeError!T {
 fn parseSchemaSigned(comptime T: type, value: std.json.Value) EncodeError!T {
     return switch (value) {
         .integer => std.math.cast(T, value.integer) orelse return error.InvalidInstructionSchema,
-        .string => std.fmt.parseInt(T, value.string, 10) catch return error.InvalidInstructionSchema,
+        .string => {
+            const negative_hex = std.mem.startsWith(u8, value.string, "-0x") or std.mem.startsWith(u8, value.string, "-0X");
+            const positive_hex = std.mem.startsWith(u8, value.string, "0x") or std.mem.startsWith(u8, value.string, "0X");
+            const base: u8 = if (negative_hex or positive_hex) 16 else 10;
+            const digits = if (negative_hex)
+                value.string[3..]
+            else if (positive_hex)
+                value.string[2..]
+            else
+                value.string;
+            const parsed = std.fmt.parseInt(T, digits, base) catch return error.InvalidInstructionSchema;
+            return if (negative_hex) -parsed else parsed;
+        },
         else => error.InvalidInstructionSchema,
     };
 }
@@ -1120,4 +1147,36 @@ test "instruction_schema treats omitted option struct fields as null" {
         0x01,
         0x02,
     }, encoded);
+}
+
+test "instruction_schema accepts ergonomic scalar inputs" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "type": "struct",
+        \\  "fields": [
+        \\    { "name": "enabled", "type": "bool" },
+        \\    { "name": "owner", "type": "pubkey" },
+        \\    { "name": "threshold", "type": "u16" },
+        \\    { "name": "delta", "type": "i32" }
+        \\  ]
+        \\}
+    ;
+    const args_json =
+        \\{
+        \\  "enabled": "true",
+        \\  "owner": { "address": "11111111111111111111111111111111" },
+        \\  "threshold": "0x0201",
+        \\  "delta": "-0x2"
+        \\}
+    ;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqual(@as(usize, 39), encoded.len);
+    try std.testing.expectEqual(@as(u8, 1), encoded[0]);
+    try std.testing.expect(std.mem.allEqual(u8, encoded[1..33], 0));
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x02 }, encoded[33..35]);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xfe, 0xff, 0xff, 0xff }, encoded[35..39]);
 }
