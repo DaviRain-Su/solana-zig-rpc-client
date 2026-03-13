@@ -149,6 +149,37 @@ pub const OwnedInvocationAccounts = struct {
         allocator.free(self.accounts);
         self.* = undefined;
     }
+
+    pub fn find(self: OwnedInvocationAccounts, pubkey: sdk.Pubkey) ?InvocationAccountInfo {
+        for (self.accounts) |info| {
+            if (std.meta.eql(info.pubkey, pubkey)) return info;
+        }
+        return null;
+    }
+
+    pub fn contains(self: OwnedInvocationAccounts, pubkey: sdk.Pubkey) bool {
+        return self.find(pubkey) != null;
+    }
+
+    pub fn isSigner(self: OwnedInvocationAccounts, pubkey: sdk.Pubkey) bool {
+        return if (self.find(pubkey)) |info| info.is_signer else false;
+    }
+
+    pub fn isWritable(self: OwnedInvocationAccounts, pubkey: sdk.Pubkey) bool {
+        return if (self.find(pubkey)) |info| info.is_writable else false;
+    }
+
+    pub fn isPayer(self: OwnedInvocationAccounts, pubkey: sdk.Pubkey) bool {
+        return if (self.find(pubkey)) |info| info.is_payer else false;
+    }
+
+    pub fn isProgram(self: OwnedInvocationAccounts, pubkey: sdk.Pubkey) bool {
+        return if (self.find(pubkey)) |info| info.is_program else false;
+    }
+
+    pub fn isNonceAccount(self: OwnedInvocationAccounts, pubkey: sdk.Pubkey) bool {
+        return if (self.find(pubkey)) |info| info.is_nonce_account else false;
+    }
 };
 
 pub const OwnedInvocationSummary = struct {
@@ -8068,6 +8099,71 @@ test "invoke.PreferredPreparedExecutionFee exposes transaction and message helpe
     try std.testing.expect(tx_base64.len != 0);
     try std.testing.expect(message_base64.len != 0);
     try std.testing.expect(fee_result.firstSignature() != null);
+}
+
+test "invoke.OwnedInvocationAccounts query helpers expose payer and program roles" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 417, 418, 419);
+    defer allocator.free(spec_json);
+
+    var accounts = try buildInvocationAccountsFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer accounts.deinit(allocator);
+
+    var payer_pubkey: ?sdk.Pubkey = null;
+    var program_pubkey: ?sdk.Pubkey = null;
+    for (accounts.accounts) |info| {
+        if (info.is_payer) payer_pubkey = info.pubkey;
+        if (info.is_program) program_pubkey = info.pubkey;
+    }
+
+    try std.testing.expect(payer_pubkey != null);
+    try std.testing.expect(program_pubkey != null);
+    try std.testing.expect(accounts.contains(payer_pubkey.?));
+    try std.testing.expect(accounts.isPayer(payer_pubkey.?));
+    try std.testing.expect(accounts.isSigner(payer_pubkey.?));
+    try std.testing.expect(!accounts.isProgram(payer_pubkey.?));
+    try std.testing.expect(accounts.contains(program_pubkey.?));
+    try std.testing.expect(accounts.isProgram(program_pubkey.?));
+    try std.testing.expect(!accounts.isPayer(program_pubkey.?));
+}
+
+test "invoke.OwnedInvocationAccounts query helpers expose writable and missing account lookups" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 420, 421, 422, 423, 424);
+    defer allocator.free(spec_json);
+
+    var accounts = try buildInvocationAccountsFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer accounts.deinit(allocator);
+
+    var writable_pubkey: ?sdk.Pubkey = null;
+    for (accounts.accounts) |info| {
+        if (info.is_writable and !info.is_program) {
+            writable_pubkey = info.pubkey;
+            break;
+        }
+    }
+
+    const missing_pubkey = sdk.Pubkey.fromBytes(.{255} ** 32);
+
+    try std.testing.expect(writable_pubkey != null);
+    try std.testing.expect(accounts.isWritable(writable_pubkey.?));
+    try std.testing.expect(accounts.find(writable_pubkey.?) != null);
+    try std.testing.expect(!accounts.contains(missing_pubkey));
+    try std.testing.expect(accounts.find(missing_pubkey) == null);
+    try std.testing.expect(!accounts.isSigner(missing_pubkey));
+    try std.testing.expect(!accounts.isWritable(missing_pubkey));
+    try std.testing.expect(!accounts.isProgram(missing_pubkey));
+    try std.testing.expect(!accounts.isNonceAccount(missing_pubkey));
 }
 
 test "invoke.PreparedInvocation transaction helpers expose generic serialization" {
