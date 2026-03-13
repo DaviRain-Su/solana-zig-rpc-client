@@ -349,6 +349,22 @@ pub const OwnedInvocationLookupCoverage = struct {
         allocator.free(self.uncovered_pubkeys);
         self.* = undefined;
     }
+
+    pub fn containsLookupTable(self: OwnedInvocationLookupCoverage, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.lookup_table_pubkeys, pubkey);
+    }
+
+    pub fn isCandidate(self: OwnedInvocationLookupCoverage, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.candidate_pubkeys, pubkey);
+    }
+
+    pub fn coversPubkey(self: OwnedInvocationLookupCoverage, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.covered_pubkeys, pubkey);
+    }
+
+    pub fn isUncoveredPubkey(self: OwnedInvocationLookupCoverage, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.uncovered_pubkeys, pubkey);
+    }
 };
 
 pub const OwnedInvocationReport = struct {
@@ -372,6 +388,30 @@ pub const OwnedInvocationReport = struct {
         self.validation.deinit(allocator);
         self.lookup_coverage.deinit(allocator);
         self.* = undefined;
+    }
+
+    pub fn usesLookupTables(self: OwnedInvocationReport) bool {
+        return self.plan.address_lookup_table_count != 0;
+    }
+
+    pub fn hasMissingRequiredSigner(self: OwnedInvocationReport, pubkey: sdk.Pubkey) bool {
+        return self.validation.isMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: OwnedInvocationReport, pubkey: sdk.Pubkey) bool {
+        return self.validation.isExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: OwnedInvocationReport, pubkey: sdk.Pubkey) bool {
+        return self.validation.hasDuplicateProvidedSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: OwnedInvocationReport, pubkey: sdk.Pubkey) bool {
+        return self.validation.hasDuplicateLookupTable(pubkey);
+    }
+
+    pub fn lookupCoverageIncludes(self: OwnedInvocationReport, pubkey: sdk.Pubkey) bool {
+        return self.lookup_coverage.coversPubkey(pubkey);
     }
 };
 
@@ -477,6 +517,14 @@ pub const OwnedPreferredInvocationReport = struct {
         self.report.deinit(allocator);
         self.* = undefined;
     }
+
+    pub fn preferredMode(self: OwnedPreferredInvocationReport) ?InvocationMode {
+        return self.mode_report.preferred_mode;
+    }
+
+    pub fn prefersVersioned(self: OwnedPreferredInvocationReport) bool {
+        return self.mode_report.preferred_mode == .versioned;
+    }
 };
 
 pub const PreferredInvocationExecutionReport = struct {
@@ -491,6 +539,14 @@ pub const PreferredInvocationExecutionReport = struct {
     pub fn deinit(self: *PreferredInvocationExecutionReport, allocator: Allocator) void {
         self.report.deinit(allocator);
         self.* = undefined;
+    }
+
+    pub fn usedRequestedMode(self: PreferredInvocationExecutionReport) bool {
+        return self.requested_mode != null and self.requested_mode == self.selected_mode;
+    }
+
+    pub fn selectedUsesVersioned(self: PreferredInvocationExecutionReport) bool {
+        return self.selected_mode == .versioned;
     }
 };
 
@@ -5297,6 +5353,32 @@ test "invoke.OwnedInvocationValidation query helpers expose signer and duplicate
     try std.testing.expect(!duplicate_validation.isExtraSigner(missing_pubkey));
 }
 
+test "invoke.OwnedInvocationLookupCoverage query helpers expose lookup and coverage state" {
+    const allocator = std.testing.allocator;
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{210} ** 32);
+    const covered_pubkey = sdk.Pubkey.fromBytes([_]u8{211} ** 32);
+    const missing_pubkey = sdk.Pubkey.fromBytes([_]u8{212} ** 32);
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 209, 208, 207, 210, 211);
+    defer allocator.free(spec_json);
+
+    var coverage = try buildInvocationLookupCoverageFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer coverage.deinit(allocator);
+
+    try std.testing.expect(coverage.containsLookupTable(lookup_table));
+    try std.testing.expect(coverage.isCandidate(covered_pubkey));
+    try std.testing.expect(coverage.coversPubkey(covered_pubkey));
+    try std.testing.expect(!coverage.isUncoveredPubkey(covered_pubkey));
+    try std.testing.expect(!coverage.containsLookupTable(missing_pubkey));
+    try std.testing.expect(!coverage.isCandidate(missing_pubkey));
+    try std.testing.expect(!coverage.coversPubkey(missing_pubkey));
+    try std.testing.expect(!coverage.isUncoveredPubkey(missing_pubkey));
+}
+
 test "invoke.buildInvocationLookupCoverageFromInvocationSpecJson detects uncovered nonce path" {
     const allocator = std.testing.allocator;
 
@@ -6895,6 +6977,64 @@ test "invoke.buildPreferredInvocationExecutionReportFromInvocationSpecJson track
     try std.testing.expectEqual(@as(?InvocationMode, null), execution_report.selected_mode);
     try std.testing.expect(!execution_report.used_fallback);
     try std.testing.expect(!execution_report.can_execute_selected_mode);
+}
+
+test "invoke preferred report and execution query helpers expose mode state" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+    const duplicate_signer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{214} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{217} ** 32);
+
+    const preferred_spec_json = try allocProgramInvocationSpecJsonWithLookupTable(
+        allocator,
+        213,
+        214,
+        215,
+        216,
+        217,
+    );
+    defer allocator.free(preferred_spec_json);
+
+    var preferred_report = try buildPreferredInvocationReportFromInvocationSpecJson(
+        allocator,
+        .program,
+        preferred_spec_json,
+    );
+    defer preferred_report.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .versioned), preferred_report.preferredMode());
+    try std.testing.expect(preferred_report.prefersVersioned());
+    try std.testing.expect(preferred_report.report.usesLookupTables());
+
+    const duplicate_spec_json = try allocProgramInvocationSpecJsonWithDuplicateSignerAndLookupTable(
+        allocator,
+        213,
+        214,
+        215,
+        216,
+        217,
+        218,
+    );
+    defer allocator.free(duplicate_spec_json);
+
+    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        duplicate_spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer execution_report.deinit(allocator);
+
+    try std.testing.expect(execution_report.selectedUsesVersioned());
+    try std.testing.expect(!execution_report.usedRequestedMode());
+    try std.testing.expect(execution_report.report.hasDuplicateSigner(duplicate_signer_raw.public_key));
+    try std.testing.expect(execution_report.report.hasDuplicateLookupTable(lookup_table));
 }
 
 test "invoke.buildPreferredOwnedMessageExecutionResultFromInvocationSpecJson preserves execution report" {
