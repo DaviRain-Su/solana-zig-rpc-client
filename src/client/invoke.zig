@@ -302,6 +302,26 @@ pub const PreferredBytesResult = struct {
     }
 };
 
+pub const PreferredSignatureResult = struct {
+    mode: InvocationMode,
+    signature: []const u8,
+
+    pub fn deinit(self: *PreferredSignatureResult, allocator: Allocator) void {
+        allocator.free(self.signature);
+        self.* = undefined;
+    }
+};
+
+pub const PreferredSimulationResult = struct {
+    mode: InvocationMode,
+    simulation: client.SimulatedTransaction,
+};
+
+pub const PreferredFeeResult = struct {
+    mode: InvocationMode,
+    fee: client.FeeForMessage,
+};
+
 pub fn buildInstructionInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
@@ -1240,6 +1260,23 @@ pub fn sendPreferredTransactionFromInvocationSpecJson(
     invocation_spec_json: []const u8,
     options: SendPreferredInvocationSpecOptions,
 ) ![]const u8 {
+    const result = try sendPreferredTransactionResultFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    return result.signature;
+}
+
+pub fn sendPreferredTransactionResultFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: SendPreferredInvocationSpecOptions,
+) !PreferredSignatureResult {
     const mode = try resolvePreferredInvocationMode(
         allocator,
         rpc,
@@ -1250,14 +1287,17 @@ pub fn sendPreferredTransactionFromInvocationSpecJson(
             .build = .{ .blockhash_commitment = options.send.blockhash_commitment },
         },
     );
-    return try sendTransactionFromInvocationSpecJson(
-        allocator,
-        rpc,
-        family,
-        mode == .versioned,
-        invocation_spec_json,
-        options.send,
-    );
+    return .{
+        .mode = mode,
+        .signature = try sendTransactionFromInvocationSpecJson(
+            allocator,
+            rpc,
+            family,
+            mode == .versioned,
+            invocation_spec_json,
+            options.send,
+        ),
+    };
 }
 
 pub fn simulatePreferredTransactionFromInvocationSpecJson(
@@ -1267,6 +1307,23 @@ pub fn simulatePreferredTransactionFromInvocationSpecJson(
     invocation_spec_json: []const u8,
     options: SimulatePreferredInvocationSpecOptions,
 ) !client.SimulatedTransaction {
+    const result = try simulatePreferredTransactionResultFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    return result.simulation;
+}
+
+pub fn simulatePreferredTransactionResultFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: SimulatePreferredInvocationSpecOptions,
+) !PreferredSimulationResult {
     const mode = try resolvePreferredInvocationMode(
         allocator,
         rpc,
@@ -1277,14 +1334,17 @@ pub fn simulatePreferredTransactionFromInvocationSpecJson(
             .build = .{ .blockhash_commitment = options.simulate.blockhash_commitment },
         },
     );
-    return try simulateTransactionFromInvocationSpecJson(
-        allocator,
-        rpc,
-        family,
-        mode == .versioned,
-        invocation_spec_json,
-        options.simulate,
-    );
+    return .{
+        .mode = mode,
+        .simulation = try simulateTransactionFromInvocationSpecJson(
+            allocator,
+            rpc,
+            family,
+            mode == .versioned,
+            invocation_spec_json,
+            options.simulate,
+        ),
+    };
 }
 
 pub fn sendAndConfirmPreferredInvocationSpecJson(
@@ -1294,6 +1354,23 @@ pub fn sendAndConfirmPreferredInvocationSpecJson(
     invocation_spec_json: []const u8,
     options: SendAndConfirmPreferredInvocationSpecOptions,
 ) ![]const u8 {
+    const result = try sendAndConfirmPreferredTransactionResultFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    return result.signature;
+}
+
+pub fn sendAndConfirmPreferredTransactionResultFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: SendAndConfirmPreferredInvocationSpecOptions,
+) !PreferredSignatureResult {
     const mode = try resolvePreferredInvocationMode(
         allocator,
         rpc,
@@ -1304,14 +1381,17 @@ pub fn sendAndConfirmPreferredInvocationSpecJson(
             .build = .{ .blockhash_commitment = options.send_and_confirm.blockhash_commitment },
         },
     );
-    return try sendAndConfirmInvocationSpecJson(
-        allocator,
-        rpc,
-        family,
-        mode == .versioned,
-        invocation_spec_json,
-        options.send_and_confirm,
-    );
+    return .{
+        .mode = mode,
+        .signature = try sendAndConfirmInvocationSpecJson(
+            allocator,
+            rpc,
+            family,
+            mode == .versioned,
+            invocation_spec_json,
+            options.send_and_confirm,
+        ),
+    };
 }
 
 pub fn sendAndConfirmPreferredInvocationSpecJsonWithSpinner(
@@ -1321,6 +1401,23 @@ pub fn sendAndConfirmPreferredInvocationSpecJsonWithSpinner(
     invocation_spec_json: []const u8,
     options: SendAndConfirmPreferredInvocationSpecOptions,
 ) ![]const u8 {
+    const result = try sendAndConfirmPreferredTransactionResultWithSpinnerFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    return result.signature;
+}
+
+pub fn sendAndConfirmPreferredTransactionResultWithSpinnerFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: SendAndConfirmPreferredInvocationSpecOptions,
+) !PreferredSignatureResult {
     const mode = try resolvePreferredInvocationMode(
         allocator,
         rpc,
@@ -1331,14 +1428,17 @@ pub fn sendAndConfirmPreferredInvocationSpecJsonWithSpinner(
             .build = .{ .blockhash_commitment = options.send_and_confirm.blockhash_commitment },
         },
     );
-    return try sendAndConfirmInvocationSpecJsonWithSpinnerOptions(
-        allocator,
-        rpc,
-        family,
-        mode == .versioned,
-        invocation_spec_json,
-        options.send_and_confirm,
-    );
+    return .{
+        .mode = mode,
+        .signature = try sendAndConfirmInvocationSpecJsonWithSpinnerOptions(
+            allocator,
+            rpc,
+            family,
+            mode == .versioned,
+            invocation_spec_json,
+            options.send_and_confirm,
+        ),
+    };
 }
 
 pub fn getFeeForPreferredInvocationSpecJson(
@@ -1348,6 +1448,23 @@ pub fn getFeeForPreferredInvocationSpecJson(
     invocation_spec_json: []const u8,
     options: GetFeeForPreferredInvocationSpecOptions,
 ) !client.FeeForMessage {
+    const result = try getFeeForPreferredInvocationSpecResultFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    return result.fee;
+}
+
+pub fn getFeeForPreferredInvocationSpecResultFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: GetFeeForPreferredInvocationSpecOptions,
+) !PreferredFeeResult {
     const mode = try resolvePreferredInvocationMode(
         allocator,
         rpc,
@@ -1358,14 +1475,17 @@ pub fn getFeeForPreferredInvocationSpecJson(
             .build = .{ .blockhash_commitment = options.fee.blockhash_commitment },
         },
     );
-    return try getFeeForInvocationSpecJson(
-        allocator,
-        rpc,
-        family,
-        mode == .versioned,
-        invocation_spec_json,
-        options.fee,
-    );
+    return .{
+        .mode = mode,
+        .fee = try getFeeForInvocationSpecJson(
+            allocator,
+            rpc,
+            family,
+            mode == .versioned,
+            invocation_spec_json,
+            options.fee,
+        ),
+    };
 }
 
 pub fn sendInvocationSpecJson(
