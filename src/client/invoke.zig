@@ -1007,6 +1007,71 @@ pub fn allocPreferredFeeExecutionResultJson(
     return try aw.toOwnedSlice();
 }
 
+fn requestedModeText(mode: ?InvocationMode) []const u8 {
+    return if (mode) |value| @tagName(value) else "auto";
+}
+
+fn selectedModeText(mode: ?InvocationMode) []const u8 {
+    return if (mode) |value| @tagName(value) else "none";
+}
+
+pub fn writeInvocationDiagnosticsText(
+    writer: *std.Io.Writer,
+    diagnostics: OwnedInvocationDiagnostics,
+) !void {
+    try writer.print(
+        "diagnostics: {d} error(s), {d} warning(s), {d} info item(s)\n",
+        .{ diagnostics.errorCount(), diagnostics.warningCount(), diagnostics.infoCount() },
+    );
+    for (diagnostics.items) |item| {
+        try writer.print(
+            "  [{s}] {s}: {s}\n",
+            .{
+                invocationDiagnosticSeverityLabel(item.severity),
+                invocationDiagnosticCodeLabel(item.code),
+                invocationDiagnosticMessage(item.code),
+            },
+        );
+        if (invocationDiagnosticSuggestion(item.code)) |suggestion| {
+            try writer.print("    suggestion: {s}\n", .{suggestion});
+        }
+    }
+}
+
+pub fn writePreferredSignatureExecutionResultText(
+    writer: *std.Io.Writer,
+    result: *const PreferredSignatureExecutionResult,
+    confirmed: bool,
+) !void {
+    try writer.print("requested mode: {s}\n", .{requestedModeText(result.execution_report.requested_mode)});
+    try writer.print("selected mode: {s}\n", .{selectedModeText(result.execution_report.selected_mode)});
+    try writer.print("used fallback: {}\n", .{result.execution_report.used_fallback});
+    try writer.print("{s}: {s}\n", .{ if (confirmed) "confirmed signature" else "signature", result.signature });
+}
+
+pub fn writePreferredSimulationExecutionSummaryText(
+    writer: *std.Io.Writer,
+    result: *const PreferredSimulationExecutionResult,
+) !void {
+    try writer.print("requested mode: {s}\n", .{requestedModeText(result.execution_report.requested_mode)});
+    try writer.print("selected mode: {s}\n", .{selectedModeText(result.execution_report.selected_mode)});
+    try writer.print("used fallback: {}\n", .{result.execution_report.used_fallback});
+}
+
+pub fn writePreferredFeeExecutionResultText(
+    writer: *std.Io.Writer,
+    result: *const PreferredFeeExecutionResult,
+) !void {
+    try writer.print("requested mode: {s}\n", .{requestedModeText(result.execution_report.requested_mode)});
+    try writer.print("selected mode: {s}\n", .{selectedModeText(result.execution_report.selected_mode)});
+    try writer.print("used fallback: {}\n", .{result.execution_report.used_fallback});
+    if (result.fee.value) |value| {
+        try writer.print("fee: {}\n", .{value});
+    } else {
+        try writer.writeAll("fee: unavailable\n");
+    }
+}
+
 pub fn writePreferredPreparedInvocationJson(
     writer: *std.Io.Writer,
     allocator: Allocator,

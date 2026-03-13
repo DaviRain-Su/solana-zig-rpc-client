@@ -4177,23 +4177,10 @@ fn printPreferredInvocationExecutionReport(
 fn printInvocationDiagnostics(
     diagnostics: client.invoke.OwnedInvocationDiagnostics,
 ) !void {
-    std.debug.print(
-        "diagnostics: {d} error(s), {d} warning(s), {d} info item(s)\n",
-        .{ diagnostics.errorCount(), diagnostics.warningCount(), diagnostics.infoCount() },
-    );
-    for (diagnostics.items) |item| {
-        std.debug.print(
-            "  [{s}] {s}: {s}\n",
-            .{
-                client.invoke.invocationDiagnosticSeverityLabel(item.severity),
-                client.invoke.invocationDiagnosticCodeLabel(item.code),
-                client.invoke.invocationDiagnosticMessage(item.code),
-            },
-        );
-        if (client.invoke.invocationDiagnosticSuggestion(item.code)) |suggestion| {
-            std.debug.print("    suggestion: {s}\n", .{suggestion});
-        }
-    }
+    var buf: [4096]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&buf);
+    try client.invoke.writeInvocationDiagnosticsText(&stderr_writer.interface, diagnostics);
+    try stderr_writer.interface.flush();
 }
 
 fn printPreferredInvocationAnalysis(
@@ -4256,10 +4243,14 @@ fn printPreferredSignatureExecutionResult(
     result: *const client.invoke.PreferredSignatureExecutionResult,
     confirmed: bool,
 ) void {
-    std.debug.print("requested mode: {s}\n", .{if (result.execution_report.requested_mode) |mode| @tagName(mode) else "auto"});
-    std.debug.print("selected mode: {s}\n", .{if (result.execution_report.selected_mode) |mode| @tagName(mode) else "none"});
-    std.debug.print("used fallback: {}\n", .{result.execution_report.used_fallback});
-    std.debug.print("{s}: {s}\n", .{ if (confirmed) "confirmed signature" else "signature", result.signature });
+    var buf: [2048]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&buf);
+    client.invoke.writePreferredSignatureExecutionResultText(
+        &stderr_writer.interface,
+        result,
+        confirmed,
+    ) catch return;
+    stderr_writer.interface.flush() catch return;
 }
 
 fn printPreferredSignatureExecutionResultJson(
@@ -4293,9 +4284,13 @@ fn emitPreferredSignatureExecutionResult(
 fn printPreferredSimulationExecutionResult(
     result: *const client.invoke.PreferredSimulationExecutionResult,
 ) void {
-    std.debug.print("requested mode: {s}\n", .{if (result.execution_report.requested_mode) |mode| @tagName(mode) else "auto"});
-    std.debug.print("selected mode: {s}\n", .{if (result.execution_report.selected_mode) |mode| @tagName(mode) else "none"});
-    std.debug.print("used fallback: {}\n", .{result.execution_report.used_fallback});
+    var buf: [2048]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&buf);
+    client.invoke.writePreferredSimulationExecutionSummaryText(
+        &stderr_writer.interface,
+        result,
+    ) catch return;
+    stderr_writer.interface.flush() catch return;
     printSimulationResult(result.simulation);
 }
 
@@ -4329,14 +4324,13 @@ fn emitPreferredSimulationExecutionResult(
 fn printPreferredFeeExecutionResult(
     result: *const client.invoke.PreferredFeeExecutionResult,
 ) void {
-    std.debug.print("requested mode: {s}\n", .{if (result.execution_report.requested_mode) |mode| @tagName(mode) else "auto"});
-    std.debug.print("selected mode: {s}\n", .{if (result.execution_report.selected_mode) |mode| @tagName(mode) else "none"});
-    std.debug.print("used fallback: {}\n", .{result.execution_report.used_fallback});
-    if (result.fee.value) |value| {
-        std.debug.print("fee: {}\n", .{value});
-    } else {
-        std.debug.print("fee: unavailable\n", .{});
-    }
+    var buf: [2048]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&buf);
+    client.invoke.writePreferredFeeExecutionResultText(
+        &stderr_writer.interface,
+        result,
+    ) catch return;
+    stderr_writer.interface.flush() catch return;
 }
 
 fn printPreferredFeeExecutionResultJson(
