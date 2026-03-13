@@ -607,6 +607,143 @@ pub const PreferredInvocationAnalysis = struct {
     }
 };
 
+fn invocationModeJsonLabel(mode: ?InvocationMode) []const u8 {
+    return if (mode) |value| switch (value) {
+        .legacy => "legacy",
+        .versioned => "versioned",
+    } else "none";
+}
+
+fn invocationBlockhashModeJsonLabel(mode: InvocationBlockhashMode) []const u8 {
+    return switch (mode) {
+        .latest_blockhash => "latest-blockhash",
+        .explicit_recent_blockhash => "explicit-recent-blockhash",
+        .durable_nonce => "durable-nonce",
+    };
+}
+
+fn writeJsonStringField(writer: *std.Io.Writer, first: *bool, name: []const u8, value: ?[]const u8) !void {
+    if (!first.*) try writer.writeAll(",");
+    first.* = false;
+    try std.json.Stringify.value(name, .{}, writer);
+    try writer.writeAll(":");
+    try std.json.Stringify.value(value, .{}, writer);
+}
+
+fn writeJsonBoolField(writer: *std.Io.Writer, first: *bool, name: []const u8, value: bool) !void {
+    if (!first.*) try writer.writeAll(",");
+    first.* = false;
+    try std.json.Stringify.value(name, .{}, writer);
+    try writer.writeAll(":");
+    try std.json.Stringify.value(value, .{}, writer);
+}
+
+fn writeJsonUsizeField(writer: *std.Io.Writer, first: *bool, name: []const u8, value: usize) !void {
+    if (!first.*) try writer.writeAll(",");
+    first.* = false;
+    try std.json.Stringify.value(name, .{}, writer);
+    try writer.writeAll(":");
+    try std.json.Stringify.value(value, .{}, writer);
+}
+
+fn writeJsonPubkeyArrayField(writer: *std.Io.Writer, first: *bool, name: []const u8, allocator: Allocator, pubkeys: anytype) !void {
+    if (!first.*) try writer.writeAll(",");
+    first.* = false;
+    try std.json.Stringify.value(name, .{}, writer);
+    try writer.writeAll(":[");
+    for (pubkeys, 0..) |pubkey, index| {
+        if (index != 0) try writer.writeAll(",");
+        const base58 = try pubkey.toBase58(allocator);
+        defer allocator.free(base58);
+        try std.json.Stringify.value(base58, .{}, writer);
+    }
+    try writer.writeAll("]");
+}
+
+fn writeJsonAccountsField(writer: *std.Io.Writer, first: *bool, allocator: Allocator, accounts: OwnedInvocationAccounts) !void {
+    if (!first.*) try writer.writeAll(",");
+    first.* = false;
+    try std.json.Stringify.value("accounts", .{}, writer);
+    try writer.writeAll(":[");
+    for (accounts.accounts, 0..) |account, index| {
+        if (index != 0) try writer.writeAll(",");
+        const base58 = try account.pubkey.toBase58(allocator);
+        defer allocator.free(base58);
+        try writer.writeAll("{");
+        var account_first = true;
+        try writeJsonStringField(writer, &account_first, "pubkey", base58);
+        try writeJsonBoolField(writer, &account_first, "is_payer", account.is_payer);
+        try writeJsonBoolField(writer, &account_first, "is_program", account.is_program);
+        try writeJsonBoolField(writer, &account_first, "is_nonce_account", account.is_nonce_account);
+        try writeJsonBoolField(writer, &account_first, "is_signer", account.is_signer);
+        try writeJsonBoolField(writer, &account_first, "is_writable", account.is_writable);
+        try writer.writeAll("}");
+    }
+    try writer.writeAll("]");
+}
+
+pub fn writePreferredInvocationAnalysisJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    analysis: *const PreferredInvocationAnalysis,
+) !void {
+    var first = true;
+
+    try writer.writeAll("{");
+    try writeJsonStringField(writer, &first, "preferred_mode", invocationModeJsonLabel(analysis.execution_report.mode_report.preferred_mode));
+    try writeJsonStringField(writer, &first, "requested_mode", invocationModeJsonLabel(analysis.execution_report.requested_mode));
+    try writeJsonStringField(writer, &first, "selected_mode", invocationModeJsonLabel(analysis.execution_report.selected_mode));
+    try writeJsonBoolField(writer, &first, "used_fallback", analysis.execution_report.used_fallback);
+    try writeJsonBoolField(writer, &first, "legacy_buildable", analysis.execution_report.mode_report.legacy_buildable);
+    try writeJsonBoolField(writer, &first, "versioned_buildable", analysis.execution_report.mode_report.versioned_buildable);
+    try writeJsonBoolField(writer, &first, "validation_passed", analysis.execution_report.mode_report.validation_passed);
+    try writeJsonBoolField(writer, &first, "can_execute_selected_mode", analysis.execution_report.can_execute_selected_mode);
+    try writeJsonBoolField(writer, &first, "can_execute", analysis.execution_report.report.can_execute);
+    try writeJsonBoolField(writer, &first, "uses_durable_nonce", analysis.execution_report.report.uses_durable_nonce);
+    try writeJsonBoolField(writer, &first, "full_lookup_coverage", analysis.execution_report.report.has_full_lookup_coverage);
+
+    const payer_base58 = try analysis.execution_report.report.summary.payer.toBase58(allocator);
+    defer allocator.free(payer_base58);
+    try writeJsonStringField(writer, &first, "payer", payer_base58);
+    try writeJsonStringField(writer, &first, "blockhash_mode", invocationBlockhashModeJsonLabel(analysis.execution_report.report.plan.blockhash_mode));
+
+    try writeJsonUsizeField(writer, &first, "instruction_count", analysis.execution_report.report.summary.instruction_count);
+    try writeJsonUsizeField(writer, &first, "account_count", analysis.execution_report.report.summary.account_count);
+    try writeJsonUsizeField(writer, &first, "signer_count", analysis.execution_report.report.summary.signer_count);
+    try writeJsonUsizeField(writer, &first, "writable_account_count", analysis.execution_report.report.summary.writable_account_count);
+    try writeJsonUsizeField(writer, &first, "readonly_account_count", analysis.execution_report.report.summary.readonly_account_count);
+    try writeJsonUsizeField(writer, &first, "lookup_table_count", analysis.execution_report.report.summary.address_lookup_table_count);
+    try writeJsonUsizeField(writer, &first, "missing_required_signer_count", analysis.execution_report.report.validation.missing_required_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "extra_signer_count", analysis.execution_report.report.validation.extra_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "duplicate_signer_count", analysis.execution_report.report.validation.duplicate_provided_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "duplicate_lookup_table_count", analysis.execution_report.report.validation.duplicate_lookup_table_pubkeys.len);
+
+    try writeJsonPubkeyArrayField(writer, &first, "program_ids", allocator, analysis.execution_report.report.summary.program_ids);
+    try writeJsonPubkeyArrayField(writer, &first, "provided_signer_pubkeys", allocator, analysis.execution_report.report.preflight.provided_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "required_signer_pubkeys", allocator, analysis.execution_report.report.preflight.required_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "writable_pubkeys", allocator, analysis.execution_report.report.preflight.writable_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "readonly_pubkeys", allocator, analysis.execution_report.report.preflight.readonly_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_table_pubkeys", allocator, analysis.execution_report.report.plan.lookup_table_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_covered_pubkeys", allocator, analysis.execution_report.report.lookup_coverage.covered_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_uncovered_pubkeys", allocator, analysis.execution_report.report.lookup_coverage.uncovered_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "missing_required_signer_pubkeys", allocator, analysis.execution_report.report.validation.missing_required_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "extra_signer_pubkeys", allocator, analysis.execution_report.report.validation.extra_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "duplicate_signer_pubkeys", allocator, analysis.execution_report.report.validation.duplicate_provided_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "duplicate_lookup_table_pubkeys", allocator, analysis.execution_report.report.validation.duplicate_lookup_table_pubkeys);
+    try writeJsonAccountsField(writer, &first, allocator, analysis.accounts);
+    try writer.writeAll("}");
+}
+
+pub fn allocPreferredInvocationAnalysisJson(
+    allocator: Allocator,
+    analysis: *const PreferredInvocationAnalysis,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writePreferredInvocationAnalysisJson(&aw.writer, allocator, analysis);
+    return try aw.toOwnedSlice();
+}
+
 pub const PreparedInvocation = struct {
     mode: InvocationMode,
     report: OwnedInvocationReport,
@@ -7808,6 +7945,37 @@ test "invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson preserves fa
 
     const program_info = findInvocationAccountInfo(analysis.accounts.accounts, program_id).?;
     try std.testing.expect(program_info.is_program);
+}
+
+test "invoke.allocPreferredInvocationAnalysisJson emits reusable analysis fields" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 71, 72, 73, 74, 75);
+    defer allocator.free(spec_json);
+
+    var analysis = try buildPreferredInvocationAnalysisFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer analysis.deinit(allocator);
+
+    const json = try allocPreferredInvocationAnalysisJson(allocator, &analysis);
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"used_fallback\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"lookup_table_count\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"program_ids\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"accounts\":[") != null);
 }
 
 test "invoke.buildPreferredPreparedSignedTransactionFromInvocationSpecJson prepares legacy transaction with analysis" {

@@ -4134,119 +4134,15 @@ fn printPreferredInvocationAnalysis(
     try printInvocationAccounts(allocator, analysis.accounts);
 }
 
-fn writeJsonStringField(writer: anytype, first: *bool, name: []const u8, value: ?[]const u8) !void {
-    if (!first.*) try writer.writeAll(",");
-    first.* = false;
-    try std.json.Stringify.value(name, .{}, writer);
-    try writer.writeAll(":");
-    try std.json.Stringify.value(value, .{}, writer);
-}
-
-fn writeJsonBoolField(writer: anytype, first: *bool, name: []const u8, value: bool) !void {
-    if (!first.*) try writer.writeAll(",");
-    first.* = false;
-    try std.json.Stringify.value(name, .{}, writer);
-    try writer.writeAll(":");
-    try std.json.Stringify.value(value, .{}, writer);
-}
-
-fn writeJsonUsizeField(writer: anytype, first: *bool, name: []const u8, value: usize) !void {
-    if (!first.*) try writer.writeAll(",");
-    first.* = false;
-    try std.json.Stringify.value(name, .{}, writer);
-    try writer.writeAll(":");
-    try std.json.Stringify.value(value, .{}, writer);
-}
-
-fn writeJsonPubkeyArrayField(writer: anytype, first: *bool, name: []const u8, allocator: Allocator, pubkeys: anytype) !void {
-    if (!first.*) try writer.writeAll(",");
-    first.* = false;
-    try std.json.Stringify.value(name, .{}, writer);
-    try writer.writeAll(":[");
-    for (pubkeys, 0..) |pubkey, index| {
-        if (index != 0) try writer.writeAll(",");
-        const base58 = try pubkey.toBase58(allocator);
-        defer allocator.free(base58);
-        try std.json.Stringify.value(base58, .{}, writer);
-    }
-    try writer.writeAll("]");
-}
-
-fn writeJsonAccountsField(writer: anytype, first: *bool, allocator: Allocator, accounts: client.invoke.OwnedInvocationAccounts) !void {
-    if (!first.*) try writer.writeAll(",");
-    first.* = false;
-    try std.json.Stringify.value("accounts", .{}, writer);
-    try writer.writeAll(":[");
-    for (accounts.accounts, 0..) |account, index| {
-        if (index != 0) try writer.writeAll(",");
-        const base58 = try account.pubkey.toBase58(allocator);
-        defer allocator.free(base58);
-        try writer.writeAll("{");
-        var account_first = true;
-        try writeJsonStringField(writer, &account_first, "pubkey", base58);
-        try writeJsonBoolField(writer, &account_first, "is_payer", account.is_payer);
-        try writeJsonBoolField(writer, &account_first, "is_program", account.is_program);
-        try writeJsonBoolField(writer, &account_first, "is_nonce_account", account.is_nonce_account);
-        try writeJsonBoolField(writer, &account_first, "is_signer", account.is_signer);
-        try writeJsonBoolField(writer, &account_first, "is_writable", account.is_writable);
-        try writer.writeAll("}");
-    }
-    try writer.writeAll("]");
-}
-
 fn printPreferredInvocationAnalysisJson(
     allocator: Allocator,
     analysis: *const client.invoke.PreferredInvocationAnalysis,
 ) !void {
     var buf: [4096]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&buf);
-    const writer = &stdout_writer.interface;
-    var first = true;
-
-    try writer.writeAll("{");
-    try writeJsonStringField(writer, &first, "preferred_mode", invocationModeLabel(analysis.execution_report.mode_report.preferred_mode));
-    try writeJsonStringField(writer, &first, "requested_mode", invocationModeLabel(analysis.execution_report.requested_mode));
-    try writeJsonStringField(writer, &first, "selected_mode", invocationModeLabel(analysis.execution_report.selected_mode));
-    try writeJsonBoolField(writer, &first, "used_fallback", analysis.execution_report.used_fallback);
-    try writeJsonBoolField(writer, &first, "legacy_buildable", analysis.execution_report.mode_report.legacy_buildable);
-    try writeJsonBoolField(writer, &first, "versioned_buildable", analysis.execution_report.mode_report.versioned_buildable);
-    try writeJsonBoolField(writer, &first, "validation_passed", analysis.execution_report.mode_report.validation_passed);
-    try writeJsonBoolField(writer, &first, "can_execute_selected_mode", analysis.execution_report.can_execute_selected_mode);
-    try writeJsonBoolField(writer, &first, "can_execute", analysis.execution_report.report.can_execute);
-    try writeJsonBoolField(writer, &first, "uses_durable_nonce", analysis.execution_report.report.uses_durable_nonce);
-    try writeJsonBoolField(writer, &first, "full_lookup_coverage", analysis.execution_report.report.has_full_lookup_coverage);
-
-    const payer_base58 = try analysis.execution_report.report.summary.payer.toBase58(allocator);
-    defer allocator.free(payer_base58);
-    try writeJsonStringField(writer, &first, "payer", payer_base58);
-    try writeJsonStringField(writer, &first, "blockhash_mode", invocationBlockhashModeLabel(analysis.execution_report.report.plan.blockhash_mode));
-
-    try writeJsonUsizeField(writer, &first, "instruction_count", analysis.execution_report.report.summary.instruction_count);
-    try writeJsonUsizeField(writer, &first, "account_count", analysis.execution_report.report.summary.account_count);
-    try writeJsonUsizeField(writer, &first, "signer_count", analysis.execution_report.report.summary.signer_count);
-    try writeJsonUsizeField(writer, &first, "writable_account_count", analysis.execution_report.report.summary.writable_account_count);
-    try writeJsonUsizeField(writer, &first, "readonly_account_count", analysis.execution_report.report.summary.readonly_account_count);
-    try writeJsonUsizeField(writer, &first, "lookup_table_count", analysis.execution_report.report.summary.address_lookup_table_count);
-    try writeJsonUsizeField(writer, &first, "missing_required_signer_count", analysis.execution_report.report.validation.missing_required_signer_pubkeys.len);
-    try writeJsonUsizeField(writer, &first, "extra_signer_count", analysis.execution_report.report.validation.extra_signer_pubkeys.len);
-    try writeJsonUsizeField(writer, &first, "duplicate_signer_count", analysis.execution_report.report.validation.duplicate_provided_signer_pubkeys.len);
-    try writeJsonUsizeField(writer, &first, "duplicate_lookup_table_count", analysis.execution_report.report.validation.duplicate_lookup_table_pubkeys.len);
-
-    try writeJsonPubkeyArrayField(writer, &first, "program_ids", allocator, analysis.execution_report.report.summary.program_ids);
-    try writeJsonPubkeyArrayField(writer, &first, "provided_signer_pubkeys", allocator, analysis.execution_report.report.preflight.provided_signer_pubkeys);
-    try writeJsonPubkeyArrayField(writer, &first, "required_signer_pubkeys", allocator, analysis.execution_report.report.preflight.required_signer_pubkeys);
-    try writeJsonPubkeyArrayField(writer, &first, "writable_pubkeys", allocator, analysis.execution_report.report.preflight.writable_pubkeys);
-    try writeJsonPubkeyArrayField(writer, &first, "readonly_pubkeys", allocator, analysis.execution_report.report.preflight.readonly_pubkeys);
-    try writeJsonPubkeyArrayField(writer, &first, "lookup_table_pubkeys", allocator, analysis.execution_report.report.plan.lookup_table_pubkeys);
-    try writeJsonPubkeyArrayField(writer, &first, "lookup_covered_pubkeys", allocator, analysis.execution_report.report.lookup_coverage.covered_pubkeys);
-    try writeJsonPubkeyArrayField(writer, &first, "lookup_uncovered_pubkeys", allocator, analysis.execution_report.report.lookup_coverage.uncovered_pubkeys);
-    try writeJsonPubkeyArrayField(writer, &first, "missing_required_signer_pubkeys", allocator, analysis.execution_report.report.validation.missing_required_signer_pubkeys);
-    try writeJsonPubkeyArrayField(writer, &first, "extra_signer_pubkeys", allocator, analysis.execution_report.report.validation.extra_signer_pubkeys);
-    try writeJsonPubkeyArrayField(writer, &first, "duplicate_signer_pubkeys", allocator, analysis.execution_report.report.validation.duplicate_provided_signer_pubkeys);
-    try writeJsonPubkeyArrayField(writer, &first, "duplicate_lookup_table_pubkeys", allocator, analysis.execution_report.report.validation.duplicate_lookup_table_pubkeys);
-    try writeJsonAccountsField(writer, &first, allocator, analysis.accounts);
-    try writer.writeAll("}\n");
-    try writer.flush();
+    try client.invoke.writePreferredInvocationAnalysisJson(&stdout_writer.interface, allocator, analysis);
+    try stdout_writer.interface.writeAll("\n");
+    try stdout_writer.interface.flush();
 }
 
 fn runGenericInvocationCommand(
