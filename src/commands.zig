@@ -4166,6 +4166,129 @@ fn buildAnchorIdlInvokeInvocationSpecJsonForCommand(
     };
 }
 
+fn runAnchorIdlInvocationCommand(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    command: cli.Command,
+    idl_arg: ?[]const u8,
+    instruction_name_arg: ?[]const u8,
+    program_id_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    accounts_json_arg: ?[]const u8,
+    account_bindings: []const []const u8,
+    remaining_accounts: []const []const u8,
+    remaining_accounts_json_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+    commitment: anytype,
+    send_preflight_commitment: anytype,
+    send_transaction_options: anytype,
+    search_transaction_history: bool,
+    status_timeout_ms: u64,
+    status_poll_ms: u64,
+    simulation_account_encoding_arg: ?[]const u8,
+    simulation_min_context_slot_arg: ?[]const u8,
+    simulation_accounts: anytype,
+    simulate_sig_verify: bool,
+    simulate_replace_recent_blockhash: bool,
+    simulate_inner_instructions: bool,
+) !void {
+    const versioned = switch (command) {
+        .send_versioned_idl_invoke,
+        .send_versioned_idl_invoke_and_confirm,
+        .simulate_versioned_idl_invoke,
+        => true,
+        else => false,
+    };
+    const simulate = switch (command) {
+        .simulate_idl_invoke,
+        .simulate_versioned_idl_invoke,
+        => true,
+        else => false,
+    };
+    const confirm = switch (command) {
+        .send_idl_invoke_and_confirm,
+        .send_versioned_idl_invoke_and_confirm,
+        => true,
+        else => false,
+    };
+
+    const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJsonForCommand(
+        allocator,
+        command,
+        idl_arg,
+        instruction_name_arg,
+        program_id_arg,
+        args_json_arg,
+        accounts_json_arg,
+        account_bindings,
+        remaining_accounts,
+        remaining_accounts_json_arg,
+        payer_keypair_path_arg,
+        payer_secret_key_arg,
+        signer_keypair_paths_arg,
+        if (versioned) lookup_tables_arg else null,
+        recent_blockhash_arg,
+        nonce_account_arg,
+        nonce_authority_keypair_path_arg,
+        additional_signer_secret_keys_arg,
+    ) catch return error.InvalidCli;
+    defer allocator.free(invocation_spec_json);
+
+    if (simulate) {
+        const options = try buildCliSimulationOptions(
+            simulation_account_encoding_arg,
+            simulation_min_context_slot_arg,
+            simulation_accounts,
+            simulate_sig_verify,
+            simulate_replace_recent_blockhash,
+            simulate_inner_instructions,
+            commitment,
+        );
+        const simulation = try simulateInvocationSpecJson(
+            allocator,
+            rpc,
+            .anchor_idl,
+            versioned,
+            invocation_spec_json,
+            commitment,
+            options,
+        );
+        defer freeSimulatedTransaction(allocator, simulation);
+
+        printSimulationResult(simulation);
+        return;
+    }
+
+    const tx_signature = try sendInvocationSpecJson(
+        allocator,
+        rpc,
+        .anchor_idl,
+        versioned,
+        confirm,
+        invocation_spec_json,
+        commitment orelse send_preflight_commitment,
+        send_transaction_options,
+        commitment,
+        search_transaction_history,
+        status_timeout_ms,
+        status_poll_ms,
+    );
+    defer allocator.free(tx_signature);
+
+    if (confirm) {
+        std.debug.print("confirmed signature: {s}\n", .{tx_signature});
+    } else {
+        std.debug.print("signature: {s}\n", .{tx_signature});
+    }
+}
+
 fn buildProgramInvokeInvocationSpecJson(
     allocator: Allocator,
     program_id: []const u8,
@@ -5447,93 +5570,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
         },
 
-        .send_idl_invoke => {
-            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJsonForCommand(
-                allocator,
-                command,
-                idl_spec_arg,
-                idl_instruction_arg,
-                idl_program_id_arg,
-                idl_args_json_arg,
-                args.idl_accounts_json_arg,
-                idl_account_bindings.items,
-                idl_remaining_accounts.items,
-                args.idl_remaining_accounts_json_arg,
-                effective_sender_keypair_path,
-                sender_secret_key_arg,
-                program_invoke_signer_keypair_paths_arg,
-                null,
-                recent_blockhash_arg,
-                program_invoke_nonce_account_arg,
-                program_invoke_nonce_authority_keypair_path_arg,
-                program_invoke_additional_signer_secret_keys_arg,
-            ) catch return error.InvalidCli;
-            defer allocator.free(invocation_spec_json);
-
-            const tx_signature = try sendInvocationSpecJson(
+        .send_idl_invoke,
+        .send_idl_invoke_and_confirm,
+        .send_versioned_idl_invoke,
+        .send_versioned_idl_invoke_and_confirm,
+        .simulate_idl_invoke,
+        .simulate_versioned_idl_invoke,
+        => {
+            try runAnchorIdlInvocationCommand(
                 allocator,
                 rpc,
-                .anchor_idl,
-                false,
-                false,
-                invocation_spec_json,
-                commitment orelse send_preflight_commitment,
-                send_transaction_options,
-                commitment,
-                search_transaction_history,
-                status_timeout_ms,
-                status_poll_ms,
-            );
-            defer allocator.free(tx_signature);
-
-            std.debug.print("signature: {s}\n", .{tx_signature});
-        },
-
-        .send_idl_invoke_and_confirm => {
-            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJsonForCommand(
-                allocator,
-                command,
-                idl_spec_arg,
-                idl_instruction_arg,
-                idl_program_id_arg,
-                idl_args_json_arg,
-                args.idl_accounts_json_arg,
-                idl_account_bindings.items,
-                idl_remaining_accounts.items,
-                args.idl_remaining_accounts_json_arg,
-                effective_sender_keypair_path,
-                sender_secret_key_arg,
-                program_invoke_signer_keypair_paths_arg,
-                null,
-                recent_blockhash_arg,
-                program_invoke_nonce_account_arg,
-                program_invoke_nonce_authority_keypair_path_arg,
-                program_invoke_additional_signer_secret_keys_arg,
-            ) catch return error.InvalidCli;
-            defer allocator.free(invocation_spec_json);
-
-            const tx_signature = try sendInvocationSpecJson(
-                allocator,
-                rpc,
-                .anchor_idl,
-                false,
-                true,
-                invocation_spec_json,
-                commitment orelse send_preflight_commitment,
-                send_transaction_options,
-                commitment,
-                search_transaction_history,
-                status_timeout_ms,
-                status_poll_ms,
-            );
-            defer allocator.free(tx_signature);
-
-            std.debug.print("confirmed signature: {s}\n", .{tx_signature});
-        },
-
-        .send_versioned_idl_invoke => {
-            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJsonForCommand(
-                allocator,
                 command,
                 idl_spec_arg,
                 idl_instruction_arg,
@@ -5551,68 +5597,19 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
-            ) catch return error.InvalidCli;
-            defer allocator.free(invocation_spec_json);
-
-            const tx_signature = try sendInvocationSpecJson(
-                allocator,
-                rpc,
-                .anchor_idl,
-                true,
-                false,
-                invocation_spec_json,
-                commitment orelse send_preflight_commitment,
-                send_transaction_options,
                 commitment,
+                send_preflight_commitment,
+                send_transaction_options,
                 search_transaction_history,
                 status_timeout_ms,
                 status_poll_ms,
+                simulation_account_encoding_arg,
+                simulation_min_context_slot_arg,
+                simulation_accounts.items,
+                simulate_sig_verify,
+                simulate_replace_recent_blockhash,
+                simulate_inner_instructions,
             );
-            defer allocator.free(tx_signature);
-
-            std.debug.print("signature: {s}\n", .{tx_signature});
-        },
-
-        .send_versioned_idl_invoke_and_confirm => {
-            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJsonForCommand(
-                allocator,
-                command,
-                idl_spec_arg,
-                idl_instruction_arg,
-                idl_program_id_arg,
-                idl_args_json_arg,
-                args.idl_accounts_json_arg,
-                idl_account_bindings.items,
-                idl_remaining_accounts.items,
-                args.idl_remaining_accounts_json_arg,
-                effective_sender_keypair_path,
-                sender_secret_key_arg,
-                program_invoke_signer_keypair_paths_arg,
-                program_invoke_lookup_tables_arg,
-                recent_blockhash_arg,
-                program_invoke_nonce_account_arg,
-                program_invoke_nonce_authority_keypair_path_arg,
-                program_invoke_additional_signer_secret_keys_arg,
-            ) catch return error.InvalidCli;
-            defer allocator.free(invocation_spec_json);
-
-            const tx_signature = try sendInvocationSpecJson(
-                allocator,
-                rpc,
-                .anchor_idl,
-                true,
-                true,
-                invocation_spec_json,
-                commitment orelse send_preflight_commitment,
-                send_transaction_options,
-                commitment,
-                search_transaction_history,
-                status_timeout_ms,
-                status_poll_ms,
-            );
-            defer allocator.free(tx_signature);
-
-            std.debug.print("confirmed signature: {s}\n", .{tx_signature});
         },
 
         .raw_rpc => {
@@ -5893,98 +5890,6 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 allocator,
                 rpc,
                 .program,
-                true,
-                invocation_spec_json,
-                commitment,
-                options,
-            );
-            defer freeSimulatedTransaction(allocator, simulation);
-
-            printSimulationResult(simulation);
-        },
-
-        .simulate_idl_invoke => {
-            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJsonForCommand(
-                allocator,
-                command,
-                idl_spec_arg,
-                idl_instruction_arg,
-                idl_program_id_arg,
-                idl_args_json_arg,
-                args.idl_accounts_json_arg,
-                idl_account_bindings.items,
-                idl_remaining_accounts.items,
-                args.idl_remaining_accounts_json_arg,
-                effective_sender_keypair_path,
-                sender_secret_key_arg,
-                program_invoke_signer_keypair_paths_arg,
-                null,
-                recent_blockhash_arg,
-                program_invoke_nonce_account_arg,
-                program_invoke_nonce_authority_keypair_path_arg,
-                program_invoke_additional_signer_secret_keys_arg,
-            ) catch return error.InvalidCli;
-            defer allocator.free(invocation_spec_json);
-
-            const options = try buildCliSimulationOptions(
-                simulation_account_encoding_arg,
-                simulation_min_context_slot_arg,
-                simulation_accounts.items,
-                simulate_sig_verify,
-                simulate_replace_recent_blockhash,
-                simulate_inner_instructions,
-                commitment,
-            );
-            const simulation = try simulateInvocationSpecJson(
-                allocator,
-                rpc,
-                .anchor_idl,
-                false,
-                invocation_spec_json,
-                commitment,
-                options,
-            );
-            defer freeSimulatedTransaction(allocator, simulation);
-
-            printSimulationResult(simulation);
-        },
-
-        .simulate_versioned_idl_invoke => {
-            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJsonForCommand(
-                allocator,
-                command,
-                idl_spec_arg,
-                idl_instruction_arg,
-                idl_program_id_arg,
-                idl_args_json_arg,
-                args.idl_accounts_json_arg,
-                idl_account_bindings.items,
-                idl_remaining_accounts.items,
-                args.idl_remaining_accounts_json_arg,
-                effective_sender_keypair_path,
-                sender_secret_key_arg,
-                program_invoke_signer_keypair_paths_arg,
-                program_invoke_lookup_tables_arg,
-                recent_blockhash_arg,
-                program_invoke_nonce_account_arg,
-                program_invoke_nonce_authority_keypair_path_arg,
-                program_invoke_additional_signer_secret_keys_arg,
-            ) catch return error.InvalidCli;
-            defer allocator.free(invocation_spec_json);
-
-            const options = try buildCliSimulationOptions(
-                simulation_account_encoding_arg,
-                simulation_min_context_slot_arg,
-                simulation_accounts.items,
-                simulate_sig_verify,
-                simulate_replace_recent_blockhash,
-                simulate_inner_instructions,
-                commitment,
-            );
-            const simulation = try simulateInvocationSpecJson(
-                allocator,
-                rpc,
-                .anchor_idl,
                 true,
                 invocation_spec_json,
                 commitment,
