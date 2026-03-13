@@ -568,6 +568,103 @@ pub const PreparedInvocation = struct {
     }
 };
 
+pub const PreferredPreparedInvocation = struct {
+    mode_report: InvocationModeReport,
+    requested_mode: ?InvocationMode,
+    selected_mode: InvocationMode,
+    requested_mode_buildable: bool,
+    used_fallback: bool,
+    can_execute_selected_mode: bool,
+    prepared: PreparedInvocation,
+
+    pub fn deinit(self: *PreferredPreparedInvocation, allocator: Allocator) void {
+        self.prepared.deinit(allocator);
+        self.* = undefined;
+    }
+
+    pub fn serialize(self: PreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.serialize(allocator);
+    }
+
+    pub fn toBase64(self: PreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.toBase64(allocator);
+    }
+
+    pub fn serializeMessage(self: PreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.serializeMessage(allocator);
+    }
+
+    pub fn messageToBase64(self: PreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.messageToBase64(allocator);
+    }
+
+    pub fn firstSignature(self: PreferredPreparedInvocation) ?sdk.Signature {
+        return self.prepared.firstSignature();
+    }
+
+    pub fn send(
+        self: *const PreferredPreparedInvocation,
+        rpc: anytype,
+        options: ?rpc_types.SendTransactionOptions,
+    ) ![]const u8 {
+        return try self.prepared.send(rpc, options);
+    }
+
+    pub fn simulate(
+        self: *const PreferredPreparedInvocation,
+        rpc: anytype,
+        options: ?rpc_types.SimulateTransactionOptions,
+    ) !client.SimulatedTransaction {
+        return try self.prepared.simulate(rpc, options);
+    }
+
+    pub fn sendAndConfirm(
+        self: *const PreferredPreparedInvocation,
+        rpc: anytype,
+        options: ?rpc_types.SendTransactionOptions,
+        commitment: ?client.Commitment,
+        search_transaction_history: bool,
+        timeout_ms: u64,
+        poll_interval_ms: u64,
+    ) ![]const u8 {
+        return try self.prepared.sendAndConfirm(
+            rpc,
+            options,
+            commitment,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+        );
+    }
+
+    pub fn sendAndConfirmWithSpinner(
+        self: *const PreferredPreparedInvocation,
+        rpc: anytype,
+        options: ?rpc_types.SendTransactionOptions,
+        commitment: ?client.Commitment,
+        search_transaction_history: bool,
+        timeout_ms: u64,
+        poll_interval_ms: u64,
+    ) ![]const u8 {
+        return try self.prepared.sendAndConfirmWithSpinner(
+            rpc,
+            options,
+            commitment,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+        );
+    }
+
+    pub fn getFee(
+        self: *const PreferredPreparedInvocation,
+        rpc: anytype,
+        commitment: ?client.Commitment,
+    ) !rpc_types.FeeForMessage {
+        return try self.prepared.getFee(rpc, commitment);
+    }
+};
+
 pub const SentPreparedInvocation = struct {
     prepared: PreparedInvocation,
     signature: []const u8,
@@ -1698,6 +1795,42 @@ pub fn buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
             rpc,
             family,
             mode == .versioned,
+            invocation_spec_json,
+            options.build,
+        ),
+    };
+}
+
+pub fn buildPreferredPreparedInvocationFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredPreparedInvocation {
+    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    defer execution_report.deinit(allocator);
+
+    const selected_mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+
+    return .{
+        .mode_report = execution_report.mode_report,
+        .requested_mode = execution_report.requested_mode,
+        .selected_mode = selected_mode,
+        .requested_mode_buildable = execution_report.requested_mode_buildable,
+        .used_fallback = execution_report.used_fallback,
+        .can_execute_selected_mode = execution_report.can_execute_selected_mode,
+        .prepared = try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+            allocator,
+            rpc,
+            family,
+            selected_mode == .versioned,
             invocation_spec_json,
             options.build,
         ),
@@ -7114,6 +7247,54 @@ test "invoke.PreferredPreparedSignedTransaction methods delegate execution helpe
     try std.testing.expectEqual(@as(u64, 12), simulation.context_slot);
     try std.testing.expectEqualStrings("preferred-method-spinner", signature);
     try std.testing.expectEqual(@as(?InvocationMode, .versioned), prepared.execution_report.selected_mode);
+}
+
+test "invoke.buildPreferredPreparedInvocationFromInvocationSpecJson prepares legacy invocation" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 385, 386, 387);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreferredPreparedInvocationFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        spec_json,
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    try std.testing.expectEqual(InvocationMode.legacy, prepared.selected_mode);
+    try std.testing.expectEqual(InvocationMode.legacy, prepared.prepared.mode);
+    try std.testing.expect(prepared.can_execute_selected_mode);
+}
+
+test "invoke.buildPreferredPreparedInvocationFromInvocationSpecJson preserves versioned fallback metadata" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 388, 389, 390, 391, 392);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreferredPreparedInvocationFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer prepared.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), prepared.requested_mode);
+    try std.testing.expectEqual(InvocationMode.versioned, prepared.selected_mode);
+    try std.testing.expect(prepared.used_fallback);
+    try std.testing.expectEqual(InvocationMode.versioned, prepared.prepared.mode);
 }
 
 test "invoke.PreparedInvocation transaction helpers expose generic serialization" {
