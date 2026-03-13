@@ -2498,6 +2498,199 @@ pub fn buildOwnedInvocationSpecFromInvocationSpecJson(
     );
 }
 
+pub const BuildInvocationSpecJsonFromOwnedInvocationSpecError =
+    client.invocation_spec_json.BuildError ||
+    Allocator.Error ||
+    error{
+        MissingPayerSigner,
+        MissingNonceAuthoritySigner,
+    };
+
+fn findOwnedInvocationSignerSecretKeyBase58(
+    allocator: Allocator,
+    signers: []const sdk.Keypair,
+    pubkey: sdk.Pubkey,
+) !?[]u8 {
+    for (signers) |signer| {
+        if (std.meta.eql(signer.public_key, pubkey)) {
+            return try client.encodeBase58(allocator, &signer.secret_key);
+        }
+    }
+    return null;
+}
+
+fn buildAdditionalSignerSecretKeysJsonFromOwnedInvocationSpec(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !?[]u8 {
+    const explicit_nonce_authority = if (owned_spec.nonce_account != null and owned_spec.nonce_authority != null and
+        !std.meta.eql(owned_spec.nonce_authority.?, owned_spec.payer))
+        owned_spec.nonce_authority.?
+    else
+        null;
+
+    var json_buffer: std.Io.Writer.Allocating = .init(allocator);
+    defer json_buffer.deinit();
+
+    var signer_count: usize = 0;
+    try json_buffer.writer.writeByte('[');
+    for (owned_spec.signers) |signer| {
+        if (std.meta.eql(signer.public_key, owned_spec.payer)) continue;
+        if (explicit_nonce_authority) |nonce_authority| {
+            if (std.meta.eql(signer.public_key, nonce_authority)) continue;
+        }
+
+        if (signer_count != 0) try json_buffer.writer.writeByte(',');
+        const secret_key_base58 = try client.encodeBase58(allocator, &signer.secret_key);
+        defer allocator.free(secret_key_base58);
+        try std.json.Stringify.value(secret_key_base58, .{}, &json_buffer.writer);
+        signer_count += 1;
+    }
+    try json_buffer.writer.writeByte(']');
+
+    if (signer_count == 0) return null;
+    return try allocator.dupe(u8, json_buffer.written());
+}
+
+fn buildAddressLookupTablesJsonFromOwnedInvocationSpec(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !?[]u8 {
+    if (owned_spec.address_lookup_tables.len == 0) return null;
+
+    var json_buffer: std.Io.Writer.Allocating = .init(allocator);
+    defer json_buffer.deinit();
+
+    try json_buffer.writer.writeByte('[');
+    for (owned_spec.address_lookup_tables, 0..) |table, table_index| {
+        if (table_index != 0) try json_buffer.writer.writeByte(',');
+        const account_key_base58 = try table.account_key.toBase58(allocator);
+        defer allocator.free(account_key_base58);
+
+        try json_buffer.writer.writeAll("{\"account_key\":");
+        try std.json.Stringify.value(account_key_base58, .{}, &json_buffer.writer);
+        try json_buffer.writer.writeAll(",\"addresses\":[");
+        for (table.addresses, 0..) |address, address_index| {
+            if (address_index != 0) try json_buffer.writer.writeByte(',');
+            const address_base58 = try address.toBase58(allocator);
+            defer allocator.free(address_base58);
+            try std.json.Stringify.value(address_base58, .{}, &json_buffer.writer);
+        }
+        try json_buffer.writer.writeAll("]}");
+    }
+    try json_buffer.writer.writeByte(']');
+
+    return try allocator.dupe(u8, json_buffer.written());
+}
+
+fn buildInstructionsJsonFromOwnedInvocationSpec(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !Allocator.Error![]u8 {
+    var json_buffer: std.Io.Writer.Allocating = .init(allocator);
+    defer json_buffer.deinit();
+
+    try json_buffer.writer.writeByte('[');
+    for (owned_spec.owned_instructions.instructions, 0..) |instruction, instruction_index| {
+        if (instruction_index != 0) try json_buffer.writer.writeByte(',');
+        const program_id_base58 = try instruction.program_id.toBase58(allocator);
+        defer allocator.free(program_id_base58);
+
+        try json_buffer.writer.writeAll("{\"program_id\":");
+        try std.json.Stringify.value(program_id_base58, .{}, &json_buffer.writer);
+
+        if (instruction.accounts.len != 0) {
+            try json_buffer.writer.writeAll(",\"accounts\":[");
+            for (instruction.accounts, 0..) |account, account_index| {
+                if (account_index != 0) try json_buffer.writer.writeByte(',');
+                const account_base58 = try account.pubkey.toBase58(allocator);
+                defer allocator.free(account_base58);
+                try json_buffer.writer.writeAll("{\"pubkey\":");
+                try std.json.Stringify.value(account_base58, .{}, &json_buffer.writer);
+                try json_buffer.writer.writeAll(",\"is_signer\":");
+                try std.json.Stringify.value(account.is_signer, .{}, &json_buffer.writer);
+                try json_buffer.writer.writeAll(",\"is_writable\":");
+                try std.json.Stringify.value(account.is_writable, .{}, &json_buffer.writer);
+                try json_buffer.writer.writeByte('}');
+            }
+            try json_buffer.writer.writeByte(']');
+        }
+
+        try json_buffer.writer.writeAll(",\"data_bytes\":[");
+        for (instruction.data, 0..) |byte, byte_index| {
+            if (byte_index != 0) try json_buffer.writer.writeByte(',');
+            try std.json.Stringify.value(byte, .{}, &json_buffer.writer);
+        }
+        try json_buffer.writer.writeAll("]}");
+    }
+    try json_buffer.writer.writeByte(']');
+
+    return try allocator.dupe(u8, json_buffer.written());
+}
+
+pub fn buildInvocationSpecJsonFromOwnedInvocationSpec(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) BuildInvocationSpecJsonFromOwnedInvocationSpecError![]u8 {
+    const payer_secret_key = try findOwnedInvocationSignerSecretKeyBase58(
+        allocator,
+        owned_spec.signers,
+        owned_spec.payer,
+    ) orelse return error.MissingPayerSigner;
+    defer allocator.free(payer_secret_key);
+
+    const additional_signer_secret_keys_json = try buildAdditionalSignerSecretKeysJsonFromOwnedInvocationSpec(
+        allocator,
+        owned_spec,
+    );
+    defer if (additional_signer_secret_keys_json) |value| allocator.free(value);
+
+    const address_lookup_tables_json = try buildAddressLookupTablesJsonFromOwnedInvocationSpec(
+        allocator,
+        owned_spec,
+    );
+    defer if (address_lookup_tables_json) |value| allocator.free(value);
+
+    const instructions_json = try buildInstructionsJsonFromOwnedInvocationSpec(
+        allocator,
+        owned_spec,
+    );
+    defer allocator.free(instructions_json);
+
+    const recent_blockhash_base58 = if (owned_spec.recent_blockhash) |value|
+        try value.toBase58(allocator)
+    else
+        null;
+    defer if (recent_blockhash_base58) |value| allocator.free(value);
+
+    const nonce_account_base58 = if (owned_spec.nonce_account) |value|
+        try value.toBase58(allocator)
+    else
+        null;
+    defer if (nonce_account_base58) |value| allocator.free(value);
+
+    const nonce_authority_secret_key = if (owned_spec.nonce_account != null and owned_spec.nonce_authority != null and
+        !std.meta.eql(owned_spec.nonce_authority.?, owned_spec.payer))
+        try findOwnedInvocationSignerSecretKeyBase58(
+            allocator,
+            owned_spec.signers,
+            owned_spec.nonce_authority.?,
+        ) orelse return error.MissingNonceAuthoritySigner
+    else
+        null;
+    defer if (nonce_authority_secret_key) |value| allocator.free(value);
+
+    return try client.invocation_spec_json.buildInvocationSpecJson(allocator, .{
+        .payer_secret_key = payer_secret_key,
+        .additional_signer_secret_keys_json = additional_signer_secret_keys_json,
+        .address_lookup_tables_json = address_lookup_tables_json,
+        .recent_blockhash = recent_blockhash_base58,
+        .nonce_account = nonce_account_base58,
+        .nonce_authority_secret_key = nonce_authority_secret_key,
+        .instructions_json = instructions_json,
+    });
+}
+
 fn buildOwnedResolvedInvocationFromOwnedSpec(
     allocator: Allocator,
     owned_spec: OwnedInvocationSpec,
@@ -6560,6 +6753,86 @@ test "invoke.buildOwnedResolvedInvocationFromOwnedInvocationSpec reuses typed no
     try std.testing.expectEqual(@as(usize, 1), resolved.owned_instructions.instructions.len);
     try std.testing.expectEqual(@as(usize, 1), resolved.address_lookup_tables.len);
     try std.testing.expect(resolved.recent_blockhash != null);
+}
+
+test "invoke.buildInvocationSpecJsonFromOwnedInvocationSpec round-trips rich signer and nonce context" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocRichInstructionsInvocationSpecJson(allocator, 160, 161, 162, 163, 164, 165);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    const exported_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, &owned_spec);
+    defer allocator.free(exported_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, exported_json, "\"payer_secret_key\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, exported_json, "\"additional_signer_secret_keys\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, exported_json, "\"nonce_account\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, exported_json, "\"nonce_authority_secret_key\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, exported_json, "\"data_bytes\":[4,5,6]") != null);
+
+    var roundtrip = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        exported_json,
+    );
+    defer roundtrip.deinit(allocator);
+
+    try std.testing.expectEqualDeep(owned_spec.payer, roundtrip.payer);
+    try std.testing.expectEqualDeep(owned_spec.recent_blockhash, roundtrip.recent_blockhash);
+    try std.testing.expectEqualDeep(owned_spec.nonce_account, roundtrip.nonce_account);
+    try std.testing.expectEqualDeep(owned_spec.nonce_authority, roundtrip.nonce_authority);
+    try std.testing.expectEqual(@as(usize, owned_spec.signers.len), roundtrip.signers.len);
+    try std.testing.expectEqualSlices(
+        u8,
+        owned_spec.owned_instructions.instructions[0].data,
+        roundtrip.owned_instructions.instructions[0].data,
+    );
+}
+
+test "invoke.buildInvocationSpecJsonFromOwnedInvocationSpec round-trips canonical lookup tables" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 166, 167, 168, 169, 170);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    const exported_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, &owned_spec);
+    defer allocator.free(exported_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, exported_json, "\"address_lookup_tables\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, exported_json, "\"instructions\":[") != null);
+
+    var roundtrip = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        exported_json,
+    );
+    defer roundtrip.deinit(allocator);
+
+    try std.testing.expectEqualDeep(owned_spec.payer, roundtrip.payer);
+    try std.testing.expectEqualDeep(owned_spec.recent_blockhash, roundtrip.recent_blockhash);
+    try std.testing.expectEqual(@as(usize, 1), roundtrip.address_lookup_tables.len);
+    try std.testing.expectEqualDeep(
+        owned_spec.address_lookup_tables[0].account_key,
+        roundtrip.address_lookup_tables[0].account_key,
+    );
+    try std.testing.expectEqualDeep(
+        owned_spec.address_lookup_tables[0].addresses[0],
+        roundtrip.address_lookup_tables[0].addresses[0],
+    );
 }
 
 test "invoke.buildOwnedInstructionsFromOwnedInvocationSpec reuses typed normalized spec" {
