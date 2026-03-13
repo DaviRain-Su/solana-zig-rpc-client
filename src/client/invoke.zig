@@ -171,6 +171,28 @@ pub const OwnedInvocationPreflight = struct {
     }
 };
 
+pub const OwnedInvocationValidation = struct {
+    provided_signer_pubkeys: []sdk.Pubkey,
+    required_signer_pubkeys: []sdk.Pubkey,
+    missing_required_signer_pubkeys: []sdk.Pubkey,
+    extra_signer_pubkeys: []sdk.Pubkey,
+    duplicate_provided_signer_pubkeys: []sdk.Pubkey,
+    lookup_table_pubkeys: []sdk.Pubkey,
+    duplicate_lookup_table_pubkeys: []sdk.Pubkey,
+    is_valid: bool,
+
+    pub fn deinit(self: *OwnedInvocationValidation, allocator: Allocator) void {
+        allocator.free(self.provided_signer_pubkeys);
+        allocator.free(self.required_signer_pubkeys);
+        allocator.free(self.missing_required_signer_pubkeys);
+        allocator.free(self.extra_signer_pubkeys);
+        allocator.free(self.duplicate_provided_signer_pubkeys);
+        allocator.free(self.lookup_table_pubkeys);
+        allocator.free(self.duplicate_lookup_table_pubkeys);
+        self.* = undefined;
+    }
+};
+
 pub fn buildInstructionInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
@@ -391,6 +413,24 @@ fn pubkeySliceContains(
     return false;
 }
 
+fn collectDuplicatePubkeys(
+    allocator: Allocator,
+    pubkeys: []const sdk.Pubkey,
+) ![]sdk.Pubkey {
+    var duplicates: std.ArrayList(sdk.Pubkey) = .empty;
+    errdefer duplicates.deinit(allocator);
+
+    for (pubkeys, 0..) |pubkey, index| {
+        for (pubkeys[index + 1 ..]) |other| {
+            if (!std.meta.eql(pubkey, other)) continue;
+            try appendUniquePubkey(allocator, &duplicates, pubkey);
+            break;
+        }
+    }
+
+    return try duplicates.toOwnedSlice(allocator);
+}
+
 pub fn buildInvocationSummaryFromInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
@@ -586,6 +626,61 @@ pub fn buildInvocationPreflightFromInvocationSpecJson(
         .recent_blockhash = resolved.recent_blockhash,
         .nonce_account = resolved.nonce_account,
         .nonce_authority = resolved.nonce_authority,
+    };
+}
+
+pub fn buildInvocationValidationFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !OwnedInvocationValidation {
+    var preflight = try buildInvocationPreflightFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer preflight.deinit(allocator);
+
+    var missing_required_signers: std.ArrayList(sdk.Pubkey) = .empty;
+    errdefer missing_required_signers.deinit(allocator);
+    for (preflight.required_signer_pubkeys) |pubkey| {
+        if (!pubkeySliceContains(preflight.provided_signer_pubkeys, pubkey)) {
+            try appendUniquePubkey(allocator, &missing_required_signers, pubkey);
+        }
+    }
+
+    const duplicate_provided_signers = try collectDuplicatePubkeys(
+        allocator,
+        preflight.provided_signer_pubkeys,
+    );
+    errdefer allocator.free(duplicate_provided_signers);
+    const duplicate_lookup_table_pubkeys = try collectDuplicatePubkeys(
+        allocator,
+        preflight.lookup_table_pubkeys,
+    );
+    errdefer allocator.free(duplicate_lookup_table_pubkeys);
+
+    const provided_signer_pubkeys = preflight.provided_signer_pubkeys;
+    const required_signer_pubkeys = preflight.required_signer_pubkeys;
+    const extra_signer_pubkeys = preflight.extra_signer_pubkeys;
+    const lookup_table_pubkeys = preflight.lookup_table_pubkeys;
+    preflight.provided_signer_pubkeys = &.{};
+    preflight.required_signer_pubkeys = &.{};
+    preflight.extra_signer_pubkeys = &.{};
+    preflight.lookup_table_pubkeys = &.{};
+    preflight.deinit(allocator);
+
+    const missing_required_signer_pubkeys = try missing_required_signers.toOwnedSlice(allocator);
+
+    return .{
+        .provided_signer_pubkeys = provided_signer_pubkeys,
+        .required_signer_pubkeys = required_signer_pubkeys,
+        .missing_required_signer_pubkeys = missing_required_signer_pubkeys,
+        .extra_signer_pubkeys = extra_signer_pubkeys,
+        .duplicate_provided_signer_pubkeys = duplicate_provided_signers,
+        .lookup_table_pubkeys = lookup_table_pubkeys,
+        .duplicate_lookup_table_pubkeys = duplicate_lookup_table_pubkeys,
+        .is_valid = missing_required_signer_pubkeys.len == 0 and extra_signer_pubkeys.len == 0 and duplicate_provided_signers.len == 0 and duplicate_lookup_table_pubkeys.len == 0,
     };
 }
 
@@ -1823,6 +1918,117 @@ fn allocInstructionsInvocationSpecJsonWithUnusedSigner(
     );
 }
 
+fn allocInstructionsInvocationSpecJsonWithMissingSignerAndExtraSigner(
+    allocator: Allocator,
+    payer_fill: u8,
+    extra_signer_fill: u8,
+    missing_signer_fill: u8,
+    program_fill: u8,
+    blockhash_fill: u8,
+) ![]u8 {
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{payer_fill} ** 32);
+    const extra_signer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{extra_signer_fill} ** 32);
+    const missing_signer = sdk.Pubkey.fromBytes([_]u8{missing_signer_fill} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{program_fill} ** 32);
+    const recent_blockhash_bytes = [_]u8{blockhash_fill} ** 32;
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const extra_signer_secret_key = extra_signer_raw.secret_key.toBytes();
+    const extra_signer_secret_key_base58 = try sdk.encodeBase58(allocator, &extra_signer_secret_key);
+    defer allocator.free(extra_signer_secret_key_base58);
+    const missing_signer_base58 = try missing_signer.toBase58(allocator);
+    defer allocator.free(missing_signer_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const recent_blockhash_base58 = try sdk.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash_base58);
+
+    return std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "additional_signer_secret_keys":["{s}"],
+        \\  "recent_blockhash":"{s}",
+        \\  "instructions":[
+        \\    {{
+        \\      "program_id":"{s}",
+        \\      "accounts":[{{"pubkey":"{s}","isSigner":true,"isWritable":false}}],
+        \\      "dataBytes":[3]
+        \\    }}
+        \\  ]
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            extra_signer_secret_key_base58,
+            recent_blockhash_base58,
+            program_id_base58,
+            missing_signer_base58,
+        },
+    );
+}
+
+fn allocProgramInvocationSpecJsonWithDuplicateSignerAndLookupTable(
+    allocator: Allocator,
+    payer_fill: u8,
+    duplicate_signer_fill: u8,
+    program_fill: u8,
+    blockhash_fill: u8,
+    lookup_table_fill: u8,
+    lookup_address_fill: u8,
+) ![]u8 {
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{payer_fill} ** 32);
+    const duplicate_signer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{duplicate_signer_fill} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{program_fill} ** 32);
+    const recent_blockhash_bytes = [_]u8{blockhash_fill} ** 32;
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{lookup_table_fill} ** 32);
+    const lookup_address = sdk.Pubkey.fromBytes([_]u8{lookup_address_fill} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const duplicate_signer_secret_key = duplicate_signer_raw.secret_key.toBytes();
+    const duplicate_signer_secret_key_base58 = try sdk.encodeBase58(allocator, &duplicate_signer_secret_key);
+    defer allocator.free(duplicate_signer_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const recent_blockhash_base58 = try sdk.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash_base58);
+    const lookup_table_base58 = try lookup_table.toBase58(allocator);
+    defer allocator.free(lookup_table_base58);
+    const lookup_address_base58 = try lookup_address.toBase58(allocator);
+    defer allocator.free(lookup_address_base58);
+
+    return std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "additional_signer_secret_keys":["{s}","{s}"],
+        \\  "recent_blockhash":"{s}",
+        \\  "program_id":"{s}",
+        \\  "address_lookup_tables":[
+        \\    {{"accountKey":"{s}","addresses":["{s}"]}},
+        \\    {{"accountKey":"{s}","addresses":["{s}"]}}
+        \\  ],
+        \\  "dataBytes":[5]
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            duplicate_signer_secret_key_base58,
+            duplicate_signer_secret_key_base58,
+            recent_blockhash_base58,
+            program_id_base58,
+            lookup_table_base58,
+            lookup_address_base58,
+            lookup_table_base58,
+            lookup_address_base58,
+        },
+    );
+}
+
 fn findInvocationAccountInfo(
     accounts: []const InvocationAccountInfo,
     pubkey: sdk.Pubkey,
@@ -2138,6 +2344,54 @@ test "invoke.buildInvocationPreflightFromInvocationSpecJson dispatches program l
     try std.testing.expect(std.meta.eql(preflight.lookup_table_pubkeys[0], lookup_table));
     try std.testing.expectEqual(@as(usize, 1), preflight.required_signer_pubkeys.len);
     try std.testing.expectEqual(@as(usize, 0), preflight.extra_signer_pubkeys.len);
+}
+
+test "invoke.buildInvocationValidationFromInvocationSpecJson detects missing and extra signers" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{181} ** 32);
+    const extra_signer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{182} ** 32);
+    const missing_signer = sdk.Pubkey.fromBytes([_]u8{183} ** 32);
+
+    const spec_json = try allocInstructionsInvocationSpecJsonWithMissingSignerAndExtraSigner(allocator, 181, 182, 183, 184, 185);
+    defer allocator.free(spec_json);
+
+    var validation = try buildInvocationValidationFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer validation.deinit(allocator);
+
+    try std.testing.expect(!validation.is_valid);
+    try std.testing.expectEqual(@as(usize, 2), validation.provided_signer_pubkeys.len);
+    try std.testing.expectEqual(@as(usize, 2), validation.required_signer_pubkeys.len);
+    try std.testing.expectEqual(@as(usize, 1), validation.missing_required_signer_pubkeys.len);
+    try std.testing.expectEqual(@as(usize, 1), validation.extra_signer_pubkeys.len);
+    try std.testing.expect(std.meta.eql(validation.required_signer_pubkeys[0], payer_raw.public_key) or std.meta.eql(validation.required_signer_pubkeys[1], payer_raw.public_key));
+    try std.testing.expect(std.meta.eql(validation.missing_required_signer_pubkeys[0], missing_signer));
+    try std.testing.expect(std.meta.eql(validation.extra_signer_pubkeys[0], extra_signer_raw.public_key));
+}
+
+test "invoke.buildInvocationValidationFromInvocationSpecJson detects duplicate signers and lookup tables" {
+    const allocator = std.testing.allocator;
+    const duplicate_signer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{192} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{195} ** 32);
+
+    const spec_json = try allocProgramInvocationSpecJsonWithDuplicateSignerAndLookupTable(allocator, 191, 192, 193, 194, 195, 196);
+    defer allocator.free(spec_json);
+
+    var validation = try buildInvocationValidationFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer validation.deinit(allocator);
+
+    try std.testing.expect(!validation.is_valid);
+    try std.testing.expectEqual(@as(usize, 1), validation.duplicate_provided_signer_pubkeys.len);
+    try std.testing.expectEqual(@as(usize, 1), validation.duplicate_lookup_table_pubkeys.len);
+    try std.testing.expect(std.meta.eql(validation.duplicate_provided_signer_pubkeys[0], duplicate_signer_raw.public_key));
+    try std.testing.expect(std.meta.eql(validation.duplicate_lookup_table_pubkeys[0], lookup_table));
 }
 
 test "invoke.buildLegacyMessageBytesFromInvocationSpecJsonWithOptions matches generic builder" {
