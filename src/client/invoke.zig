@@ -349,6 +349,37 @@ pub const PreferredInvocationExecutionReport = struct {
     }
 };
 
+pub const PreferredSignatureExecutionResult = struct {
+    execution_report: PreferredInvocationExecutionReport,
+    signature: []const u8,
+
+    pub fn deinit(self: *PreferredSignatureExecutionResult, allocator: Allocator) void {
+        self.execution_report.deinit(allocator);
+        allocator.free(self.signature);
+        self.* = undefined;
+    }
+};
+
+pub const PreferredSimulationExecutionResult = struct {
+    execution_report: PreferredInvocationExecutionReport,
+    simulation: client.SimulatedTransaction,
+
+    pub fn deinit(self: *PreferredSimulationExecutionResult, allocator: Allocator) void {
+        self.execution_report.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
+pub const PreferredFeeExecutionResult = struct {
+    execution_report: PreferredInvocationExecutionReport,
+    fee: client.FeeForMessage,
+
+    pub fn deinit(self: *PreferredFeeExecutionResult, allocator: Allocator) void {
+        self.execution_report.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 pub fn buildInstructionInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
@@ -1591,6 +1622,171 @@ pub fn buildPreferredInvocationExecutionReportFromInvocationSpecJson(
         else
             false,
         .can_execute_selected_mode = selected_mode != null and report.can_execute,
+    };
+}
+
+pub fn sendPreferredTransactionExecutionResultFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: SendPreferredInvocationSpecOptions,
+) !PreferredSignatureExecutionResult {
+    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.send.blockhash_commitment },
+        },
+    );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .signature = try sendTransactionFromInvocationSpecJson(
+            allocator,
+            rpc,
+            family,
+            mode == .versioned,
+            invocation_spec_json,
+            options.send,
+        ),
+    };
+}
+
+pub fn simulatePreferredTransactionExecutionResultFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: SimulatePreferredInvocationSpecOptions,
+) !PreferredSimulationExecutionResult {
+    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.simulate.blockhash_commitment },
+        },
+    );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .simulation = try simulateTransactionFromInvocationSpecJson(
+            allocator,
+            rpc,
+            family,
+            mode == .versioned,
+            invocation_spec_json,
+            options.simulate,
+        ),
+    };
+}
+
+pub fn sendAndConfirmPreferredTransactionExecutionResultFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: SendAndConfirmPreferredInvocationSpecOptions,
+) !PreferredSignatureExecutionResult {
+    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.send_and_confirm.blockhash_commitment },
+        },
+    );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .signature = try sendAndConfirmInvocationSpecJson(
+            allocator,
+            rpc,
+            family,
+            mode == .versioned,
+            invocation_spec_json,
+            options.send_and_confirm,
+        ),
+    };
+}
+
+pub fn sendAndConfirmPreferredTransactionExecutionResultWithSpinnerFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: SendAndConfirmPreferredInvocationSpecOptions,
+) !PreferredSignatureExecutionResult {
+    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.send_and_confirm.blockhash_commitment },
+        },
+    );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .signature = try sendAndConfirmInvocationSpecJsonWithSpinnerOptions(
+            allocator,
+            rpc,
+            family,
+            mode == .versioned,
+            invocation_spec_json,
+            options.send_and_confirm,
+        ),
+    };
+}
+
+pub fn getFeeForPreferredInvocationExecutionResultFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: GetFeeForPreferredInvocationSpecOptions,
+) !PreferredFeeExecutionResult {
+    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.fee.blockhash_commitment },
+        },
+    );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .fee = try getFeeForInvocationSpecJson(
+            allocator,
+            rpc,
+            family,
+            mode == .versioned,
+            invocation_spec_json,
+            options.fee,
+        ),
     };
 }
 
@@ -4902,4 +5098,116 @@ test "invoke.buildPreferredInvocationExecutionReportFromInvocationSpecJson track
     try std.testing.expectEqual(@as(?InvocationMode, null), execution_report.selected_mode);
     try std.testing.expect(!execution_report.used_fallback);
     try std.testing.expect(!execution_report.can_execute_selected_mode);
+}
+
+test "invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson preserves execution report" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{346} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id = sdk.Pubkey.fromBytes(.{347} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "dataBytes":[1,2,3]
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const MockRpc = struct {
+        pub fn sendLegacyInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            options: ?rpc_types.SendLegacyInstructionsOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = payer;
+            _ = instructions;
+            _ = signers;
+            _ = options;
+            return "preferred-execution-send";
+        }
+    };
+
+    var rpc = MockRpc{};
+    var result = try sendPreferredTransactionExecutionResultFromInvocationSpecJson(
+        allocator,
+        &rpc,
+        .program,
+        spec_json,
+        .{},
+    );
+    defer result.deinit(allocator);
+
+    try std.testing.expectEqualStrings("preferred-execution-send", result.signature);
+    try std.testing.expectEqual(@as(?InvocationMode, null), result.execution_report.requested_mode);
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), result.execution_report.selected_mode);
+    try std.testing.expect(result.execution_report.can_execute_selected_mode);
+}
+
+test "invoke.getFeeForPreferredInvocationExecutionResultFromInvocationSpecJson preserves fallback report" {
+    const allocator = std.testing.allocator;
+
+    const MockLegacyInvocationFeeClient = struct {
+        pub fn getFeeForVersionedInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            lookup_tables: []const sdk.AddressLookupTableAccount,
+            options: ?rpc_types.VersionedInstructionsBuildOptions,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = payer;
+            _ = instructions;
+            _ = lookup_tables;
+            _ = options;
+            _ = commitment;
+            return .{ .value = 2468 };
+        }
+    };
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(
+        allocator,
+        351,
+        352,
+        353,
+        354,
+        355,
+    );
+    defer allocator.free(spec_json);
+
+    var rpc = MockLegacyInvocationFeeClient{};
+    var result = try getFeeForPreferredInvocationExecutionResultFromInvocationSpecJson(
+        allocator,
+        &rpc,
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+            .fee = .{ .commitment = .processed },
+        },
+    );
+    defer result.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?u64, 2468), result.fee.value);
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), result.execution_report.requested_mode);
+    try std.testing.expectEqual(@as(?InvocationMode, .versioned), result.execution_report.selected_mode);
+    try std.testing.expect(result.execution_report.used_fallback);
 }
