@@ -2680,28 +2680,12 @@ fn loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(
     const idl_source = loadInstructionSpecSource(allocator, idl_arg) catch return error.InvalidCli;
     defer allocator.free(idl_source);
 
-    const args_json_source = if (args_json_arg) |value|
-        loadInstructionSpecSource(allocator, value) catch return error.InvalidCli
-    else
-        null;
+    const args_json_source = loadOptionalInstructionSpecSource(allocator, args_json_arg) catch return error.InvalidCli;
     defer if (args_json_source) |value| allocator.free(value);
-    const accounts_json_source = if (accounts_json_arg) |value|
-        loadInstructionSpecSource(allocator, value) catch return error.InvalidCli
-    else
-        null;
+    const accounts_json_source = loadOptionalInstructionSpecSource(allocator, accounts_json_arg) catch return error.InvalidCli;
     defer if (accounts_json_source) |value| allocator.free(value);
-    const remaining_accounts_json_source = if (remaining_accounts_json_arg) |value|
-        loadInstructionSpecSource(allocator, value) catch return error.InvalidCli
-    else
-        null;
+    const remaining_accounts_json_source = loadOptionalInstructionSpecSource(allocator, remaining_accounts_json_arg) catch return error.InvalidCli;
     defer if (remaining_accounts_json_source) |value| allocator.free(value);
-    const parsed_remaining_accounts = if (remaining_accounts_json_source) |value|
-        std.json.parseFromSlice([]CliInstructionAccountMeta, allocator, value, .{
-            .ignore_unknown_fields = true,
-        }) catch return error.InvalidCli
-    else
-        null;
-    defer if (parsed_remaining_accounts) |*value| value.deinit();
     var parsed_signer_keypair_paths: ?std.json.Parsed([]const []const u8) = null;
     defer if (parsed_signer_keypair_paths) |*value| value.deinit();
 
@@ -2734,41 +2718,19 @@ fn loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(
     var parsed_cli_account_bindings = parseCliAnchorInvokeBindings(allocator, account_bindings) catch return error.InvalidCli;
     defer parsed_cli_account_bindings.deinit(allocator);
 
-    const merged_accounts_json_source = mergeAnchorInvokeAccountBindingsJson(
+    var account_inputs = loadCliAnchorInvokeAccountInputs(
         allocator,
         accounts_json_source,
-        parsed_cli_account_bindings.json_overlay_source,
+        parsed_cli_account_bindings,
+        remaining_accounts,
+        remaining_accounts_json_source,
     ) catch return error.InvalidCli;
-    defer if (merged_accounts_json_source) |value| allocator.free(value);
+    defer account_inputs.deinit(allocator);
 
     const program_id_override = if (program_id_override_arg) |value|
         client.Pubkey.fromBase58(allocator, value) catch return error.InvalidCli
     else
         null;
-
-    const remaining_account_count = remaining_accounts.len + if (parsed_remaining_accounts) |value| value.value.len else 0;
-    const typed_remaining_accounts = try allocator.alloc(client.AccountMeta, remaining_account_count);
-    defer allocator.free(typed_remaining_accounts);
-    var remaining_account_index: usize = 0;
-    for (remaining_accounts) |raw_remaining_account| {
-        const parsed_account = parseCliRemainingAccountMeta(raw_remaining_account) catch return error.InvalidCli;
-        typed_remaining_accounts[remaining_account_index] = client.AccountMeta.init(
-            client.Pubkey.fromBase58(allocator, parsed_account.pubkey) catch return error.InvalidCli,
-            parsed_account.is_signer,
-            parsed_account.is_writable,
-        );
-        remaining_account_index += 1;
-    }
-    if (parsed_remaining_accounts) |value| {
-        for (value.value) |account| {
-            typed_remaining_accounts[remaining_account_index] = client.AccountMeta.init(
-                client.Pubkey.fromBase58(allocator, account.pubkey) catch return error.InvalidCli,
-                account.is_signer,
-                account.is_writable,
-            );
-            remaining_account_index += 1;
-        }
-    }
 
     var owned_instruction = client.anchor_idl_invoke.buildOwnedInstructionFromJson(
         allocator,
@@ -2778,8 +2740,8 @@ fn loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(
             .program_id = program_id_override,
             .args_json = args_json_source,
             .account_bindings = parsed_cli_account_bindings.typed_bindings,
-            .account_bindings_json = if (merged_accounts_json_source) |value| value else accounts_json_source,
-            .remaining_accounts = typed_remaining_accounts,
+            .account_bindings_json = if (account_inputs.merged_account_bindings_json_source) |value| value else accounts_json_source,
+            .remaining_accounts = account_inputs.typed_remaining_accounts,
             .default_signer = default_signer_pubkey,
         },
     ) catch return error.InvalidCli;
@@ -3658,6 +3620,113 @@ fn loadCliInvocationContextJsonInputs(
     };
 }
 
+const LoadedCliAnchorInvokeAccountInputs = struct {
+    merged_account_bindings_json_source: ?[]u8 = null,
+    combined_account_bindings_json_source: ?[]u8 = null,
+    typed_remaining_accounts: []client.AccountMeta,
+    canonical_remaining_accounts_json: ?[]u8 = null,
+
+    fn deinit(self: *@This(), allocator: Allocator) void {
+        if (self.merged_account_bindings_json_source) |value| allocator.free(value);
+        if (self.combined_account_bindings_json_source) |value| allocator.free(value);
+        allocator.free(self.typed_remaining_accounts);
+        if (self.canonical_remaining_accounts_json) |value| allocator.free(value);
+    }
+};
+
+fn loadCliAnchorInvokeAccountInputs(
+    allocator: Allocator,
+    accounts_json_source: ?[]const u8,
+    parsed_cli_account_bindings: anytype,
+    remaining_accounts: []const []const u8,
+    remaining_accounts_json_source: ?[]const u8,
+) !LoadedCliAnchorInvokeAccountInputs {
+    const merged_account_bindings_json_source = try mergeAnchorInvokeAccountBindingsJson(
+        allocator,
+        accounts_json_source,
+        parsed_cli_account_bindings.json_overlay_source,
+    );
+    errdefer if (merged_account_bindings_json_source) |value| allocator.free(value);
+
+    var typed_account_bindings_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer typed_account_bindings_buffer.deinit();
+    var has_typed_account_bindings = false;
+    if (parsed_cli_account_bindings.typed_bindings.len > 0) {
+        try typed_account_bindings_buffer.writer.writeByte('{');
+        for (parsed_cli_account_bindings.typed_bindings, 0..) |binding, index| {
+            if (index != 0) try typed_account_bindings_buffer.writer.writeByte(',');
+            const encoded_pubkey = try binding.pubkey.toBase58(allocator);
+            defer allocator.free(encoded_pubkey);
+            try std.json.Stringify.value(binding.path, .{}, &typed_account_bindings_buffer.writer);
+            try typed_account_bindings_buffer.writer.writeByte(':');
+            try std.json.Stringify.value(encoded_pubkey, .{}, &typed_account_bindings_buffer.writer);
+        }
+        try typed_account_bindings_buffer.writer.writeByte('}');
+        has_typed_account_bindings = true;
+    }
+
+    const combined_account_bindings_json_source = if (has_typed_account_bindings)
+        try mergeAnchorInvokeAccountBindingsJson(
+            allocator,
+            if (merged_account_bindings_json_source) |value| value else accounts_json_source,
+            typed_account_bindings_buffer.written(),
+        )
+    else if (merged_account_bindings_json_source) |value|
+        try allocator.dupe(u8, value)
+    else if (accounts_json_source) |value|
+        try allocator.dupe(u8, value)
+    else
+        null;
+    errdefer if (combined_account_bindings_json_source) |value| allocator.free(value);
+
+    var parsed_remaining_accounts = try parseCliRemainingAccountsJsonSource(allocator, remaining_accounts_json_source);
+    defer if (parsed_remaining_accounts) |*value| value.deinit();
+
+    const remaining_account_count = remaining_accounts.len + if (parsed_remaining_accounts) |value| value.value.len else 0;
+    const typed_remaining_accounts = try allocator.alloc(client.AccountMeta, remaining_account_count);
+    errdefer allocator.free(typed_remaining_accounts);
+    const canonical_remaining_accounts = try allocator.alloc(CliInstructionAccountMeta, remaining_account_count);
+    defer allocator.free(canonical_remaining_accounts);
+
+    var remaining_account_index: usize = 0;
+    for (remaining_accounts) |raw_remaining_account| {
+        const parsed_account = try parseCliRemainingAccountMeta(raw_remaining_account);
+        canonical_remaining_accounts[remaining_account_index] = parsed_account;
+        typed_remaining_accounts[remaining_account_index] = client.AccountMeta.init(
+            client.Pubkey.fromBase58(allocator, parsed_account.pubkey) catch return error.InvalidCli,
+            parsed_account.is_signer,
+            parsed_account.is_writable,
+        );
+        remaining_account_index += 1;
+    }
+    if (parsed_remaining_accounts) |value| {
+        for (value.value) |account| {
+            canonical_remaining_accounts[remaining_account_index] = account;
+            typed_remaining_accounts[remaining_account_index] = client.AccountMeta.init(
+                client.Pubkey.fromBase58(allocator, account.pubkey) catch return error.InvalidCli,
+                account.is_signer,
+                account.is_writable,
+            );
+            remaining_account_index += 1;
+        }
+    }
+
+    const canonical_remaining_accounts_json = if (canonical_remaining_accounts.len > 0) blk: {
+        var buffer: std.io.Writer.Allocating = .init(allocator);
+        defer buffer.deinit();
+        std.json.Stringify.value(canonical_remaining_accounts, .{}, &buffer.writer) catch unreachable;
+        break :blk try allocator.dupe(u8, buffer.written());
+    } else null;
+    errdefer if (canonical_remaining_accounts_json) |value| allocator.free(value);
+
+    return .{
+        .merged_account_bindings_json_source = merged_account_bindings_json_source,
+        .combined_account_bindings_json_source = combined_account_bindings_json_source,
+        .typed_remaining_accounts = typed_remaining_accounts,
+        .canonical_remaining_accounts_json = canonical_remaining_accounts_json,
+    };
+}
+
 fn buildProgramInvokeInvocationSpecJson(
     allocator: Allocator,
     program_id: []const u8,
@@ -3757,47 +3826,8 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
     var parsed_cli_account_bindings = try parseCliAnchorInvokeBindings(allocator, account_bindings);
     defer parsed_cli_account_bindings.deinit(allocator);
 
-    const merged_accounts_json_source = try mergeAnchorInvokeAccountBindingsJson(
-        allocator,
-        accounts_json_source,
-        parsed_cli_account_bindings.json_overlay_source,
-    );
-    defer if (merged_accounts_json_source) |value| allocator.free(value);
-    var typed_account_bindings_buffer: std.io.Writer.Allocating = .init(allocator);
-    defer typed_account_bindings_buffer.deinit();
-    var has_typed_account_bindings = false;
-    if (parsed_cli_account_bindings.typed_bindings.len > 0) {
-        try typed_account_bindings_buffer.writer.writeByte('{');
-        for (parsed_cli_account_bindings.typed_bindings, 0..) |binding, index| {
-            if (index != 0) try typed_account_bindings_buffer.writer.writeByte(',');
-            const encoded_pubkey = try binding.pubkey.toBase58(allocator);
-            defer allocator.free(encoded_pubkey);
-            try std.json.Stringify.value(binding.path, .{}, &typed_account_bindings_buffer.writer);
-            try typed_account_bindings_buffer.writer.writeByte(':');
-            try std.json.Stringify.value(encoded_pubkey, .{}, &typed_account_bindings_buffer.writer);
-        }
-        try typed_account_bindings_buffer.writer.writeByte('}');
-        has_typed_account_bindings = true;
-    }
-    const combined_account_bindings_json_source = if (has_typed_account_bindings)
-        try mergeAnchorInvokeAccountBindingsJson(
-            allocator,
-            if (merged_accounts_json_source) |value| value else accounts_json_source,
-            typed_account_bindings_buffer.written(),
-        )
-    else if (merged_accounts_json_source) |value|
-        try allocator.dupe(u8, value)
-    else if (accounts_json_source) |value|
-        try allocator.dupe(u8, value)
-    else
-        null;
-    defer if (combined_account_bindings_json_source) |value| allocator.free(value);
-
     const remaining_accounts_json_source = try loadOptionalInstructionSpecSource(allocator, remaining_accounts_json_arg);
     defer if (remaining_accounts_json_source) |value| allocator.free(value);
-
-    var parsed_remaining_accounts = try parseCliRemainingAccountsJsonSource(allocator, remaining_accounts_json_source);
-    defer if (parsed_remaining_accounts) |*value| value.deinit();
 
     var invocation_context = try loadCliInvocationContextJsonInputs(
         allocator,
@@ -3811,33 +3841,14 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
     var parsed_lookup_tables = try parseCliAddressLookupTablesJsonSource(allocator, invocation_context.lookup_tables_source);
     defer if (parsed_lookup_tables) |*value| value.deinit();
 
-    const remaining_account_count = remaining_accounts.len + if (parsed_remaining_accounts) |value| value.value.len else 0;
-    const canonical_remaining_accounts = try allocator.alloc(CliInstructionAccountMeta, remaining_account_count);
-    defer allocator.free(canonical_remaining_accounts);
-    const typed_remaining_accounts = try allocator.alloc(client.AccountMeta, remaining_account_count);
-    defer allocator.free(typed_remaining_accounts);
-    var remaining_account_index: usize = 0;
-    for (remaining_accounts) |raw_remaining_account| {
-        const parsed_account = try parseCliRemainingAccountMeta(raw_remaining_account);
-        canonical_remaining_accounts[remaining_account_index] = parsed_account;
-        typed_remaining_accounts[remaining_account_index] = client.AccountMeta.init(
-            client.Pubkey.fromBase58(allocator, parsed_account.pubkey) catch return error.InvalidCli,
-            parsed_account.is_signer,
-            parsed_account.is_writable,
-        );
-        remaining_account_index += 1;
-    }
-    if (parsed_remaining_accounts) |value| {
-        for (value.value) |account| {
-            canonical_remaining_accounts[remaining_account_index] = account;
-            typed_remaining_accounts[remaining_account_index] = client.AccountMeta.init(
-                client.Pubkey.fromBase58(allocator, account.pubkey) catch return error.InvalidCli,
-                account.is_signer,
-                account.is_writable,
-            );
-            remaining_account_index += 1;
-        }
-    }
+    var account_inputs = try loadCliAnchorInvokeAccountInputs(
+        allocator,
+        accounts_json_source,
+        parsed_cli_account_bindings,
+        remaining_accounts,
+        remaining_accounts_json_source,
+    );
+    defer account_inputs.deinit(allocator);
 
     const program_id_override = if (program_id_override_arg) |value|
         client.Pubkey.fromBase58(allocator, value) catch return error.InvalidCli
@@ -3852,20 +3863,12 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
             .program_id = program_id_override,
             .args_json = args_json_source,
             .account_bindings = parsed_cli_account_bindings.typed_bindings,
-            .account_bindings_json = if (merged_accounts_json_source) |value| value else accounts_json_source,
-            .remaining_accounts = typed_remaining_accounts,
+            .account_bindings_json = if (account_inputs.merged_account_bindings_json_source) |value| value else accounts_json_source,
+            .remaining_accounts = account_inputs.typed_remaining_accounts,
             .default_signer = payer_inputs.keypair.public_key,
         },
     ) catch return error.InvalidCli;
     defer owned_instruction.deinit(allocator);
-
-    var remaining_accounts_buffer: ?std.io.Writer.Allocating = null;
-    defer if (remaining_accounts_buffer) |*value| value.deinit();
-    const remaining_accounts_json = if (canonical_remaining_accounts.len > 0) blk: {
-        remaining_accounts_buffer = .init(allocator);
-        std.json.Stringify.value(canonical_remaining_accounts, .{}, &remaining_accounts_buffer.?.writer) catch unreachable;
-        break :blk remaining_accounts_buffer.?.written();
-    } else null;
 
     return client.invocation_spec_json.buildAnchorIdlInvocationSpecJson(allocator, .{
         .payer_secret_key = payer_inputs.secret_key,
@@ -3878,8 +3881,8 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
         .instruction_name = instruction_name,
         .program_id = program_id_override_arg,
         .args_json = args_json_source,
-        .account_bindings_json = combined_account_bindings_json_source,
-        .remaining_accounts_json = remaining_accounts_json,
+        .account_bindings_json = account_inputs.combined_account_bindings_json_source,
+        .remaining_accounts_json = account_inputs.canonical_remaining_accounts_json,
     }) catch |err| switch (err) {
         error.InvalidInvocationSpec => return error.InvalidCli,
         else => return err,
