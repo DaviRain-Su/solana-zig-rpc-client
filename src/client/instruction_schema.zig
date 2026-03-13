@@ -326,6 +326,12 @@ fn schemaIsU8(root_schema: std.json.Value, schema: std.json.Value) EncodeError!b
     return std.mem.eql(u8, type_name, "u8");
 }
 
+fn schemaIsOption(root_schema: std.json.Value, schema: std.json.Value) EncodeError!bool {
+    const resolved_schema = try resolveSchemaValue(root_schema, schema);
+    const type_name = schemaTypeName(resolved_schema) orelse return error.InvalidInstructionSchema;
+    return std.mem.eql(u8, type_name, "option");
+}
+
 fn maybeDecodeByteSequenceValue(
     allocator: Allocator,
     root_schema: std.json.Value,
@@ -647,7 +653,12 @@ fn encodeBorshSchemaValue(
                 const field_name_value = findJsonObjectField(field_value.object, &.{"name"}) orelse return error.InvalidInstructionSchema;
                 if (field_name_value != .string) return error.InvalidInstructionSchema;
                 const field_schema = findJsonObjectField(field_value.object, &.{"type"}) orelse field_value;
-                const field_arg = value.object.get(field_name_value.string) orelse return error.InvalidInstructionSchema;
+                const field_arg = value.object.get(field_name_value.string) orelse blk: {
+                    if (try schemaIsOption(root_schema, field_schema)) {
+                        break :blk std.json.Value{ .null = {} };
+                    }
+                    return error.InvalidInstructionSchema;
+                };
                 try encodeBorshSchemaValue(allocator, output, root_schema, field_schema, field_arg);
             }
             return;
@@ -1081,5 +1092,32 @@ test "instruction_schema resolves named types from registry aliases" {
         0x00,
         'o',
         'k',
+    }, encoded);
+}
+
+test "instruction_schema treats omitted option struct fields as null" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "type": "struct",
+        \\  "fields": [
+        \\    { "name": "memo", "type": { "type": "option", "item": "string" } },
+        \\    { "name": "amount", "type": "u16" }
+        \\  ]
+        \\}
+    ;
+    const args_json =
+        \\{
+        \\  "amount": 513
+        \\}
+    ;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x00,
+        0x01,
+        0x02,
     }, encoded);
 }
