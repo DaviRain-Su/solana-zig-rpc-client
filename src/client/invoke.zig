@@ -1674,6 +1674,50 @@ fn buildOwnedResolvedInvocationFromOwnedSpec(
     };
 }
 
+fn cloneOwnedResolvedInvocation(
+    allocator: Allocator,
+    source: *const OwnedResolvedInvocation,
+) !OwnedResolvedInvocation {
+    const signer_pubkeys = try allocator.dupe(sdk.Pubkey, source.signer_pubkeys);
+    errdefer allocator.free(signer_pubkeys);
+
+    var owned_instructions = try sdk.cloneInstructions(
+        allocator,
+        source.owned_instructions.instructions,
+    );
+    errdefer owned_instructions.deinit(allocator);
+
+    const address_lookup_tables = try allocator.alloc(
+        sdk.AddressLookupTableAccount,
+        source.address_lookup_tables.len,
+    );
+    errdefer allocator.free(address_lookup_tables);
+    var initialized_tables_len: usize = 0;
+    errdefer {
+        for (address_lookup_tables[0..initialized_tables_len]) |table| {
+            allocator.free(table.addresses);
+        }
+        allocator.free(address_lookup_tables);
+    }
+    for (source.address_lookup_tables, 0..) |table, index| {
+        address_lookup_tables[index] = .{
+            .account_key = table.account_key,
+            .addresses = try allocator.dupe(sdk.Pubkey, table.addresses),
+        };
+        initialized_tables_len += 1;
+    }
+
+    return .{
+        .payer = source.payer,
+        .signer_pubkeys = signer_pubkeys,
+        .owned_instructions = owned_instructions,
+        .address_lookup_tables = address_lookup_tables,
+        .recent_blockhash = source.recent_blockhash,
+        .nonce_account = source.nonce_account,
+        .nonce_authority = source.nonce_authority,
+    };
+}
+
 pub fn buildOwnedResolvedInvocationFromOwnedInvocationSpec(
     allocator: Allocator,
     owned_spec: OwnedInvocationSpec,
@@ -2340,21 +2384,39 @@ pub fn buildInvocationLookupCoverageFromInvocationSpecJson(
 
 fn buildInvocationReportFromResolved(
     allocator: Allocator,
-    resolved: OwnedResolvedInvocation,
+    resolved_input: OwnedResolvedInvocation,
 ) !OwnedInvocationReport {
-    var summary = try buildInvocationSummaryFromResolved(allocator, resolved);
+    var resolved = resolved_input;
+    defer resolved.deinit(allocator);
+
+    var summary = try buildInvocationSummaryFromResolved(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, &resolved),
+    );
     errdefer summary.deinit(allocator);
 
-    var plan = try buildInvocationPlanFromResolved(allocator, resolved);
+    var plan = try buildInvocationPlanFromResolved(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, &resolved),
+    );
     errdefer plan.deinit(allocator);
 
-    var preflight = try buildInvocationPreflightFromResolved(allocator, resolved);
+    var preflight = try buildInvocationPreflightFromResolved(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, &resolved),
+    );
     errdefer preflight.deinit(allocator);
 
-    var validation = try buildInvocationValidationFromResolved(allocator, resolved);
+    var validation = try buildInvocationValidationFromResolved(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, &resolved),
+    );
     errdefer validation.deinit(allocator);
 
-    var lookup_coverage = try buildInvocationLookupCoverageFromResolved(allocator, resolved);
+    var lookup_coverage = try buildInvocationLookupCoverageFromResolved(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, &resolved),
+    );
     errdefer lookup_coverage.deinit(allocator);
 
     return .{

@@ -3906,6 +3906,7 @@ fn buildProgramInvokeInvocationSpecJsonForCommand(
     const command_label = if (lookupInvokeCommandSpec(command)) |spec|
         spec.label
     else switch (command) {
+        .preview_program_invoke => "preview-program-invoke",
         .preview_idl_invoke => "preview-idl-invoke",
         else => unreachable,
     };
@@ -11825,6 +11826,108 @@ test "runCommand simulate-idl-invoke accepts additional-signer-secret-key" {
     try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: idl-extra-signer-ok") != null);
+}
+
+test "runCommand preview-program-invoke emits json analysis for schema args" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://preview-program-invoke-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{81} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_bytes = payer_raw.public_key.toBytes();
+    const payer_pubkey_base58 = try client.encodeBase58(allocator, &payer_pubkey_bytes);
+    defer allocator.free(payer_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 19);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{33} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const state_pubkey = client.Pubkey.fromBytes(.{44} ** 32);
+    const state_pubkey_base58 = try state_pubkey.toBase58(allocator);
+    defer allocator.free(state_pubkey_base58);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"isWritable\":true}}]",
+        .{state_pubkey_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    const schema_json =
+        \\{"type":"struct","fields":[{"name":"enabled","type":"bool"},{"name":"count","type":"u16"}]}
+    ;
+    const args_json =
+        \\{"enabled":true,"count":7}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "preview-program-invoke",
+        "--json",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--data-schema-json",
+        schema_json,
+        "--args-json",
+        args_json,
+        "--schema-encoding",
+        "borsh",
+        program_id_base58,
+        accounts_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    const expected_program_ids = try std.fmt.allocPrint(
+        allocator,
+        "\"program_ids\":[\"{s}\"]",
+        .{program_id_base58},
+    );
+    defer allocator.free(expected_program_ids);
+    const expected_signers = try std.fmt.allocPrint(
+        allocator,
+        "\"provided_signer_pubkeys\":[\"{s}\"]",
+        .{payer_pubkey_base58},
+    );
+    defer allocator.free(expected_signers);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"preferred_mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"blockhash_mode\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"instruction_count\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"can_execute_selected_mode\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, expected_program_ids) != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, expected_signers) != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"accounts\":[") != null);
 }
 
 test "runCommand simulate-versioned-idl-invoke accepts sender-secret-key" {
