@@ -305,6 +305,25 @@ fn isNamedStructField(field_value: std.json.Value) bool {
     };
 }
 
+fn schemaIsU8(root_schema: std.json.Value, schema: std.json.Value) EncodeError!bool {
+    const resolved_schema = try resolveSchemaValue(root_schema, schema);
+    const type_name = schemaTypeName(resolved_schema) orelse return error.InvalidInstructionSchema;
+    return std.mem.eql(u8, type_name, "u8");
+}
+
+fn maybeDecodeByteSequenceValue(
+    allocator: Allocator,
+    root_schema: std.json.Value,
+    schema: std.json.Value,
+    value: std.json.Value,
+) EncodeError!?[]u8 {
+    if (!(try schemaIsU8(root_schema, schema))) return null;
+    return switch (value) {
+        .array => null,
+        else => try decodeSchemaBytesValue(allocator, value),
+    };
+}
+
 fn encodeBorshSchemaValue(
     allocator: Allocator,
     output: *std.ArrayList(u8),
@@ -407,8 +426,14 @@ fn encodeBorshSchemaValue(
     if (std.mem.eql(u8, type_name, "array")) {
         const item_schema = findJsonObjectField(resolved_schema.object, &.{"item"}) orelse return error.InvalidInstructionSchema;
         const len_value = findJsonObjectField(resolved_schema.object, &.{"len"}) orelse return error.InvalidInstructionSchema;
-        if (value != .array) return error.InvalidInstructionSchema;
         const expected_len = try parseSchemaUnsigned(usize, len_value);
+        if (try maybeDecodeByteSequenceValue(allocator, root_schema, item_schema, value)) |bytes| {
+            defer allocator.free(bytes);
+            if (bytes.len != expected_len) return error.InvalidInstructionSchema;
+            try output.appendSlice(allocator, bytes);
+            return;
+        }
+        if (value != .array) return error.InvalidInstructionSchema;
         if (value.array.items.len != expected_len) return error.InvalidInstructionSchema;
         for (value.array.items) |item| {
             try encodeBorshSchemaValue(allocator, output, root_schema, item_schema, item);
@@ -418,6 +443,11 @@ fn encodeBorshSchemaValue(
 
     if (std.mem.eql(u8, type_name, "vec")) {
         const item_schema = findJsonObjectField(resolved_schema.object, &.{"item"}) orelse return error.InvalidInstructionSchema;
+        if (try maybeDecodeByteSequenceValue(allocator, root_schema, item_schema, value)) |bytes| {
+            defer allocator.free(bytes);
+            try appendLengthPrefixedBytes(allocator, output, bytes);
+            return;
+        }
         if (value != .array) return error.InvalidInstructionSchema;
         const item_len = std.math.cast(u32, value.array.items.len) orelse return error.InvalidInstructionSchema;
         try appendLittleEndianInt(allocator, output, u32, item_len);
@@ -664,5 +694,52 @@ test "instruction_schema encodes enum tuple payload variants" {
         0x00,
         'o',
         'k',
+    }, encoded);
+}
+
+test "instruction_schema encodes vec u8 from hex string input" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "type": "vec",
+        \\  "item": "u8"
+        \\}
+    ;
+    const args_json = "\"hex:deadbeef\"";
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x04,
+        0x00,
+        0x00,
+        0x00,
+        0xde,
+        0xad,
+        0xbe,
+        0xef,
+    }, encoded);
+}
+
+test "instruction_schema encodes fixed u8 array from base64 string input" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "type": "array",
+        \\  "item": "u8",
+        \\  "len": 4
+        \\}
+    ;
+    const args_json = "\"base64:3q2+7w==\"";
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0xde,
+        0xad,
+        0xbe,
+        0xef,
     }, encoded);
 }
