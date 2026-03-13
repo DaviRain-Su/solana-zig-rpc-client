@@ -3335,6 +3335,136 @@ fn loadCliInstructionSpecWithSenderAndAdditionalSigners(
     );
 }
 
+fn resolveInstructionKeypairSecretKeyBase58(
+    allocator: Allocator,
+    secret_key: ?[]const u8,
+    keypair_path: ?[]const u8,
+) !?[]u8 {
+    if (secret_key != null and keypair_path != null) return error.InvalidCli;
+    if (secret_key) |value| return try allocator.dupe(u8, value);
+    if (keypair_path) |value| {
+        const keypair = try loadInstructionKeypairFromPath(allocator, value);
+        return try client.encodeBase58(allocator, &keypair.secret_key);
+    }
+    return null;
+}
+
+const JsonCliInstructionSpec = struct {
+    program_id: []const u8,
+    accounts: []const CliInstructionAccountMeta = &.{},
+    data: []const u8,
+    data_encoding: []const u8 = "base64",
+};
+
+fn buildInvocationSpecJsonFromCliSpec(
+    allocator: Allocator,
+    spec: *const CliSimulateInstructionsSpec,
+    sender_keypair_path_arg: ?[]const u8,
+    sender_secret_key_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+    recent_blockhash_arg: ?[]const u8,
+) ![]u8 {
+    const payer_secret_key = if (sender_keypair_path_arg != null or sender_secret_key_arg != null)
+        try resolveInstructionKeypairSecretKeyBase58(allocator, sender_secret_key_arg, sender_keypair_path_arg)
+    else
+        try resolveInstructionKeypairSecretKeyBase58(allocator, spec.payer_secret_key, spec.payer_keypair_path);
+    defer if (payer_secret_key) |value| allocator.free(value);
+    const effective_payer_secret_key = payer_secret_key orelse return error.InvalidCli;
+
+    const nonce_authority_secret_key = try resolveInstructionKeypairSecretKeyBase58(
+        allocator,
+        spec.nonce_authority_secret_key,
+        spec.nonce_authority_keypair_path,
+    );
+    defer if (nonce_authority_secret_key) |value| allocator.free(value);
+
+    const effective_recent_blockhash = recent_blockhash_arg orelse spec.recent_blockhash;
+    if (effective_recent_blockhash != null and spec.nonce_account != null) return error.InvalidCli;
+
+    var owned_additional_signer_secret_keys = std.ArrayListUnmanaged([]u8){};
+    defer {
+        for (owned_additional_signer_secret_keys.items) |value| allocator.free(value);
+        owned_additional_signer_secret_keys.deinit(allocator);
+    }
+    var effective_additional_signer_secret_keys = std.ArrayListUnmanaged([]const u8){};
+    defer effective_additional_signer_secret_keys.deinit(allocator);
+
+    for (spec.additional_signer_secret_keys) |value| {
+        try effective_additional_signer_secret_keys.append(allocator, value);
+    }
+    for (spec.additional_signer_keypair_paths) |value| {
+        const resolved = try resolveInstructionKeypairSecretKeyBase58(allocator, null, value) orelse return error.InvalidCli;
+        try owned_additional_signer_secret_keys.append(allocator, resolved);
+        try effective_additional_signer_secret_keys.append(allocator, resolved);
+    }
+    for (additional_signer_secret_keys_arg) |value| {
+        try effective_additional_signer_secret_keys.append(allocator, value);
+    }
+
+    const canonical_instructions = try allocator.alloc(JsonCliInstructionSpec, spec.instructions.len);
+    defer allocator.free(canonical_instructions);
+    var instruction_data_base64 = std.ArrayListUnmanaged([]u8){};
+    defer {
+        for (instruction_data_base64.items) |value| allocator.free(value);
+        instruction_data_base64.deinit(allocator);
+    }
+
+    for (spec.instructions, 0..) |instruction, index| {
+        const data = try loadCliInstructionData(allocator, instruction);
+        defer allocator.free(data);
+        const data_base64 = try client.encodeBase64(allocator, data);
+        try instruction_data_base64.append(allocator, data_base64);
+        canonical_instructions[index] = .{
+            .program_id = instruction.program_id,
+            .accounts = instruction.accounts,
+            .data = data_base64,
+        };
+    }
+
+    var buffer: std.io.Writer.Allocating = .init(allocator);
+    defer buffer.deinit();
+
+    try buffer.writer.writeByte('{');
+    var has_field = false;
+    const WriteFieldName = struct {
+        fn write(buffer_inner: *std.io.Writer.Allocating, has_field_inner: *bool, name: []const u8) !void {
+            if (has_field_inner.*) try buffer_inner.writer.writeByte(',');
+            try std.json.Stringify.value(name, .{}, &buffer_inner.writer);
+            try buffer_inner.writer.writeByte(':');
+            has_field_inner.* = true;
+        }
+    };
+
+    try WriteFieldName.write(&buffer, &has_field, "payer_secret_key");
+    try std.json.Stringify.value(effective_payer_secret_key, .{}, &buffer.writer);
+
+    try WriteFieldName.write(&buffer, &has_field, "additional_signer_secret_keys");
+    try std.json.Stringify.value(effective_additional_signer_secret_keys.items, .{}, &buffer.writer);
+
+    try WriteFieldName.write(&buffer, &has_field, "instructions");
+    try std.json.Stringify.value(canonical_instructions, .{}, &buffer.writer);
+
+    if (spec.address_lookup_tables.len > 0) {
+        try WriteFieldName.write(&buffer, &has_field, "address_lookup_tables");
+        try std.json.Stringify.value(spec.address_lookup_tables, .{}, &buffer.writer);
+    }
+    if (effective_recent_blockhash) |value| {
+        try WriteFieldName.write(&buffer, &has_field, "recent_blockhash");
+        try std.json.Stringify.value(value, .{}, &buffer.writer);
+    }
+    if (spec.nonce_account) |value| {
+        try WriteFieldName.write(&buffer, &has_field, "nonce_account");
+        try std.json.Stringify.value(value, .{}, &buffer.writer);
+    }
+    if (nonce_authority_secret_key) |value| {
+        try WriteFieldName.write(&buffer, &has_field, "nonce_authority_secret_key");
+        try std.json.Stringify.value(value, .{}, &buffer.writer);
+    }
+
+    try buffer.writer.writeByte('}');
+    return try allocator.dupe(u8, buffer.written());
+}
+
 fn parseInstructionDataEncodingArg(value: ?[]const u8) !InstructionDataEncoding {
     const raw = value orelse return .utf8;
 
@@ -4272,43 +4402,24 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
             defer parsed_spec.deinit();
-
-            var loaded = loadCliInstructionSpecWithSenderAndAdditionalSigners(
+            const invocation_spec_json = buildInvocationSpecJsonFromCliSpec(
                 allocator,
                 &parsed_spec.value,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
                 program_invoke_additional_signer_secret_keys_arg,
+                recent_blockhash_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-instructions spec is invalid\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
-            const recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash,
-                commitment orelse send_preflight_commitment,
-            ) catch {
-                reportInvalidCliMessage("error: send-instructions spec is invalid\n", .{});
-                return error.InvalidCli;
-            };
+            defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.instructions_invoke.sendLegacyTransaction(
-                rpc,
-                .{
-                    .payer = loaded.payer,
-                    .instructions = loaded.owned_instructions.instructions,
-                    .signers = loaded.signers,
-                    .rpc = .{
-                        .recent_blockhash = build_context.recent_blockhash,
-                        .blockhash_commitment = build_context.blockhash_commitment,
-                        .blockhash_query = build_context.blockhash_query,
-                        .nonce_authority = build_context.nonce_authority,
-                        .send_transaction_options = send_transaction_options,
-                    },
-                },
-            );
+            const tx_signature = try client.instructions_invoke.sendLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .instruction_spec_json = invocation_spec_json,
+                .blockhash_commitment = commitment orelse send_preflight_commitment,
+                .send_transaction_options = send_transaction_options,
+            });
             defer allocator.free(tx_signature);
 
             std.debug.print("signature: {s}\n", .{tx_signature});
@@ -4332,47 +4443,28 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
             defer parsed_spec.deinit();
-
-            var loaded = loadCliInstructionSpecWithSenderAndAdditionalSigners(
+            const invocation_spec_json = buildInvocationSpecJsonFromCliSpec(
                 allocator,
                 &parsed_spec.value,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
                 program_invoke_additional_signer_secret_keys_arg,
+                recent_blockhash_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-instructions-and-confirm spec is invalid\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
-            const recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash,
-                commitment orelse send_preflight_commitment,
-            ) catch {
-                reportInvalidCliMessage("error: send-instructions-and-confirm spec is invalid\n", .{});
-                return error.InvalidCli;
-            };
+            defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.instructions_invoke.sendAndConfirmLegacyTransaction(
-                rpc,
-                .{
-                    .payer = loaded.payer,
-                    .instructions = loaded.owned_instructions.instructions,
-                    .signers = loaded.signers,
-                    .rpc = .{
-                        .recent_blockhash = build_context.recent_blockhash,
-                        .blockhash_commitment = build_context.blockhash_commitment,
-                        .blockhash_query = build_context.blockhash_query,
-                        .nonce_authority = build_context.nonce_authority,
-                        .send_transaction_options = send_transaction_options,
-                        .commitment = commitment,
-                        .search_transaction_history = search_transaction_history,
-                        .timeout_ms = status_timeout_ms,
-                        .poll_interval_ms = status_poll_ms,
-                    },
-                },
-            );
+            const tx_signature = try client.instructions_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .instruction_spec_json = invocation_spec_json,
+                .blockhash_commitment = commitment orelse send_preflight_commitment,
+                .send_transaction_options = send_transaction_options,
+                .commitment = commitment,
+                .search_transaction_history = search_transaction_history,
+                .timeout_ms = status_timeout_ms,
+                .poll_interval_ms = status_poll_ms,
+            });
             defer allocator.free(tx_signature);
 
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
@@ -4396,44 +4488,24 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
             defer parsed_spec.deinit();
-
-            var loaded = loadCliInstructionSpecWithSenderAndAdditionalSigners(
+            const invocation_spec_json = buildInvocationSpecJsonFromCliSpec(
                 allocator,
                 &parsed_spec.value,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
                 program_invoke_additional_signer_secret_keys_arg,
+                recent_blockhash_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-versioned-instructions spec is invalid\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
-            const recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash,
-                commitment orelse send_preflight_commitment,
-            ) catch {
-                reportInvalidCliMessage("error: send-versioned-instructions spec is invalid\n", .{});
-                return error.InvalidCli;
-            };
+            defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.instructions_invoke.sendVersionedTransaction(
-                rpc,
-                .{
-                    .payer = loaded.payer,
-                    .instructions = loaded.owned_instructions.instructions,
-                    .address_lookup_tables = loaded.address_lookup_tables,
-                    .signers = loaded.signers,
-                    .rpc = .{
-                        .recent_blockhash = build_context.recent_blockhash,
-                        .blockhash_commitment = build_context.blockhash_commitment,
-                        .blockhash_query = build_context.blockhash_query,
-                        .nonce_authority = build_context.nonce_authority,
-                        .send_transaction_options = send_transaction_options,
-                    },
-                },
-            );
+            const tx_signature = try client.instructions_invoke.sendVersionedTransactionFromInvocationSpecJson(rpc, .{
+                .instruction_spec_json = invocation_spec_json,
+                .blockhash_commitment = commitment orelse send_preflight_commitment,
+                .send_transaction_options = send_transaction_options,
+            });
             defer allocator.free(tx_signature);
 
             std.debug.print("signature: {s}\n", .{tx_signature});
@@ -4457,48 +4529,28 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
             defer parsed_spec.deinit();
-
-            var loaded = loadCliInstructionSpecWithSenderAndAdditionalSigners(
+            const invocation_spec_json = buildInvocationSpecJsonFromCliSpec(
                 allocator,
                 &parsed_spec.value,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
                 program_invoke_additional_signer_secret_keys_arg,
+                recent_blockhash_arg,
             ) catch {
                 reportInvalidCliMessage("error: send-versioned-instructions-and-confirm spec is invalid\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
-            const recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash,
-                commitment orelse send_preflight_commitment,
-            ) catch {
-                reportInvalidCliMessage("error: send-versioned-instructions-and-confirm spec is invalid\n", .{});
-                return error.InvalidCli;
-            };
+            defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.instructions_invoke.sendAndConfirmVersionedTransaction(
-                rpc,
-                .{
-                    .payer = loaded.payer,
-                    .instructions = loaded.owned_instructions.instructions,
-                    .address_lookup_tables = loaded.address_lookup_tables,
-                    .signers = loaded.signers,
-                    .rpc = .{
-                        .recent_blockhash = build_context.recent_blockhash,
-                        .blockhash_commitment = build_context.blockhash_commitment,
-                        .blockhash_query = build_context.blockhash_query,
-                        .nonce_authority = build_context.nonce_authority,
-                        .send_transaction_options = send_transaction_options,
-                        .commitment = commitment,
-                        .search_transaction_history = search_transaction_history,
-                        .timeout_ms = status_timeout_ms,
-                        .poll_interval_ms = status_poll_ms,
-                    },
-                },
-            );
+            const tx_signature = try client.instructions_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(rpc, .{
+                .instruction_spec_json = invocation_spec_json,
+                .blockhash_commitment = commitment orelse send_preflight_commitment,
+                .send_transaction_options = send_transaction_options,
+                .commitment = commitment,
+                .search_transaction_history = search_transaction_history,
+                .timeout_ms = status_timeout_ms,
+                .poll_interval_ms = status_poll_ms,
+            });
             defer allocator.free(tx_signature);
 
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
@@ -5239,18 +5291,18 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
             defer parsed_spec.deinit();
-
-            var loaded = loadCliInstructionSpecWithSenderAndAdditionalSigners(
+            const invocation_spec_json = buildInvocationSpecJsonFromCliSpec(
                 allocator,
                 &parsed_spec.value,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
                 program_invoke_additional_signer_secret_keys_arg,
+                recent_blockhash_arg,
             ) catch {
                 reportInvalidCliMessage("error: simulate-instructions spec is invalid\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
+            defer allocator.free(invocation_spec_json);
 
             const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
                 parseAccountEncoding(value) orelse return error.InvalidCli
@@ -5283,35 +5335,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             else
                 null;
-            const effective_recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                effective_recent_blockhash,
-                commitment,
-            ) catch {
-                reportInvalidCliMessage("error: simulate-instructions spec is invalid\n", .{});
-                return error.InvalidCli;
-            };
-            const build_options = if (build_context.recent_blockhash != null or build_context.blockhash_commitment != null or build_context.blockhash_query != null or build_context.nonce_authority != null)
-                client.LegacyInstructionsBuildOptions{
-                    .recent_blockhash = build_context.recent_blockhash,
-                    .blockhash_commitment = build_context.blockhash_commitment,
-                    .blockhash_query = build_context.blockhash_query,
-                    .nonce_authority = build_context.nonce_authority,
-                }
-            else
-                null;
 
-            const simulation = try client.instructions_invoke.simulateLegacyTransaction(
-                rpc,
-                .{
-                    .payer = loaded.payer,
-                    .instructions = loaded.owned_instructions.instructions,
-                    .signers = loaded.signers,
-                    .build = build_options,
-                    .rpc = options,
-                },
-            );
+            const simulation = try client.instructions_invoke.simulateLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .instruction_spec_json = invocation_spec_json,
+                .blockhash_commitment = commitment,
+                .simulate_options = options,
+            });
             defer freeSimulatedTransaction(allocator, simulation);
 
             printSimulationResult(simulation);
@@ -5335,18 +5364,18 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
             defer parsed_spec.deinit();
-
-            var loaded = loadCliInstructionSpecWithSenderAndAdditionalSigners(
+            const invocation_spec_json = buildInvocationSpecJsonFromCliSpec(
                 allocator,
                 &parsed_spec.value,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
                 program_invoke_additional_signer_secret_keys_arg,
+                recent_blockhash_arg,
             ) catch {
                 reportInvalidCliMessage("error: simulate-versioned-instructions spec is invalid\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
+            defer allocator.free(invocation_spec_json);
 
             const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
                 parseAccountEncoding(value) orelse return error.InvalidCli
@@ -5379,36 +5408,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             else
                 null;
-            const effective_recent_blockhash = recent_blockhash_arg orelse parsed_spec.value.recent_blockhash;
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                effective_recent_blockhash,
-                commitment,
-            ) catch {
-                reportInvalidCliMessage("error: simulate-versioned-instructions spec is invalid\n", .{});
-                return error.InvalidCli;
-            };
-            const build_options = if (build_context.recent_blockhash != null or build_context.blockhash_commitment != null or build_context.blockhash_query != null or build_context.nonce_authority != null)
-                client.VersionedInstructionsBuildOptions{
-                    .recent_blockhash = build_context.recent_blockhash,
-                    .blockhash_commitment = build_context.blockhash_commitment,
-                    .blockhash_query = build_context.blockhash_query,
-                    .nonce_authority = build_context.nonce_authority,
-                }
-            else
-                null;
 
-            const simulation = try client.instructions_invoke.simulateVersionedTransaction(
-                rpc,
-                .{
-                    .payer = loaded.payer,
-                    .instructions = loaded.owned_instructions.instructions,
-                    .address_lookup_tables = loaded.address_lookup_tables,
-                    .signers = loaded.signers,
-                    .build = build_options,
-                    .rpc = options,
-                },
-            );
+            const simulation = try client.instructions_invoke.simulateVersionedTransactionFromInvocationSpecJson(rpc, .{
+                .instruction_spec_json = invocation_spec_json,
+                .blockhash_commitment = commitment,
+                .simulate_options = options,
+            });
             defer freeSimulatedTransaction(allocator, simulation);
 
             printSimulationResult(simulation);

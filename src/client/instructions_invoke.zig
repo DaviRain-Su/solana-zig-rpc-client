@@ -815,7 +815,7 @@ fn stringifyJsonValue(
 ) Allocator.Error![]u8 {
     var json_buffer: std.io.Writer.Allocating = .init(allocator);
     defer json_buffer.deinit();
-    try std.json.Stringify.value(value, .{}, &json_buffer.writer);
+    std.json.Stringify.value(value, .{}, &json_buffer.writer) catch unreachable;
     return try allocator.dupe(u8, json_buffer.written());
 }
 
@@ -2536,23 +2536,27 @@ pub fn sendLegacyTransactionFromInvocationSpecJson(
     defer owned_spec.deinit(self.allocator);
 
     if (owned_spec.recent_blockhash) |value| {
+        const recent_blockhash_base58 = try value.toBase58(self.allocator);
+        defer self.allocator.free(recent_blockhash_base58);
         return try sendLegacyTransaction(self, .{
             .payer = owned_spec.payer,
             .instructions = owned_spec.owned_instructions.instructions,
             .signers = owned_spec.signers,
             .rpc = .{
-                .recent_blockhash = value,
+                .recent_blockhash = recent_blockhash_base58,
                 .send_transaction_options = options.send_transaction_options,
             },
         });
     }
     if (owned_spec.nonce_account) |value| {
+        const nonce_account_base58 = try value.toBase58(self.allocator);
+        defer self.allocator.free(nonce_account_base58);
         return try sendLegacyTransactionWithBlockhashQuery(self, .{
             .payer = owned_spec.payer,
             .instructions = owned_spec.owned_instructions.instructions,
             .signers = owned_spec.signers,
             .blockhash_query = .{ .nonce_account = .{
-                .pubkey = value,
+                .pubkey = nonce_account_base58,
                 .commitment = options.blockhash_commitment,
             } },
             .nonce_authority = owned_spec.nonce_authority,
@@ -2576,21 +2580,25 @@ pub fn simulateLegacyTransactionFromInvocationSpecJson(
     defer owned_spec.deinit(self.allocator);
 
     if (owned_spec.recent_blockhash) |value| {
+        const recent_blockhash_base58 = try value.toBase58(self.allocator);
+        defer self.allocator.free(recent_blockhash_base58);
         return try simulateLegacyTransaction(self, .{
             .payer = owned_spec.payer,
             .instructions = owned_spec.owned_instructions.instructions,
             .signers = owned_spec.signers,
-            .build = .{ .recent_blockhash = value },
+            .build = .{ .recent_blockhash = recent_blockhash_base58 },
             .rpc = options.simulate_options,
         });
     }
     if (owned_spec.nonce_account) |value| {
+        const nonce_account_base58 = try value.toBase58(self.allocator);
+        defer self.allocator.free(nonce_account_base58);
         return try simulateLegacyTransactionWithBlockhashQuery(self, .{
             .payer = owned_spec.payer,
             .instructions = owned_spec.owned_instructions.instructions,
             .signers = owned_spec.signers,
             .blockhash_query = .{ .nonce_account = .{
-                .pubkey = value,
+                .pubkey = nonce_account_base58,
                 .commitment = options.blockhash_commitment,
             } },
             .nonce_authority = owned_spec.nonce_authority,
@@ -2614,12 +2622,14 @@ pub fn sendAndConfirmLegacyTransactionFromInvocationSpecJson(
     defer owned_spec.deinit(self.allocator);
 
     if (owned_spec.recent_blockhash) |value| {
+        const recent_blockhash_base58 = try value.toBase58(self.allocator);
+        defer self.allocator.free(recent_blockhash_base58);
         return try sendAndConfirmLegacyTransaction(self, .{
             .payer = owned_spec.payer,
             .instructions = owned_spec.owned_instructions.instructions,
             .signers = owned_spec.signers,
             .rpc = .{
-                .recent_blockhash = value,
+                .recent_blockhash = recent_blockhash_base58,
                 .send_transaction_options = options.send_transaction_options,
                 .commitment = options.commitment,
                 .search_transaction_history = options.search_transaction_history,
@@ -2629,12 +2639,14 @@ pub fn sendAndConfirmLegacyTransactionFromInvocationSpecJson(
         });
     }
     if (owned_spec.nonce_account) |value| {
+        const nonce_account_base58 = try value.toBase58(self.allocator);
+        defer self.allocator.free(nonce_account_base58);
         return try sendAndConfirmLegacyTransactionWithBlockhashQuery(self, .{
             .payer = owned_spec.payer,
             .instructions = owned_spec.owned_instructions.instructions,
             .signers = owned_spec.signers,
             .blockhash_query = .{ .nonce_account = .{
-                .pubkey = value,
+                .pubkey = nonce_account_base58,
                 .commitment = options.blockhash_commitment,
             } },
             .nonce_authority = owned_spec.nonce_authority,
@@ -2666,25 +2678,29 @@ pub fn sendVersionedTransactionFromInvocationSpecJson(
     defer owned_spec.deinit(self.allocator);
 
     if (owned_spec.recent_blockhash) |value| {
+        const recent_blockhash_base58 = try value.toBase58(self.allocator);
+        defer self.allocator.free(recent_blockhash_base58);
         return try sendVersionedTransaction(self, .{
             .payer = owned_spec.payer,
             .instructions = owned_spec.owned_instructions.instructions,
             .address_lookup_tables = owned_spec.address_lookup_tables,
             .signers = owned_spec.signers,
             .rpc = .{
-                .recent_blockhash = value,
+                .recent_blockhash = recent_blockhash_base58,
                 .send_transaction_options = options.send_transaction_options,
             },
         });
     }
     if (owned_spec.nonce_account) |value| {
+        const nonce_account_base58 = try value.toBase58(self.allocator);
+        defer self.allocator.free(nonce_account_base58);
         return try sendVersionedTransactionWithBlockhashQuery(self, .{
             .payer = owned_spec.payer,
             .instructions = owned_spec.owned_instructions.instructions,
             .address_lookup_tables = owned_spec.address_lookup_tables,
             .signers = owned_spec.signers,
             .blockhash_query = .{ .nonce_account = .{
-                .pubkey = value,
+                .pubkey = nonce_account_base58,
                 .commitment = options.blockhash_commitment,
             } },
             .nonce_authority = owned_spec.nonce_authority,
@@ -2709,23 +2725,27 @@ pub fn simulateVersionedTransactionFromInvocationSpecJson(
     defer owned_spec.deinit(self.allocator);
 
     if (owned_spec.recent_blockhash) |value| {
+        const recent_blockhash_base58 = try value.toBase58(self.allocator);
+        defer self.allocator.free(recent_blockhash_base58);
         return try simulateVersionedTransaction(self, .{
             .payer = owned_spec.payer,
             .instructions = owned_spec.owned_instructions.instructions,
             .address_lookup_tables = owned_spec.address_lookup_tables,
             .signers = owned_spec.signers,
-            .build = .{ .recent_blockhash = value },
+            .build = .{ .recent_blockhash = recent_blockhash_base58 },
             .rpc = options.simulate_options,
         });
     }
     if (owned_spec.nonce_account) |value| {
+        const nonce_account_base58 = try value.toBase58(self.allocator);
+        defer self.allocator.free(nonce_account_base58);
         return try simulateVersionedTransactionWithBlockhashQuery(self, .{
             .payer = owned_spec.payer,
             .instructions = owned_spec.owned_instructions.instructions,
             .address_lookup_tables = owned_spec.address_lookup_tables,
             .signers = owned_spec.signers,
             .blockhash_query = .{ .nonce_account = .{
-                .pubkey = value,
+                .pubkey = nonce_account_base58,
                 .commitment = options.blockhash_commitment,
             } },
             .nonce_authority = owned_spec.nonce_authority,
@@ -2750,13 +2770,15 @@ pub fn sendAndConfirmVersionedTransactionFromInvocationSpecJson(
     defer owned_spec.deinit(self.allocator);
 
     if (owned_spec.recent_blockhash) |value| {
+        const recent_blockhash_base58 = try value.toBase58(self.allocator);
+        defer self.allocator.free(recent_blockhash_base58);
         return try sendAndConfirmVersionedTransaction(self, .{
             .payer = owned_spec.payer,
             .instructions = owned_spec.owned_instructions.instructions,
             .address_lookup_tables = owned_spec.address_lookup_tables,
             .signers = owned_spec.signers,
             .rpc = .{
-                .recent_blockhash = value,
+                .recent_blockhash = recent_blockhash_base58,
                 .send_transaction_options = options.send_transaction_options,
                 .commitment = options.commitment,
                 .search_transaction_history = options.search_transaction_history,
@@ -2766,13 +2788,15 @@ pub fn sendAndConfirmVersionedTransactionFromInvocationSpecJson(
         });
     }
     if (owned_spec.nonce_account) |value| {
+        const nonce_account_base58 = try value.toBase58(self.allocator);
+        defer self.allocator.free(nonce_account_base58);
         return try sendAndConfirmVersionedTransactionWithBlockhashQuery(self, .{
             .payer = owned_spec.payer,
             .instructions = owned_spec.owned_instructions.instructions,
             .address_lookup_tables = owned_spec.address_lookup_tables,
             .signers = owned_spec.signers,
             .blockhash_query = .{ .nonce_account = .{
-                .pubkey = value,
+                .pubkey = nonce_account_base58,
                 .commitment = options.blockhash_commitment,
             } },
             .nonce_authority = owned_spec.nonce_authority,
