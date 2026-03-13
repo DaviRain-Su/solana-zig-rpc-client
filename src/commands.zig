@@ -3880,6 +3880,7 @@ fn buildInstructionsInvocationSpecJsonForCommand(
         .validate_instructions => "validate-instructions",
         .prepare_instructions => "prepare-instructions",
         .estimate_instructions_fee => "estimate-instructions-fee",
+        .spec_instructions => "spec-instructions",
         else => unreachable,
     };
     const spec_arg = instructions_spec_arg orelse {
@@ -3943,6 +3944,7 @@ fn buildProgramInvokeInvocationSpecJsonForCommand(
         .validate_program_invoke => "validate-program-invoke",
         .prepare_program_invoke => "prepare-program-invoke",
         .estimate_program_invoke_fee => "estimate-program-invoke-fee",
+        .spec_program_invoke => "spec-program-invoke",
         else => unreachable,
     };
     const program_id = program_id_arg orelse {
@@ -4008,6 +4010,7 @@ fn buildAnchorIdlInvokeInvocationSpecJsonForCommand(
         .validate_idl_invoke => "validate-idl-invoke",
         .prepare_idl_invoke => "prepare-idl-invoke",
         .estimate_idl_invoke_fee => "estimate-idl-invoke-fee",
+        .spec_idl_invoke => "spec-idl-invoke",
         else => unreachable,
     };
     const idl = idl_arg orelse {
@@ -4296,6 +4299,14 @@ fn printPreferredPreparedInvocationJson(
     var buf: [4096]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&buf);
     try client.invoke.writePreferredPreparedInvocationJson(&stdout_writer.interface, allocator, prepared);
+    try stdout_writer.interface.writeAll("\n");
+    try stdout_writer.interface.flush();
+}
+
+fn printInvocationSpecJson(invocation_spec_json: []const u8) !void {
+    var buf: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&buf);
+    try stdout_writer.interface.writeAll(invocation_spec_json);
     try stdout_writer.interface.writeAll("\n");
     try stdout_writer.interface.flush();
 }
@@ -4890,6 +4901,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .validate_instructions and
         command != .prepare_instructions and
         command != .estimate_instructions_fee and
+        command != .spec_instructions and
         command != .simulate_instructions and
         command != .simulate_versioned_instructions and
         command != .invoke_program_invoke and
@@ -4900,6 +4912,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .validate_program_invoke and
         command != .prepare_program_invoke and
         command != .estimate_program_invoke_fee and
+        command != .spec_program_invoke and
         command != .send_program_invoke and
         command != .send_program_invoke_and_confirm and
         command != .send_versioned_program_invoke and
@@ -4912,6 +4925,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
         command != .estimate_idl_invoke_fee and
+        command != .spec_idl_invoke and
         command != .send_idl_invoke and
         command != .send_idl_invoke_and_confirm and
         command != .send_versioned_idl_invoke and
@@ -4939,6 +4953,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .validate_instructions and
         command != .prepare_instructions and
         command != .estimate_instructions_fee and
+        command != .spec_instructions and
         command != .invoke_program_invoke and
         command != .invoke_program_invoke_and_confirm and
         command != .invoke_program_invoke_simulate and
@@ -4947,6 +4962,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .validate_program_invoke and
         command != .prepare_program_invoke and
         command != .estimate_program_invoke_fee and
+        command != .spec_program_invoke and
         command != .invoke_idl_invoke and
         command != .invoke_idl_invoke_and_confirm and
         command != .invoke_idl_invoke_simulate and
@@ -4954,9 +4970,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .explain_idl_invoke and
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
-        command != .estimate_idl_invoke_fee)
+        command != .estimate_idl_invoke_fee and
+        command != .spec_idl_invoke)
     {
-        reportInvalidCliMessage("error: --json requires invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, prepare-instructions, estimate-instructions-fee, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, prepare-idl-invoke, or estimate-idl-invoke-fee\n", .{});
+        reportInvalidCliMessage("error: --json requires invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, prepare-instructions, estimate-instructions-fee, spec-instructions, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, spec-program-invoke, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, prepare-idl-invoke, estimate-idl-invoke-fee, or spec-idl-invoke\n", .{});
         return error.InvalidCli;
     }
 
@@ -5004,6 +5021,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .validate_instructions and
         command != .prepare_instructions and
         command != .estimate_instructions_fee and
+        command != .spec_instructions and
         command != .simulate_instructions and
         command != .simulate_versioned_instructions and
         command != .invoke_program_invoke and
@@ -5014,6 +5032,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .validate_program_invoke and
         command != .prepare_program_invoke and
         command != .estimate_program_invoke_fee and
+        command != .spec_program_invoke and
         command != .send_program_invoke and
         command != .send_program_invoke_and_confirm and
         command != .simulate_program_invoke and
@@ -5028,6 +5047,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
         command != .estimate_idl_invoke_fee and
+        command != .spec_idl_invoke and
         command != .simulate_idl_invoke and
         command != .send_idl_invoke and
         command != .send_idl_invoke_and_confirm and
@@ -5035,7 +5055,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_idl_invoke and
         command != .send_versioned_idl_invoke_and_confirm)
     {
-        reportInvalidCliMessage("error: --sender-keypair/--sender-secret-key requires transfer, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, prepare-instructions, estimate-instructions-fee, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, simulate-instructions, simulate-versioned-instructions, send-program-invoke, send-program-invoke-and-confirm, send-versioned-program-invoke, send-versioned-program-invoke-and-confirm, simulate-program-invoke, simulate-versioned-program-invoke, send-idl-invoke, send-idl-invoke-and-confirm, send-versioned-idl-invoke, send-versioned-idl-invoke-and-confirm, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, prepare-idl-invoke, estimate-idl-invoke-fee, simulate-idl-invoke, or simulate-versioned-idl-invoke commands\n", .{});
+        reportInvalidCliMessage("error: --sender-keypair/--sender-secret-key requires transfer, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, prepare-instructions, estimate-instructions-fee, spec-instructions, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, spec-program-invoke, simulate-instructions, simulate-versioned-instructions, send-program-invoke, send-program-invoke-and-confirm, send-versioned-program-invoke, send-versioned-program-invoke-and-confirm, simulate-program-invoke, simulate-versioned-program-invoke, send-idl-invoke, send-idl-invoke-and-confirm, send-versioned-idl-invoke, send-versioned-idl-invoke-and-confirm, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, prepare-idl-invoke, estimate-idl-invoke-fee, spec-idl-invoke, simulate-idl-invoke, or simulate-versioned-idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
@@ -5053,6 +5073,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
         command != .estimate_idl_invoke_fee and
+        command != .spec_idl_invoke and
         command != .simulate_idl_invoke and
         command != .send_idl_invoke and
         command != .send_idl_invoke_and_confirm and
@@ -5073,6 +5094,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
         command != .estimate_idl_invoke_fee and
+        command != .spec_idl_invoke and
         command != .simulate_idl_invoke and
         command != .send_idl_invoke and
         command != .send_idl_invoke_and_confirm and
@@ -5097,6 +5119,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .validate_program_invoke and
         command != .prepare_program_invoke and
         command != .estimate_program_invoke_fee and
+        command != .spec_program_invoke and
         command != .simulate_program_invoke and
         command != .send_versioned_program_invoke and
         command != .send_versioned_program_invoke_and_confirm and
@@ -5114,6 +5137,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .explain_idl_invoke and
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
+        command != .spec_idl_invoke and
         command != .simulate_idl_invoke and
         command != .send_idl_invoke and
         command != .send_idl_invoke_and_confirm and
@@ -5135,6 +5159,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .explain_program_invoke and
         command != .validate_program_invoke and
         command != .prepare_program_invoke and
+        command != .estimate_program_invoke_fee and
+        command != .spec_program_invoke and
         command != .simulate_program_invoke and
         command != .send_versioned_program_invoke and
         command != .send_versioned_program_invoke_and_confirm and
@@ -5144,6 +5170,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
         command != .estimate_idl_invoke_fee and
+        command != .spec_idl_invoke and
         command != .invoke_idl_invoke_simulate and
         command != .simulate_idl_invoke and
         command != .send_idl_invoke and
@@ -5166,6 +5193,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .explain_program_invoke and
         command != .validate_program_invoke and
         command != .prepare_program_invoke and
+        command != .spec_program_invoke and
         command != .simulate_program_invoke and
         command != .send_versioned_program_invoke and
         command != .send_versioned_program_invoke_and_confirm and
@@ -5175,6 +5203,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
         command != .estimate_idl_invoke_fee and
+        command != .spec_idl_invoke and
         command != .invoke_idl_invoke_simulate and
         command != .simulate_idl_invoke and
         command != .send_idl_invoke and
@@ -5444,6 +5473,72 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args,
             invoke_execution_args,
         );
+        return;
+    }
+
+    if (command == .spec_program_invoke) {
+        const invocation_spec_json = try buildProgramInvokeInvocationSpecJsonForCommand(
+            allocator,
+            command,
+            invoke_payload_args.program_id_arg,
+            invoke_payload_args.program_accounts_arg,
+            invoke_payload_args.program_data_arg,
+            invoke_payload_args.program_data_encoding_arg,
+            invoke_payload_args.program_data_schema_json_arg,
+            invoke_payload_args.program_args_json_arg,
+            invoke_payload_args.program_schema_encoding_arg,
+            invoke_context_args.payer_keypair_path_arg,
+            invoke_context_args.payer_secret_key_arg,
+            invoke_context_args.signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
+            invoke_context_args.recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
+            invoke_context_args.additional_signer_secret_keys_arg,
+        );
+        defer allocator.free(invocation_spec_json);
+        try printInvocationSpecJson(invocation_spec_json);
+        return;
+    }
+
+    if (command == .spec_instructions) {
+        const invocation_spec_json = try buildInstructionsInvocationSpecJsonForCommand(
+            allocator,
+            command,
+            invoke_payload_args.instructions_spec_arg,
+            effective_sender_keypair_path,
+            sender_secret_key_arg,
+            program_invoke_additional_signer_secret_keys_arg,
+            recent_blockhash_arg,
+        );
+        defer allocator.free(invocation_spec_json);
+        try printInvocationSpecJson(invocation_spec_json);
+        return;
+    }
+
+    if (command == .spec_idl_invoke) {
+        const invocation_spec_json = try buildAnchorIdlInvokeInvocationSpecJsonForCommand(
+            allocator,
+            command,
+            idl_spec_arg,
+            idl_instruction_arg,
+            idl_program_id_arg,
+            idl_args_json_arg,
+            args.idl_accounts_json_arg,
+            idl_account_bindings.items,
+            idl_remaining_accounts.items,
+            args.idl_remaining_accounts_json_arg,
+            invoke_context_args.payer_keypair_path_arg,
+            invoke_context_args.payer_secret_key_arg,
+            invoke_context_args.signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
+            invoke_context_args.recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
+            invoke_context_args.additional_signer_secret_keys_arg,
+        );
+        defer allocator.free(invocation_spec_json);
+        try printInvocationSpecJson(invocation_spec_json);
         return;
     }
 
@@ -6185,6 +6280,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         .validate_instructions => unreachable,
         .prepare_instructions => unreachable,
         .estimate_instructions_fee => unreachable,
+        .spec_instructions => unreachable,
         .invoke_program_invoke => unreachable,
         .invoke_program_invoke_and_confirm => unreachable,
         .invoke_program_invoke_simulate => unreachable,
@@ -6193,6 +6289,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         .validate_program_invoke => unreachable,
         .prepare_program_invoke => unreachable,
         .estimate_program_invoke_fee => unreachable,
+        .spec_program_invoke => unreachable,
         .invoke_idl_invoke => unreachable,
         .invoke_idl_invoke_and_confirm => unreachable,
         .invoke_idl_invoke_simulate => unreachable,
@@ -6201,6 +6298,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         .validate_idl_invoke => unreachable,
         .prepare_idl_invoke => unreachable,
         .estimate_idl_invoke_fee => unreachable,
+        .spec_idl_invoke => unreachable,
         .latest_blockhash => {
             if (with_context) {
                 const blockhash_response = try rpc.getLatestBlockhashResponse(commitment);
@@ -12888,6 +12986,87 @@ test "runCommand preview-program-invoke emits json analysis for schema args" {
     try std.testing.expect(std.mem.indexOf(u8, captured, expected_program_ids) != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, expected_signers) != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"accounts\":[") != null);
+}
+
+test "runCommand spec-program-invoke emits invocation spec json for schema args" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://spec-program-invoke-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{82} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 23);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{34} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const state_pubkey = client.Pubkey.fromBytes(.{45} ** 32);
+    const state_pubkey_base58 = try state_pubkey.toBase58(allocator);
+    defer allocator.free(state_pubkey_base58);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"isWritable\":true}}]",
+        .{state_pubkey_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    const schema_json =
+        \\{"type":"struct","fields":[{"name":"enabled","type":"bool"},{"name":"count","type":"u16"}]}
+    ;
+    const args_json =
+        \\{"enabled":true,"count":7}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "spec-program-invoke",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--data-schema-json",
+        schema_json,
+        "--args-json",
+        args_json,
+        "--schema-encoding",
+        "borsh",
+        program_id_base58,
+        accounts_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"payer_secret_key\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"program_id\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"accounts\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"data_schema\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"args\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"schema_encoding\":\"borsh\"") != null);
 }
 
 test "runCommand explain-program-invoke emits json analysis for schema args" {
