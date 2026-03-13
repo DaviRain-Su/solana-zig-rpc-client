@@ -115,6 +115,36 @@ pub const OwnedInvocationSummary = struct {
     }
 };
 
+pub const InvocationBlockhashMode = enum {
+    latest_blockhash,
+    explicit_recent_blockhash,
+    durable_nonce,
+};
+
+pub const OwnedInvocationPlan = struct {
+    payer: sdk.Pubkey,
+    signer_pubkeys: []sdk.Pubkey,
+    program_ids: []sdk.Pubkey,
+    lookup_table_pubkeys: []sdk.Pubkey,
+    instruction_count: usize,
+    account_count: usize,
+    signer_count: usize,
+    writable_account_count: usize,
+    readonly_account_count: usize,
+    address_lookup_table_count: usize,
+    blockhash_mode: InvocationBlockhashMode,
+    recent_blockhash: ?sdk.Hash = null,
+    nonce_account: ?sdk.Pubkey = null,
+    nonce_authority: ?sdk.Pubkey = null,
+
+    pub fn deinit(self: *OwnedInvocationPlan, allocator: Allocator) void {
+        allocator.free(self.signer_pubkeys);
+        allocator.free(self.program_ids);
+        allocator.free(self.lookup_table_pubkeys);
+        self.* = undefined;
+    }
+};
+
 pub fn buildInstructionInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
@@ -364,6 +394,83 @@ pub fn buildInvocationSummaryFromInvocationSpecJson(
         .writable_account_count = writable_account_count,
         .readonly_account_count = accounts.accounts.len - writable_account_count,
         .address_lookup_table_count = resolved.address_lookup_tables.len,
+        .recent_blockhash = resolved.recent_blockhash,
+        .nonce_account = resolved.nonce_account,
+        .nonce_authority = resolved.nonce_authority,
+    };
+}
+
+pub fn buildInvocationLookupTablePubkeysFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) ![]sdk.Pubkey {
+    var resolved = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer resolved.deinit(allocator);
+
+    const lookup_table_pubkeys = try allocator.alloc(sdk.Pubkey, resolved.address_lookup_tables.len);
+    for (resolved.address_lookup_tables, 0..) |table, index| {
+        lookup_table_pubkeys[index] = table.account_key;
+    }
+    return lookup_table_pubkeys;
+}
+
+pub fn buildInvocationPlanFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !OwnedInvocationPlan {
+    var resolved = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer resolved.deinit(allocator);
+
+    var accounts = try buildOwnedInvocationAccountsFromResolved(allocator, &resolved);
+    defer accounts.deinit(allocator);
+
+    var writable_account_count: usize = 0;
+    for (accounts.accounts) |account| {
+        if (account.is_writable) writable_account_count += 1;
+    }
+
+    var program_ids: std.ArrayList(sdk.Pubkey) = .empty;
+    errdefer program_ids.deinit(allocator);
+    for (resolved.owned_instructions.instructions) |instruction| {
+        try appendUniquePubkey(allocator, &program_ids, instruction.program_id);
+    }
+
+    const lookup_table_pubkeys = try allocator.alloc(sdk.Pubkey, resolved.address_lookup_tables.len);
+    errdefer allocator.free(lookup_table_pubkeys);
+    for (resolved.address_lookup_tables, 0..) |table, index| {
+        lookup_table_pubkeys[index] = table.account_key;
+    }
+
+    const signer_pubkeys = resolved.signer_pubkeys;
+    resolved.signer_pubkeys = &.{};
+
+    return .{
+        .payer = resolved.payer,
+        .signer_pubkeys = signer_pubkeys,
+        .program_ids = try program_ids.toOwnedSlice(allocator),
+        .lookup_table_pubkeys = lookup_table_pubkeys,
+        .instruction_count = resolved.owned_instructions.instructions.len,
+        .account_count = accounts.accounts.len,
+        .signer_count = signer_pubkeys.len,
+        .writable_account_count = writable_account_count,
+        .readonly_account_count = accounts.accounts.len - writable_account_count,
+        .address_lookup_table_count = resolved.address_lookup_tables.len,
+        .blockhash_mode = if (resolved.nonce_account != null)
+            .durable_nonce
+        else if (resolved.recent_blockhash != null)
+            .explicit_recent_blockhash
+        else
+            .latest_blockhash,
         .recent_blockhash = resolved.recent_blockhash,
         .nonce_account = resolved.nonce_account,
         .nonce_authority = resolved.nonce_authority,
@@ -1515,6 +1622,54 @@ fn allocRichInstructionsInvocationSpecJson(
     );
 }
 
+fn allocProgramInvocationSpecJsonWithLookupTable(
+    allocator: Allocator,
+    payer_fill: u8,
+    program_fill: u8,
+    blockhash_fill: u8,
+    lookup_table_fill: u8,
+    lookup_address_fill: u8,
+) ![]u8 {
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{payer_fill} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{program_fill} ** 32);
+    const recent_blockhash_bytes = [_]u8{blockhash_fill} ** 32;
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{lookup_table_fill} ** 32);
+    const lookup_address = sdk.Pubkey.fromBytes([_]u8{lookup_address_fill} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const recent_blockhash_base58 = try sdk.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash_base58);
+    const lookup_table_base58 = try lookup_table.toBase58(allocator);
+    defer allocator.free(lookup_table_base58);
+    const lookup_address_base58 = try lookup_address.toBase58(allocator);
+    defer allocator.free(lookup_address_base58);
+
+    return std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "recent_blockhash":"{s}",
+        \\  "program_id":"{s}",
+        \\  "accounts":[{{"pubkey":"{s}","isSigner":false,"isWritable":false}}],
+        \\  "address_lookup_tables":[{{"accountKey":"{s}","addresses":["{s}"]}}],
+        \\  "dataBytes":[1]
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            recent_blockhash_base58,
+            program_id_base58,
+            lookup_address_base58,
+            lookup_table_base58,
+            lookup_address_base58,
+        },
+    );
+}
+
 fn findInvocationAccountInfo(
     accounts: []const InvocationAccountInfo,
     pubkey: sdk.Pubkey,
@@ -1727,6 +1882,62 @@ test "invoke.buildInvocationSummaryFromInvocationSpecJson dispatches program fam
     try std.testing.expectEqual(@as(usize, 1), summary.program_ids.len);
     try std.testing.expect(std.meta.eql(summary.program_ids[0], program_id));
     try std.testing.expect(summary.recent_blockhash != null);
+}
+
+test "invoke.buildInvocationLookupTablePubkeysFromInvocationSpecJson dispatches program family" {
+    const allocator = std.testing.allocator;
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{134} ** 32);
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 131, 132, 133, 134, 135);
+    defer allocator.free(spec_json);
+
+    const lookup_table_pubkeys = try buildInvocationLookupTablePubkeysFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer allocator.free(lookup_table_pubkeys);
+
+    try std.testing.expectEqual(@as(usize, 1), lookup_table_pubkeys.len);
+    try std.testing.expect(std.meta.eql(lookup_table_pubkeys[0], lookup_table));
+}
+
+test "invoke.buildInvocationPlanFromInvocationSpecJson summarizes durable nonce and lookup tables" {
+    const allocator = std.testing.allocator;
+    const program_id = sdk.Pubkey.fromBytes([_]u8{144} ** 32);
+
+    const instructions_spec_json = try allocRichInstructionsInvocationSpecJson(allocator, 141, 142, 143, 144, 145, 146);
+    defer allocator.free(instructions_spec_json);
+
+    var nonce_plan = try buildInvocationPlanFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        instructions_spec_json,
+    );
+    defer nonce_plan.deinit(allocator);
+
+    try std.testing.expectEqual(InvocationBlockhashMode.durable_nonce, nonce_plan.blockhash_mode);
+    try std.testing.expectEqual(@as(usize, 0), nonce_plan.lookup_table_pubkeys.len);
+    try std.testing.expectEqual(@as(usize, 3), nonce_plan.signer_count);
+    try std.testing.expectEqual(@as(usize, 1), nonce_plan.program_ids.len);
+    try std.testing.expect(std.meta.eql(nonce_plan.program_ids[0], program_id));
+
+    const program_spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 151, 152, 153, 154, 155);
+    defer allocator.free(program_spec_json);
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{154} ** 32);
+
+    var recent_plan = try buildInvocationPlanFromInvocationSpecJson(
+        allocator,
+        .program,
+        program_spec_json,
+    );
+    defer recent_plan.deinit(allocator);
+
+    try std.testing.expectEqual(InvocationBlockhashMode.explicit_recent_blockhash, recent_plan.blockhash_mode);
+    try std.testing.expectEqual(@as(usize, 1), recent_plan.lookup_table_pubkeys.len);
+    try std.testing.expect(std.meta.eql(recent_plan.lookup_table_pubkeys[0], lookup_table));
+    try std.testing.expectEqual(@as(usize, 1), recent_plan.address_lookup_table_count);
+    try std.testing.expect(recent_plan.recent_blockhash != null);
 }
 
 test "invoke.buildLegacyMessageBytesFromInvocationSpecJsonWithOptions matches generic builder" {
