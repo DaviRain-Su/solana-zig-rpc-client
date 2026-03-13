@@ -4062,6 +4062,13 @@ const CliInvokeExecutionArgs = struct {
     simulate_inner_instructions: bool,
 };
 
+const CliInvokeCommandBehavior = struct {
+    family: InvokeFamily,
+    versioned: bool,
+    simulate: bool,
+    confirm: bool,
+};
+
 fn buildCliInvokeContextArgs(
     payer_keypair_path_arg: ?[]const u8,
     payer_secret_key_arg: ?[]const u8,
@@ -4147,30 +4154,32 @@ fn buildCliInvokeExecutionArgs(
 }
 
 fn invokeFamilyForCommand(command: cli.Command) ?InvokeFamily {
+    const behavior = invokeCommandBehavior(command) orelse return null;
+    return behavior.family;
+}
+
+fn invokeCommandBehavior(command: cli.Command) ?CliInvokeCommandBehavior {
     return switch (command) {
-        .send_instructions,
-        .send_instructions_and_confirm,
-        .send_versioned_instructions,
-        .send_versioned_instructions_and_confirm,
-        .simulate_instructions,
-        .simulate_versioned_instructions,
-        => .instructions,
+        .send_instructions => .{ .family = .instructions, .versioned = false, .simulate = false, .confirm = false },
+        .send_instructions_and_confirm => .{ .family = .instructions, .versioned = false, .simulate = false, .confirm = true },
+        .send_versioned_instructions => .{ .family = .instructions, .versioned = true, .simulate = false, .confirm = false },
+        .send_versioned_instructions_and_confirm => .{ .family = .instructions, .versioned = true, .simulate = false, .confirm = true },
+        .simulate_instructions => .{ .family = .instructions, .versioned = false, .simulate = true, .confirm = false },
+        .simulate_versioned_instructions => .{ .family = .instructions, .versioned = true, .simulate = true, .confirm = false },
 
-        .send_program_invoke,
-        .send_program_invoke_and_confirm,
-        .send_versioned_program_invoke,
-        .send_versioned_program_invoke_and_confirm,
-        .simulate_program_invoke,
-        .simulate_versioned_program_invoke,
-        => .program,
+        .send_program_invoke => .{ .family = .program, .versioned = false, .simulate = false, .confirm = false },
+        .send_program_invoke_and_confirm => .{ .family = .program, .versioned = false, .simulate = false, .confirm = true },
+        .send_versioned_program_invoke => .{ .family = .program, .versioned = true, .simulate = false, .confirm = false },
+        .send_versioned_program_invoke_and_confirm => .{ .family = .program, .versioned = true, .simulate = false, .confirm = true },
+        .simulate_program_invoke => .{ .family = .program, .versioned = false, .simulate = true, .confirm = false },
+        .simulate_versioned_program_invoke => .{ .family = .program, .versioned = true, .simulate = true, .confirm = false },
 
-        .send_idl_invoke,
-        .send_idl_invoke_and_confirm,
-        .send_versioned_idl_invoke,
-        .send_versioned_idl_invoke_and_confirm,
-        .simulate_idl_invoke,
-        .simulate_versioned_idl_invoke,
-        => .anchor_idl,
+        .send_idl_invoke => .{ .family = .anchor_idl, .versioned = false, .simulate = false, .confirm = false },
+        .send_idl_invoke_and_confirm => .{ .family = .anchor_idl, .versioned = false, .simulate = false, .confirm = true },
+        .send_versioned_idl_invoke => .{ .family = .anchor_idl, .versioned = true, .simulate = false, .confirm = false },
+        .send_versioned_idl_invoke_and_confirm => .{ .family = .anchor_idl, .versioned = true, .simulate = false, .confirm = true },
+        .simulate_idl_invoke => .{ .family = .anchor_idl, .versioned = false, .simulate = true, .confirm = false },
+        .simulate_versioned_idl_invoke => .{ .family = .anchor_idl, .versioned = true, .simulate = true, .confirm = false },
 
         else => null,
     };
@@ -4326,6 +4335,7 @@ fn runProgramInvocationCommand(
     allocator: Allocator,
     rpc: *client.RpcClient,
     command: cli.Command,
+    behavior: CliInvokeCommandBehavior,
     program_id_arg: ?[]const u8,
     accounts_arg: ?[]const u8,
     data_arg: ?[]const u8,
@@ -4340,26 +4350,6 @@ fn runProgramInvocationCommand(
     additional_signer_secret_keys_arg: []const []const u8,
     execution_args: CliInvokeExecutionArgs,
 ) !void {
-    const versioned = switch (command) {
-        .send_versioned_program_invoke,
-        .send_versioned_program_invoke_and_confirm,
-        .simulate_versioned_program_invoke,
-        => true,
-        else => false,
-    };
-    const simulate = switch (command) {
-        .simulate_program_invoke,
-        .simulate_versioned_program_invoke,
-        => true,
-        else => false,
-    };
-    const confirm = switch (command) {
-        .send_program_invoke_and_confirm,
-        .send_versioned_program_invoke_and_confirm,
-        => true,
-        else => false,
-    };
-
     const invocation_spec_json = buildProgramInvokeInvocationSpecJsonForCommand(
         allocator,
         command,
@@ -4370,7 +4360,7 @@ fn runProgramInvocationCommand(
         payer_keypair_path_arg,
         payer_secret_key_arg,
         signer_keypair_paths_arg,
-        if (versioned) lookup_tables_arg else null,
+        if (behavior.versioned) lookup_tables_arg else null,
         recent_blockhash_arg,
         nonce_account_arg,
         nonce_authority_keypair_path_arg,
@@ -4378,7 +4368,7 @@ fn runProgramInvocationCommand(
     ) catch return error.InvalidCli;
     defer allocator.free(invocation_spec_json);
 
-    if (simulate) {
+    if (behavior.simulate) {
         const options = try buildCliSimulationOptions(
             execution_args.simulation_account_encoding_arg,
             execution_args.simulation_min_context_slot_arg,
@@ -4392,7 +4382,7 @@ fn runProgramInvocationCommand(
             allocator,
             rpc,
             .program,
-            versioned,
+            behavior.versioned,
             invocation_spec_json,
             execution_args.commitment,
             options,
@@ -4407,8 +4397,8 @@ fn runProgramInvocationCommand(
         allocator,
         rpc,
         .program,
-        versioned,
-        confirm,
+        behavior.versioned,
+        behavior.confirm,
         invocation_spec_json,
         execution_args.commitment orelse execution_args.send_preflight_commitment,
         execution_args.send_transaction_options,
@@ -4419,7 +4409,7 @@ fn runProgramInvocationCommand(
     );
     defer allocator.free(tx_signature);
 
-    if (confirm) {
+    if (behavior.confirm) {
         std.debug.print("confirmed signature: {s}\n", .{tx_signature});
     } else {
         std.debug.print("signature: {s}\n", .{tx_signature});
@@ -4430,6 +4420,7 @@ fn runInstructionsInvocationCommand(
     allocator: Allocator,
     rpc: *client.RpcClient,
     command: cli.Command,
+    behavior: CliInvokeCommandBehavior,
     instructions_spec_arg: ?[]const u8,
     payer_keypair_path_arg: ?[]const u8,
     payer_secret_key_arg: ?[]const u8,
@@ -4437,26 +4428,6 @@ fn runInstructionsInvocationCommand(
     recent_blockhash_arg: ?[]const u8,
     execution_args: CliInvokeExecutionArgs,
 ) !void {
-    const versioned = switch (command) {
-        .send_versioned_instructions,
-        .send_versioned_instructions_and_confirm,
-        .simulate_versioned_instructions,
-        => true,
-        else => false,
-    };
-    const simulate = switch (command) {
-        .simulate_instructions,
-        .simulate_versioned_instructions,
-        => true,
-        else => false,
-    };
-    const confirm = switch (command) {
-        .send_instructions_and_confirm,
-        .send_versioned_instructions_and_confirm,
-        => true,
-        else => false,
-    };
-
     const invocation_spec_json = buildInstructionsInvocationSpecJsonForCommand(
         allocator,
         command,
@@ -4468,7 +4439,7 @@ fn runInstructionsInvocationCommand(
     ) catch return error.InvalidCli;
     defer allocator.free(invocation_spec_json);
 
-    if (simulate) {
+    if (behavior.simulate) {
         const options = try buildCliSimulationOptions(
             execution_args.simulation_account_encoding_arg,
             execution_args.simulation_min_context_slot_arg,
@@ -4482,7 +4453,7 @@ fn runInstructionsInvocationCommand(
             allocator,
             rpc,
             .instructions,
-            versioned,
+            behavior.versioned,
             invocation_spec_json,
             execution_args.commitment,
             options,
@@ -4497,8 +4468,8 @@ fn runInstructionsInvocationCommand(
         allocator,
         rpc,
         .instructions,
-        versioned,
-        confirm,
+        behavior.versioned,
+        behavior.confirm,
         invocation_spec_json,
         execution_args.commitment orelse execution_args.send_preflight_commitment,
         execution_args.send_transaction_options,
@@ -4509,7 +4480,7 @@ fn runInstructionsInvocationCommand(
     );
     defer allocator.free(tx_signature);
 
-    if (confirm) {
+    if (behavior.confirm) {
         std.debug.print("confirmed signature: {s}\n", .{tx_signature});
     } else {
         std.debug.print("signature: {s}\n", .{tx_signature});
@@ -4520,6 +4491,7 @@ fn runAnchorIdlInvocationCommand(
     allocator: Allocator,
     rpc: *client.RpcClient,
     command: cli.Command,
+    behavior: CliInvokeCommandBehavior,
     idl_arg: ?[]const u8,
     instruction_name_arg: ?[]const u8,
     program_id_arg: ?[]const u8,
@@ -4538,26 +4510,6 @@ fn runAnchorIdlInvocationCommand(
     additional_signer_secret_keys_arg: []const []const u8,
     execution_args: CliInvokeExecutionArgs,
 ) !void {
-    const versioned = switch (command) {
-        .send_versioned_idl_invoke,
-        .send_versioned_idl_invoke_and_confirm,
-        .simulate_versioned_idl_invoke,
-        => true,
-        else => false,
-    };
-    const simulate = switch (command) {
-        .simulate_idl_invoke,
-        .simulate_versioned_idl_invoke,
-        => true,
-        else => false,
-    };
-    const confirm = switch (command) {
-        .send_idl_invoke_and_confirm,
-        .send_versioned_idl_invoke_and_confirm,
-        => true,
-        else => false,
-    };
-
     const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJsonForCommand(
         allocator,
         command,
@@ -4572,7 +4524,7 @@ fn runAnchorIdlInvocationCommand(
         payer_keypair_path_arg,
         payer_secret_key_arg,
         signer_keypair_paths_arg,
-        if (versioned) lookup_tables_arg else null,
+        if (behavior.versioned) lookup_tables_arg else null,
         recent_blockhash_arg,
         nonce_account_arg,
         nonce_authority_keypair_path_arg,
@@ -4580,7 +4532,7 @@ fn runAnchorIdlInvocationCommand(
     ) catch return error.InvalidCli;
     defer allocator.free(invocation_spec_json);
 
-    if (simulate) {
+    if (behavior.simulate) {
         const options = try buildCliSimulationOptions(
             execution_args.simulation_account_encoding_arg,
             execution_args.simulation_min_context_slot_arg,
@@ -4594,7 +4546,7 @@ fn runAnchorIdlInvocationCommand(
             allocator,
             rpc,
             .anchor_idl,
-            versioned,
+            behavior.versioned,
             invocation_spec_json,
             execution_args.commitment,
             options,
@@ -4609,8 +4561,8 @@ fn runAnchorIdlInvocationCommand(
         allocator,
         rpc,
         .anchor_idl,
-        versioned,
-        confirm,
+        behavior.versioned,
+        behavior.confirm,
         invocation_spec_json,
         execution_args.commitment orelse execution_args.send_preflight_commitment,
         execution_args.send_transaction_options,
@@ -4621,7 +4573,7 @@ fn runAnchorIdlInvocationCommand(
     );
     defer allocator.free(tx_signature);
 
-    if (confirm) {
+    if (behavior.confirm) {
         std.debug.print("confirmed signature: {s}\n", .{tx_signature});
     } else {
         std.debug.print("signature: {s}\n", .{tx_signature});
@@ -4636,11 +4588,13 @@ fn runGenericInvocationCommand(
     context_args: CliInvokeContextArgs,
     execution_args: CliInvokeExecutionArgs,
 ) !void {
-    return switch (invokeFamilyForCommand(command) orelse unreachable) {
+    const behavior = invokeCommandBehavior(command) orelse unreachable;
+    return switch (behavior.family) {
         .instructions => runInstructionsInvocationCommand(
             allocator,
             rpc,
             command,
+            behavior,
             payload_args.instructions_spec_arg,
             context_args.payer_keypair_path_arg,
             context_args.payer_secret_key_arg,
@@ -4652,6 +4606,7 @@ fn runGenericInvocationCommand(
             allocator,
             rpc,
             command,
+            behavior,
             payload_args.program_id_arg,
             payload_args.program_accounts_arg,
             payload_args.program_data_arg,
@@ -4670,6 +4625,7 @@ fn runGenericInvocationCommand(
             allocator,
             rpc,
             command,
+            behavior,
             payload_args.idl_arg,
             payload_args.idl_instruction_arg,
             payload_args.idl_program_id_arg,
