@@ -898,6 +898,24 @@ pub fn writePreferredPreparedInvocationJson(
     defer allocator.free(payer_base58);
     try writeJsonStringField(writer, &first, "payer", payer_base58);
     try writeJsonStringField(writer, &first, "blockhash_mode", invocationBlockhashModeJsonLabel(report.plan.blockhash_mode));
+    const recent_blockhash_base58 = if (report.plan.recent_blockhash) |value|
+        try value.toBase58(allocator)
+    else
+        null;
+    defer if (recent_blockhash_base58) |value| allocator.free(value);
+    try writeJsonStringField(writer, &first, "recent_blockhash", recent_blockhash_base58);
+    const nonce_account_base58 = if (report.plan.nonce_account) |value|
+        try value.toBase58(allocator)
+    else
+        null;
+    defer if (nonce_account_base58) |value| allocator.free(value);
+    try writeJsonStringField(writer, &first, "nonce_account", nonce_account_base58);
+    const nonce_authority_base58 = if (report.plan.nonce_authority) |value|
+        try value.toBase58(allocator)
+    else
+        null;
+    defer if (nonce_authority_base58) |value| allocator.free(value);
+    try writeJsonStringField(writer, &first, "nonce_authority", nonce_authority_base58);
 
     try writeJsonUsizeField(writer, &first, "instruction_count", report.summary.instruction_count);
     try writeJsonUsizeField(writer, &first, "account_count", report.summary.account_count);
@@ -934,6 +952,8 @@ pub fn writePreferredPreparedInvocationJson(
     try writeJsonPubkeyArrayField(writer, &first, "writable_pubkeys", allocator, report.preflight.writable_pubkeys);
     try writeJsonPubkeyArrayField(writer, &first, "readonly_pubkeys", allocator, report.preflight.readonly_pubkeys);
     try writeJsonPubkeyArrayField(writer, &first, "lookup_table_pubkeys", allocator, report.plan.lookup_table_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_table_address_pubkeys", allocator, report.lookup_coverage.lookup_table_address_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_candidate_pubkeys", allocator, report.lookup_coverage.candidate_pubkeys);
     try writeJsonPubkeyArrayField(writer, &first, "lookup_covered_pubkeys", allocator, report.lookup_coverage.covered_pubkeys);
     try writeJsonPubkeyArrayField(writer, &first, "lookup_uncovered_pubkeys", allocator, report.lookup_coverage.uncovered_pubkeys);
     try writeJsonPubkeyArrayField(writer, &first, "missing_required_signer_pubkeys", allocator, report.validation.missing_required_signer_pubkeys);

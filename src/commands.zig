@@ -4257,6 +4257,21 @@ fn printPreferredPreparedInvocation(
     std.debug.print("validation passed: {}\n", .{prepared.prepared.report.validation.is_valid});
     std.debug.print("payer: {s}\n", .{payer_base58});
     std.debug.print("blockhash mode: {s}\n", .{@tagName(prepared.prepared.report.plan.blockhash_mode)});
+    if (prepared.prepared.report.plan.recent_blockhash) |value| {
+        const recent_blockhash_base58 = try value.toBase58(allocator);
+        defer allocator.free(recent_blockhash_base58);
+        std.debug.print("recent blockhash: {s}\n", .{recent_blockhash_base58});
+    }
+    if (prepared.prepared.report.plan.nonce_account) |value| {
+        const nonce_account_base58 = try value.toBase58(allocator);
+        defer allocator.free(nonce_account_base58);
+        std.debug.print("nonce account: {s}\n", .{nonce_account_base58});
+    }
+    if (prepared.prepared.report.plan.nonce_authority) |value| {
+        const nonce_authority_base58 = try value.toBase58(allocator);
+        defer allocator.free(nonce_authority_base58);
+        std.debug.print("nonce authority: {s}\n", .{nonce_authority_base58});
+    }
     std.debug.print("instruction count: {}\n", .{prepared.prepared.report.summary.instruction_count});
     std.debug.print("account count: {}\n", .{prepared.prepared.report.summary.account_count});
     std.debug.print("signer count: {}\n", .{prepared.prepared.report.summary.signer_count});
@@ -4283,6 +4298,12 @@ fn printPreferredPreparedInvocation(
     }
     if (prepared.prepared.report.plan.lookup_table_pubkeys.len != 0) {
         try printInvocationPubkeys("lookup table pubkeys", allocator, prepared.prepared.report.plan.lookup_table_pubkeys);
+    }
+    if (prepared.prepared.report.lookup_coverage.lookup_table_address_pubkeys.len != 0) {
+        try printInvocationPubkeys("lookup table address pubkeys", allocator, prepared.prepared.report.lookup_coverage.lookup_table_address_pubkeys);
+    }
+    if (prepared.prepared.report.lookup_coverage.candidate_pubkeys.len != 0) {
+        try printInvocationPubkeys("lookup candidate pubkeys", allocator, prepared.prepared.report.lookup_coverage.candidate_pubkeys);
     }
     if (prepared.prepared.report.lookup_coverage.covered_pubkeys.len != 0) {
         try printInvocationPubkeys("lookup covered pubkeys", allocator, prepared.prepared.report.lookup_coverage.covered_pubkeys);
@@ -12503,12 +12524,14 @@ test "runCommand prepare-program-invoke emits json prepared transaction for sche
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode_buildable\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"validation_passed\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"recent_blockhash\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostic_error_count\":0") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostic_warning_count\":0") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"transaction_base64\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"message_base64\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"first_signature\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"provided_signer_pubkeys\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"lookup_candidate_pubkeys\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostics\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"accounts\":[") != null);
 }
