@@ -1,0 +1,392 @@
+const std = @import("std");
+const sdk = @import("./sdk.zig");
+
+const Allocator = std.mem.Allocator;
+
+pub const SchemaEncoding = enum {
+    borsh,
+};
+
+pub const EncodeError = Allocator.Error || error{
+    InvalidInstructionSchema,
+    InvalidHexData,
+    InvalidBase64Data,
+};
+
+fn findJsonObjectField(object: std.json.ObjectMap, comptime names: []const []const u8) ?std.json.Value {
+    inline for (names) |name| {
+        if (object.get(name)) |value| return value;
+    }
+    return null;
+}
+
+fn parseJsonBool(value: std.json.Value) EncodeError!bool {
+    return switch (value) {
+        .bool => value.bool,
+        else => error.InvalidInstructionSchema,
+    };
+}
+
+fn parseJsonPubkey(allocator: Allocator, value: std.json.Value) EncodeError!sdk.Pubkey {
+    return switch (value) {
+        .string => sdk.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidInstructionSchema,
+        else => error.InvalidInstructionSchema,
+    };
+}
+
+fn decodeInstructionData(
+    allocator: Allocator,
+    encoded: []const u8,
+    comptime encoding: enum { base64, hex, utf8 },
+) EncodeError![]u8 {
+    return switch (encoding) {
+        .utf8 => try allocator.dupe(u8, encoded),
+        .base64 => blk: {
+            const decoded_len = std.base64.standard.Decoder.calcSizeForSlice(encoded) catch return error.InvalidBase64Data;
+            const decoded = try allocator.alloc(u8, decoded_len);
+            errdefer allocator.free(decoded);
+            std.base64.standard.Decoder.decode(decoded, encoded) catch return error.InvalidBase64Data;
+            break :blk decoded;
+        },
+        .hex => blk: {
+            const hex_value = if (std.mem.startsWith(u8, encoded, "0x") or std.mem.startsWith(u8, encoded, "0X"))
+                encoded[2..]
+            else
+                encoded;
+            if (hex_value.len % 2 != 0) return error.InvalidHexData;
+            const decoded = try allocator.alloc(u8, hex_value.len / 2);
+            errdefer allocator.free(decoded);
+            _ = std.fmt.hexToBytes(decoded, hex_value) catch return error.InvalidHexData;
+            break :blk decoded;
+        },
+    };
+}
+
+pub fn parseSchemaEncoding(value: []const u8) EncodeError!SchemaEncoding {
+    if (std.mem.eql(u8, value, "borsh")) return .borsh;
+    return error.InvalidInstructionSchema;
+}
+
+fn parseSchemaUnsigned(comptime T: type, value: std.json.Value) EncodeError!T {
+    return switch (value) {
+        .integer => {
+            if (value.integer < 0) return error.InvalidInstructionSchema;
+            return std.math.cast(T, value.integer) orelse return error.InvalidInstructionSchema;
+        },
+        .string => std.fmt.parseInt(T, value.string, 10) catch return error.InvalidInstructionSchema,
+        else => error.InvalidInstructionSchema,
+    };
+}
+
+fn parseSchemaSigned(comptime T: type, value: std.json.Value) EncodeError!T {
+    return switch (value) {
+        .integer => std.math.cast(T, value.integer) orelse return error.InvalidInstructionSchema,
+        .string => std.fmt.parseInt(T, value.string, 10) catch return error.InvalidInstructionSchema,
+        else => error.InvalidInstructionSchema,
+    };
+}
+
+fn appendLittleEndianInt(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    comptime T: type,
+    value: T,
+) EncodeError!void {
+    var buffer: [@sizeOf(T)]u8 = undefined;
+    std.mem.writeInt(T, &buffer, value, .little);
+    try output.appendSlice(allocator, &buffer);
+}
+
+fn appendLengthPrefixedBytes(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    bytes: []const u8,
+) EncodeError!void {
+    const len = std.math.cast(u32, bytes.len) orelse return error.InvalidInstructionSchema;
+    try appendLittleEndianInt(allocator, output, u32, len);
+    try output.appendSlice(allocator, bytes);
+}
+
+fn decodeSchemaBytesValue(
+    allocator: Allocator,
+    value: std.json.Value,
+) EncodeError![]u8 {
+    return switch (value) {
+        .array => blk: {
+            const decoded = try allocator.alloc(u8, value.array.items.len);
+            errdefer allocator.free(decoded);
+            for (value.array.items, 0..) |item, index| {
+                decoded[index] = try parseSchemaUnsigned(u8, item);
+            }
+            break :blk decoded;
+        },
+        .string => blk: {
+            if (std.mem.startsWith(u8, value.string, "base64:")) {
+                break :blk try decodeInstructionData(allocator, value.string["base64:".len..], .base64);
+            }
+            if (std.mem.startsWith(u8, value.string, "hex:")) {
+                break :blk try decodeInstructionData(allocator, value.string["hex:".len..], .hex);
+            }
+            if (std.mem.startsWith(u8, value.string, "0x") or std.mem.startsWith(u8, value.string, "0X")) {
+                break :blk try decodeInstructionData(allocator, value.string, .hex);
+            }
+            if (std.mem.startsWith(u8, value.string, "utf8:")) {
+                break :blk try decodeInstructionData(allocator, value.string["utf8:".len..], .utf8);
+            }
+            break :blk try allocator.dupe(u8, value.string);
+        },
+        .object => blk: {
+            if (findJsonObjectField(value.object, &.{"bytes"})) |field| {
+                break :blk try decodeSchemaBytesValue(allocator, field);
+            }
+            if (findJsonObjectField(value.object, &.{"base64"})) |field| {
+                if (field != .string) return error.InvalidInstructionSchema;
+                break :blk try decodeInstructionData(allocator, field.string, .base64);
+            }
+            if (findJsonObjectField(value.object, &.{"hex"})) |field| {
+                if (field != .string) return error.InvalidInstructionSchema;
+                break :blk try decodeInstructionData(allocator, field.string, .hex);
+            }
+            if (findJsonObjectField(value.object, &.{"utf8"})) |field| {
+                if (field != .string) return error.InvalidInstructionSchema;
+                break :blk try decodeInstructionData(allocator, field.string, .utf8);
+            }
+            return error.InvalidInstructionSchema;
+        },
+        else => error.InvalidInstructionSchema,
+    };
+}
+
+fn schemaTypeName(schema: std.json.Value) ?[]const u8 {
+    return switch (schema) {
+        .string => schema.string,
+        .object => if (findJsonObjectField(schema.object, &.{"type"})) |value|
+            switch (value) {
+                .string => value.string,
+                else => null,
+            }
+        else if (findJsonObjectField(schema.object, &.{"fields"})) |_|
+            "struct"
+        else
+            null,
+        else => null,
+    };
+}
+
+fn parseEnumInput(
+    value: std.json.Value,
+) EncodeError!struct {
+    name: []const u8,
+    payload: ?std.json.Value,
+} {
+    return switch (value) {
+        .string => .{ .name = value.string, .payload = null },
+        .object => blk: {
+            if (findJsonObjectField(value.object, &.{"variant"})) |variant_value| {
+                if (variant_value != .string) return error.InvalidInstructionSchema;
+                break :blk .{
+                    .name = variant_value.string,
+                    .payload = value.object.get("value"),
+                };
+            }
+
+            if (value.object.count() != 1) return error.InvalidInstructionSchema;
+            var iterator = value.object.iterator();
+            const entry = iterator.next() orelse return error.InvalidInstructionSchema;
+            break :blk .{
+                .name = entry.key_ptr.*,
+                .payload = entry.value_ptr.*,
+            };
+        },
+        else => error.InvalidInstructionSchema,
+    };
+}
+
+fn encodeBorshSchemaValue(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    schema: std.json.Value,
+    value: std.json.Value,
+) EncodeError!void {
+    const type_name = schemaTypeName(schema) orelse return error.InvalidInstructionSchema;
+
+    if (std.mem.eql(u8, type_name, "bool")) {
+        try output.append(allocator, if (try parseJsonBool(value)) 1 else 0);
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "u8")) {
+        try output.append(allocator, try parseSchemaUnsigned(u8, value));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "u16")) {
+        try appendLittleEndianInt(allocator, output, u16, try parseSchemaUnsigned(u16, value));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "u32")) {
+        try appendLittleEndianInt(allocator, output, u32, try parseSchemaUnsigned(u32, value));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "u64")) {
+        try appendLittleEndianInt(allocator, output, u64, try parseSchemaUnsigned(u64, value));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "i8")) {
+        const signed_value = try parseSchemaSigned(i8, value);
+        try output.append(allocator, @as(u8, @bitCast(signed_value)));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "i16")) {
+        const signed_value = try parseSchemaSigned(i16, value);
+        try appendLittleEndianInt(allocator, output, u16, @as(u16, @bitCast(signed_value)));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "i32")) {
+        const signed_value = try parseSchemaSigned(i32, value);
+        try appendLittleEndianInt(allocator, output, u32, @as(u32, @bitCast(signed_value)));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "i64")) {
+        const signed_value = try parseSchemaSigned(i64, value);
+        try appendLittleEndianInt(allocator, output, u64, @as(u64, @bitCast(signed_value)));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "string")) {
+        if (value != .string) return error.InvalidInstructionSchema;
+        try appendLengthPrefixedBytes(allocator, output, value.string);
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "bytes")) {
+        const bytes = try decodeSchemaBytesValue(allocator, value);
+        defer allocator.free(bytes);
+        try appendLengthPrefixedBytes(allocator, output, bytes);
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "pubkey")) {
+        const pubkey = try parseJsonPubkey(allocator, value);
+        try output.appendSlice(allocator, &pubkey.bytes);
+        return;
+    }
+
+    if (schema != .object) return error.InvalidInstructionSchema;
+
+    if (std.mem.eql(u8, type_name, "option")) {
+        const item_schema = findJsonObjectField(schema.object, &.{"item"}) orelse return error.InvalidInstructionSchema;
+        if (value == .null) {
+            try output.append(allocator, 0);
+            return;
+        }
+        try output.append(allocator, 1);
+        try encodeBorshSchemaValue(allocator, output, item_schema, value);
+        return;
+    }
+
+    if (std.mem.eql(u8, type_name, "array")) {
+        const item_schema = findJsonObjectField(schema.object, &.{"item"}) orelse return error.InvalidInstructionSchema;
+        const len_value = findJsonObjectField(schema.object, &.{"len"}) orelse return error.InvalidInstructionSchema;
+        if (value != .array) return error.InvalidInstructionSchema;
+        const expected_len = try parseSchemaUnsigned(usize, len_value);
+        if (value.array.items.len != expected_len) return error.InvalidInstructionSchema;
+        for (value.array.items) |item| {
+            try encodeBorshSchemaValue(allocator, output, item_schema, item);
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, type_name, "vec")) {
+        const item_schema = findJsonObjectField(schema.object, &.{"item"}) orelse return error.InvalidInstructionSchema;
+        if (value != .array) return error.InvalidInstructionSchema;
+        const item_len = std.math.cast(u32, value.array.items.len) orelse return error.InvalidInstructionSchema;
+        try appendLittleEndianInt(allocator, output, u32, item_len);
+        for (value.array.items) |item| {
+            try encodeBorshSchemaValue(allocator, output, item_schema, item);
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, type_name, "struct")) {
+        const fields_value = findJsonObjectField(schema.object, &.{"fields"}) orelse return error.InvalidInstructionSchema;
+        if (fields_value != .array or value != .object) return error.InvalidInstructionSchema;
+        for (fields_value.array.items) |field_value| {
+            if (field_value != .object) return error.InvalidInstructionSchema;
+            const field_name_value = findJsonObjectField(field_value.object, &.{"name"}) orelse return error.InvalidInstructionSchema;
+            const field_schema = findJsonObjectField(field_value.object, &.{"type"}) orelse return error.InvalidInstructionSchema;
+            if (field_name_value != .string) return error.InvalidInstructionSchema;
+            const field_arg = value.object.get(field_name_value.string) orelse return error.InvalidInstructionSchema;
+            try encodeBorshSchemaValue(allocator, output, field_schema, field_arg);
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, type_name, "enum")) {
+        const variants_value = findJsonObjectField(schema.object, &.{"variants"}) orelse return error.InvalidInstructionSchema;
+        if (variants_value != .array) return error.InvalidInstructionSchema;
+
+        const input = try parseEnumInput(value);
+        for (variants_value.array.items, 0..) |variant_value, index| {
+            if (variant_value != .object) return error.InvalidInstructionSchema;
+            const variant_name_value = findJsonObjectField(variant_value.object, &.{"name"}) orelse return error.InvalidInstructionSchema;
+            if (variant_name_value != .string) return error.InvalidInstructionSchema;
+            if (!std.mem.eql(u8, variant_name_value.string, input.name)) continue;
+
+            const discriminant = std.math.cast(u8, index) orelse return error.InvalidInstructionSchema;
+            try output.append(allocator, discriminant);
+
+            const inline_schema = findJsonObjectField(variant_value.object, &.{"type"});
+            const fields_schema = findJsonObjectField(variant_value.object, &.{"fields"});
+            if (inline_schema == null and fields_schema == null) {
+                if (input.payload) |payload| {
+                    if (payload != .null) return error.InvalidInstructionSchema;
+                }
+                return;
+            }
+
+            const payload = input.payload orelse return error.InvalidInstructionSchema;
+            try encodeBorshSchemaValue(allocator, output, inline_schema orelse variant_value, payload);
+            return;
+        }
+
+        return error.InvalidInstructionSchema;
+    }
+
+    return error.InvalidInstructionSchema;
+}
+
+pub fn encodeInstructionDataFromSchemaValue(
+    allocator: Allocator,
+    schema: std.json.Value,
+    args: std.json.Value,
+    schema_encoding: SchemaEncoding,
+) EncodeError![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+
+    switch (schema_encoding) {
+        .borsh => try encodeBorshSchemaValue(allocator, &output, schema, args),
+    }
+
+    return try output.toOwnedSlice(allocator);
+}
+
+pub fn encodeInstructionDataFromSchemaJson(
+    allocator: Allocator,
+    schema_json: []const u8,
+    args_json: []const u8,
+    schema_encoding: SchemaEncoding,
+) EncodeError![]u8 {
+    const parsed_schema = std.json.parseFromSlice(std.json.Value, allocator, schema_json, .{
+        .ignore_unknown_fields = true,
+    }) catch return error.InvalidInstructionSchema;
+    defer parsed_schema.deinit();
+
+    const parsed_args = std.json.parseFromSlice(std.json.Value, allocator, args_json, .{
+        .ignore_unknown_fields = true,
+    }) catch return error.InvalidInstructionSchema;
+    defer parsed_args.deinit();
+
+    return try encodeInstructionDataFromSchemaValue(
+        allocator,
+        parsed_schema.value,
+        parsed_args.value,
+        schema_encoding,
+    );
+}

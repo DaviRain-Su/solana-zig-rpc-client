@@ -1,4 +1,5 @@
 const std = @import("std");
+const instruction_schema = @import("./instruction_schema.zig");
 const instructions_invoke = @import("./instructions_invoke.zig");
 const invocation_spec_json = @import("./invocation_spec_json.zig");
 const rpc_types = @import("./rpc_types.zig");
@@ -12,9 +13,7 @@ pub const InstructionDataEncoding = enum {
     utf8,
 };
 
-pub const SchemaEncoding = enum {
-    borsh,
-};
+pub const SchemaEncoding = instruction_schema.SchemaEncoding;
 
 pub const BuildError = Allocator.Error || error{
     InvalidProgramInvokeSpec,
@@ -558,12 +557,16 @@ pub fn buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
     var owned_data_bytes_json: ?[]u8 = null;
     defer if (owned_data_bytes_json) |value| allocator.free(value);
     const data_bytes_json = if (data_schema_value) |schema| blk: {
-        const encoded_instruction_data = try encodeInstructionDataFromSchemaValue(
+        const encoded_instruction_data = instruction_schema.encodeInstructionDataFromSchemaValue(
             allocator,
             schema,
             args_value.?,
             schema_encoding,
-        );
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.InvalidHexData => return error.InvalidHexData,
+            error.InvalidBase64Data, error.InvalidInstructionSchema => return error.InvalidProgramInvokeSpec,
+        };
         defer allocator.free(encoded_instruction_data);
 
         const encoded = try stringifyByteArrayJson(allocator, encoded_instruction_data);
@@ -629,8 +632,7 @@ fn decodeInstructionData(
 }
 
 fn parseSchemaEncoding(value: []const u8) BuildError!SchemaEncoding {
-    if (std.mem.eql(u8, value, "borsh")) return .borsh;
-    return error.InvalidProgramInvokeSpec;
+    return instruction_schema.parseSchemaEncoding(value) catch return error.InvalidProgramInvokeSpec;
 }
 
 fn parseSchemaUnsigned(comptime T: type, value: std.json.Value) BuildError!T {
@@ -944,14 +946,16 @@ fn encodeInstructionDataFromSchemaValue(
     args: std.json.Value,
     schema_encoding: SchemaEncoding,
 ) BuildError![]u8 {
-    var output: std.ArrayList(u8) = .empty;
-    errdefer output.deinit(allocator);
-
-    switch (schema_encoding) {
-        .borsh => try encodeBorshSchemaValue(allocator, &output, schema, args),
-    }
-
-    return try output.toOwnedSlice(allocator);
+    return instruction_schema.encodeInstructionDataFromSchemaValue(
+        allocator,
+        schema,
+        args,
+        schema_encoding,
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidHexData => return error.InvalidHexData,
+        error.InvalidBase64Data, error.InvalidInstructionSchema => return error.InvalidProgramInvokeSpec,
+    };
 }
 
 pub fn encodeInstructionDataFromSchemaJson(
@@ -960,22 +964,16 @@ pub fn encodeInstructionDataFromSchemaJson(
     args_json: []const u8,
     schema_encoding: SchemaEncoding,
 ) BuildError![]u8 {
-    const parsed_schema = std.json.parseFromSlice(std.json.Value, allocator, schema_json, .{
-        .ignore_unknown_fields = true,
-    }) catch return error.InvalidProgramInvokeSpec;
-    defer parsed_schema.deinit();
-
-    const parsed_args = std.json.parseFromSlice(std.json.Value, allocator, args_json, .{
-        .ignore_unknown_fields = true,
-    }) catch return error.InvalidProgramInvokeSpec;
-    defer parsed_args.deinit();
-
-    return try encodeInstructionDataFromSchemaValue(
+    return instruction_schema.encodeInstructionDataFromSchemaJson(
         allocator,
-        parsed_schema.value,
-        parsed_args.value,
+        schema_json,
+        args_json,
         schema_encoding,
-    );
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidHexData => return error.InvalidHexData,
+        error.InvalidBase64Data, error.InvalidInstructionSchema => return error.InvalidProgramInvokeSpec,
+    };
 }
 
 pub fn buildOwnedInstruction(

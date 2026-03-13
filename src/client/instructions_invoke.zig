@@ -1,4 +1,5 @@
 const std = @import("std");
+const instruction_schema = @import("./instruction_schema.zig");
 const rpc_types = @import("./rpc_types.zig");
 const sdk = @import("./sdk.zig");
 
@@ -540,17 +541,53 @@ fn parseInstructionDataFromJsonObject(
     allocator: Allocator,
     object: *const std.json.ObjectMap,
 ) BuildError![]u8 {
-    if (jsonObjectField(object, &.{ "dataBytes", "data_bytes" })) |value| {
+    const data_bytes_value = jsonObjectField(object, &.{ "dataBytes", "data_bytes" });
+    const encoded_value = jsonObjectField(object, &.{"data"});
+    const data_schema_value = jsonObjectField(object, &.{ "dataSchema", "data_schema" });
+    const args_value = jsonObjectField(object, &.{"args"});
+    const schema_encoding_value = jsonObjectField(object, &.{ "schemaEncoding", "schema_encoding" });
+
+    if (data_bytes_value != null and encoded_value != null) return error.InvalidInstructionSpec;
+    if ((data_bytes_value != null or encoded_value != null) and
+        (data_schema_value != null or args_value != null))
+    {
+        return error.InvalidInstructionSpec;
+    }
+    if ((data_schema_value == null) != (args_value == null)) return error.InvalidInstructionSpec;
+    if (data_schema_value == null and schema_encoding_value != null) return error.InvalidInstructionSpec;
+
+    if (data_schema_value) |schema| {
+        const schema_encoding = if (schema_encoding_value) |encoding_value|
+            switch (encoding_value) {
+                .string => instruction_schema.parseSchemaEncoding(encoding_value.string) catch return error.InvalidInstructionSpec,
+                else => return error.InvalidInstructionSpec,
+            }
+        else
+            instruction_schema.SchemaEncoding.borsh;
+        return instruction_schema.encodeInstructionDataFromSchemaValue(
+            allocator,
+            schema,
+            args_value.?,
+            schema_encoding,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.InvalidHexData => return error.InvalidHexData,
+            error.InvalidBase64Data => return error.InvalidBase64Data,
+            error.InvalidInstructionSchema => return error.InvalidInstructionSpec,
+        };
+    }
+
+    if (data_bytes_value) |value| {
         return try parseJsonByteArray(allocator, value);
     }
 
-    const encoded_value = jsonObjectField(object, &.{"data"}) orelse return allocator.alloc(u8, 0);
+    const resolved_encoded_value = encoded_value orelse return allocator.alloc(u8, 0);
     const encoding = try parseInstructionDataEncoding(jsonObjectField(
         object,
         &.{ "dataEncoding", "data_encoding", "encoding" },
     ));
 
-    const encoded = switch (encoded_value) {
+    const encoded = switch (resolved_encoded_value) {
         .string => |string| string,
         else => return error.InvalidInstructionSpec,
     };
@@ -4321,6 +4358,49 @@ test "instructions_invoke.buildOwnedInstructionsFromJson parses flexible instruc
     try std.testing.expectEqualSlices(u8, "hi", owned.instructions[0].data);
     try std.testing.expectEqual(@as(usize, 0), owned.instructions[1].accounts.len);
     try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3 }, owned.instructions[1].data);
+}
+
+test "instructions_invoke.buildOwnedInstructionsFromJson encodes schema-driven instruction data" {
+    const allocator = std.testing.allocator;
+    const program_id = sdk.Pubkey.fromBytes([_]u8{31} ** 32);
+    const authority = sdk.Pubkey.fromBytes([_]u8{32} ** 32);
+
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\[
+        \\  {{
+        \\    "programId":"{s}",
+        \\    "dataSchema":{{"type":"struct","fields":[{{"name":"authority","type":"pubkey"}},{{"name":"payload","type":"bytes"}},{{"name":"memo","type":"string"}}]}},
+        \\    "args":{{"authority":"{s}","payload":"base64:AQID","memo":"hi"}},
+        \\    "schemaEncoding":"borsh"
+        \\  }}
+        \\]
+    ,
+        .{ program_id_base58, authority_base58 },
+    );
+    defer allocator.free(instructions_json);
+
+    var owned = try buildOwnedInstructionsFromJson(allocator, instructions_json);
+    defer owned.deinit(allocator);
+
+    const expected = [_]u8{
+        authority.bytes[0],  authority.bytes[1],  authority.bytes[2],  authority.bytes[3],  authority.bytes[4],  authority.bytes[5],  authority.bytes[6],  authority.bytes[7],
+        authority.bytes[8],  authority.bytes[9],  authority.bytes[10], authority.bytes[11], authority.bytes[12], authority.bytes[13], authority.bytes[14], authority.bytes[15],
+        authority.bytes[16], authority.bytes[17], authority.bytes[18], authority.bytes[19], authority.bytes[20], authority.bytes[21], authority.bytes[22], authority.bytes[23],
+        authority.bytes[24], authority.bytes[25], authority.bytes[26], authority.bytes[27], authority.bytes[28], authority.bytes[29], authority.bytes[30], authority.bytes[31],
+        3,                   0,                   0,                   0,                   1,                   2,                   3,                   2,
+        0,                   0,                   0,                   'h',                 'i',
+    };
+
+    try std.testing.expectEqual(@as(usize, 1), owned.instructions.len);
+    try std.testing.expectEqual(program_id, owned.instructions[0].program_id);
+    try std.testing.expectEqual(@as(usize, 0), owned.instructions[0].accounts.len);
+    try std.testing.expectEqualSlices(u8, &expected, owned.instructions[0].data);
 }
 
 test "instructions_invoke.buildLegacyTransactionBase64FromJson matches typed helper" {

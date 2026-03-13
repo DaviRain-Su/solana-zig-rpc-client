@@ -5,6 +5,7 @@ pub const anchor_idl = @import("./client/anchor_idl/types.zig");
 pub const anchor_idl_encode = @import("./client/anchor_idl/encode.zig");
 pub const anchor_idl_invoke = @import("./client/anchor_idl/invoke.zig");
 pub const invoke = @import("./client/invoke.zig");
+pub const instruction_schema = @import("./client/instruction_schema.zig");
 pub const invocation_spec_json = @import("./client/invocation_spec_json.zig");
 pub const instructions_invoke = @import("./client/instructions_invoke.zig");
 pub const program_invoke = @import("./client/program_invoke.zig");
