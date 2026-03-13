@@ -488,7 +488,39 @@ fn parseResultInput(
 fn isNamedStructField(field_value: std.json.Value) bool {
     return switch (field_value) {
         .object => findJsonObjectField(field_value.object, &.{"name"}) != null,
+        .array => field_value.array.items.len >= 2 and field_value.array.items[0] == .string,
         else => false,
+    };
+}
+
+const StructFieldSpec = struct {
+    name: []const u8,
+    schema: std.json.Value,
+    default_value: ?std.json.Value,
+};
+
+fn parseStructFieldSpec(field_value: std.json.Value) ?StructFieldSpec {
+    return switch (field_value) {
+        .object => blk: {
+            const field_name_value = findJsonObjectField(field_value.object, &.{"name"}) orelse return null;
+            if (field_name_value != .string) return null;
+            break :blk .{
+                .name = field_name_value.string,
+                .schema = findJsonObjectField(field_value.object, &.{"type"}) orelse field_value,
+                .default_value = findJsonObjectField(field_value.object, &.{ "default", "defaultValue", "default_value" }),
+            };
+        },
+        .array => blk: {
+            if (field_value.array.items.len < 2 or field_value.array.items.len > 3) return null;
+            const field_name_value = field_value.array.items[0];
+            if (field_name_value != .string) return null;
+            break :blk .{
+                .name = field_name_value.string,
+                .schema = field_value.array.items[1],
+                .default_value = if (field_value.array.items.len == 3) field_value.array.items[2] else null,
+            };
+        },
+        else => null,
     };
 }
 
@@ -576,6 +608,43 @@ fn parseEnumVariantDiscriminant(
         }
     }
     return std.math.cast(u8, default_index) orelse return error.InvalidInstructionSchema;
+}
+
+const EnumVariantArraySpec = struct {
+    name: []const u8,
+    discriminant: ?u8,
+    payload_schema: ?std.json.Value,
+};
+
+fn parseEnumVariantArraySpec(
+    variant_value: std.json.Value,
+) EncodeError!?EnumVariantArraySpec {
+    if (variant_value != .array) return null;
+    if (variant_value.array.items.len < 1 or variant_value.array.items.len > 3) return error.InvalidInstructionSchema;
+    const name_value = variant_value.array.items[0];
+    if (name_value != .string) return error.InvalidInstructionSchema;
+
+    if (variant_value.array.items.len == 1) {
+        return .{
+            .name = name_value.string,
+            .discriminant = null,
+            .payload_schema = null,
+        };
+    }
+
+    if (variant_value.array.items.len == 2) {
+        return .{
+            .name = name_value.string,
+            .discriminant = null,
+            .payload_schema = if (variant_value.array.items[1] == .null) null else variant_value.array.items[1],
+        };
+    }
+
+    return .{
+        .name = name_value.string,
+        .discriminant = try parseSchemaUnsigned(u8, variant_value.array.items[1]),
+        .payload_schema = if (variant_value.array.items[2] == .null) null else variant_value.array.items[2],
+    };
 }
 
 fn enumVariantPayloadSchema(variant_value: std.json.Value) ?std.json.Value {
@@ -1065,20 +1134,20 @@ fn encodeBorshSchemaValue(
         if (uses_named_fields) {
             if (value != .object) return error.InvalidInstructionSchema;
             for (fields_value.array.items) |field_value| {
-                if (field_value != .object) return error.InvalidInstructionSchema;
-                const field_name_value = findJsonObjectField(field_value.object, &.{"name"}) orelse return error.InvalidInstructionSchema;
-                if (field_name_value != .string) return error.InvalidInstructionSchema;
-                const field_schema = findJsonObjectField(field_value.object, &.{"type"}) orelse field_value;
-                const field_arg = findStructFieldArg(value.object, field_name_value.string) orelse blk: {
-                    if (try findSchemaDefaultValue(root_schema, field_value, field_schema)) |default_value| {
+                const field_spec = parseStructFieldSpec(field_value) orelse return error.InvalidInstructionSchema;
+                const field_arg = findStructFieldArg(value.object, field_spec.name) orelse blk: {
+                    if (field_spec.default_value) |default_value| {
                         break :blk default_value;
                     }
-                    if (try schemaIsOption(root_schema, field_schema)) {
+                    if (try findSchemaDefaultValue(root_schema, field_value, field_spec.schema)) |default_value| {
+                        break :blk default_value;
+                    }
+                    if (try schemaIsOption(root_schema, field_spec.schema)) {
                         break :blk std.json.Value{ .null = {} };
                     }
                     return error.InvalidInstructionSchema;
                 };
-                try encodeBorshSchemaValue(allocator, output, root_schema, field_schema, field_arg);
+                try encodeBorshSchemaValue(allocator, output, root_schema, field_spec.schema, field_arg);
             }
             return;
         }
@@ -1095,6 +1164,24 @@ fn encodeBorshSchemaValue(
         const input = try parseEnumInput(value);
         if (variants_value == .array) {
             for (variants_value.array.items, 0..) |variant_value, index| {
+                if (try parseEnumVariantArraySpec(variant_value)) |variant_spec| {
+                    if (!std.mem.eql(u8, variant_spec.name, input.name)) continue;
+
+                    const discriminant = variant_spec.discriminant orelse std.math.cast(u8, index) orelse return error.InvalidInstructionSchema;
+                    try output.append(allocator, discriminant);
+
+                    if (variant_spec.payload_schema == null) {
+                        if (input.payload) |payload| {
+                            if (payload != .null) return error.InvalidInstructionSchema;
+                        }
+                        return;
+                    }
+
+                    const payload = input.payload orelse return error.InvalidInstructionSchema;
+                    try encodeBorshSchemaValue(allocator, output, root_schema, variant_spec.payload_schema.?, payload);
+                    return;
+                }
+
                 if (variant_value != .object) return error.InvalidInstructionSchema;
                 const variant_name_value = findJsonObjectField(variant_value.object, &.{"name"}) orelse return error.InvalidInstructionSchema;
                 if (variant_name_value != .string) return error.InvalidInstructionSchema;
@@ -2011,6 +2098,60 @@ test "instruction_schema accepts pubkey byte wrappers" {
 
     try std.testing.expectEqual(@as(usize, 64), encoded.len);
     try std.testing.expect(std.mem.allEqual(u8, encoded, 0));
+}
+
+test "instruction_schema accepts struct field pair entries" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "type": "struct",
+        \\  "fields": [
+        \\    ["owner_pubkey", "pubkey"],
+        \\    ["threshold_value", "u16", "0x0201"]
+        \\  ]
+        \\}
+    ;
+    const args_json =
+        \\{
+        \\  "ownerPubkey": "11111111111111111111111111111111"
+        \\}
+    ;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqual(@as(usize, 34), encoded.len);
+    try std.testing.expect(std.mem.allEqual(u8, encoded[0..32], 0));
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x02 }, encoded[32..34]);
+}
+
+test "instruction_schema accepts enum variant pair entries" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "type": "enum",
+        \\  "variants": [
+        \\    ["Reset", null],
+        \\    ["SetValue", 9, {"tuple":["u8","u16"]}]
+        \\  ]
+        \\}
+    ;
+    const args_json =
+        \\{
+        \\  "name": "SetValue",
+        \\  "data": [7, 513]
+        \\}
+    ;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x09,
+        0x07,
+        0x01,
+        0x02,
+    }, encoded);
 }
 
 test "instruction_schema accepts nested tagged container configs" {
