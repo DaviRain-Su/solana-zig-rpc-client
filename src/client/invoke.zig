@@ -3010,6 +3010,50 @@ fn buildOwnedResolvedInvocationFromOwnedSpec(
     };
 }
 
+fn cloneOwnedInvocationSpec(
+    allocator: Allocator,
+    source: *const OwnedInvocationSpec,
+) !OwnedInvocationSpec {
+    const signers = try allocator.dupe(sdk.Keypair, source.signers);
+    errdefer allocator.free(signers);
+
+    var owned_instructions = try sdk.cloneInstructions(
+        allocator,
+        source.owned_instructions.instructions,
+    );
+    errdefer owned_instructions.deinit(allocator);
+
+    const address_lookup_tables = try allocator.alloc(
+        sdk.AddressLookupTableAccount,
+        source.address_lookup_tables.len,
+    );
+    errdefer allocator.free(address_lookup_tables);
+    var initialized_tables_len: usize = 0;
+    errdefer {
+        for (address_lookup_tables[0..initialized_tables_len]) |table| {
+            allocator.free(table.addresses);
+        }
+        allocator.free(address_lookup_tables);
+    }
+    for (source.address_lookup_tables, 0..) |table, index| {
+        address_lookup_tables[index] = .{
+            .account_key = table.account_key,
+            .addresses = try allocator.dupe(sdk.Pubkey, table.addresses),
+        };
+        initialized_tables_len += 1;
+    }
+
+    return .{
+        .payer = source.payer,
+        .signers = signers,
+        .owned_instructions = owned_instructions,
+        .address_lookup_tables = address_lookup_tables,
+        .recent_blockhash = source.recent_blockhash,
+        .nonce_account = source.nonce_account,
+        .nonce_authority = source.nonce_authority,
+    };
+}
+
 fn cloneOwnedResolvedInvocation(
     allocator: Allocator,
     source: *const OwnedResolvedInvocation,
@@ -4417,16 +4461,49 @@ pub fn buildInvocationModeReportFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildInvocationSpecOptions,
 ) !InvocationModeReport {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildInvocationModeReportFromInvocationSpecJson(
+    var report = try buildInvocationReportFromOwnedInvocationSpec(
         allocator,
-        rpc,
-        .instructions,
-        invocation_spec_json,
-        options,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
     );
+    defer report.deinit(allocator);
+
+    const legacy_buildable = blk: {
+        const encoded = buildLegacyTransactionBase64FromOwnedInvocationSpecWithOptions(
+            allocator,
+            rpc,
+            owned_spec,
+            options,
+        ) catch break :blk false;
+        allocator.free(encoded);
+        break :blk true;
+    };
+
+    const versioned_buildable = blk: {
+        const encoded = buildVersionedTransactionBase64FromOwnedInvocationSpecWithOptions(
+            allocator,
+            rpc,
+            owned_spec,
+            options,
+        ) catch break :blk false;
+        allocator.free(encoded);
+        break :blk true;
+    };
+
+    return .{
+        .legacy_buildable = legacy_buildable,
+        .versioned_buildable = versioned_buildable,
+        .preferred_mode = if (versioned_buildable and report.summary.address_lookup_table_count != 0)
+            .versioned
+        else if (legacy_buildable)
+            .legacy
+        else if (versioned_buildable)
+            .versioned
+        else
+            null,
+        .validation_passed = report.validation.is_valid,
+        .uses_durable_nonce = report.uses_durable_nonce,
+        .address_lookup_table_count = report.summary.address_lookup_table_count,
+    };
 }
 
 pub fn buildPreferredInvocationReportFromOwnedInvocationSpec(
@@ -4435,21 +4512,16 @@ pub fn buildPreferredInvocationReportFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildInvocationSpecOptions,
 ) !OwnedPreferredInvocationReport {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
     return .{
-        .mode_report = try buildInvocationModeReportFromInvocationSpecJson(
+        .mode_report = try buildInvocationModeReportFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .instructions,
-            invocation_spec_json,
+            owned_spec,
             options,
         ),
-        .report = try buildInvocationReportFromInvocationSpecJson(
+        .report = try buildInvocationReportFromOwnedInvocationSpec(
             allocator,
-            .instructions,
-            invocation_spec_json,
+            try cloneOwnedInvocationSpec(allocator, owned_spec),
         ),
     };
 }
@@ -4460,16 +4532,47 @@ pub fn buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredInvocationExecutionReport {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+    const mode_report = try buildInvocationModeReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
-        options,
+        owned_spec,
+        options.build,
     );
+
+    var report = try buildInvocationReportFromOwnedInvocationSpec(
+        allocator,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
+    );
+    errdefer report.deinit(allocator);
+
+    const requested_mode_buildable = if (options.mode.preferred_mode) |requested_mode|
+        switch (requested_mode) {
+            .legacy => mode_report.legacy_buildable,
+            .versioned => mode_report.versioned_buildable,
+        }
+    else
+        false;
+
+    const selected_mode = blk: {
+        if (options.mode.preferred_mode) |requested_mode| {
+            if (requested_mode_buildable) break :blk requested_mode;
+            if (!options.mode.allow_fallback) break :blk null;
+        }
+        break :blk mode_report.preferred_mode;
+    };
+
+    return .{
+        .mode_report = mode_report,
+        .report = report,
+        .requested_mode = options.mode.preferred_mode,
+        .selected_mode = selected_mode,
+        .requested_mode_buildable = requested_mode_buildable,
+        .used_fallback = if (options.mode.preferred_mode) |requested_mode|
+            selected_mode != null and selected_mode.? != requested_mode
+        else
+            false,
+        .can_execute_selected_mode = selected_mode != null and report.can_execute,
+    };
 }
 
 pub fn buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
@@ -4478,16 +4581,31 @@ pub fn buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredInvocationAnalysis {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredInvocationAnalysisFromInvocationSpecJson(
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    errdefer execution_report.deinit(allocator);
+
+    var resolved_invocation = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
+    );
+    errdefer resolved_invocation.deinit(allocator);
+
+    var accounts = try buildInvocationAccountsFromOwnedInvocationSpec(
+        allocator,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
+    );
+    errdefer accounts.deinit(allocator);
+
+    return .{
+        .execution_report = execution_report,
+        .resolved_invocation = resolved_invocation,
+        .accounts = accounts,
+    };
 }
 
 pub fn buildPreferredPreparedSignedTransactionFromOwnedInvocationSpec(
@@ -4496,16 +4614,40 @@ pub fn buildPreferredPreparedSignedTransactionFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredPreparedSignedTransaction {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    errdefer execution_report.deinit(allocator);
+
+    var resolved_invocation = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
+    );
+    errdefer resolved_invocation.deinit(allocator);
+
+    var accounts = try buildInvocationAccountsFromOwnedInvocationSpec(
+        allocator,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
+    );
+    errdefer accounts.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+
+    return .{
+        .execution_report = execution_report,
+        .resolved_invocation = resolved_invocation,
+        .accounts = accounts,
+        .transaction = try buildSignedTransactionFromOwnedInvocationSpecWithOptions(
+            allocator,
+            rpc,
+            mode == .versioned,
+            owned_spec,
+            options.build,
+        ),
+    };
 }
 
 pub fn buildPreferredPreparedInvocationFromOwnedInvocationSpec(
@@ -4514,16 +4656,31 @@ pub fn buildPreferredPreparedInvocationFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredPreparedInvocation {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredPreparedInvocationFromInvocationSpecJson(
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    defer execution_report.deinit(allocator);
+
+    const selected_mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+
+    return .{
+        .mode_report = execution_report.mode_report,
+        .requested_mode = execution_report.requested_mode,
+        .selected_mode = selected_mode,
+        .requested_mode_buildable = execution_report.requested_mode_buildable,
+        .used_fallback = execution_report.used_fallback,
+        .can_execute_selected_mode = execution_report.can_execute_selected_mode,
+        .prepared = try buildPreparedInvocationFromOwnedInvocationSpecWithOptions(
+            allocator,
+            rpc,
+            selected_mode == .versioned,
+            try cloneOwnedInvocationSpec(allocator, owned_spec),
+            options.build,
+        ),
+    };
 }
 
 pub fn writePreferredInvocationAnalysisTextFromOwnedInvocationSpec(
