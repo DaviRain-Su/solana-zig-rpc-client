@@ -12446,6 +12446,93 @@ test "runCommand explain-program-invoke emits json analysis for schema args" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"accounts\":[") != null);
 }
 
+test "runCommand explain-program-invoke honors explicit versioned mode" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://explain-program-invoke-versioned" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{94} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 61);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{56} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const lookup_table_key = client.Pubkey.fromBytes(.{74} ** 32);
+    const lookup_table_key_base58 = try lookup_table_key.toBase58(allocator);
+    defer allocator.free(lookup_table_key_base58);
+    const lookup_table_address = client.Pubkey.fromBytes(.{75} ** 32);
+    const lookup_table_address_base58 = try lookup_table_address.toBase58(allocator);
+    defer allocator.free(lookup_table_address_base58);
+    const lookup_tables_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"account_key\":\"{s}\",\"addresses\":[\"{s}\"]}}]",
+        .{ lookup_table_key_base58, lookup_table_address_base58 },
+    );
+    defer allocator.free(lookup_tables_json);
+
+    const schema_json =
+        \\{"type":"struct","fields":[{"name":"enabled","type":"bool"},{"name":"count","type":"u16"}]}
+    ;
+    const args_json =
+        \\{"enabled":true,"count":21}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "explain-program-invoke",
+        "--json",
+        "--invoke-mode",
+        "versioned",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--data-schema-json",
+        schema_json,
+        "--args-json",
+        args_json,
+        "--schema-encoding",
+        "borsh",
+        program_id_base58,
+        "[]",
+        "[]",
+        lookup_tables_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
+}
+
 test "runCommand validate-program-invoke emits json analysis for schema args" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
@@ -12673,6 +12760,96 @@ test "runCommand prepare-program-invoke emits json prepared transaction for sche
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"lookup_candidate_pubkeys\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostics\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"accounts\":[") != null);
+}
+
+test "runCommand prepare-program-invoke honors explicit versioned mode" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://prepare-program-invoke-versioned" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{95} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 71);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{57} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const lookup_table_key = client.Pubkey.fromBytes(.{76} ** 32);
+    const lookup_table_key_base58 = try lookup_table_key.toBase58(allocator);
+    defer allocator.free(lookup_table_key_base58);
+    const lookup_table_address = client.Pubkey.fromBytes(.{77} ** 32);
+    const lookup_table_address_base58 = try lookup_table_address.toBase58(allocator);
+    defer allocator.free(lookup_table_address_base58);
+    const lookup_tables_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"account_key\":\"{s}\",\"addresses\":[\"{s}\"]}}]",
+        .{ lookup_table_key_base58, lookup_table_address_base58 },
+    );
+    defer allocator.free(lookup_tables_json);
+
+    const schema_json =
+        \\{"type":"struct","fields":[{"name":"enabled","type":"bool"},{"name":"count","type":"u16"}]}
+    ;
+    const args_json =
+        \\{"enabled":true,"count":23}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "prepare-program-invoke",
+        "--json",
+        "--invoke-mode",
+        "versioned",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--data-schema-json",
+        schema_json,
+        "--args-json",
+        args_json,
+        "--schema-encoding",
+        "borsh",
+        program_id_base58,
+        "[]",
+        "[]",
+        lookup_tables_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 8192);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode_buildable\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"transaction_base64\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"message_base64\":\"") != null);
 }
 
 test "runCommand simulate-versioned-idl-invoke accepts sender-secret-key" {
