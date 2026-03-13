@@ -4266,6 +4266,42 @@ fn printPreferredPreparedInvocation(
     }
     std.debug.print("transaction base64: {s}\n", .{transaction_base64});
     std.debug.print("message base64: {s}\n", .{message_base64});
+    if (prepared.prepared.report.summary.program_ids.len != 0) {
+        try printInvocationPubkeys("program ids", allocator, prepared.prepared.report.summary.program_ids);
+    }
+    if (prepared.prepared.report.preflight.provided_signer_pubkeys.len != 0) {
+        try printInvocationPubkeys("provided signer pubkeys", allocator, prepared.prepared.report.preflight.provided_signer_pubkeys);
+    }
+    if (prepared.prepared.report.preflight.required_signer_pubkeys.len != 0) {
+        try printInvocationPubkeys("required signer pubkeys", allocator, prepared.prepared.report.preflight.required_signer_pubkeys);
+    }
+    if (prepared.prepared.report.preflight.writable_pubkeys.len != 0) {
+        try printInvocationPubkeys("writable pubkeys", allocator, prepared.prepared.report.preflight.writable_pubkeys);
+    }
+    if (prepared.prepared.report.preflight.readonly_pubkeys.len != 0) {
+        try printInvocationPubkeys("readonly pubkeys", allocator, prepared.prepared.report.preflight.readonly_pubkeys);
+    }
+    if (prepared.prepared.report.plan.lookup_table_pubkeys.len != 0) {
+        try printInvocationPubkeys("lookup table pubkeys", allocator, prepared.prepared.report.plan.lookup_table_pubkeys);
+    }
+    if (prepared.prepared.report.lookup_coverage.covered_pubkeys.len != 0) {
+        try printInvocationPubkeys("lookup covered pubkeys", allocator, prepared.prepared.report.lookup_coverage.covered_pubkeys);
+    }
+    if (prepared.prepared.report.lookup_coverage.uncovered_pubkeys.len != 0) {
+        try printInvocationPubkeys("lookup uncovered pubkeys", allocator, prepared.prepared.report.lookup_coverage.uncovered_pubkeys);
+    }
+    if (prepared.prepared.report.validation.missing_required_signer_pubkeys.len != 0) {
+        try printInvocationPubkeys("missing required signer pubkeys", allocator, prepared.prepared.report.validation.missing_required_signer_pubkeys);
+    }
+    if (prepared.prepared.report.validation.extra_signer_pubkeys.len != 0) {
+        try printInvocationPubkeys("extra signer pubkeys", allocator, prepared.prepared.report.validation.extra_signer_pubkeys);
+    }
+    if (prepared.prepared.report.validation.duplicate_provided_signer_pubkeys.len != 0) {
+        try printInvocationPubkeys("duplicate signer pubkeys", allocator, prepared.prepared.report.validation.duplicate_provided_signer_pubkeys);
+    }
+    if (prepared.prepared.report.validation.duplicate_lookup_table_pubkeys.len != 0) {
+        try printInvocationPubkeys("duplicate lookup table pubkeys", allocator, prepared.prepared.report.validation.duplicate_lookup_table_pubkeys);
+    }
     try printInvocationDiagnostics(diagnostics);
     try printInvocationAccounts(allocator, prepared.prepared.accounts);
 }
@@ -12467,6 +12503,8 @@ test "runCommand prepare-program-invoke emits json prepared transaction for sche
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode_buildable\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"validation_passed\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostic_error_count\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostic_warning_count\":0") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"transaction_base64\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"message_base64\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"first_signature\":\"") != null);

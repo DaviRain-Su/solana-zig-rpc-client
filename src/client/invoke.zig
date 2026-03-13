@@ -909,6 +909,9 @@ pub fn writePreferredPreparedInvocationJson(
     try writeJsonUsizeField(writer, &first, "extra_signer_count", report.validation.extra_signer_pubkeys.len);
     try writeJsonUsizeField(writer, &first, "duplicate_signer_count", report.validation.duplicate_provided_signer_pubkeys.len);
     try writeJsonUsizeField(writer, &first, "duplicate_lookup_table_count", report.validation.duplicate_lookup_table_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_info_count", diagnostics.infoCount());
 
     const transaction_base64 = try prepared.toBase64(allocator);
     defer allocator.free(transaction_base64);
