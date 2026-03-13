@@ -1633,6 +1633,10 @@ pub const PreparedInvocation = struct {
         return self.transaction.firstSignature();
     }
 
+    pub fn allocResolvedInvocationJson(self: *const PreparedInvocation, allocator: Allocator) ![]u8 {
+        return try allocOwnedResolvedInvocationJson(allocator, &self.resolved_invocation);
+    }
+
     pub fn send(
         self: *const PreparedInvocation,
         rpc: anytype,
@@ -1853,6 +1857,10 @@ pub const PreferredPreparedInvocation = struct {
 
     pub fn firstSignature(self: PreferredPreparedInvocation) ?sdk.Signature {
         return self.prepared.firstSignature();
+    }
+
+    pub fn allocResolvedInvocationJson(self: *const PreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocResolvedInvocationJson(allocator);
     }
 
     pub fn send(
@@ -2552,17 +2560,17 @@ fn buildAdditionalSignerSecretKeysJsonFromOwnedInvocationSpec(
     return try allocator.dupe(u8, json_buffer.written());
 }
 
-fn buildAddressLookupTablesJsonFromOwnedInvocationSpec(
+fn buildAddressLookupTablesJsonFromLookupTableSlice(
     allocator: Allocator,
-    owned_spec: *const OwnedInvocationSpec,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount,
 ) !?[]u8 {
-    if (owned_spec.address_lookup_tables.len == 0) return null;
+    if (address_lookup_tables.len == 0) return null;
 
     var json_buffer: std.Io.Writer.Allocating = .init(allocator);
     defer json_buffer.deinit();
 
     try json_buffer.writer.writeByte('[');
-    for (owned_spec.address_lookup_tables, 0..) |table, table_index| {
+    for (address_lookup_tables, 0..) |table, table_index| {
         if (table_index != 0) try json_buffer.writer.writeByte(',');
         const account_key_base58 = try table.account_key.toBase58(allocator);
         defer allocator.free(account_key_base58);
@@ -2581,6 +2589,26 @@ fn buildAddressLookupTablesJsonFromOwnedInvocationSpec(
     try json_buffer.writer.writeByte(']');
 
     return try allocator.dupe(u8, json_buffer.written());
+}
+
+fn buildAddressLookupTablesJsonFromOwnedInvocationSpec(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !?[]u8 {
+    return try buildAddressLookupTablesJsonFromLookupTableSlice(
+        allocator,
+        owned_spec.address_lookup_tables,
+    );
+}
+
+pub fn buildAddressLookupTablesJsonFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !?[]u8 {
+    return try buildAddressLookupTablesJsonFromLookupTableSlice(
+        allocator,
+        resolved.address_lookup_tables,
+    );
 }
 
 fn buildInstructionsJsonFromInstructionSlice(
@@ -2646,6 +2674,85 @@ pub fn buildInstructionsJsonFromOwnedResolvedInvocation(
         allocator,
         resolved.owned_instructions.instructions,
     );
+}
+
+pub fn writeOwnedResolvedInvocationJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !void {
+    var first = true;
+    const payer_base58 = try resolved.payer.toBase58(allocator);
+    defer allocator.free(payer_base58);
+
+    const instructions_json = try buildInstructionsJsonFromOwnedResolvedInvocation(
+        allocator,
+        resolved,
+    );
+    defer allocator.free(instructions_json);
+
+    const address_lookup_tables_json = try buildAddressLookupTablesJsonFromOwnedResolvedInvocation(
+        allocator,
+        resolved,
+    );
+    defer if (address_lookup_tables_json) |value| allocator.free(value);
+
+    const recent_blockhash_base58 = if (resolved.recent_blockhash) |value|
+        try value.toBase58(allocator)
+    else
+        null;
+    defer if (recent_blockhash_base58) |value| allocator.free(value);
+
+    const nonce_account_base58 = if (resolved.nonce_account) |value|
+        try value.toBase58(allocator)
+    else
+        null;
+    defer if (nonce_account_base58) |value| allocator.free(value);
+
+    const nonce_authority_base58 = if (resolved.nonce_authority) |value|
+        try value.toBase58(allocator)
+    else
+        null;
+    defer if (nonce_authority_base58) |value| allocator.free(value);
+
+    try writer.writeAll("{");
+    try writeJsonStringField(writer, &first, "payer", payer_base58);
+    try writeJsonPubkeyArrayField(writer, &first, "signer_pubkeys", allocator, resolved.signer_pubkeys);
+    try writeJsonStringField(writer, &first, "recent_blockhash", recent_blockhash_base58);
+    try writeJsonStringField(writer, &first, "nonce_account", nonce_account_base58);
+    try writeJsonStringField(writer, &first, "nonce_authority", nonce_authority_base58);
+    if (address_lookup_tables_json) |value| {
+        if (!first) try writer.writeAll(",");
+        first = false;
+        try std.json.Stringify.value("address_lookup_tables", .{}, writer);
+        try writer.writeAll(":");
+        try writer.writeAll(value);
+    }
+    if (!first) try writer.writeAll(",");
+    first = false;
+    try std.json.Stringify.value("instructions", .{}, writer);
+    try writer.writeAll(":");
+    try writer.writeAll(instructions_json);
+    try writer.writeAll("}");
+}
+
+pub fn allocOwnedResolvedInvocationJson(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writeOwnedResolvedInvocationJson(&aw.writer, allocator, resolved);
+    return try aw.toOwnedSlice();
+}
+
+pub fn buildResolvedInvocationJsonFromOwnedInvocationSpec(
+    allocator: Allocator,
+    owned_spec: OwnedInvocationSpec,
+) ![]u8 {
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(allocator, owned_spec);
+    defer resolved.deinit(allocator);
+    return try allocOwnedResolvedInvocationJson(allocator, &resolved);
 }
 
 pub fn buildInvocationSpecJsonFromOwnedInvocationSpec(
@@ -6936,6 +7043,32 @@ test "invoke.buildInstructionsJsonFromOwnedResolvedInvocation exports canonical 
     );
 }
 
+test "invoke.allocResolvedInvocationJson emits canonical resolved fields" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 182, 183, 184, 185, 186);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    const json = try allocOwnedResolvedInvocationJson(allocator, &resolved);
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"payer\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"signer_pubkeys\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"address_lookup_tables\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"instructions\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"recent_blockhash\":\"") != null);
+}
+
 test "invoke.buildOwnedInstructionsFromOwnedInvocationSpec reuses typed normalized spec" {
     const allocator = std.testing.allocator;
 
@@ -9518,6 +9651,32 @@ test "invoke.allocPreparedInvocationJson emits generic prepared fields" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"transaction_base64\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"message_base64\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"diagnostic_error_count\":0") != null);
+}
+
+test "invoke.PreparedInvocation allocResolvedInvocationJson emits canonical resolved fields" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocRichInstructionsInvocationSpecJson(allocator, 251, 252, 253, 254, 255, 0);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        false,
+        spec_json,
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    const json = try prepared.allocResolvedInvocationJson(allocator);
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"nonce_account\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"nonce_authority\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"instructions\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"signer_pubkeys\":[") != null);
 }
 
 test "invoke.writePreparedInvocationText emits generic prepared summary" {
