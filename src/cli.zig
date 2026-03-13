@@ -155,6 +155,12 @@ const instruction_command_positionals_params = clap.parseParamsComptime(
     \\
 );
 
+const invocation_spec_command_positionals_params = clap.parseParamsComptime(
+    \\<invocation-spec-json|@path>
+    \\<extra>...
+    \\
+);
+
 const idl_invoke_command_positionals_params = clap.parseParamsComptime(
     \\<idl-json|@path>
     \\<instruction-name>
@@ -646,6 +652,7 @@ const CommandUsageStyle = enum {
     signature_list,
     signed_transaction,
     instruction,
+    invocation_spec,
     program_invoke,
     idl_invoke,
     raw_rpc,
@@ -727,6 +734,14 @@ const command_usage_entries = [_]CommandUsageEntry{
     .{ .command = .prepare_instructions, .style = .instruction, .parse_style = .instruction },
     .{ .command = .estimate_instructions_fee, .style = .instruction, .parse_style = .instruction },
     .{ .command = .spec_instructions, .style = .instruction, .parse_style = .instruction },
+    .{ .command = .invoke_spec, .style = .invocation_spec, .parse_style = .instruction },
+    .{ .command = .invoke_spec_and_confirm, .style = .invocation_spec, .parse_style = .instruction },
+    .{ .command = .invoke_spec_simulate, .style = .invocation_spec, .parse_style = .instruction },
+    .{ .command = .preview_spec, .style = .invocation_spec, .parse_style = .instruction },
+    .{ .command = .explain_spec, .style = .invocation_spec, .parse_style = .instruction },
+    .{ .command = .validate_spec, .style = .invocation_spec, .parse_style = .instruction },
+    .{ .command = .prepare_spec, .style = .invocation_spec, .parse_style = .instruction },
+    .{ .command = .estimate_spec_fee, .style = .invocation_spec, .parse_style = .instruction },
     .{ .command = .send_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]", .parse_style = .program_invoke_legacy },
     .{ .command = .send_program_invoke_and_confirm, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]", .parse_style = .program_invoke_legacy },
     .{ .command = .send_versioned_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
@@ -829,6 +844,7 @@ fn writeCommandUsageEntry(out: *std.Io.Writer, entry: CommandUsageEntry) !void {
         .signature_list => try writeCommandUsageLine(out, entry.command, &signature_statuses_command_usage_params, entry.suffix),
         .signed_transaction => try writeCommandUsageLine(out, entry.command, &signed_transaction_command_usage_params, entry.suffix),
         .instruction => try writeCommandUsageLine(out, entry.command, &instruction_command_usage_params, entry.suffix),
+        .invocation_spec => try writeCommandUsageLine(out, entry.command, &invocation_spec_command_positionals_params, entry.suffix),
         .program_invoke => try writeCommandUsageLine(out, entry.command, &program_invoke_command_usage_params, entry.suffix),
         .idl_invoke => try writeCommandUsageLine(out, entry.command, &idl_invoke_command_usage_params, entry.suffix),
         .raw_rpc => try writeCommandUsageLine(out, entry.command, &raw_rpc_command_usage_params, entry.suffix),
@@ -1638,6 +1654,14 @@ pub const Command = enum {
     prepare_instructions,
     estimate_instructions_fee,
     spec_instructions,
+    invoke_spec,
+    invoke_spec_and_confirm,
+    invoke_spec_simulate,
+    preview_spec,
+    explain_spec,
+    validate_spec,
+    prepare_spec,
+    estimate_spec_fee,
     send_program_invoke,
     send_program_invoke_and_confirm,
     send_versioned_program_invoke,
@@ -1805,6 +1829,14 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "validate-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "prepare-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "spec-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-spec <invocation-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-spec-and-confirm <invocation-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-spec-simulate <invocation-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "preview-spec <invocation-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "explain-spec <invocation-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "validate-spec <invocation-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "prepare-spec <invocation-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "estimate-spec-fee <invocation-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
@@ -2208,6 +2240,52 @@ test "cli.parseCliArgs parses spec-instructions spec" {
     defer parsed.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(Command.spec_instructions, parsed.command);
+    try std.testing.expectEqualStrings(
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+        parsed.instructions_spec_arg orelse "",
+    );
+}
+
+test "cli.parseCliArgs parses preview-spec spec" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "preview-spec",
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.preview_spec, parsed.command);
+    try std.testing.expectEqualStrings(
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+        parsed.instructions_spec_arg orelse "",
+    );
+}
+
+test "cli.parseCliArgs parses invoke-spec args" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "invoke-spec",
+        "--json",
+        "--invoke-mode",
+        "versioned",
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.invoke_spec, parsed.command);
+    try std.testing.expectEqualStrings("versioned", parsed.invoke_mode_arg orelse "");
+    try std.testing.expectEqualStrings(
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+        parsed.instructions_spec_arg orelse "",
+    );
+}
+
+test "cli.parseCliArgs parses prepare-spec spec" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "prepare-spec",
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.prepare_spec, parsed.command);
     try std.testing.expectEqualStrings(
         "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
         parsed.instructions_spec_arg orelse "",
