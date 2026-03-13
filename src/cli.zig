@@ -58,6 +58,9 @@ const cli_params = clap.parseParamsComptime(
     \\    --sender-secret-key <string>...
     \\    --additional-signer-secret-key <string>...
     \\    --program-id <string>...
+    \\    --data-schema-json <string>...
+    \\    --args-json <string>...
+    \\    --schema-encoding <string>...
     \\    --idl-args-json <string>...
     \\    --accounts-json <string>...
     \\    --account <string>...
@@ -109,6 +112,9 @@ const cli_option_help_params = clap.parseParamsComptime(
     \\    --sender-keypair <path>             Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)
     \\    --sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer secret key (base58)
     \\    --additional-signer-secret-key <additional-signer-secret-key> Additional signer secret key (base58, repeatable)
+    \\    --data-schema-json <json|@path>    Program-invoke instruction data schema JSON (used with --args-json)
+    \\    --args-json <json|@path>           Program-invoke instruction args JSON (used with --data-schema-json)
+    \\    --schema-encoding <encoding>       Program-invoke schema encoding (currently borsh)
     \\    --transfer-recent-blockhash <blockhash> Recent blockhash override for transfer
     \\    --epoch <epoch>                     Epoch override for inflation-reward
     \\    --encoding <mode>                   json|jsonParsed|base58|base64 (block and transaction)
@@ -277,6 +283,9 @@ const program_invoke_command_usage_params = clap.parseParamsComptime(
     \\    --recent-blockhash <base58>
     \\    --nonce-account <pubkey>
     \\    --nonce-authority-keypair <path>
+    \\    --data-schema-json <json|@path>
+    \\    --args-json <json|@path>
+    \\    --schema-encoding <encoding>
     \\<program-id>
     \\<accounts-json|@path>
     \\
@@ -997,6 +1006,9 @@ pub const ParsedArgs = struct {
     program_invoke_accounts_arg: ?[]const u8,
     program_invoke_data_arg: ?[]const u8,
     program_invoke_data_encoding_arg: ?[]const u8,
+    program_invoke_data_schema_json_arg: ?[]const u8,
+    program_invoke_args_json_arg: ?[]const u8,
+    program_invoke_schema_encoding_arg: ?[]const u8,
     program_invoke_signer_keypair_paths_arg: ?[]const u8,
     program_invoke_additional_signer_secret_keys: std.ArrayListUnmanaged([]const u8),
     program_invoke_lookup_tables_arg: ?[]const u8,
@@ -1378,6 +1390,9 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .program_invoke_accounts_arg = null,
         .program_invoke_data_arg = null,
         .program_invoke_data_encoding_arg = null,
+        .program_invoke_data_schema_json_arg = null,
+        .program_invoke_args_json_arg = null,
+        .program_invoke_schema_encoding_arg = null,
         .program_invoke_signer_keypair_paths_arg = null,
         .program_invoke_additional_signer_secret_keys = .{},
         .program_invoke_lookup_tables_arg = null,
@@ -1491,6 +1506,9 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
     if (try requireZeroOrOne(@field(result.args, "sender-keypair"))) |value| parsed.sender_keypair_path_arg = value;
     if (try requireZeroOrOne(@field(result.args, "sender-secret-key"))) |value| parsed.sender_secret_key_arg = value;
     if (try requireZeroOrOne(@field(result.args, "program-id"))) |value| parsed.idl_program_id_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "data-schema-json"))) |value| parsed.program_invoke_data_schema_json_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "args-json"))) |value| parsed.program_invoke_args_json_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "schema-encoding"))) |value| parsed.program_invoke_schema_encoding_arg = value;
     if (try requireZeroOrOne(@field(result.args, "idl-args-json"))) |value| parsed.idl_args_json_arg = value;
     if (try requireZeroOrOne(@field(result.args, "accounts-json"))) |value| parsed.idl_accounts_json_arg = value;
     if (try requireZeroOrOne(@field(result.args, "remaining-accounts-json"))) |value| parsed.idl_remaining_accounts_json_arg = value;
@@ -1712,14 +1730,14 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-instructions-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
@@ -2290,6 +2308,33 @@ test "cli.parseCliArgs parses send-program-invoke with additional-signer-secret-
     );
     try std.testing.expectEqualStrings("11111111111111111111111111111111", parsed.program_invoke_program_id_arg orelse "");
     try std.testing.expectEqualStrings("[{\"pubkey\":\"22222222222222222222222222222222\",\"is_signer\":true}]", parsed.program_invoke_accounts_arg orelse "");
+}
+
+test "cli.parseCliArgs parses send-program-invoke with schema args" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "send-program-invoke",
+        "--sender-keypair",
+        "/tmp/test-program-schema.json",
+        "--data-schema-json",
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"amount\",\"type\":\"u64\"}]}",
+        "--args-json",
+        "{\"amount\":\"42\"}",
+        "--schema-encoding",
+        "borsh",
+        "11111111111111111111111111111111",
+        "[]",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.send_program_invoke, parsed.command);
+    try std.testing.expectEqualStrings("/tmp/test-program-schema.json", parsed.sender_keypair_path_arg orelse "");
+    try std.testing.expectEqualStrings("{\"type\":\"struct\",\"fields\":[{\"name\":\"amount\",\"type\":\"u64\"}]}", parsed.program_invoke_data_schema_json_arg orelse "");
+    try std.testing.expectEqualStrings("{\"amount\":\"42\"}", parsed.program_invoke_args_json_arg orelse "");
+    try std.testing.expectEqualStrings("borsh", parsed.program_invoke_schema_encoding_arg orelse "");
+    try std.testing.expectEqualStrings("11111111111111111111111111111111", parsed.program_invoke_program_id_arg orelse "");
+    try std.testing.expectEqualStrings("[]", parsed.program_invoke_accounts_arg orelse "");
+    try std.testing.expect(parsed.program_invoke_data_arg == null);
+    try std.testing.expect(parsed.program_invoke_data_encoding_arg == null);
 }
 
 test "cli.parseCliArgs parses send-idl-invoke with sender-secret-key" {

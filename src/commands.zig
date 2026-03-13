@@ -3886,6 +3886,9 @@ fn buildProgramInvokeInvocationSpecJsonForCommand(
     accounts_arg: ?[]const u8,
     data_arg: ?[]const u8,
     data_encoding_arg: ?[]const u8,
+    data_schema_json_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    schema_encoding_arg: ?[]const u8,
     payer_keypair_path_arg: ?[]const u8,
     payer_secret_key_arg: ?[]const u8,
     signer_keypair_paths_arg: ?[]const u8,
@@ -3911,6 +3914,9 @@ fn buildProgramInvokeInvocationSpecJsonForCommand(
         accounts,
         data_arg,
         data_encoding_arg,
+        data_schema_json_arg,
+        args_json_arg,
+        schema_encoding_arg,
         payer_keypair_path_arg,
         payer_secret_key_arg,
         signer_keypair_paths_arg,
@@ -4032,6 +4038,9 @@ fn buildProgramInvokeInvocationSpecJson(
     accounts_arg: []const u8,
     data_arg: ?[]const u8,
     data_encoding_arg: ?[]const u8,
+    data_schema_json_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    schema_encoding_arg: ?[]const u8,
     payer_keypair_path_arg: ?[]const u8,
     payer_secret_key_arg: ?[]const u8,
     signer_keypair_paths_arg: ?[]const u8,
@@ -4042,6 +4051,11 @@ fn buildProgramInvokeInvocationSpecJson(
     additional_signer_secret_keys_arg: []const []const u8,
 ) ![]u8 {
     if (recent_blockhash_arg != null and nonce_account_arg != null) return error.InvalidCli;
+    if ((data_arg != null or data_encoding_arg != null) and
+        (data_schema_json_arg != null or args_json_arg != null or schema_encoding_arg != null))
+    {
+        return error.InvalidCli;
+    }
 
     const context_args: CliInvocationContextArgs = .{
         .payer_keypair_path_arg = payer_keypair_path_arg,
@@ -4061,16 +4075,27 @@ fn buildProgramInvokeInvocationSpecJson(
     );
     defer payer_inputs.deinit(allocator);
 
-    var payload_inputs = try loadCliProgramInvokePayloadInputs(
-        allocator,
-        accounts_arg,
-        data_arg,
-        data_encoding_arg,
-    );
-    defer payload_inputs.deinit(allocator);
+    const accounts_source = try loadInstructionSpecSource(allocator, accounts_arg);
+    defer allocator.free(accounts_source);
 
-    const instruction_data_base64 = try client.encodeBase64(allocator, payload_inputs.instruction_data);
-    defer allocator.free(instruction_data_base64);
+    const data_schema_json_source = try loadOptionalInstructionSpecSource(allocator, data_schema_json_arg);
+    defer if (data_schema_json_source) |value| allocator.free(value);
+
+    const args_json_source = try loadOptionalInstructionSpecSource(allocator, args_json_arg);
+    defer if (args_json_source) |value| allocator.free(value);
+
+    const instruction_data_base64 = blk: {
+        if (data_schema_json_source != null or args_json_source != null) break :blk null;
+
+        const instruction_data = try loadProgramInvokeDataArg(
+            allocator,
+            data_arg,
+            data_encoding_arg,
+        );
+        defer allocator.free(instruction_data);
+        break :blk try client.encodeBase64(allocator, instruction_data);
+    };
+    defer if (instruction_data_base64) |value| allocator.free(value);
 
     var invocation_context = try loadCliInvocationContextJsonInputs(allocator, context_args);
     defer invocation_context.deinit(allocator);
@@ -4083,9 +4108,12 @@ fn buildProgramInvokeInvocationSpecJson(
         .nonce_account = context_args.nonce_account_arg,
         .nonce_authority_secret_key = invocation_context.nonce_authority_secret_key,
         .program_id = program_id,
-        .accounts_json = payload_inputs.accounts_source,
+        .accounts_json = accounts_source,
         .data = instruction_data_base64,
-        .data_encoding = "base64",
+        .data_encoding = if (instruction_data_base64 != null) "base64" else null,
+        .data_schema_json = data_schema_json_source,
+        .args_json = args_json_source,
+        .schema_encoding = schema_encoding_arg,
     }) catch |err| switch (err) {
         error.InvalidInvocationSpec => return error.InvalidCli,
         else => return err,
@@ -4416,6 +4444,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const program_invoke_accounts_arg = args.program_invoke_accounts_arg;
     const program_invoke_data_arg = args.program_invoke_data_arg;
     const program_invoke_data_encoding_arg = args.program_invoke_data_encoding_arg;
+    const program_invoke_data_schema_json_arg = args.program_invoke_data_schema_json_arg;
+    const program_invoke_args_json_arg = args.program_invoke_args_json_arg;
+    const program_invoke_schema_encoding_arg = args.program_invoke_schema_encoding_arg;
     const program_invoke_signer_keypair_paths_arg = args.program_invoke_signer_keypair_paths_arg;
     const program_invoke_additional_signer_secret_keys_arg = args.program_invoke_additional_signer_secret_keys.items;
     const program_invoke_lookup_tables_arg = args.program_invoke_lookup_tables_arg;
@@ -4606,6 +4637,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_idl_invoke_and_confirm)
     {
         reportInvalidCliMessage("error: --program-id requires idl-invoke commands\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((program_invoke_data_schema_json_arg != null or
+        program_invoke_args_json_arg != null or
+        program_invoke_schema_encoding_arg != null) and
+        command != .send_program_invoke and
+        command != .send_program_invoke_and_confirm and
+        command != .simulate_program_invoke and
+        command != .send_versioned_program_invoke and
+        command != .send_versioned_program_invoke_and_confirm and
+        command != .simulate_versioned_program_invoke)
+    {
+        reportInvalidCliMessage("error: --data-schema-json, --args-json, and --schema-encoding require program-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
@@ -4851,6 +4896,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         program_invoke_accounts_arg,
         program_invoke_data_arg,
         program_invoke_data_encoding_arg,
+        program_invoke_data_schema_json_arg,
+        program_invoke_args_json_arg,
+        program_invoke_schema_encoding_arg,
         idl_spec_arg,
         idl_instruction_arg,
         idl_program_id_arg,
