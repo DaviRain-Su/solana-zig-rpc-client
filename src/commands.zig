@@ -3847,7 +3847,12 @@ fn buildInstructionsInvocationSpecJsonForCommand(
     additional_signer_secret_keys_arg: []const []const u8,
     recent_blockhash_arg: ?[]const u8,
 ) ![]u8 {
-    const command_label = (lookupInvokeCommandSpec(command) orelse unreachable).label;
+    const command_label = if (lookupInvokeCommandSpec(command)) |spec|
+        spec.label
+    else switch (command) {
+        .preview_program_invoke => "preview-program-invoke",
+        else => unreachable,
+    };
     const spec_arg = instructions_spec_arg orelse {
         reportInvalidCliMessage("error: {s} requires <instruction-spec-json>\n", .{command_label});
         return error.InvalidCli;
@@ -4002,6 +4007,77 @@ fn buildCliSimulationOptionsFromExecutionArgs(
         execution_args.simulate_inner_instructions,
         execution_args.commitment,
     );
+}
+
+fn invocationModeLabel(mode: ?client.invoke.InvocationMode) []const u8 {
+    return if (mode) |value| switch (value) {
+        .legacy => "legacy",
+        .versioned => "versioned",
+    } else "none";
+}
+
+fn invocationBlockhashModeLabel(mode: client.invoke.InvocationBlockhashMode) []const u8 {
+    return switch (mode) {
+        .latest_blockhash => "latest-blockhash",
+        .explicit_recent_blockhash => "explicit-recent-blockhash",
+        .durable_nonce => "durable-nonce",
+    };
+}
+
+fn printInvocationPubkeys(label: []const u8, allocator: Allocator, pubkeys: anytype) !void {
+    std.debug.print("{s} ({d}):\n", .{ label, pubkeys.len });
+    for (pubkeys) |pubkey| {
+        const base58 = try pubkey.toBase58(allocator);
+        defer allocator.free(base58);
+        std.debug.print("  {s}\n", .{base58});
+    }
+}
+
+fn printPreferredInvocationExecutionReport(
+    allocator: Allocator,
+    report: *const client.invoke.PreferredInvocationExecutionReport,
+) !void {
+    const payer_base58 = try report.report.summary.payer.toBase58(allocator);
+    defer allocator.free(payer_base58);
+
+    std.debug.print("preferred mode: {s}\n", .{invocationModeLabel(report.mode_report.preferred_mode)});
+    std.debug.print("requested mode: {s}\n", .{invocationModeLabel(report.requested_mode)});
+    std.debug.print("selected mode: {s}\n", .{invocationModeLabel(report.selected_mode)});
+    std.debug.print("used fallback: {}\n", .{report.used_fallback});
+    std.debug.print("legacy buildable: {}\n", .{report.mode_report.legacy_buildable});
+    std.debug.print("versioned buildable: {}\n", .{report.mode_report.versioned_buildable});
+    std.debug.print("validation passed: {}\n", .{report.mode_report.validation_passed});
+    std.debug.print("can execute selected mode: {}\n", .{report.can_execute_selected_mode});
+    std.debug.print("payer: {s}\n", .{payer_base58});
+    std.debug.print("blockhash mode: {s}\n", .{invocationBlockhashModeLabel(report.report.plan.blockhash_mode)});
+    std.debug.print("instruction count: {d}\n", .{report.report.summary.instruction_count});
+    std.debug.print("account count: {d}\n", .{report.report.summary.account_count});
+    std.debug.print("signer count: {d}\n", .{report.report.summary.signer_count});
+    std.debug.print("writable accounts: {d}\n", .{report.report.summary.writable_account_count});
+    std.debug.print("readonly accounts: {d}\n", .{report.report.summary.readonly_account_count});
+    std.debug.print("lookup tables: {d}\n", .{report.report.summary.address_lookup_table_count});
+    std.debug.print("full lookup coverage: {}\n", .{report.report.has_full_lookup_coverage});
+    std.debug.print("missing required signers: {d}\n", .{report.report.validation.missing_required_signer_pubkeys.len});
+    std.debug.print("extra signers: {d}\n", .{report.report.validation.extra_signer_pubkeys.len});
+    std.debug.print("duplicate signers: {d}\n", .{report.report.validation.duplicate_provided_signer_pubkeys.len});
+    std.debug.print("duplicate lookup tables: {d}\n", .{report.report.validation.duplicate_lookup_table_pubkeys.len});
+
+    try printInvocationPubkeys("program ids", allocator, report.report.summary.program_ids);
+    if (report.report.plan.lookup_table_pubkeys.len != 0) {
+        try printInvocationPubkeys("lookup table pubkeys", allocator, report.report.plan.lookup_table_pubkeys);
+    }
+    if (report.report.validation.missing_required_signer_pubkeys.len != 0) {
+        try printInvocationPubkeys("missing required signer pubkeys", allocator, report.report.validation.missing_required_signer_pubkeys);
+    }
+    if (report.report.validation.extra_signer_pubkeys.len != 0) {
+        try printInvocationPubkeys("extra signer pubkeys", allocator, report.report.validation.extra_signer_pubkeys);
+    }
+    if (report.report.validation.duplicate_provided_signer_pubkeys.len != 0) {
+        try printInvocationPubkeys("duplicate signer pubkeys", allocator, report.report.validation.duplicate_provided_signer_pubkeys);
+    }
+    if (report.report.validation.duplicate_lookup_table_pubkeys.len != 0) {
+        try printInvocationPubkeys("duplicate lookup table pubkeys", allocator, report.report.validation.duplicate_lookup_table_pubkeys);
+    }
 }
 
 fn runGenericInvocationCommand(
@@ -4564,6 +4640,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_instructions_and_confirm and
         command != .simulate_instructions and
         command != .simulate_versioned_instructions and
+        command != .preview_program_invoke and
         command != .send_program_invoke and
         command != .send_program_invoke_and_confirm and
         command != .send_versioned_program_invoke and
@@ -4594,6 +4671,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_instructions_and_confirm and
         command != .simulate_instructions and
         command != .simulate_versioned_instructions and
+        command != .preview_program_invoke and
         command != .send_program_invoke and
         command != .send_program_invoke_and_confirm and
         command != .simulate_program_invoke and
@@ -4607,7 +4685,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_idl_invoke and
         command != .send_versioned_idl_invoke_and_confirm)
     {
-        reportInvalidCliMessage("error: --sender-keypair/--sender-secret-key requires transfer, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, simulate-instructions, simulate-versioned-instructions, send-program-invoke, send-program-invoke-and-confirm, send-versioned-program-invoke, send-versioned-program-invoke-and-confirm, simulate-program-invoke, simulate-versioned-program-invoke, send-idl-invoke, send-idl-invoke-and-confirm, send-versioned-idl-invoke, send-versioned-idl-invoke-and-confirm, simulate-idl-invoke, or simulate-versioned-idl-invoke commands\n", .{});
+        reportInvalidCliMessage("error: --sender-keypair/--sender-secret-key requires transfer, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, preview-program-invoke, simulate-instructions, simulate-versioned-instructions, send-program-invoke, send-program-invoke-and-confirm, send-versioned-program-invoke, send-versioned-program-invoke-and-confirm, simulate-program-invoke, simulate-versioned-program-invoke, send-idl-invoke, send-idl-invoke-and-confirm, send-versioned-idl-invoke, send-versioned-idl-invoke-and-confirm, simulate-idl-invoke, or simulate-versioned-idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
@@ -4645,6 +4723,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         program_invoke_schema_encoding_arg != null) and
         command != .send_program_invoke and
         command != .send_program_invoke_and_confirm and
+        command != .preview_program_invoke and
         command != .simulate_program_invoke and
         command != .send_versioned_program_invoke and
         command != .send_versioned_program_invoke_and_confirm and
@@ -4669,6 +4748,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     if (program_invoke_nonce_account_arg != null and
         command != .send_program_invoke and
         command != .send_program_invoke_and_confirm and
+        command != .preview_program_invoke and
         command != .simulate_program_invoke and
         command != .send_versioned_program_invoke and
         command != .send_versioned_program_invoke_and_confirm and
@@ -4880,11 +4960,31 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     else
         null;
 
+    const program_invoke_uses_schema = program_invoke_data_schema_json_arg != null or
+        program_invoke_args_json_arg != null or
+        program_invoke_schema_encoding_arg != null;
+    const effective_program_invoke_data_arg = if (program_invoke_uses_schema)
+        null
+    else
+        program_invoke_data_arg;
+    const effective_program_invoke_data_encoding_arg = if (program_invoke_uses_schema)
+        null
+    else
+        program_invoke_data_encoding_arg;
+    const effective_program_invoke_signer_keypair_paths_arg = if (program_invoke_uses_schema)
+        program_invoke_signer_keypair_paths_arg orelse program_invoke_data_arg
+    else
+        program_invoke_signer_keypair_paths_arg;
+    const effective_program_invoke_lookup_tables_arg = if (program_invoke_uses_schema)
+        program_invoke_lookup_tables_arg orelse program_invoke_data_encoding_arg
+    else
+        program_invoke_lookup_tables_arg;
+
     const invoke_context_args = buildCliInvokeContextArgs(
         effective_sender_keypair_path,
         sender_secret_key_arg,
-        program_invoke_signer_keypair_paths_arg,
-        program_invoke_lookup_tables_arg,
+        effective_program_invoke_signer_keypair_paths_arg,
+        effective_program_invoke_lookup_tables_arg,
         recent_blockhash_arg,
         program_invoke_nonce_account_arg,
         program_invoke_nonce_authority_keypair_path_arg,
@@ -4894,8 +4994,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         instructions_spec_arg,
         program_invoke_program_id_arg,
         program_invoke_accounts_arg,
-        program_invoke_data_arg,
-        program_invoke_data_encoding_arg,
+        effective_program_invoke_data_arg,
+        effective_program_invoke_data_encoding_arg,
         program_invoke_data_schema_json_arg,
         program_invoke_args_json_arg,
         program_invoke_schema_encoding_arg,
@@ -4935,7 +5035,46 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return;
     }
 
+    if (command == .preview_program_invoke) {
+        const invocation_spec_json = try buildProgramInvokeInvocationSpecJsonForCommand(
+            allocator,
+            command,
+            invoke_payload_args.program_id_arg,
+            invoke_payload_args.program_accounts_arg,
+            invoke_payload_args.program_data_arg,
+            invoke_payload_args.program_data_encoding_arg,
+            invoke_payload_args.program_data_schema_json_arg,
+            invoke_payload_args.program_args_json_arg,
+            invoke_payload_args.program_schema_encoding_arg,
+            invoke_context_args.payer_keypair_path_arg,
+            invoke_context_args.payer_secret_key_arg,
+            invoke_context_args.signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
+            invoke_context_args.recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
+            invoke_context_args.additional_signer_secret_keys_arg,
+        );
+        defer allocator.free(invocation_spec_json);
+
+        var report = client.invoke.buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+            allocator,
+            rpc,
+            .program,
+            invocation_spec_json,
+            .{},
+        ) catch {
+            reportInvalidCliMessage("error: preview-program-invoke arguments are invalid\n", .{});
+            return error.InvalidCli;
+        };
+        defer report.deinit(allocator);
+
+        try printPreferredInvocationExecutionReport(allocator, &report);
+        return;
+    }
+
     switch (command) {
+        .preview_program_invoke => unreachable,
         .latest_blockhash => {
             if (with_context) {
                 const blockhash_response = try rpc.getLatestBlockhashResponse(commitment);
