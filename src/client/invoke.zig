@@ -405,6 +405,20 @@ pub const PreferredInvocationAnalysis = struct {
     }
 };
 
+pub const PreferredPreparedSignedTransaction = struct {
+    execution_report: PreferredInvocationExecutionReport,
+    resolved_invocation: OwnedResolvedInvocation,
+    accounts: OwnedInvocationAccounts,
+    transaction: SignedInvocationTransaction,
+
+    pub fn deinit(self: *PreferredPreparedSignedTransaction, allocator: Allocator) void {
+        self.execution_report.deinit(allocator);
+        self.resolved_invocation.deinit(allocator);
+        self.accounts.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 pub const PreferredSignatureExecutionResult = struct {
     execution_report: PreferredInvocationExecutionReport,
     signature: []const u8,
@@ -1330,6 +1344,53 @@ pub fn buildPreferredInvocationAnalysisFromInvocationSpecJson(
         .execution_report = execution_report,
         .resolved_invocation = resolved_invocation,
         .accounts = accounts,
+    };
+}
+
+pub fn buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredPreparedSignedTransaction {
+    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    errdefer execution_report.deinit(allocator);
+
+    var resolved_invocation = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer resolved_invocation.deinit(allocator);
+
+    var accounts = try buildInvocationAccountsFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer accounts.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+
+    return .{
+        .execution_report = execution_report,
+        .resolved_invocation = resolved_invocation,
+        .accounts = accounts,
+        .transaction = try buildSignedTransactionFromInvocationSpecJsonWithOptions(
+            allocator,
+            rpc,
+            family,
+            mode == .versioned,
+            invocation_spec_json,
+            options.build,
+        ),
     };
 }
 
@@ -5537,6 +5598,57 @@ test "invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson preserves fa
 
     const program_info = findInvocationAccountInfo(analysis.accounts.accounts, program_id).?;
     try std.testing.expect(program_info.is_program);
+}
+
+test "invoke.buildPreferredPreparedSignedTransactionFromInvocationSpecJson prepares legacy transaction with analysis" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 76, 77, 78);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        spec_json,
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), prepared.execution_report.selected_mode);
+    try std.testing.expect(prepared.execution_report.can_execute_selected_mode);
+    try std.testing.expectEqual(@as(usize, 1), prepared.resolved_invocation.owned_instructions.instructions.len);
+    try std.testing.expect(prepared.accounts.accounts.len >= 2);
+    try std.testing.expectEqual(@as(std.meta.Tag(SignedInvocationTransaction), .legacy), std.meta.activeTag(prepared.transaction));
+}
+
+test "invoke.buildPreferredPreparedSignedTransactionFromInvocationSpecJson preserves versioned fallback metadata" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 81, 82, 83, 84, 85);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer prepared.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), prepared.execution_report.requested_mode);
+    try std.testing.expectEqual(@as(?InvocationMode, .versioned), prepared.execution_report.selected_mode);
+    try std.testing.expect(prepared.execution_report.used_fallback);
+    try std.testing.expectEqual(@as(usize, 1), prepared.resolved_invocation.address_lookup_tables.len);
+    try std.testing.expectEqual(@as(std.meta.Tag(SignedInvocationTransaction), .versioned), std.meta.activeTag(prepared.transaction));
 }
 
 test "invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson preserves execution report" {
