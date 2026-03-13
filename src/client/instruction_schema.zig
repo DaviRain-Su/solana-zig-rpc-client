@@ -320,11 +320,11 @@ fn parseEnumInput(
     return switch (value) {
         .string => .{ .name = value.string, .payload = null },
         .object => blk: {
-            if (findJsonObjectField(value.object, &.{"variant"})) |variant_value| {
+            if (findJsonObjectField(value.object, &.{ "variant", "kind", "tag", "name" })) |variant_value| {
                 if (variant_value != .string) return error.InvalidInstructionSchema;
                 break :blk .{
                     .name = variant_value.string,
-                    .payload = value.object.get("value"),
+                    .payload = findJsonObjectField(value.object, &.{ "value", "data", "payload", "fields" }),
                 };
             }
 
@@ -337,6 +337,28 @@ fn parseEnumInput(
             };
         },
         else => error.InvalidInstructionSchema,
+    };
+}
+
+fn parseOptionInput(
+    value: std.json.Value,
+) EncodeError!struct {
+    is_some: bool,
+    payload: ?std.json.Value,
+} {
+    return switch (value) {
+        .null => .{ .is_some = false, .payload = null },
+        .object => {
+            if (findJsonObjectField(value.object, &.{ "none", "null" })) |none_value| {
+                if (none_value != .bool or none_value.bool != true) return error.InvalidInstructionSchema;
+                return .{ .is_some = false, .payload = null };
+            }
+            if (findJsonObjectField(value.object, &.{ "some", "value", "data", "payload" })) |some_value| {
+                return .{ .is_some = true, .payload = some_value };
+            }
+            return .{ .is_some = true, .payload = value };
+        },
+        else => .{ .is_some = true, .payload = value },
     };
 }
 
@@ -576,12 +598,13 @@ fn encodeBorshSchemaValue(
 
     if (std.mem.eql(u8, type_name, "option")) {
         const item_schema = findJsonObjectField(resolved_schema.object, &.{ "item", "itemType", "item_type", "element", "elementType", "element_type" }) orelse return error.InvalidInstructionSchema;
-        if (value == .null) {
+        const option_input = try parseOptionInput(value);
+        if (!option_input.is_some) {
             try output.append(allocator, 0);
             return;
         }
         try output.append(allocator, 1);
-        try encodeBorshSchemaValue(allocator, output, root_schema, item_schema, value);
+        try encodeBorshSchemaValue(allocator, output, root_schema, item_schema, option_input.payload.?);
         return;
     }
 
@@ -1443,5 +1466,76 @@ test "instruction_schema accepts key value aliases for maps" {
         0x00,
         'a',
         0x01,
+    }, encoded);
+}
+
+test "instruction_schema accepts wrapped option inputs" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "type": "struct",
+        \\  "fields": [
+        \\    { "name": "memo", "type": { "type": "option", "item": "string" } },
+        \\    { "name": "flag", "type": { "type": "option", "item": "bool" } }
+        \\  ]
+        \\}
+    ;
+    const args_json =
+        \\{
+        \\  "memo": { "some": "hi" },
+        \\  "flag": { "none": true }
+        \\}
+    ;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x01,
+        0x02,
+        0x00,
+        0x00,
+        0x00,
+        'h',
+        'i',
+        0x00,
+    }, encoded);
+}
+
+test "instruction_schema accepts enum variant aliases and payload aliases" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "type": "enum",
+        \\  "variants": [
+        \\    {
+        \\      "name": "SetValue",
+        \\      "fields": [
+        \\        "u8",
+        \\        "string"
+        \\      ]
+        \\    }
+        \\  ]
+        \\}
+    ;
+    const args_json =
+        \\{
+        \\  "kind": "SetValue",
+        \\  "payload": [5, "ok"]
+        \\}
+    ;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x00,
+        0x05,
+        0x02,
+        0x00,
+        0x00,
+        0x00,
+        'o',
+        'k',
     }, encoded);
 }
