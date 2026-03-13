@@ -2677,6 +2677,16 @@ fn loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) !LoadedCliInstructionSpec {
+    const context_args: CliInvocationContextArgs = .{
+        .payer_keypair_path_arg = payer_keypair_path_arg,
+        .payer_secret_key_arg = payer_secret_key_arg,
+        .signer_keypair_paths_arg = signer_keypair_paths_arg,
+        .lookup_tables_arg = lookup_tables_arg,
+        .nonce_account_arg = nonce_account_arg,
+        .nonce_authority_keypair_path_arg = nonce_authority_keypair_path_arg,
+        .additional_signer_secret_keys_arg = additional_signer_secret_keys_arg,
+    };
+
     const idl_source = loadInstructionSpecSource(allocator, idl_arg) catch return error.InvalidCli;
     defer allocator.free(idl_source);
 
@@ -2686,14 +2696,10 @@ fn loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(
     defer if (accounts_json_source) |value| allocator.free(value);
     const remaining_accounts_json_source = loadOptionalInstructionSpecSource(allocator, remaining_accounts_json_arg) catch return error.InvalidCli;
     defer if (remaining_accounts_json_source) |value| allocator.free(value);
-    var context_spec_inputs = loadCliInvocationContextSpecInputs(
-        allocator,
-        signer_keypair_paths_arg,
-        lookup_tables_arg,
-    ) catch return error.InvalidCli;
+    var context_spec_inputs = loadCliInvocationContextSpecInputs(allocator, context_args) catch return error.InvalidCli;
     defer context_spec_inputs.deinit();
-    const payer_keypair = if (payer_secret_key_arg != null or payer_keypair_path_arg != null)
-        try resolveOptionalInstructionKeypair(allocator, payer_secret_key_arg, payer_keypair_path_arg)
+    const payer_keypair = if (context_args.payer_secret_key_arg != null or context_args.payer_keypair_path_arg != null)
+        try resolveOptionalInstructionKeypair(allocator, context_args.payer_secret_key_arg, context_args.payer_keypair_path_arg)
     else
         null;
     const default_signer_pubkey = if (payer_keypair) |value| value.public_key else null;
@@ -2741,11 +2747,11 @@ fn loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(
         },
     };
     const spec = CliSimulateInstructionsSpec{
-        .payer_secret_key = payer_secret_key_arg,
-        .payer_keypair_path = payer_keypair_path_arg,
-        .nonce_account = nonce_account_arg,
-        .nonce_authority_keypair_path = nonce_authority_keypair_path_arg,
-        .additional_signer_secret_keys = additional_signer_secret_keys_arg,
+        .payer_secret_key = context_args.payer_secret_key_arg,
+        .payer_keypair_path = context_args.payer_keypair_path_arg,
+        .nonce_account = context_args.nonce_account_arg,
+        .nonce_authority_keypair_path = context_args.nonce_authority_keypair_path_arg,
+        .additional_signer_secret_keys = context_args.additional_signer_secret_keys_arg,
         .additional_signer_keypair_paths = context_spec_inputs.additionalSignerKeypairPaths(),
         .address_lookup_tables = context_spec_inputs.addressLookupTables(),
         .instructions = &instruction_specs,
@@ -3520,6 +3526,17 @@ fn loadRequiredCliInvokePayerInputs(
     };
 }
 
+const CliInvocationContextArgs = struct {
+    payer_keypair_path_arg: ?[]const u8 = null,
+    payer_secret_key_arg: ?[]const u8 = null,
+    signer_keypair_paths_arg: ?[]const u8 = null,
+    lookup_tables_arg: ?[]const u8 = null,
+    recent_blockhash_arg: ?[]const u8 = null,
+    nonce_account_arg: ?[]const u8 = null,
+    nonce_authority_keypair_path_arg: ?[]const u8 = null,
+    additional_signer_secret_keys_arg: []const []const u8 = &.{},
+};
+
 const LoadedCliProgramInvokePayloadInputs = struct {
     accounts_source: []u8,
     instruction_data: []u8,
@@ -3566,24 +3583,21 @@ const LoadedCliInvocationContextJsonInputs = struct {
 
 fn loadCliInvocationContextJsonInputs(
     allocator: Allocator,
-    signer_keypair_paths_arg: ?[]const u8,
-    lookup_tables_arg: ?[]const u8,
-    nonce_authority_keypair_path_arg: ?[]const u8,
-    additional_signer_secret_keys_arg: []const []const u8,
+    context_args: CliInvocationContextArgs,
 ) !LoadedCliInvocationContextJsonInputs {
-    const signer_keypair_paths_source = try loadOptionalInstructionSpecSource(allocator, signer_keypair_paths_arg);
+    const signer_keypair_paths_source = try loadOptionalInstructionSpecSource(allocator, context_args.signer_keypair_paths_arg);
     defer if (signer_keypair_paths_source) |value| allocator.free(value);
 
     var parsed_signer_keypair_paths = try parseCliSignerKeypairPathsJsonSource(allocator, signer_keypair_paths_source);
     defer if (parsed_signer_keypair_paths) |*value| value.deinit();
 
-    const lookup_tables_source = try loadOptionalInstructionSpecSource(allocator, lookup_tables_arg);
+    const lookup_tables_source = try loadOptionalInstructionSpecSource(allocator, context_args.lookup_tables_arg);
     errdefer if (lookup_tables_source) |value| allocator.free(value);
 
     const nonce_authority_secret_key = try resolveInstructionKeypairSecretKeyBase58(
         allocator,
         null,
-        nonce_authority_keypair_path_arg,
+        context_args.nonce_authority_keypair_path_arg,
     );
     errdefer if (nonce_authority_secret_key) |value| allocator.free(value);
 
@@ -3591,7 +3605,7 @@ fn loadCliInvocationContextJsonInputs(
         allocator,
         &.{},
         if (parsed_signer_keypair_paths) |value| value.value else &.{},
-        additional_signer_secret_keys_arg,
+        context_args.additional_signer_secret_keys_arg,
     );
     errdefer allocator.free(additional_signer_secret_keys_json);
 
@@ -3622,13 +3636,12 @@ const LoadedCliInvocationContextSpecInputs = struct {
 
 fn loadCliInvocationContextSpecInputs(
     allocator: Allocator,
-    signer_keypair_paths_arg: ?[]const u8,
-    lookup_tables_arg: ?[]const u8,
+    context_args: CliInvocationContextArgs,
 ) !LoadedCliInvocationContextSpecInputs {
-    const signer_keypair_paths_source = try loadOptionalInstructionSpecSource(allocator, signer_keypair_paths_arg);
+    const signer_keypair_paths_source = try loadOptionalInstructionSpecSource(allocator, context_args.signer_keypair_paths_arg);
     defer if (signer_keypair_paths_source) |value| allocator.free(value);
 
-    const lookup_tables_source = try loadOptionalInstructionSpecSource(allocator, lookup_tables_arg);
+    const lookup_tables_source = try loadOptionalInstructionSpecSource(allocator, context_args.lookup_tables_arg);
     defer if (lookup_tables_source) |value| allocator.free(value);
 
     var parsed_signer_keypair_paths = try parseCliSignerKeypairPathsJsonSource(allocator, signer_keypair_paths_source);
@@ -3767,10 +3780,21 @@ fn buildProgramInvokeInvocationSpecJson(
 ) ![]u8 {
     if (recent_blockhash_arg != null and nonce_account_arg != null) return error.InvalidCli;
 
+    const context_args: CliInvocationContextArgs = .{
+        .payer_keypair_path_arg = payer_keypair_path_arg,
+        .payer_secret_key_arg = payer_secret_key_arg,
+        .signer_keypair_paths_arg = signer_keypair_paths_arg,
+        .lookup_tables_arg = lookup_tables_arg,
+        .recent_blockhash_arg = recent_blockhash_arg,
+        .nonce_account_arg = nonce_account_arg,
+        .nonce_authority_keypair_path_arg = nonce_authority_keypair_path_arg,
+        .additional_signer_secret_keys_arg = additional_signer_secret_keys_arg,
+    };
+
     var payer_inputs = try loadRequiredCliInvokePayerInputs(
         allocator,
-        payer_secret_key_arg,
-        payer_keypair_path_arg,
+        context_args.payer_secret_key_arg,
+        context_args.payer_keypair_path_arg,
     );
     defer payer_inputs.deinit(allocator);
 
@@ -3785,21 +3809,15 @@ fn buildProgramInvokeInvocationSpecJson(
     const instruction_data_base64 = try client.encodeBase64(allocator, payload_inputs.instruction_data);
     defer allocator.free(instruction_data_base64);
 
-    var invocation_context = try loadCliInvocationContextJsonInputs(
-        allocator,
-        signer_keypair_paths_arg,
-        lookup_tables_arg,
-        nonce_authority_keypair_path_arg,
-        additional_signer_secret_keys_arg,
-    );
+    var invocation_context = try loadCliInvocationContextJsonInputs(allocator, context_args);
     defer invocation_context.deinit(allocator);
 
     return client.invocation_spec_json.buildProgramInvocationSpecJson(allocator, .{
         .payer_secret_key = payer_inputs.secret_key,
         .additional_signer_secret_keys_json = invocation_context.additional_signer_secret_keys_json,
         .address_lookup_tables_json = invocation_context.lookup_tables_source,
-        .recent_blockhash = recent_blockhash_arg,
-        .nonce_account = nonce_account_arg,
+        .recent_blockhash = context_args.recent_blockhash_arg,
+        .nonce_account = context_args.nonce_account_arg,
         .nonce_authority_secret_key = invocation_context.nonce_authority_secret_key,
         .program_id = program_id,
         .accounts_json = payload_inputs.accounts_source,
@@ -3830,10 +3848,21 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) ![]u8 {
+    const context_args: CliInvocationContextArgs = .{
+        .payer_keypair_path_arg = payer_keypair_path_arg,
+        .payer_secret_key_arg = payer_secret_key_arg,
+        .signer_keypair_paths_arg = signer_keypair_paths_arg,
+        .lookup_tables_arg = lookup_tables_arg,
+        .recent_blockhash_arg = recent_blockhash_arg,
+        .nonce_account_arg = nonce_account_arg,
+        .nonce_authority_keypair_path_arg = nonce_authority_keypair_path_arg,
+        .additional_signer_secret_keys_arg = additional_signer_secret_keys_arg,
+    };
+
     var payer_inputs = try loadRequiredCliInvokePayerInputs(
         allocator,
-        payer_secret_key_arg,
-        payer_keypair_path_arg,
+        context_args.payer_secret_key_arg,
+        context_args.payer_keypair_path_arg,
     );
     defer payer_inputs.deinit(allocator);
 
@@ -3852,13 +3881,7 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
     const remaining_accounts_json_source = try loadOptionalInstructionSpecSource(allocator, remaining_accounts_json_arg);
     defer if (remaining_accounts_json_source) |value| allocator.free(value);
 
-    var invocation_context = try loadCliInvocationContextJsonInputs(
-        allocator,
-        signer_keypair_paths_arg,
-        lookup_tables_arg,
-        nonce_authority_keypair_path_arg,
-        additional_signer_secret_keys_arg,
-    );
+    var invocation_context = try loadCliInvocationContextJsonInputs(allocator, context_args);
     defer invocation_context.deinit(allocator);
 
     var parsed_lookup_tables = try parseCliAddressLookupTablesJsonSource(allocator, invocation_context.lookup_tables_source);
@@ -3897,8 +3920,8 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
         .payer_secret_key = payer_inputs.secret_key,
         .additional_signer_secret_keys_json = invocation_context.additional_signer_secret_keys_json,
         .address_lookup_tables_json = invocation_context.lookup_tables_source,
-        .recent_blockhash = recent_blockhash_arg,
-        .nonce_account = nonce_account_arg,
+        .recent_blockhash = context_args.recent_blockhash_arg,
+        .nonce_account = context_args.nonce_account_arg,
         .nonce_authority_secret_key = invocation_context.nonce_authority_secret_key,
         .idl_json = idl_source,
         .instruction_name = instruction_name,
@@ -3983,6 +4006,16 @@ fn loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) !LoadedCliInstructionSpec {
+    const context_args: CliInvocationContextArgs = .{
+        .payer_keypair_path_arg = payer_keypair_path_arg,
+        .payer_secret_key_arg = payer_secret_key_arg,
+        .signer_keypair_paths_arg = signer_keypair_paths_arg,
+        .lookup_tables_arg = lookup_tables_arg,
+        .nonce_account_arg = nonce_account_arg,
+        .nonce_authority_keypair_path_arg = nonce_authority_keypair_path_arg,
+        .additional_signer_secret_keys_arg = additional_signer_secret_keys_arg,
+    };
+
     var payload_inputs = loadCliProgramInvokePayloadInputs(
         allocator,
         accounts_arg,
@@ -3991,11 +4024,7 @@ fn loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
     ) catch return error.InvalidCli;
     defer payload_inputs.deinit(allocator);
 
-    var context_spec_inputs = loadCliInvocationContextSpecInputs(
-        allocator,
-        signer_keypair_paths_arg,
-        lookup_tables_arg,
-    ) catch return error.InvalidCli;
+    var context_spec_inputs = loadCliInvocationContextSpecInputs(allocator, context_args) catch return error.InvalidCli;
     defer context_spec_inputs.deinit();
 
     const program_id_pubkey = client.Pubkey.fromBase58(allocator, program_id) catch return error.InvalidCli;
@@ -4021,11 +4050,11 @@ fn loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
         },
     };
     const spec = CliSimulateInstructionsSpec{
-        .payer_secret_key = payer_secret_key_arg,
-        .payer_keypair_path = payer_keypair_path_arg,
-        .nonce_account = nonce_account_arg,
-        .nonce_authority_keypair_path = nonce_authority_keypair_path_arg,
-        .additional_signer_secret_keys = additional_signer_secret_keys_arg,
+        .payer_secret_key = context_args.payer_secret_key_arg,
+        .payer_keypair_path = context_args.payer_keypair_path_arg,
+        .nonce_account = context_args.nonce_account_arg,
+        .nonce_authority_keypair_path = context_args.nonce_authority_keypair_path_arg,
+        .additional_signer_secret_keys = context_args.additional_signer_secret_keys_arg,
         .additional_signer_keypair_paths = context_spec_inputs.additionalSignerKeypairPaths(),
         .address_lookup_tables = context_spec_inputs.addressLookupTables(),
         .instructions = &instruction_specs,
