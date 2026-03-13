@@ -4038,6 +4038,29 @@ fn printInvocationPubkeys(label: []const u8, allocator: Allocator, pubkeys: anyt
     }
 }
 
+fn printInvocationAccounts(allocator: Allocator, accounts: client.invoke.OwnedInvocationAccounts) !void {
+    if (accounts.accounts.len == 0) return;
+
+    std.debug.print("accounts ({d}):\n", .{accounts.accounts.len});
+    for (accounts.accounts) |account| {
+        const base58 = try account.pubkey.toBase58(allocator);
+        defer allocator.free(base58);
+
+        std.debug.print(
+            "  {s} [{s}{s}{s}{s}{s}, {s}]\n",
+            .{
+                base58,
+                if (account.is_payer) "payer " else "",
+                if (account.is_program) "program " else "",
+                if (account.is_nonce_account) "nonce " else "",
+                if (account.is_signer) "signer " else "",
+                if (!account.is_payer and !account.is_program and !account.is_nonce_account and !account.is_signer) "account" else "",
+                if (account.is_writable) "writable" else "readonly",
+            },
+        );
+    }
+}
+
 fn printPreferredInvocationExecutionReport(
     allocator: Allocator,
     report: *const client.invoke.PreferredInvocationExecutionReport,
@@ -4083,6 +4106,14 @@ fn printPreferredInvocationExecutionReport(
     if (report.report.validation.duplicate_lookup_table_pubkeys.len != 0) {
         try printInvocationPubkeys("duplicate lookup table pubkeys", allocator, report.report.validation.duplicate_lookup_table_pubkeys);
     }
+}
+
+fn printPreferredInvocationAnalysis(
+    allocator: Allocator,
+    analysis: *const client.invoke.PreferredInvocationAnalysis,
+) !void {
+    try printPreferredInvocationExecutionReport(allocator, &analysis.execution_report);
+    try printInvocationAccounts(allocator, analysis.accounts);
 }
 
 fn runGenericInvocationCommand(
@@ -5071,7 +5102,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         );
         defer allocator.free(invocation_spec_json);
 
-        var report = client.invoke.buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        var analysis = client.invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson(
             allocator,
             rpc,
             .program,
@@ -5081,9 +5112,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             reportInvalidCliMessage("error: preview-program-invoke arguments are invalid\n", .{});
             return error.InvalidCli;
         };
-        defer report.deinit(allocator);
+        defer analysis.deinit(allocator);
 
-        try printPreferredInvocationExecutionReport(allocator, &report);
+        try printPreferredInvocationAnalysis(allocator, &analysis);
         return;
     }
 
@@ -5099,7 +5130,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         );
         defer allocator.free(invocation_spec_json);
 
-        var report = client.invoke.buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        var analysis = client.invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson(
             allocator,
             rpc,
             .instructions,
@@ -5109,9 +5140,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             reportInvalidCliMessage("error: preview-instructions spec is invalid\n", .{});
             return error.InvalidCli;
         };
-        defer report.deinit(allocator);
+        defer analysis.deinit(allocator);
 
-        try printPreferredInvocationExecutionReport(allocator, &report);
+        try printPreferredInvocationAnalysis(allocator, &analysis);
         return;
     }
 
@@ -5138,7 +5169,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         );
         defer allocator.free(invocation_spec_json);
 
-        var report = client.invoke.buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        var analysis = client.invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson(
             allocator,
             rpc,
             .anchor_idl,
@@ -5148,9 +5179,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             reportInvalidCliMessage("error: preview-idl-invoke arguments are invalid\n", .{});
             return error.InvalidCli;
         };
-        defer report.deinit(allocator);
+        defer analysis.deinit(allocator);
 
-        try printPreferredInvocationExecutionReport(allocator, &report);
+        try printPreferredInvocationAnalysis(allocator, &analysis);
         return;
     }
 
