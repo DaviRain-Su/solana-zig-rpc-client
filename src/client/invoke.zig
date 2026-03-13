@@ -1396,6 +1396,208 @@ pub fn allocPreferredPreparedInvocationJson(
     return try aw.toOwnedSlice();
 }
 
+pub fn writePreparedInvocationText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    prepared: *const PreparedInvocation,
+) !void {
+    const payer_base58 = try prepared.payer().toBase58(allocator);
+    defer allocator.free(payer_base58);
+
+    const transaction_base64 = try prepared.toBase64(allocator);
+    defer allocator.free(transaction_base64);
+
+    const message_base64 = try prepared.messageToBase64(allocator);
+    defer allocator.free(message_base64);
+
+    const first_signature_base58 = if (prepared.firstSignature()) |signature|
+        try signature.toBase58(allocator)
+    else
+        null;
+    defer if (first_signature_base58) |value| allocator.free(value);
+
+    var diagnostics = try buildInvocationDiagnosticsFromReport(
+        allocator,
+        &prepared.report,
+    );
+    defer diagnostics.deinit(allocator);
+
+    try writer.print("mode: {s}\n", .{@tagName(prepared.mode)});
+    try writer.print("validation passed: {}\n", .{prepared.report.validation.is_valid});
+    try writer.print("can execute: {}\n", .{prepared.report.can_execute});
+    try writer.print("payer: {s}\n", .{payer_base58});
+    try writer.print("blockhash mode: {s}\n", .{invocationBlockhashModeJsonLabel(prepared.report.plan.blockhash_mode)});
+    if (prepared.report.plan.recent_blockhash) |value| {
+        const recent_blockhash_base58 = try value.toBase58(allocator);
+        defer allocator.free(recent_blockhash_base58);
+        try writer.print("recent blockhash: {s}\n", .{recent_blockhash_base58});
+    }
+    if (prepared.report.plan.nonce_account) |value| {
+        const nonce_account_base58 = try value.toBase58(allocator);
+        defer allocator.free(nonce_account_base58);
+        try writer.print("nonce account: {s}\n", .{nonce_account_base58});
+    }
+    if (prepared.report.plan.nonce_authority) |value| {
+        const nonce_authority_base58 = try value.toBase58(allocator);
+        defer allocator.free(nonce_authority_base58);
+        try writer.print("nonce authority: {s}\n", .{nonce_authority_base58});
+    }
+    try writer.print("instruction count: {}\n", .{prepared.report.summary.instruction_count});
+    try writer.print("account count: {}\n", .{prepared.report.summary.account_count});
+    try writer.print("signer count: {}\n", .{prepared.report.summary.signer_count});
+    try writer.print("writable account count: {}\n", .{prepared.report.summary.writable_account_count});
+    try writer.print("readonly account count: {}\n", .{prepared.report.summary.readonly_account_count});
+    try writer.print("lookup table count: {}\n", .{prepared.report.summary.address_lookup_table_count});
+    if (first_signature_base58) |value| {
+        try writer.print("first signature: {s}\n", .{value});
+    }
+    try writer.print("transaction base64: {s}\n", .{transaction_base64});
+    try writer.print("message base64: {s}\n", .{message_base64});
+    try writeInvocationPubkeysText(writer, allocator, "program ids", prepared.report.summary.program_ids);
+    if (prepared.report.preflight.provided_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "provided signer pubkeys", prepared.report.preflight.provided_signer_pubkeys);
+    }
+    if (prepared.report.preflight.required_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "required signer pubkeys", prepared.report.preflight.required_signer_pubkeys);
+    }
+    if (prepared.report.preflight.writable_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "writable pubkeys", prepared.report.preflight.writable_pubkeys);
+    }
+    if (prepared.report.preflight.readonly_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "readonly pubkeys", prepared.report.preflight.readonly_pubkeys);
+    }
+    if (prepared.report.plan.lookup_table_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup table pubkeys", prepared.report.plan.lookup_table_pubkeys);
+    }
+    if (prepared.report.lookup_coverage.lookup_table_address_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup table address pubkeys", prepared.report.lookup_coverage.lookup_table_address_pubkeys);
+    }
+    if (prepared.report.lookup_coverage.candidate_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup candidate pubkeys", prepared.report.lookup_coverage.candidate_pubkeys);
+    }
+    if (prepared.report.lookup_coverage.covered_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup covered pubkeys", prepared.report.lookup_coverage.covered_pubkeys);
+    }
+    if (prepared.report.lookup_coverage.uncovered_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup uncovered pubkeys", prepared.report.lookup_coverage.uncovered_pubkeys);
+    }
+    if (prepared.report.validation.missing_required_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "missing required signer pubkeys", prepared.report.validation.missing_required_signer_pubkeys);
+    }
+    if (prepared.report.validation.extra_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "extra signer pubkeys", prepared.report.validation.extra_signer_pubkeys);
+    }
+    if (prepared.report.validation.duplicate_provided_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "duplicate signer pubkeys", prepared.report.validation.duplicate_provided_signer_pubkeys);
+    }
+    if (prepared.report.validation.duplicate_lookup_table_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "duplicate lookup table pubkeys", prepared.report.validation.duplicate_lookup_table_pubkeys);
+    }
+    try writeInvocationDiagnosticsText(writer, diagnostics);
+    try writeInvocationAccountsText(writer, allocator, prepared.accounts);
+}
+
+pub fn writePreparedInvocationJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    prepared: *const PreparedInvocation,
+) !void {
+    var first = true;
+    var diagnostics = try buildInvocationDiagnosticsFromReport(
+        allocator,
+        &prepared.report,
+    );
+    defer diagnostics.deinit(allocator);
+
+    try writer.writeAll("{");
+    try writeJsonStringField(writer, &first, "mode", @tagName(prepared.mode));
+    try writeJsonBoolField(writer, &first, "validation_passed", prepared.report.validation.is_valid);
+    try writeJsonBoolField(writer, &first, "can_execute", prepared.report.can_execute);
+
+    const payer_base58 = try prepared.report.summary.payer.toBase58(allocator);
+    defer allocator.free(payer_base58);
+    try writeJsonStringField(writer, &first, "payer", payer_base58);
+    try writeJsonStringField(writer, &first, "blockhash_mode", invocationBlockhashModeJsonLabel(prepared.report.plan.blockhash_mode));
+
+    const recent_blockhash_base58 = if (prepared.report.plan.recent_blockhash) |value|
+        try value.toBase58(allocator)
+    else
+        null;
+    defer if (recent_blockhash_base58) |value| allocator.free(value);
+    try writeJsonStringField(writer, &first, "recent_blockhash", recent_blockhash_base58);
+
+    const nonce_account_base58 = if (prepared.report.plan.nonce_account) |value|
+        try value.toBase58(allocator)
+    else
+        null;
+    defer if (nonce_account_base58) |value| allocator.free(value);
+    try writeJsonStringField(writer, &first, "nonce_account", nonce_account_base58);
+
+    const nonce_authority_base58 = if (prepared.report.plan.nonce_authority) |value|
+        try value.toBase58(allocator)
+    else
+        null;
+    defer if (nonce_authority_base58) |value| allocator.free(value);
+    try writeJsonStringField(writer, &first, "nonce_authority", nonce_authority_base58);
+
+    try writeJsonUsizeField(writer, &first, "instruction_count", prepared.report.summary.instruction_count);
+    try writeJsonUsizeField(writer, &first, "account_count", prepared.report.summary.account_count);
+    try writeJsonUsizeField(writer, &first, "signer_count", prepared.report.summary.signer_count);
+    try writeJsonUsizeField(writer, &first, "writable_account_count", prepared.report.summary.writable_account_count);
+    try writeJsonUsizeField(writer, &first, "readonly_account_count", prepared.report.summary.readonly_account_count);
+    try writeJsonUsizeField(writer, &first, "lookup_table_count", prepared.report.summary.address_lookup_table_count);
+    try writeJsonUsizeField(writer, &first, "missing_required_signer_count", prepared.report.validation.missing_required_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "extra_signer_count", prepared.report.validation.extra_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "duplicate_signer_count", prepared.report.validation.duplicate_provided_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "duplicate_lookup_table_count", prepared.report.validation.duplicate_lookup_table_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+
+    const transaction_base64 = try prepared.toBase64(allocator);
+    defer allocator.free(transaction_base64);
+    try writeJsonStringField(writer, &first, "transaction_base64", transaction_base64);
+
+    const message_base64 = try prepared.messageToBase64(allocator);
+    defer allocator.free(message_base64);
+    try writeJsonStringField(writer, &first, "message_base64", message_base64);
+
+    const first_signature_base58 = if (prepared.firstSignature()) |signature|
+        try signature.toBase58(allocator)
+    else
+        null;
+    defer if (first_signature_base58) |value| allocator.free(value);
+    try writeJsonStringField(writer, &first, "first_signature", first_signature_base58);
+
+    try writeJsonPubkeyArrayField(writer, &first, "program_ids", allocator, prepared.report.summary.program_ids);
+    try writeJsonPubkeyArrayField(writer, &first, "provided_signer_pubkeys", allocator, prepared.report.preflight.provided_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "required_signer_pubkeys", allocator, prepared.report.preflight.required_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "writable_pubkeys", allocator, prepared.report.preflight.writable_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "readonly_pubkeys", allocator, prepared.report.preflight.readonly_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_table_pubkeys", allocator, prepared.report.plan.lookup_table_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_table_address_pubkeys", allocator, prepared.report.lookup_coverage.lookup_table_address_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_candidate_pubkeys", allocator, prepared.report.lookup_coverage.candidate_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_covered_pubkeys", allocator, prepared.report.lookup_coverage.covered_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_uncovered_pubkeys", allocator, prepared.report.lookup_coverage.uncovered_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "missing_required_signer_pubkeys", allocator, prepared.report.validation.missing_required_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "extra_signer_pubkeys", allocator, prepared.report.validation.extra_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "duplicate_signer_pubkeys", allocator, prepared.report.validation.duplicate_provided_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "duplicate_lookup_table_pubkeys", allocator, prepared.report.validation.duplicate_lookup_table_pubkeys);
+    try writeJsonDiagnosticsField(writer, &first, diagnostics);
+    try writeJsonAccountsField(writer, &first, allocator, prepared.accounts);
+    try writer.writeAll("}");
+}
+
+pub fn allocPreparedInvocationJson(
+    allocator: Allocator,
+    prepared: *const PreparedInvocation,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writePreparedInvocationJson(&aw.writer, allocator, prepared);
+    return try aw.toOwnedSlice();
+}
+
 pub const PreparedInvocation = struct {
     mode: InvocationMode,
     report: OwnedInvocationReport,
@@ -8916,6 +9118,60 @@ test "invoke.buildPreparedInvocationFromOwnedInvocationSpecWithOptions prepares 
     try std.testing.expectEqual(@as(usize, 1), prepared.report.plan.address_lookup_table_count);
     try std.testing.expectEqual(@as(usize, 1), prepared.resolved_invocation.address_lookup_tables.len);
     try std.testing.expectEqual(@as(std.meta.Tag(SignedInvocationTransaction), .versioned), std.meta.activeTag(prepared.transaction));
+}
+
+test "invoke.allocPreparedInvocationJson emits generic prepared fields" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 241, 242, 243);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        false,
+        spec_json,
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    const json = try allocPreparedInvocationJson(allocator, &prepared);
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"transaction_base64\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"message_base64\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"diagnostic_error_count\":0") != null);
+}
+
+test "invoke.writePreparedInvocationText emits generic prepared summary" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 244, 245, 246, 247, 248);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .program,
+        true,
+        spec_json,
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+    try writePreparedInvocationText(&aw.writer, allocator, &prepared);
+    const text = try aw.toOwnedSlice();
+    defer allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "mode: versioned") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "transaction base64:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "lookup table count: 1") != null);
 }
 
 test "invoke.sendPreparedInvocation dispatches prepared legacy transaction" {
