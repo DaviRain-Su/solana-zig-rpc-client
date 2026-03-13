@@ -3565,61 +3565,25 @@ fn buildProgramInvokeInvocationSpecJson(
         }
     }
 
-    var buffer: std.io.Writer.Allocating = .init(allocator);
-    defer buffer.deinit();
+    var additional_signers_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer additional_signers_buffer.deinit();
+    std.json.Stringify.value(effective_additional_signer_secret_keys.items, .{}, &additional_signers_buffer.writer) catch unreachable;
 
-    try buffer.writer.writeByte('{');
-    var has_field = false;
-    const WriteFieldName = struct {
-        fn write(
-            buffer_inner: *std.io.Writer.Allocating,
-            has_field_inner: *bool,
-            name: []const u8,
-        ) !void {
-            if (has_field_inner.*) try buffer_inner.writer.writeByte(',');
-            try std.json.Stringify.value(name, .{}, &buffer_inner.writer);
-            try buffer_inner.writer.writeByte(':');
-            has_field_inner.* = true;
-        }
+    return client.invocation_spec_json.buildProgramInvocationSpecJson(allocator, .{
+        .payer_secret_key = payer_secret_key,
+        .additional_signer_secret_keys_json = additional_signers_buffer.written(),
+        .address_lookup_tables_json = lookup_tables_source,
+        .recent_blockhash = recent_blockhash_arg,
+        .nonce_account = nonce_account_arg,
+        .nonce_authority_secret_key = nonce_authority_secret_key,
+        .program_id = program_id,
+        .accounts_json = accounts_source,
+        .data = instruction_data_base64,
+        .data_encoding = "base64",
+    }) catch |err| switch (err) {
+        error.InvalidInvocationSpec => return error.InvalidCli,
+        else => return err,
     };
-
-    try WriteFieldName.write(&buffer, &has_field, "payer_secret_key");
-    try std.json.Stringify.value(payer_secret_key, .{}, &buffer.writer);
-
-    try WriteFieldName.write(&buffer, &has_field, "additional_signer_secret_keys");
-    try std.json.Stringify.value(effective_additional_signer_secret_keys.items, .{}, &buffer.writer);
-
-    try WriteFieldName.write(&buffer, &has_field, "program_id");
-    try std.json.Stringify.value(program_id, .{}, &buffer.writer);
-
-    try WriteFieldName.write(&buffer, &has_field, "accounts");
-    try buffer.writer.writeAll(accounts_source);
-
-    try WriteFieldName.write(&buffer, &has_field, "data");
-    try std.json.Stringify.value(instruction_data_base64, .{}, &buffer.writer);
-
-    try WriteFieldName.write(&buffer, &has_field, "data_encoding");
-    try std.json.Stringify.value("base64", .{}, &buffer.writer);
-
-    if (lookup_tables_source) |value| {
-        try WriteFieldName.write(&buffer, &has_field, "address_lookup_tables");
-        try buffer.writer.writeAll(value);
-    }
-    if (recent_blockhash_arg) |value| {
-        try WriteFieldName.write(&buffer, &has_field, "recent_blockhash");
-        try std.json.Stringify.value(value, .{}, &buffer.writer);
-    }
-    if (nonce_account_arg) |value| {
-        try WriteFieldName.write(&buffer, &has_field, "nonce_account");
-        try std.json.Stringify.value(value, .{}, &buffer.writer);
-    }
-    if (nonce_authority_secret_key) |value| {
-        try WriteFieldName.write(&buffer, &has_field, "nonce_authority_secret_key");
-        try std.json.Stringify.value(value, .{}, &buffer.writer);
-    }
-
-    try buffer.writer.writeByte('}');
-    return try allocator.dupe(u8, buffer.written());
 }
 
 fn buildAnchorIdlInvokeInvocationSpecJson(

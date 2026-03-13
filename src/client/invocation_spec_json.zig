@@ -35,6 +35,20 @@ pub const BuildInvocationSpecJsonOptions = struct {
     instructions_json: []const u8,
 };
 
+pub const BuildProgramInvocationSpecJsonOptions = struct {
+    payer_secret_key: []const u8,
+    additional_signer_secret_keys_json: ?[]const u8 = null,
+    address_lookup_tables_json: ?[]const u8 = null,
+    recent_blockhash: ?[]const u8 = null,
+    nonce_account: ?[]const u8 = null,
+    nonce_authority_secret_key: ?[]const u8 = null,
+    program_id: []const u8,
+    accounts_json: ?[]const u8 = null,
+    data: ?[]const u8 = null,
+    data_encoding: ?[]const u8 = null,
+    data_bytes_json: ?[]const u8 = null,
+};
+
 pub fn writeFieldName(
     buffer: *std.io.Writer.Allocating,
     has_field_ptr: *bool,
@@ -95,6 +109,71 @@ pub fn buildInstructionInvocationSpecJson(
         .nonce_authority_secret_key = options.nonce_authority_secret_key,
         .instructions_json = instruction_buffer.written(),
     });
+}
+
+pub fn buildProgramInvocationSpecJson(
+    allocator: Allocator,
+    options: BuildProgramInvocationSpecJsonOptions,
+) BuildError![]u8 {
+    if (options.data != null and options.data_bytes_json != null) {
+        return error.InvalidInvocationSpec;
+    }
+    if (options.data_encoding != null and options.data == null) {
+        return error.InvalidInvocationSpec;
+    }
+
+    var json_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer json_buffer.deinit();
+
+    try json_buffer.writer.writeByte('{');
+    var has_field = false;
+
+    try writeFieldName(&json_buffer, &has_field, "payer_secret_key");
+    try std.json.Stringify.value(options.payer_secret_key, .{}, &json_buffer.writer);
+
+    if (options.additional_signer_secret_keys_json) |value| {
+        try writeFieldName(&json_buffer, &has_field, "additional_signer_secret_keys");
+        try json_buffer.writer.writeAll(value);
+    }
+    if (options.address_lookup_tables_json) |value| {
+        try writeFieldName(&json_buffer, &has_field, "address_lookup_tables");
+        try json_buffer.writer.writeAll(value);
+    }
+    if (options.recent_blockhash) |value| {
+        try writeFieldName(&json_buffer, &has_field, "recent_blockhash");
+        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
+    }
+    if (options.nonce_account) |value| {
+        try writeFieldName(&json_buffer, &has_field, "nonce_account");
+        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
+    }
+    if (options.nonce_authority_secret_key) |value| {
+        try writeFieldName(&json_buffer, &has_field, "nonce_authority_secret_key");
+        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
+    }
+
+    try writeFieldName(&json_buffer, &has_field, "program_id");
+    try std.json.Stringify.value(options.program_id, .{}, &json_buffer.writer);
+
+    if (options.accounts_json) |value| {
+        try writeFieldName(&json_buffer, &has_field, "accounts");
+        try json_buffer.writer.writeAll(value);
+    }
+    if (options.data) |value| {
+        try writeFieldName(&json_buffer, &has_field, "data");
+        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
+    }
+    if (options.data_encoding) |value| {
+        try writeFieldName(&json_buffer, &has_field, "data_encoding");
+        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
+    }
+    if (options.data_bytes_json) |value| {
+        try writeFieldName(&json_buffer, &has_field, "data_bytes");
+        try json_buffer.writer.writeAll(value);
+    }
+
+    try json_buffer.writer.writeByte('}');
+    return try allocator.dupe(u8, json_buffer.written());
 }
 
 pub fn buildInvocationSpecJson(
@@ -196,4 +275,27 @@ test "invocation_spec_json.buildInvocationSpecJson writes canonical outer fields
     try std.testing.expect(std.mem.indexOf(u8, encoded, "\"additional_signer_secret_keys\":[\"extra-signer\"]") != null);
     try std.testing.expect(std.mem.indexOf(u8, encoded, "\"recent_blockhash\":\"recent-blockhash\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, encoded, "\"instructions\":[{\"program_id\":\"program-id\",\"data\":\"AQ==\",\"data_encoding\":\"base64\"}]") != null);
+}
+
+test "invocation_spec_json.buildProgramInvocationSpecJson writes canonical program invocation fields" {
+    const allocator = std.testing.allocator;
+
+    const encoded = try buildProgramInvocationSpecJson(allocator, .{
+        .payer_secret_key = "payer-secret",
+        .additional_signer_secret_keys_json = "[\"extra-signer\"]",
+        .recent_blockhash = "recent-blockhash",
+        .program_id = "program-id",
+        .accounts_json = "[]",
+        .data = "AQ==",
+        .data_encoding = "base64",
+    });
+    defer allocator.free(encoded);
+
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"payer_secret_key\":\"payer-secret\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"additional_signer_secret_keys\":[\"extra-signer\"]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"recent_blockhash\":\"recent-blockhash\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"program_id\":\"program-id\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"accounts\":[]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"data\":\"AQ==\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"data_encoding\":\"base64\"") != null);
 }
