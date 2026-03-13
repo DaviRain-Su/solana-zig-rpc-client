@@ -68,14 +68,82 @@ fn parseJsonBool(value: std.json.Value) EncodeError!bool {
     };
 }
 
+fn decodePubkeyBytesValue(
+    allocator: Allocator,
+    value: std.json.Value,
+) EncodeError![32]u8 {
+    const decoded = switch (value) {
+        .array => blk: {
+            if (value.array.items.len != 32) return error.InvalidInstructionSchema;
+            const bytes = try allocator.alloc(u8, 32);
+            errdefer allocator.free(bytes);
+            for (value.array.items, 0..) |item, index| {
+                switch (item) {
+                    .integer => {
+                        if (item.integer < 0 or item.integer > 255) return error.InvalidInstructionSchema;
+                        bytes[index] = @intCast(item.integer);
+                    },
+                    else => return error.InvalidInstructionSchema,
+                }
+            }
+            break :blk bytes;
+        },
+        .string => blk: {
+            if (std.mem.startsWith(u8, value.string, "base64:")) {
+                break :blk try decodeInstructionData(allocator, value.string["base64:".len..], .base64);
+            }
+            if (std.mem.startsWith(u8, value.string, "hex:")) {
+                break :blk try decodeInstructionData(allocator, value.string["hex:".len..], .hex);
+            }
+            if (std.mem.startsWith(u8, value.string, "0x") or std.mem.startsWith(u8, value.string, "0X")) {
+                break :blk try decodeInstructionData(allocator, value.string, .hex);
+            }
+            return error.InvalidInstructionSchema;
+        },
+        .object => blk: {
+            if (findJsonObjectField(value.object, &.{"bytes"})) |field| {
+                const nested_bytes = try decodePubkeyBytesValue(allocator, field);
+                break :blk try allocator.dupe(u8, &nested_bytes);
+            }
+            if (findJsonObjectField(value.object, &.{"base64"})) |field| {
+                if (field != .string) return error.InvalidInstructionSchema;
+                break :blk try decodeInstructionData(allocator, field.string, .base64);
+            }
+            if (findJsonObjectField(value.object, &.{"hex"})) |field| {
+                if (field != .string) return error.InvalidInstructionSchema;
+                break :blk try decodeInstructionData(allocator, field.string, .hex);
+            }
+            return error.InvalidInstructionSchema;
+        },
+        else => return error.InvalidInstructionSchema,
+    };
+    defer allocator.free(decoded);
+
+    if (decoded.len != 32) return error.InvalidInstructionSchema;
+    var bytes: [32]u8 = undefined;
+    @memcpy(&bytes, decoded);
+    return bytes;
+}
+
 fn parseJsonPubkey(allocator: Allocator, value: std.json.Value) EncodeError!sdk.Pubkey {
     return switch (value) {
-        .string => sdk.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidInstructionSchema,
+        .string => blk: {
+            if (std.mem.startsWith(u8, value.string, "base64:") or
+                std.mem.startsWith(u8, value.string, "hex:") or
+                std.mem.startsWith(u8, value.string, "0x") or
+                std.mem.startsWith(u8, value.string, "0X"))
+            {
+                break :blk sdk.Pubkey{ .bytes = try decodePubkeyBytesValue(allocator, value) };
+            }
+            break :blk sdk.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidInstructionSchema;
+        },
+        .array => sdk.Pubkey{ .bytes = try decodePubkeyBytesValue(allocator, value) },
         .object => blk: {
-            const field = findJsonObjectField(value.object, &.{ "pubkey", "publicKey", "public_key", "address", "key" }) orelse
-                return error.InvalidInstructionSchema;
-            if (field != .string) return error.InvalidInstructionSchema;
-            break :blk sdk.Pubkey.fromBase58(allocator, field.string) catch return error.InvalidInstructionSchema;
+            if (findJsonObjectField(value.object, &.{ "pubkey", "publicKey", "public_key", "address", "key", "base58" })) |field| {
+                if (field != .string) return error.InvalidInstructionSchema;
+                break :blk sdk.Pubkey.fromBase58(allocator, field.string) catch return error.InvalidInstructionSchema;
+            }
+            break :blk sdk.Pubkey{ .bytes = try decodePubkeyBytesValue(allocator, value) };
         },
         else => error.InvalidInstructionSchema,
     };
@@ -528,7 +596,13 @@ fn enumVariantPayloadSchema(variant_value: std.json.Value) ?std.json.Value {
 }
 
 fn findOptionItemSchema(schema_object: std.json.ObjectMap) ?std.json.Value {
-    return findJsonObjectField(schema_object, &.{ "item", "itemType", "item_type", "element", "elementType", "element_type", "option" });
+    if (findJsonObjectField(schema_object, &.{"option"})) |tagged_option| {
+        return switch (tagged_option) {
+            .object => findJsonObjectField(tagged_option.object, &.{ "item", "itemType", "item_type", "element", "elementType", "element_type", "type", "kind", "schema", "value" }) orelse tagged_option,
+            else => tagged_option,
+        };
+    }
+    return findJsonObjectField(schema_object, &.{ "item", "itemType", "item_type", "element", "elementType", "element_type" });
 }
 
 fn findResultSpec(schema_object: std.json.ObjectMap) ?struct { ok_schema: std.json.Value, err_schema: std.json.Value } {
@@ -1881,6 +1955,62 @@ test "instruction_schema encodes result arrays" {
         'n',
         'o',
     }, encoded);
+}
+
+test "instruction_schema accepts nested option shorthand configs" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "struct": {
+        \\    "memo": { "option": { "itemType": "string" } }
+        \\  }
+        \\}
+    ;
+    const args_json =
+        \\{
+        \\  "memo": { "some": "ok" }
+        \\}
+    ;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x01,
+        0x02,
+        0x00,
+        0x00,
+        0x00,
+        'o',
+        'k',
+    }, encoded);
+}
+
+test "instruction_schema accepts pubkey byte wrappers" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "type": "struct",
+        \\  "fields": [
+        \\    { "name": "owner_hex", "type": "pubkey" },
+        \\    { "name": "owner_array", "type": "pubkey" }
+        \\  ]
+        \\}
+    ;
+    const args_json =
+        \\{
+        \\  "owner_hex": { "hex": "0000000000000000000000000000000000000000000000000000000000000000" },
+        \\  "owner_array": [
+        \\    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        \\  ]
+        \\}
+    ;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqual(@as(usize, 64), encoded.len);
+    try std.testing.expect(std.mem.allEqual(u8, encoded, 0));
 }
 
 test "instruction_schema accepts nested tagged container configs" {
