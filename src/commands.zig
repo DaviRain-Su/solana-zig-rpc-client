@@ -4242,6 +4242,11 @@ fn printPreferredPreparedInvocation(
     else
         null;
     defer if (first_signature_base58) |value| allocator.free(value);
+    var diagnostics = try client.invoke.buildInvocationDiagnosticsFromReport(
+        allocator,
+        &prepared.prepared.report,
+    );
+    defer diagnostics.deinit(allocator);
 
     std.debug.print("preferred mode: {s}\n", .{if (prepared.mode_report.preferred_mode) |mode| @tagName(mode) else "none"});
     std.debug.print("requested mode: {s}\n", .{if (prepared.requested_mode) |mode| @tagName(mode) else "auto"});
@@ -4261,6 +4266,8 @@ fn printPreferredPreparedInvocation(
     }
     std.debug.print("transaction base64: {s}\n", .{transaction_base64});
     std.debug.print("message base64: {s}\n", .{message_base64});
+    try printInvocationDiagnostics(diagnostics);
+    try printInvocationAccounts(allocator, prepared.prepared.accounts);
 }
 
 fn printPreferredPreparedInvocationJson(
@@ -12463,6 +12470,9 @@ test "runCommand prepare-program-invoke emits json prepared transaction for sche
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"transaction_base64\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"message_base64\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"first_signature\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"provided_signer_pubkeys\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostics\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"accounts\":[") != null);
 }
 
 test "runCommand simulate-versioned-idl-invoke accepts sender-secret-key" {

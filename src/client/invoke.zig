@@ -879,6 +879,8 @@ pub fn writePreferredPreparedInvocationJson(
 ) !void {
     var first = true;
     const report = &prepared.prepared.report;
+    var diagnostics = try buildInvocationDiagnosticsFromReport(allocator, report);
+    defer diagnostics.deinit(allocator);
 
     try writer.writeAll("{");
     try writeJsonStringField(writer, &first, "preferred_mode", invocationModeJsonLabel(prepared.mode_report.preferred_mode));
@@ -900,7 +902,13 @@ pub fn writePreferredPreparedInvocationJson(
     try writeJsonUsizeField(writer, &first, "instruction_count", report.summary.instruction_count);
     try writeJsonUsizeField(writer, &first, "account_count", report.summary.account_count);
     try writeJsonUsizeField(writer, &first, "signer_count", report.summary.signer_count);
+    try writeJsonUsizeField(writer, &first, "writable_account_count", report.summary.writable_account_count);
+    try writeJsonUsizeField(writer, &first, "readonly_account_count", report.summary.readonly_account_count);
     try writeJsonUsizeField(writer, &first, "lookup_table_count", report.summary.address_lookup_table_count);
+    try writeJsonUsizeField(writer, &first, "missing_required_signer_count", report.validation.missing_required_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "extra_signer_count", report.validation.extra_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "duplicate_signer_count", report.validation.duplicate_provided_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "duplicate_lookup_table_count", report.validation.duplicate_lookup_table_pubkeys.len);
 
     const transaction_base64 = try prepared.toBase64(allocator);
     defer allocator.free(transaction_base64);
@@ -918,6 +926,19 @@ pub fn writePreferredPreparedInvocationJson(
     try writeJsonStringField(writer, &first, "first_signature", first_signature_base58);
 
     try writeJsonPubkeyArrayField(writer, &first, "program_ids", allocator, report.summary.program_ids);
+    try writeJsonPubkeyArrayField(writer, &first, "provided_signer_pubkeys", allocator, report.preflight.provided_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "required_signer_pubkeys", allocator, report.preflight.required_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "writable_pubkeys", allocator, report.preflight.writable_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "readonly_pubkeys", allocator, report.preflight.readonly_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_table_pubkeys", allocator, report.plan.lookup_table_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_covered_pubkeys", allocator, report.lookup_coverage.covered_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_uncovered_pubkeys", allocator, report.lookup_coverage.uncovered_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "missing_required_signer_pubkeys", allocator, report.validation.missing_required_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "extra_signer_pubkeys", allocator, report.validation.extra_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "duplicate_signer_pubkeys", allocator, report.validation.duplicate_provided_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "duplicate_lookup_table_pubkeys", allocator, report.validation.duplicate_lookup_table_pubkeys);
+    try writeJsonDiagnosticsField(writer, &first, diagnostics);
+    try writeJsonAccountsField(writer, &first, allocator, prepared.prepared.accounts);
     try writer.writeAll("}");
 }
 
