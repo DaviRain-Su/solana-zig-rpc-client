@@ -4062,6 +4062,90 @@ const CliInvokeExecutionArgs = struct {
     simulate_inner_instructions: bool,
 };
 
+fn buildCliInvokeContextArgs(
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+) CliInvokeContextArgs {
+    return .{
+        .payer_keypair_path_arg = payer_keypair_path_arg,
+        .payer_secret_key_arg = payer_secret_key_arg,
+        .signer_keypair_paths_arg = signer_keypair_paths_arg,
+        .lookup_tables_arg = lookup_tables_arg,
+        .recent_blockhash_arg = recent_blockhash_arg,
+        .nonce_account_arg = nonce_account_arg,
+        .nonce_authority_keypair_path_arg = nonce_authority_keypair_path_arg,
+        .additional_signer_secret_keys_arg = additional_signer_secret_keys_arg,
+    };
+}
+
+fn buildCliInvokePayloadArgs(
+    instructions_spec_arg: ?[]const u8,
+    program_id_arg: ?[]const u8,
+    program_accounts_arg: ?[]const u8,
+    program_data_arg: ?[]const u8,
+    program_data_encoding_arg: ?[]const u8,
+    idl_arg: ?[]const u8,
+    idl_instruction_arg: ?[]const u8,
+    idl_program_id_arg: ?[]const u8,
+    idl_args_json_arg: ?[]const u8,
+    idl_accounts_json_arg: ?[]const u8,
+    idl_account_bindings: []const []const u8,
+    idl_remaining_accounts: []const []const u8,
+    idl_remaining_accounts_json_arg: ?[]const u8,
+) CliInvokePayloadArgs {
+    return .{
+        .instructions_spec_arg = instructions_spec_arg,
+        .program_id_arg = program_id_arg,
+        .program_accounts_arg = program_accounts_arg,
+        .program_data_arg = program_data_arg,
+        .program_data_encoding_arg = program_data_encoding_arg,
+        .idl_arg = idl_arg,
+        .idl_instruction_arg = idl_instruction_arg,
+        .idl_program_id_arg = idl_program_id_arg,
+        .idl_args_json_arg = idl_args_json_arg,
+        .idl_accounts_json_arg = idl_accounts_json_arg,
+        .idl_account_bindings = idl_account_bindings,
+        .idl_remaining_accounts = idl_remaining_accounts,
+        .idl_remaining_accounts_json_arg = idl_remaining_accounts_json_arg,
+    };
+}
+
+fn buildCliInvokeExecutionArgs(
+    commitment: ?client.Commitment,
+    send_preflight_commitment: ?client.Commitment,
+    send_transaction_options: ?client.SendTransactionOptions,
+    search_transaction_history: bool,
+    status_timeout_ms: u64,
+    status_poll_ms: u64,
+    simulation_account_encoding_arg: ?[]const u8,
+    simulation_min_context_slot_arg: ?[]const u8,
+    simulation_accounts: []const []const u8,
+    simulate_sig_verify: bool,
+    simulate_replace_recent_blockhash: bool,
+    simulate_inner_instructions: bool,
+) CliInvokeExecutionArgs {
+    return .{
+        .commitment = commitment,
+        .send_preflight_commitment = send_preflight_commitment,
+        .send_transaction_options = send_transaction_options,
+        .search_transaction_history = search_transaction_history,
+        .status_timeout_ms = status_timeout_ms,
+        .status_poll_ms = status_poll_ms,
+        .simulation_account_encoding_arg = simulation_account_encoding_arg,
+        .simulation_min_context_slot_arg = simulation_min_context_slot_arg,
+        .simulation_accounts = simulation_accounts,
+        .simulate_sig_verify = simulate_sig_verify,
+        .simulate_replace_recent_blockhash = simulate_replace_recent_blockhash,
+        .simulate_inner_instructions = simulate_inner_instructions,
+    };
+}
+
 fn invokeFamilyForCommand(command: cli.Command) ?InvokeFamily {
     return switch (command) {
         .send_instructions,
@@ -5416,45 +5500,45 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     else
         null;
 
-    const invoke_context_args: CliInvokeContextArgs = .{
-        .payer_keypair_path_arg = effective_sender_keypair_path,
-        .payer_secret_key_arg = sender_secret_key_arg,
-        .signer_keypair_paths_arg = program_invoke_signer_keypair_paths_arg,
-        .lookup_tables_arg = program_invoke_lookup_tables_arg,
-        .recent_blockhash_arg = recent_blockhash_arg,
-        .nonce_account_arg = program_invoke_nonce_account_arg,
-        .nonce_authority_keypair_path_arg = program_invoke_nonce_authority_keypair_path_arg,
-        .additional_signer_secret_keys_arg = program_invoke_additional_signer_secret_keys_arg,
-    };
-    const invoke_payload_args: CliInvokePayloadArgs = .{
-        .instructions_spec_arg = instructions_spec_arg,
-        .program_id_arg = program_invoke_program_id_arg,
-        .program_accounts_arg = program_invoke_accounts_arg,
-        .program_data_arg = program_invoke_data_arg,
-        .program_data_encoding_arg = program_invoke_data_encoding_arg,
-        .idl_arg = idl_spec_arg,
-        .idl_instruction_arg = idl_instruction_arg,
-        .idl_program_id_arg = idl_program_id_arg,
-        .idl_args_json_arg = idl_args_json_arg,
-        .idl_accounts_json_arg = args.idl_accounts_json_arg,
-        .idl_account_bindings = idl_account_bindings.items,
-        .idl_remaining_accounts = idl_remaining_accounts.items,
-        .idl_remaining_accounts_json_arg = args.idl_remaining_accounts_json_arg,
-    };
-    const invoke_execution_args: CliInvokeExecutionArgs = .{
-        .commitment = commitment,
-        .send_preflight_commitment = send_preflight_commitment,
-        .send_transaction_options = send_transaction_options,
-        .search_transaction_history = search_transaction_history,
-        .status_timeout_ms = status_timeout_ms,
-        .status_poll_ms = status_poll_ms,
-        .simulation_account_encoding_arg = simulation_account_encoding_arg,
-        .simulation_min_context_slot_arg = simulation_min_context_slot_arg,
-        .simulation_accounts = simulation_accounts.items,
-        .simulate_sig_verify = simulate_sig_verify,
-        .simulate_replace_recent_blockhash = simulate_replace_recent_blockhash,
-        .simulate_inner_instructions = simulate_inner_instructions,
-    };
+    const invoke_context_args = buildCliInvokeContextArgs(
+        effective_sender_keypair_path,
+        sender_secret_key_arg,
+        program_invoke_signer_keypair_paths_arg,
+        program_invoke_lookup_tables_arg,
+        recent_blockhash_arg,
+        program_invoke_nonce_account_arg,
+        program_invoke_nonce_authority_keypair_path_arg,
+        program_invoke_additional_signer_secret_keys_arg,
+    );
+    const invoke_payload_args = buildCliInvokePayloadArgs(
+        instructions_spec_arg,
+        program_invoke_program_id_arg,
+        program_invoke_accounts_arg,
+        program_invoke_data_arg,
+        program_invoke_data_encoding_arg,
+        idl_spec_arg,
+        idl_instruction_arg,
+        idl_program_id_arg,
+        idl_args_json_arg,
+        args.idl_accounts_json_arg,
+        idl_account_bindings.items,
+        idl_remaining_accounts.items,
+        args.idl_remaining_accounts_json_arg,
+    );
+    const invoke_execution_args = buildCliInvokeExecutionArgs(
+        commitment,
+        send_preflight_commitment,
+        send_transaction_options,
+        search_transaction_history,
+        status_timeout_ms,
+        status_poll_ms,
+        simulation_account_encoding_arg,
+        simulation_min_context_slot_arg,
+        simulation_accounts.items,
+        simulate_sig_verify,
+        simulate_replace_recent_blockhash,
+        simulate_inner_instructions,
+    );
 
     switch (command) {
         .latest_blockhash => {
