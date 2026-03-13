@@ -347,6 +347,34 @@ fn isNamedStructField(field_value: std.json.Value) bool {
     };
 }
 
+fn normalizedFieldNameEql(a: []const u8, b: []const u8) bool {
+    var a_index: usize = 0;
+    var b_index: usize = 0;
+    while (true) {
+        while (a_index < a.len and (a[a_index] == '_' or a[a_index] == '-')) : (a_index += 1) {}
+        while (b_index < b.len and (b[b_index] == '_' or b[b_index] == '-')) : (b_index += 1) {}
+
+        if (a_index == a.len or b_index == b.len) {
+            return a_index == a.len and b_index == b.len;
+        }
+
+        if (std.ascii.toLower(a[a_index]) != std.ascii.toLower(b[b_index])) return false;
+        a_index += 1;
+        b_index += 1;
+    }
+}
+
+fn findStructFieldArg(object: std.json.ObjectMap, field_name: []const u8) ?std.json.Value {
+    if (object.get(field_name)) |field_value| return field_value;
+
+    var iterator = object.iterator();
+    while (iterator.next()) |entry| {
+        if (normalizedFieldNameEql(entry.key_ptr.*, field_name)) return entry.value_ptr.*;
+    }
+
+    return null;
+}
+
 fn schemaIsU8(root_schema: std.json.Value, schema: std.json.Value) EncodeError!bool {
     const resolved_schema = try resolveSchemaValue(root_schema, schema);
     const type_name = schemaTypeName(resolved_schema) orelse return error.InvalidInstructionSchema;
@@ -370,6 +398,27 @@ fn maybeDecodeByteSequenceValue(
         .array => null,
         else => try decodeSchemaBytesValue(allocator, value),
     };
+}
+
+fn findSchemaDefaultValue(
+    root_schema: std.json.Value,
+    field_value: std.json.Value,
+    field_schema: std.json.Value,
+) EncodeError!?std.json.Value {
+    if (field_value == .object) {
+        if (findJsonObjectField(field_value.object, &.{ "default", "defaultValue", "default_value" })) |default_value| {
+            return default_value;
+        }
+    }
+
+    const resolved_schema = try resolveSchemaValue(root_schema, field_schema);
+    if (resolved_schema == .object) {
+        if (findJsonObjectField(resolved_schema.object, &.{ "default", "defaultValue", "default_value" })) |default_value| {
+            return default_value;
+        }
+    }
+
+    return null;
 }
 
 fn sortEncodedSlices(items: [][]u8) void {
@@ -680,7 +729,10 @@ fn encodeBorshSchemaValue(
                 const field_name_value = findJsonObjectField(field_value.object, &.{"name"}) orelse return error.InvalidInstructionSchema;
                 if (field_name_value != .string) return error.InvalidInstructionSchema;
                 const field_schema = findJsonObjectField(field_value.object, &.{"type"}) orelse field_value;
-                const field_arg = value.object.get(field_name_value.string) orelse blk: {
+                const field_arg = findStructFieldArg(value.object, field_name_value.string) orelse blk: {
+                    if (try findSchemaDefaultValue(root_schema, field_value, field_schema)) |default_value| {
+                        break :blk default_value;
+                    }
                     if (try schemaIsOption(root_schema, field_schema)) {
                         break :blk std.json.Value{ .null = {} };
                     }
@@ -1179,4 +1231,33 @@ test "instruction_schema accepts ergonomic scalar inputs" {
     try std.testing.expect(std.mem.allEqual(u8, encoded[1..33], 0));
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x02 }, encoded[33..35]);
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0xfe, 0xff, 0xff, 0xff }, encoded[35..39]);
+}
+
+test "instruction_schema accepts field aliases and schema defaults" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "type": "struct",
+        \\  "fields": [
+        \\    { "name": "public_key", "type": "pubkey" },
+        \\    { "name": "threshold_value", "type": "u16", "default": "0x0201" },
+        \\    { "name": "enabled_flag", "type": "bool", "defaultValue": "true" },
+        \\    { "name": "memo_text", "type": { "type": "option", "item": "string" } }
+        \\  ]
+        \\}
+    ;
+    const args_json =
+        \\{
+        \\  "publicKey": { "address": "11111111111111111111111111111111" }
+        \\}
+    ;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqual(@as(usize, 36), encoded.len);
+    try std.testing.expect(std.mem.allEqual(u8, encoded[0..32], 0));
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x02 }, encoded[32..34]);
+    try std.testing.expectEqual(@as(u8, 1), encoded[34]);
+    try std.testing.expectEqual(@as(u8, 0), encoded[35]);
 }
