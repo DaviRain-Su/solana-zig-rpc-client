@@ -3098,6 +3098,101 @@ fn cloneOwnedResolvedInvocation(
     };
 }
 
+fn buildOwnedMessageFromOwnedSpecWithOptions(
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: OwnedInvocationSpec,
+    options: BuildInvocationSpecOptions,
+) !OwnedInvocationMessage {
+    var resolved_invocation = try buildOwnedResolvedInvocationFromOwnedSpec(allocator, owned_spec);
+    defer resolved_invocation.deinit(allocator);
+
+    if (versioned) {
+        if (resolved_invocation.recent_blockhash) |recent_blockhash| {
+            return .{ .versioned = try client.instructions_invoke.buildOwnedVersionedMessage(allocator, .{
+                .payer = resolved_invocation.payer,
+                .recent_blockhash = recent_blockhash,
+                .instructions = resolved_invocation.owned_instructions.instructions,
+                .address_lookup_tables = resolved_invocation.address_lookup_tables,
+            }) };
+        }
+
+        if (resolved_invocation.nonce_account) |nonce_account| {
+            const nonce_account_base58 = try nonce_account.toBase58(allocator);
+            defer allocator.free(nonce_account_base58);
+
+            return .{ .versioned = try client.instructions_invoke.buildOwnedVersionedMessageWithBlockhashQuery(rpc, .{
+                .payer = resolved_invocation.payer,
+                .instructions = resolved_invocation.owned_instructions.instructions,
+                .address_lookup_tables = resolved_invocation.address_lookup_tables,
+                .blockhash_query = .{ .nonce_account = .{
+                    .pubkey = nonce_account_base58,
+                    .commitment = options.blockhash_commitment,
+                } },
+                .nonce_authority = resolved_invocation.nonce_authority,
+            }) };
+        }
+
+        return .{ .versioned = try client.instructions_invoke.buildOwnedVersionedMessageWithLatestBlockhash(rpc, .{
+            .payer = resolved_invocation.payer,
+            .instructions = resolved_invocation.owned_instructions.instructions,
+            .address_lookup_tables = resolved_invocation.address_lookup_tables,
+            .blockhash_commitment = options.blockhash_commitment,
+        }) };
+    }
+
+    if (resolved_invocation.recent_blockhash) |recent_blockhash| {
+        return .{ .legacy = try client.instructions_invoke.buildOwnedLegacyMessage(allocator, .{
+            .payer = resolved_invocation.payer,
+            .recent_blockhash = recent_blockhash,
+            .instructions = resolved_invocation.owned_instructions.instructions,
+        }) };
+    }
+
+    if (resolved_invocation.nonce_account) |nonce_account| {
+        const nonce_account_base58 = try nonce_account.toBase58(allocator);
+        defer allocator.free(nonce_account_base58);
+
+        return .{ .legacy = try client.instructions_invoke.buildOwnedLegacyMessageWithBlockhashQuery(rpc, .{
+            .payer = resolved_invocation.payer,
+            .instructions = resolved_invocation.owned_instructions.instructions,
+            .blockhash_query = .{ .nonce_account = .{
+                .pubkey = nonce_account_base58,
+                .commitment = options.blockhash_commitment,
+            } },
+            .nonce_authority = resolved_invocation.nonce_authority,
+        }) };
+    }
+
+    return .{ .legacy = try client.instructions_invoke.buildOwnedLegacyMessageWithLatestBlockhash(rpc, .{
+        .payer = resolved_invocation.payer,
+        .instructions = resolved_invocation.owned_instructions.instructions,
+        .blockhash_commitment = options.blockhash_commitment,
+    }) };
+}
+
+fn buildSignedTransactionFromOwnedSpecWithOptions(
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: *const OwnedInvocationSpec,
+    options: BuildInvocationSpecOptions,
+) !SignedInvocationTransaction {
+    var prepared = try buildPreparedInvocationFromOwnedInvocationSpecRefWithOptions(
+        allocator,
+        rpc,
+        versioned,
+        owned_spec,
+        options,
+    );
+    const transaction = prepared.transaction;
+    prepared.report.deinit(allocator);
+    prepared.resolved_invocation.deinit(allocator);
+    prepared.accounts.deinit(allocator);
+    return transaction;
+}
+
 pub fn buildOwnedResolvedInvocationFromOwnedInvocationSpec(
     allocator: Allocator,
     owned_spec: OwnedInvocationSpec,
@@ -4941,16 +5036,14 @@ pub fn buildOwnedLegacyMessageFromOwnedInvocationSpecWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildInvocationSpecOptions,
 ) !sdk.OwnedLegacyMessage {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildOwnedLegacyMessageFromInvocationSpecJsonWithOptions(
+    const message = try buildOwnedMessageFromOwnedSpecWithOptions(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        false,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
         options,
     );
+    return message.legacy;
 }
 
 pub fn buildOwnedLegacyMessageFromOwnedInvocationSpec(
@@ -4973,16 +5066,15 @@ pub fn buildLegacyMessageBytesFromOwnedInvocationSpecWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildInvocationSpecOptions,
 ) ![]u8 {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildLegacyMessageBytesFromInvocationSpecJsonWithOptions(
+    var message = try buildOwnedMessageFromOwnedSpecWithOptions(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        false,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
         options,
     );
+    defer message.deinit(allocator);
+    return try message.serialize(allocator);
 }
 
 pub fn buildLegacyMessageBytesFromOwnedInvocationSpec(
@@ -5005,16 +5097,15 @@ pub fn buildLegacyMessageBase64FromOwnedInvocationSpecWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildInvocationSpecOptions,
 ) ![]u8 {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildLegacyMessageBase64FromInvocationSpecJsonWithOptions(
+    var message = try buildOwnedMessageFromOwnedSpecWithOptions(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        false,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
         options,
     );
+    defer message.deinit(allocator);
+    return try message.toBase64(allocator);
 }
 
 pub fn buildLegacyMessageBase64FromOwnedInvocationSpec(
@@ -5037,16 +5128,14 @@ pub fn buildSignedLegacyTransactionFromOwnedInvocationSpecWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildInvocationSpecOptions,
 ) !sdk.SignedLegacyTransaction {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildSignedLegacyTransactionFromInvocationSpecJsonWithOptions(
+    const transaction = try buildSignedTransactionFromOwnedSpecWithOptions(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        false,
+        owned_spec,
         options,
     );
+    return transaction.legacy;
 }
 
 pub fn buildSignedLegacyTransactionFromOwnedInvocationSpec(
@@ -5069,16 +5158,15 @@ pub fn buildLegacyTransactionBase64FromOwnedInvocationSpecWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildInvocationSpecOptions,
 ) ![]u8 {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildLegacyTransactionBase64FromInvocationSpecJsonWithOptions(
+    var transaction = try buildSignedTransactionFromOwnedSpecWithOptions(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        false,
+        owned_spec,
         options,
     );
+    defer transaction.deinit(allocator);
+    return try transaction.toBase64(allocator);
 }
 
 pub fn buildLegacyTransactionBase64FromOwnedInvocationSpec(
@@ -5101,16 +5189,14 @@ pub fn buildOwnedVersionedMessageFromOwnedInvocationSpecWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildInvocationSpecOptions,
 ) !sdk.OwnedVersionedMessageV0 {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildOwnedVersionedMessageFromInvocationSpecJsonWithOptions(
+    const message = try buildOwnedMessageFromOwnedSpecWithOptions(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        true,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
         options,
     );
+    return message.versioned;
 }
 
 pub fn buildOwnedVersionedMessageFromOwnedInvocationSpec(
@@ -5133,16 +5219,15 @@ pub fn buildVersionedMessageBytesFromOwnedInvocationSpecWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildInvocationSpecOptions,
 ) ![]u8 {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildVersionedMessageBytesFromInvocationSpecJsonWithOptions(
+    var message = try buildOwnedMessageFromOwnedSpecWithOptions(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        true,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
         options,
     );
+    defer message.deinit(allocator);
+    return try message.serialize(allocator);
 }
 
 pub fn buildVersionedMessageBytesFromOwnedInvocationSpec(
@@ -5165,16 +5250,15 @@ pub fn buildVersionedMessageBase64FromOwnedInvocationSpecWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildInvocationSpecOptions,
 ) ![]u8 {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildVersionedMessageBase64FromInvocationSpecJsonWithOptions(
+    var message = try buildOwnedMessageFromOwnedSpecWithOptions(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        true,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
         options,
     );
+    defer message.deinit(allocator);
+    return try message.toBase64(allocator);
 }
 
 pub fn buildVersionedMessageBase64FromOwnedInvocationSpec(
@@ -5197,16 +5281,14 @@ pub fn buildSignedVersionedTransactionFromOwnedInvocationSpecWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildInvocationSpecOptions,
 ) !sdk.SignedVersionedTransaction {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildSignedVersionedTransactionFromInvocationSpecJsonWithOptions(
+    const transaction = try buildSignedTransactionFromOwnedSpecWithOptions(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        true,
+        owned_spec,
         options,
     );
+    return transaction.versioned;
 }
 
 pub fn buildSignedVersionedTransactionFromOwnedInvocationSpec(
@@ -5229,16 +5311,15 @@ pub fn buildVersionedTransactionBase64FromOwnedInvocationSpecWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildInvocationSpecOptions,
 ) ![]u8 {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildVersionedTransactionBase64FromInvocationSpecJsonWithOptions(
+    var transaction = try buildSignedTransactionFromOwnedSpecWithOptions(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        true,
+        owned_spec,
         options,
     );
+    defer transaction.deinit(allocator);
+    return try transaction.toBase64(allocator);
 }
 
 pub fn buildVersionedTransactionBase64FromOwnedInvocationSpec(
