@@ -334,6 +334,21 @@ pub const OwnedPreferredInvocationReport = struct {
     }
 };
 
+pub const PreferredInvocationExecutionReport = struct {
+    mode_report: InvocationModeReport,
+    report: OwnedInvocationReport,
+    requested_mode: ?InvocationMode,
+    selected_mode: ?InvocationMode,
+    requested_mode_buildable: bool,
+    used_fallback: bool,
+    can_execute_selected_mode: bool,
+
+    pub fn deinit(self: *PreferredInvocationExecutionReport, allocator: Allocator) void {
+        self.report.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 pub fn buildInstructionInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
@@ -1524,6 +1539,58 @@ pub fn buildPreferredInvocationReportFromInvocationSpecJson(
             family,
             invocation_spec_json,
         ),
+    };
+}
+
+pub fn buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredInvocationExecutionReport {
+    const mode_report = try buildInvocationModeReportFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options.build,
+    );
+
+    var report = try buildInvocationReportFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer report.deinit(allocator);
+
+    const requested_mode_buildable = if (options.mode.preferred_mode) |requested_mode|
+        switch (requested_mode) {
+            .legacy => mode_report.legacy_buildable,
+            .versioned => mode_report.versioned_buildable,
+        }
+    else
+        false;
+
+    const selected_mode = blk: {
+        if (options.mode.preferred_mode) |requested_mode| {
+            if (requested_mode_buildable) break :blk requested_mode;
+            if (!options.mode.allow_fallback) break :blk null;
+        }
+        break :blk mode_report.preferred_mode;
+    };
+
+    return .{
+        .mode_report = mode_report,
+        .report = report,
+        .requested_mode = options.mode.preferred_mode,
+        .selected_mode = selected_mode,
+        .requested_mode_buildable = requested_mode_buildable,
+        .used_fallback = if (options.mode.preferred_mode) |requested_mode|
+            selected_mode != null and selected_mode.? != requested_mode
+        else
+            false,
+        .can_execute_selected_mode = selected_mode != null and report.can_execute,
     };
 }
 
@@ -4765,4 +4832,74 @@ test "invoke.buildPreferredInvocationReportFromInvocationSpecJson surfaces inval
         @as(?InvocationMode, null),
         preferred_report.mode_report.preferred_mode,
     );
+}
+
+test "invoke.buildPreferredInvocationExecutionReportFromInvocationSpecJson tracks fallback selection" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(
+        allocator,
+        331,
+        332,
+        333,
+        334,
+        335,
+    );
+    defer allocator.free(spec_json);
+
+    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer execution_report.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), execution_report.requested_mode);
+    try std.testing.expect(!execution_report.requested_mode_buildable);
+    try std.testing.expectEqual(@as(?InvocationMode, .versioned), execution_report.selected_mode);
+    try std.testing.expect(execution_report.used_fallback);
+    try std.testing.expect(execution_report.can_execute_selected_mode);
+}
+
+test "invoke.buildPreferredInvocationExecutionReportFromInvocationSpecJson tracks unbuildable requested mode without fallback" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocInstructionsInvocationSpecJsonWithMissingSignerAndExtraSigner(
+        allocator,
+        341,
+        342,
+        343,
+        344,
+        345,
+    );
+    defer allocator.free(spec_json);
+
+    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = false,
+            },
+        },
+    );
+    defer execution_report.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), execution_report.requested_mode);
+    try std.testing.expect(!execution_report.requested_mode_buildable);
+    try std.testing.expectEqual(@as(?InvocationMode, null), execution_report.selected_mode);
+    try std.testing.expect(!execution_report.used_fallback);
+    try std.testing.expect(!execution_report.can_execute_selected_mode);
 }
