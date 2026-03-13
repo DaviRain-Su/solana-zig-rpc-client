@@ -2686,30 +2686,12 @@ fn loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(
     defer if (accounts_json_source) |value| allocator.free(value);
     const remaining_accounts_json_source = loadOptionalInstructionSpecSource(allocator, remaining_accounts_json_arg) catch return error.InvalidCli;
     defer if (remaining_accounts_json_source) |value| allocator.free(value);
-    var parsed_signer_keypair_paths: ?std.json.Parsed([]const []const u8) = null;
-    defer if (parsed_signer_keypair_paths) |*value| value.deinit();
-
-    if (signer_keypair_paths_arg) |value| {
-        const signer_paths_source = loadInstructionSpecSource(allocator, value) catch return error.InvalidCli;
-        defer allocator.free(signer_paths_source);
-
-        parsed_signer_keypair_paths = std.json.parseFromSlice([]const []const u8, allocator, signer_paths_source, .{
-            .allocate = .alloc_always,
-        }) catch return error.InvalidCli;
-    }
-
-    var parsed_lookup_tables: ?std.json.Parsed([]CliAddressLookupTableSpec) = null;
-    defer if (parsed_lookup_tables) |*value| value.deinit();
-
-    if (lookup_tables_arg) |value| {
-        const lookup_tables_source = loadInstructionSpecSource(allocator, value) catch return error.InvalidCli;
-        defer allocator.free(lookup_tables_source);
-
-        parsed_lookup_tables = std.json.parseFromSlice([]CliAddressLookupTableSpec, allocator, lookup_tables_source, .{
-            .allocate = .alloc_always,
-            .ignore_unknown_fields = true,
-        }) catch return error.InvalidCli;
-    }
+    var context_spec_inputs = loadCliInvocationContextSpecInputs(
+        allocator,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+    ) catch return error.InvalidCli;
+    defer context_spec_inputs.deinit();
     const payer_keypair = if (payer_secret_key_arg != null or payer_keypair_path_arg != null)
         try resolveOptionalInstructionKeypair(allocator, payer_secret_key_arg, payer_keypair_path_arg)
     else
@@ -2764,8 +2746,8 @@ fn loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(
         .nonce_account = nonce_account_arg,
         .nonce_authority_keypair_path = nonce_authority_keypair_path_arg,
         .additional_signer_secret_keys = additional_signer_secret_keys_arg,
-        .additional_signer_keypair_paths = if (parsed_signer_keypair_paths) |value| value.value else &.{},
-        .address_lookup_tables = if (parsed_lookup_tables) |value| value.value else &.{},
+        .additional_signer_keypair_paths = context_spec_inputs.additionalSignerKeypairPaths(),
+        .address_lookup_tables = context_spec_inputs.addressLookupTables(),
         .instructions = &instruction_specs,
     };
     return try loadCliInstructionSpec(allocator, &spec);
@@ -3620,6 +3602,47 @@ fn loadCliInvocationContextJsonInputs(
     };
 }
 
+const LoadedCliInvocationContextSpecInputs = struct {
+    parsed_signer_keypair_paths: ?std.json.Parsed([]const []const u8) = null,
+    parsed_lookup_tables: ?std.json.Parsed([]CliAddressLookupTableSpec) = null,
+
+    fn deinit(self: *@This()) void {
+        if (self.parsed_signer_keypair_paths) |*value| value.deinit();
+        if (self.parsed_lookup_tables) |*value| value.deinit();
+    }
+
+    fn additionalSignerKeypairPaths(self: *const @This()) []const []const u8 {
+        return if (self.parsed_signer_keypair_paths) |value| value.value else &.{};
+    }
+
+    fn addressLookupTables(self: *const @This()) []const CliAddressLookupTableSpec {
+        return if (self.parsed_lookup_tables) |value| value.value else &.{};
+    }
+};
+
+fn loadCliInvocationContextSpecInputs(
+    allocator: Allocator,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+) !LoadedCliInvocationContextSpecInputs {
+    const signer_keypair_paths_source = try loadOptionalInstructionSpecSource(allocator, signer_keypair_paths_arg);
+    defer if (signer_keypair_paths_source) |value| allocator.free(value);
+
+    const lookup_tables_source = try loadOptionalInstructionSpecSource(allocator, lookup_tables_arg);
+    defer if (lookup_tables_source) |value| allocator.free(value);
+
+    var parsed_signer_keypair_paths = try parseCliSignerKeypairPathsJsonSource(allocator, signer_keypair_paths_source);
+    errdefer if (parsed_signer_keypair_paths) |*value| value.deinit();
+
+    var parsed_lookup_tables = try parseCliAddressLookupTablesJsonSource(allocator, lookup_tables_source);
+    errdefer if (parsed_lookup_tables) |*value| value.deinit();
+
+    return .{
+        .parsed_signer_keypair_paths = parsed_signer_keypair_paths,
+        .parsed_lookup_tables = parsed_lookup_tables,
+    };
+}
+
 const LoadedCliAnchorInvokeAccountInputs = struct {
     merged_account_bindings_json_source: ?[]u8 = null,
     combined_account_bindings_json_source: ?[]u8 = null,
@@ -3968,17 +3991,12 @@ fn loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
     ) catch return error.InvalidCli;
     defer payload_inputs.deinit(allocator);
 
-    const signer_keypair_paths_source = loadOptionalInstructionSpecSource(allocator, signer_keypair_paths_arg) catch return error.InvalidCli;
-    defer if (signer_keypair_paths_source) |value| allocator.free(value);
-
-    var parsed_signer_keypair_paths = parseCliSignerKeypairPathsJsonSource(allocator, signer_keypair_paths_source) catch return error.InvalidCli;
-    defer if (parsed_signer_keypair_paths) |*value| value.deinit();
-
-    const lookup_tables_source = loadOptionalInstructionSpecSource(allocator, lookup_tables_arg) catch return error.InvalidCli;
-    defer if (lookup_tables_source) |value| allocator.free(value);
-
-    var parsed_lookup_tables = parseCliAddressLookupTablesJsonSource(allocator, lookup_tables_source) catch return error.InvalidCli;
-    defer if (parsed_lookup_tables) |*value| value.deinit();
+    var context_spec_inputs = loadCliInvocationContextSpecInputs(
+        allocator,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+    ) catch return error.InvalidCli;
+    defer context_spec_inputs.deinit();
 
     const program_id_pubkey = client.Pubkey.fromBase58(allocator, program_id) catch return error.InvalidCli;
     var owned_instruction = client.program_invoke.buildOwnedInstruction(
@@ -4008,8 +4026,8 @@ fn loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
         .nonce_account = nonce_account_arg,
         .nonce_authority_keypair_path = nonce_authority_keypair_path_arg,
         .additional_signer_secret_keys = additional_signer_secret_keys_arg,
-        .additional_signer_keypair_paths = if (parsed_signer_keypair_paths) |value| value.value else &.{},
-        .address_lookup_tables = if (parsed_lookup_tables) |value| value.value else &.{},
+        .additional_signer_keypair_paths = context_spec_inputs.additionalSignerKeypairPaths(),
+        .address_lookup_tables = context_spec_inputs.addressLookupTables(),
         .instructions = &instruction_specs,
     };
 
