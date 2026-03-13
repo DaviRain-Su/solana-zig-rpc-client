@@ -3996,6 +3996,71 @@ fn simulateInvocationSpecJson(
     };
 }
 
+fn invokeCommandLabel(command: cli.Command) []const u8 {
+    return switch (command) {
+        .send_instructions => "send-instructions",
+        .send_instructions_and_confirm => "send-instructions-and-confirm",
+        .send_versioned_instructions => "send-versioned-instructions",
+        .send_versioned_instructions_and_confirm => "send-versioned-instructions-and-confirm",
+        .simulate_instructions => "simulate-instructions",
+        .simulate_versioned_instructions => "simulate-versioned-instructions",
+        .send_program_invoke => "send-program-invoke",
+        .send_program_invoke_and_confirm => "send-program-invoke-and-confirm",
+        .send_versioned_program_invoke => "send-versioned-program-invoke",
+        .send_versioned_program_invoke_and_confirm => "send-versioned-program-invoke-and-confirm",
+        .simulate_program_invoke => "simulate-program-invoke",
+        .simulate_versioned_program_invoke => "simulate-versioned-program-invoke",
+        .send_idl_invoke => "send-idl-invoke",
+        .send_idl_invoke_and_confirm => "send-idl-invoke-and-confirm",
+        .send_versioned_idl_invoke => "send-versioned-idl-invoke",
+        .send_versioned_idl_invoke_and_confirm => "send-versioned-idl-invoke-and-confirm",
+        .simulate_idl_invoke => "simulate-idl-invoke",
+        .simulate_versioned_idl_invoke => "simulate-versioned-idl-invoke",
+        else => unreachable,
+    };
+}
+
+fn buildInstructionsInvocationSpecJsonForCommand(
+    allocator: Allocator,
+    command: cli.Command,
+    instructions_spec_arg: ?[]const u8,
+    effective_sender_keypair_path: ?[]const u8,
+    sender_secret_key_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+    recent_blockhash_arg: ?[]const u8,
+) ![]u8 {
+    const command_label = invokeCommandLabel(command);
+    const spec_arg = instructions_spec_arg orelse {
+        reportInvalidCliMessage("error: {s} requires <instruction-spec-json>\n", .{command_label});
+        return error.InvalidCli;
+    };
+    const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
+        reportInvalidCliMessage("error: {s} spec must be valid JSON or @path\n", .{command_label});
+        return error.InvalidCli;
+    };
+    defer allocator.free(spec_source);
+
+    const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
+        .ignore_unknown_fields = true,
+    }) catch {
+        reportInvalidCliMessage("error: {s} spec must be valid JSON\n", .{command_label});
+        return error.InvalidCli;
+    };
+    defer parsed_spec.deinit();
+
+    return buildInvocationSpecJsonFromCliSpec(
+        allocator,
+        &parsed_spec.value,
+        effective_sender_keypair_path,
+        sender_secret_key_arg,
+        additional_signer_secret_keys_arg,
+        recent_blockhash_arg,
+    ) catch {
+        reportInvalidCliMessage("error: {s} spec is invalid\n", .{command_label});
+        return error.InvalidCli;
+    };
+}
+
 fn buildProgramInvokeInvocationSpecJson(
     allocator: Allocator,
     program_id: []const u8,
@@ -5002,34 +5067,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .send_instructions => {
-            const spec_arg = instructions_spec_arg orelse {
-                reportInvalidCliMessage("error: send-instructions requires <instruction-spec-json>\n", .{});
-                return error.InvalidCli;
-            };
-            const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
-                reportInvalidCliMessage("error: send-instructions spec must be valid JSON or @path\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(spec_source);
-
-            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
-                .ignore_unknown_fields = true,
-            }) catch {
-                reportInvalidCliMessage("error: send-instructions spec must be valid JSON\n", .{});
-                return error.InvalidCli;
-            };
-            defer parsed_spec.deinit();
-            const invocation_spec_json = buildInvocationSpecJsonFromCliSpec(
+            const invocation_spec_json = buildInstructionsInvocationSpecJsonForCommand(
                 allocator,
-                &parsed_spec.value,
+                command,
+                instructions_spec_arg,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
                 program_invoke_additional_signer_secret_keys_arg,
                 recent_blockhash_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-instructions spec is invalid\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const tx_signature = try sendInvocationSpecJson(
@@ -5052,34 +5098,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .send_instructions_and_confirm => {
-            const spec_arg = instructions_spec_arg orelse {
-                reportInvalidCliMessage("error: send-instructions-and-confirm requires <instruction-spec-json>\n", .{});
-                return error.InvalidCli;
-            };
-            const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
-                reportInvalidCliMessage("error: send-instructions-and-confirm spec must be valid JSON or @path\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(spec_source);
-
-            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
-                .ignore_unknown_fields = true,
-            }) catch {
-                reportInvalidCliMessage("error: send-instructions-and-confirm spec must be valid JSON\n", .{});
-                return error.InvalidCli;
-            };
-            defer parsed_spec.deinit();
-            const invocation_spec_json = buildInvocationSpecJsonFromCliSpec(
+            const invocation_spec_json = buildInstructionsInvocationSpecJsonForCommand(
                 allocator,
-                &parsed_spec.value,
+                command,
+                instructions_spec_arg,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
                 program_invoke_additional_signer_secret_keys_arg,
                 recent_blockhash_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-instructions-and-confirm spec is invalid\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const tx_signature = try sendInvocationSpecJson(
@@ -5102,34 +5129,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .send_versioned_instructions => {
-            const spec_arg = instructions_spec_arg orelse {
-                reportInvalidCliMessage("error: send-versioned-instructions requires <instruction-spec-json>\n", .{});
-                return error.InvalidCli;
-            };
-            const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
-                reportInvalidCliMessage("error: send-versioned-instructions spec must be valid JSON or @path\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(spec_source);
-
-            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
-                .ignore_unknown_fields = true,
-            }) catch {
-                reportInvalidCliMessage("error: send-versioned-instructions spec must be valid JSON\n", .{});
-                return error.InvalidCli;
-            };
-            defer parsed_spec.deinit();
-            const invocation_spec_json = buildInvocationSpecJsonFromCliSpec(
+            const invocation_spec_json = buildInstructionsInvocationSpecJsonForCommand(
                 allocator,
-                &parsed_spec.value,
+                command,
+                instructions_spec_arg,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
                 program_invoke_additional_signer_secret_keys_arg,
                 recent_blockhash_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-versioned-instructions spec is invalid\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const tx_signature = try sendInvocationSpecJson(
@@ -5152,34 +5160,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .send_versioned_instructions_and_confirm => {
-            const spec_arg = instructions_spec_arg orelse {
-                reportInvalidCliMessage("error: send-versioned-instructions-and-confirm requires <instruction-spec-json>\n", .{});
-                return error.InvalidCli;
-            };
-            const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
-                reportInvalidCliMessage("error: send-versioned-instructions-and-confirm spec must be valid JSON or @path\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(spec_source);
-
-            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
-                .ignore_unknown_fields = true,
-            }) catch {
-                reportInvalidCliMessage("error: send-versioned-instructions-and-confirm spec must be valid JSON\n", .{});
-                return error.InvalidCli;
-            };
-            defer parsed_spec.deinit();
-            const invocation_spec_json = buildInvocationSpecJsonFromCliSpec(
+            const invocation_spec_json = buildInstructionsInvocationSpecJsonForCommand(
                 allocator,
-                &parsed_spec.value,
+                command,
+                instructions_spec_arg,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
                 program_invoke_additional_signer_secret_keys_arg,
                 recent_blockhash_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-versioned-instructions-and-confirm spec is invalid\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const tx_signature = try sendInvocationSpecJson(
@@ -5756,34 +5745,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .simulate_instructions => {
-            const spec_arg = instructions_spec_arg orelse {
-                reportInvalidCliMessage("error: simulate-instructions requires <instruction-spec-json>\n", .{});
-                return error.InvalidCli;
-            };
-            const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
-                reportInvalidCliMessage("error: simulate-instructions spec must be valid JSON or @path\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(spec_source);
-
-            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
-                .ignore_unknown_fields = true,
-            }) catch {
-                reportInvalidCliMessage("error: simulate-instructions spec must be valid JSON\n", .{});
-                return error.InvalidCli;
-            };
-            defer parsed_spec.deinit();
-            const invocation_spec_json = buildInvocationSpecJsonFromCliSpec(
+            const invocation_spec_json = buildInstructionsInvocationSpecJsonForCommand(
                 allocator,
-                &parsed_spec.value,
+                command,
+                instructions_spec_arg,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
                 program_invoke_additional_signer_secret_keys_arg,
                 recent_blockhash_arg,
-            ) catch {
-                reportInvalidCliMessage("error: simulate-instructions spec is invalid\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const options = try buildCliSimulationOptions(
@@ -5811,34 +5781,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .simulate_versioned_instructions => {
-            const spec_arg = instructions_spec_arg orelse {
-                reportInvalidCliMessage("error: simulate-versioned-instructions requires <instruction-spec-json>\n", .{});
-                return error.InvalidCli;
-            };
-            const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
-                reportInvalidCliMessage("error: simulate-versioned-instructions spec must be valid JSON or @path\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(spec_source);
-
-            const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
-                .ignore_unknown_fields = true,
-            }) catch {
-                reportInvalidCliMessage("error: simulate-versioned-instructions spec must be valid JSON\n", .{});
-                return error.InvalidCli;
-            };
-            defer parsed_spec.deinit();
-            const invocation_spec_json = buildInvocationSpecJsonFromCliSpec(
+            const invocation_spec_json = buildInstructionsInvocationSpecJsonForCommand(
                 allocator,
-                &parsed_spec.value,
+                command,
+                instructions_spec_arg,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
                 program_invoke_additional_signer_secret_keys_arg,
                 recent_blockhash_arg,
-            ) catch {
-                reportInvalidCliMessage("error: simulate-versioned-instructions spec is invalid\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const options = try buildCliSimulationOptions(
