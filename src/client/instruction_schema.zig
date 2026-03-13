@@ -31,6 +31,7 @@ fn isBuiltinSchemaType(name: []const u8) bool {
         std.mem.eql(u8, name, "bytes") or
         std.mem.eql(u8, name, "pubkey") or
         std.mem.eql(u8, name, "option") or
+        std.mem.eql(u8, name, "result") or
         std.mem.eql(u8, name, "array") or
         std.mem.eql(u8, name, "vec") or
         std.mem.eql(u8, name, "set") or
@@ -238,6 +239,8 @@ fn schemaTypeName(schema: std.json.Value) ?[]const u8 {
             }
         else if (findJsonObjectField(schema.object, &.{"option"})) |_|
             "option"
+        else if (findJsonObjectField(schema.object, &.{"result"})) |_|
+            "result"
         else if (findJsonObjectField(schema.object, &.{"array"})) |_|
             "array"
         else if (findJsonObjectField(schema.object, &.{"vec"})) |_|
@@ -378,6 +381,42 @@ fn parseOptionInput(
     };
 }
 
+fn parseResultInput(
+    value: std.json.Value,
+) EncodeError!struct {
+    is_ok: bool,
+    payload: ?std.json.Value,
+} {
+    return switch (value) {
+        .object => {
+            if (findJsonObjectField(value.object, &.{ "ok", "Ok" })) |ok_value| {
+                return .{ .is_ok = true, .payload = ok_value };
+            }
+            if (findJsonObjectField(value.object, &.{ "err", "error", "Err", "Error" })) |err_value| {
+                return .{ .is_ok = false, .payload = err_value };
+            }
+            if (findJsonObjectField(value.object, &.{ "variant", "kind", "tag", "name" })) |variant_value| {
+                if (variant_value != .string) return error.InvalidInstructionSchema;
+                if (std.ascii.eqlIgnoreCase(variant_value.string, "ok")) {
+                    return .{
+                        .is_ok = true,
+                        .payload = findJsonObjectField(value.object, &.{ "value", "data", "payload", "fields" }),
+                    };
+                }
+                if (std.ascii.eqlIgnoreCase(variant_value.string, "err") or std.ascii.eqlIgnoreCase(variant_value.string, "error")) {
+                    return .{
+                        .is_ok = false,
+                        .payload = findJsonObjectField(value.object, &.{ "value", "data", "payload", "fields" }),
+                    };
+                }
+                return error.InvalidInstructionSchema;
+            }
+            return error.InvalidInstructionSchema;
+        },
+        else => error.InvalidInstructionSchema,
+    };
+}
+
 fn isNamedStructField(field_value: std.json.Value) bool {
     return switch (field_value) {
         .object => findJsonObjectField(field_value.object, &.{"name"}) != null,
@@ -490,6 +529,30 @@ fn enumVariantPayloadSchema(variant_value: std.json.Value) ?std.json.Value {
 
 fn findOptionItemSchema(schema_object: std.json.ObjectMap) ?std.json.Value {
     return findJsonObjectField(schema_object, &.{ "item", "itemType", "item_type", "element", "elementType", "element_type", "option" });
+}
+
+fn findResultSpec(schema_object: std.json.ObjectMap) ?struct { ok_schema: std.json.Value, err_schema: std.json.Value } {
+    if (findJsonObjectField(schema_object, &.{"result"})) |tagged_result| {
+        return switch (tagged_result) {
+            .object => .{
+                .ok_schema = findJsonObjectField(tagged_result.object, &.{ "ok", "Ok", "success", "value" }) orelse return null,
+                .err_schema = findJsonObjectField(tagged_result.object, &.{ "err", "error", "Err", "Error" }) orelse return null,
+            },
+            .array => {
+                if (tagged_result.array.items.len != 2) return null;
+                return .{
+                    .ok_schema = tagged_result.array.items[0],
+                    .err_schema = tagged_result.array.items[1],
+                };
+            },
+            else => null,
+        };
+    }
+
+    return .{
+        .ok_schema = findJsonObjectField(schema_object, &.{ "ok", "Ok", "success" }) orelse return null,
+        .err_schema = findJsonObjectField(schema_object, &.{ "err", "error", "Err", "Error" }) orelse return null,
+    };
 }
 
 fn findArraySpec(schema_object: std.json.ObjectMap) ?struct { item_schema: std.json.Value, len_value: std.json.Value } {
@@ -724,6 +787,21 @@ fn encodeBorshSchemaValue(
         }
         try output.append(allocator, 1);
         try encodeBorshSchemaValue(allocator, output, root_schema, item_schema, option_input.payload.?);
+        return;
+    }
+
+    if (std.mem.eql(u8, type_name, "result")) {
+        const result_spec = findResultSpec(resolved_schema.object) orelse return error.InvalidInstructionSchema;
+        const result_input = try parseResultInput(value);
+        try output.append(allocator, if (result_input.is_ok) 0 else 1);
+        const payload = result_input.payload orelse return error.InvalidInstructionSchema;
+        try encodeBorshSchemaValue(
+            allocator,
+            output,
+            root_schema,
+            if (result_input.is_ok) result_spec.ok_schema else result_spec.err_schema,
+            payload,
+        );
         return;
     }
 
@@ -1743,6 +1821,65 @@ test "instruction_schema accepts tagged map and enum shorthands" {
         0x00,
         'b',
         0x02,
+    }, encoded);
+}
+
+test "instruction_schema encodes result shorthands" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "result": {
+        \\    "ok": "u16",
+        \\    "err": "string"
+        \\  }
+        \\}
+    ;
+
+    const ok_encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json,
+        \\{"ok":"0x0201"}
+    , .borsh);
+    defer allocator.free(ok_encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0x01, 0x02 }, ok_encoded);
+
+    const err_encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json,
+        \\{"variant":"err","payload":"bad"}
+    , .borsh);
+    defer allocator.free(err_encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x01,
+        0x03,
+        0x00,
+        0x00,
+        0x00,
+        'b',
+        'a',
+        'd',
+    }, err_encoded);
+}
+
+test "instruction_schema encodes result arrays" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "type": "result",
+        \\  "result": ["u8", "string"]
+        \\}
+    ;
+    const args_json = "{\"Err\":\"no\"}";
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x01,
+        0x02,
+        0x00,
+        0x00,
+        0x00,
+        'n',
+        'o',
     }, encoded);
 }
 
