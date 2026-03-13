@@ -4266,41 +4266,15 @@ fn printPreferredSignatureExecutionResultJson(
     allocator: Allocator,
     result: *const client.invoke.PreferredSignatureExecutionResult,
 ) !void {
-    var diagnostics = try client.invoke.buildInvocationDiagnosticsFromPreferredExecutionReport(
-        allocator,
-        &result.execution_report,
-    );
-    defer diagnostics.deinit(allocator);
-
     var buf: [4096]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&buf);
-    const writer = &stdout_writer.interface;
-
-    try writer.writeAll("{");
-    try writer.print("\"requested_mode\":\"{s}\"", .{if (result.execution_report.requested_mode) |mode| @tagName(mode) else "auto"});
-    try writer.print(",\"selected_mode\":\"{s}\"", .{if (result.execution_report.selected_mode) |mode| @tagName(mode) else "none"});
-    try writer.print(",\"requested_mode_buildable\":{s}", .{if (result.execution_report.requested_mode_buildable) "true" else "false"});
-    try writer.print(",\"used_fallback\":{s}", .{if (result.execution_report.used_fallback) "true" else "false"});
-    try writer.print(",\"can_execute_selected_mode\":{s}", .{if (result.execution_report.can_execute_selected_mode) "true" else "false"});
-    try writer.print(",\"signature\":\"{s}\"", .{result.signature});
-    try writer.print(",\"diagnostic_error_count\":{}", .{diagnostics.errorCount()});
-    try writer.print(",\"diagnostic_warning_count\":{}", .{diagnostics.warningCount()});
-    try writer.print(",\"diagnostic_info_count\":{}", .{diagnostics.infoCount()});
-    try writer.writeAll(",\"diagnostics\":[");
-    for (diagnostics.items, 0..) |diagnostic, index| {
-        if (index != 0) try writer.writeAll(",");
-        try writer.writeAll("{");
-        try writer.print("\"severity\":\"{s}\"", .{@tagName(diagnostic.severity)});
-        try writer.print(",\"code\":\"{s}\"", .{@tagName(diagnostic.code)});
-        try writer.print(",\"message\":\"{s}\"", .{client.invoke.invocationDiagnosticMessage(diagnostic.code)});
-        if (client.invoke.invocationDiagnosticSuggestion(diagnostic.code)) |suggestion| {
-            try writer.print(",\"suggestion\":\"{s}\"", .{suggestion});
-        }
-        try writer.writeAll("}");
-    }
-    try writer.writeAll("]}");
-    try writer.writeAll("\n");
-    try writer.flush();
+    try client.invoke.writePreferredSignatureExecutionResultJson(
+        &stdout_writer.interface,
+        allocator,
+        result,
+    );
+    try stdout_writer.interface.writeAll("\n");
+    try stdout_writer.interface.flush();
 }
 
 fn emitPreferredSignatureExecutionResult(
@@ -4329,47 +4303,15 @@ fn printPreferredSimulationExecutionResultJson(
     allocator: Allocator,
     result: *const client.invoke.PreferredSimulationExecutionResult,
 ) !void {
-    var diagnostics = try client.invoke.buildInvocationDiagnosticsFromPreferredExecutionReport(
-        allocator,
-        &result.execution_report,
-    );
-    defer diagnostics.deinit(allocator);
-
     var buf: [4096]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&buf);
-    const writer = &stdout_writer.interface;
-
-    try writer.writeAll("{");
-    try writer.print("\"requested_mode\":\"{s}\"", .{if (result.execution_report.requested_mode) |mode| @tagName(mode) else "auto"});
-    try writer.print(",\"selected_mode\":\"{s}\"", .{if (result.execution_report.selected_mode) |mode| @tagName(mode) else "none"});
-    try writer.print(",\"requested_mode_buildable\":{s}", .{if (result.execution_report.requested_mode_buildable) "true" else "false"});
-    try writer.print(",\"used_fallback\":{s}", .{if (result.execution_report.used_fallback) "true" else "false"});
-    try writer.print(",\"can_execute_selected_mode\":{s}", .{if (result.execution_report.can_execute_selected_mode) "true" else "false"});
-    try writer.print(",\"context_slot\":{}", .{result.simulation.context_slot});
-    try writer.print(",\"fee\":{?d}", .{result.simulation.fee});
-    try writer.print(",\"units_consumed\":{?d}", .{result.simulation.units_consumed});
-    try writer.print(",\"loaded_accounts_data_size\":{?d}", .{result.simulation.loaded_accounts_data_size});
-    try writer.print(",\"has_logs\":{s}", .{if (result.simulation.logs != null) "true" else "false"});
-    try writer.print(",\"logs_count\":{}", .{if (result.simulation.logs) |logs| logs.len else @as(usize, 0)});
-    try writer.print(",\"accounts_count\":{}", .{if (result.simulation.accounts) |accounts| accounts.len else @as(usize, 0)});
-    try writer.print(",\"diagnostic_error_count\":{}", .{diagnostics.errorCount()});
-    try writer.print(",\"diagnostic_warning_count\":{}", .{diagnostics.warningCount()});
-    try writer.print(",\"diagnostic_info_count\":{}", .{diagnostics.infoCount()});
-    try writer.writeAll(",\"diagnostics\":[");
-    for (diagnostics.items, 0..) |diagnostic, index| {
-        if (index != 0) try writer.writeAll(",");
-        try writer.writeAll("{");
-        try writer.print("\"severity\":\"{s}\"", .{@tagName(diagnostic.severity)});
-        try writer.print(",\"code\":\"{s}\"", .{@tagName(diagnostic.code)});
-        try writer.print(",\"message\":\"{s}\"", .{client.invoke.invocationDiagnosticMessage(diagnostic.code)});
-        if (client.invoke.invocationDiagnosticSuggestion(diagnostic.code)) |suggestion| {
-            try writer.print(",\"suggestion\":\"{s}\"", .{suggestion});
-        }
-        try writer.writeAll("}");
-    }
-    try writer.writeAll("]}");
-    try writer.writeAll("\n");
-    try writer.flush();
+    try client.invoke.writePreferredSimulationExecutionResultJson(
+        &stdout_writer.interface,
+        allocator,
+        result,
+    );
+    try stdout_writer.interface.writeAll("\n");
+    try stdout_writer.interface.flush();
 }
 
 fn emitPreferredSimulationExecutionResult(
@@ -4401,45 +4343,15 @@ fn printPreferredFeeExecutionResultJson(
     allocator: Allocator,
     result: *const client.invoke.PreferredFeeExecutionResult,
 ) !void {
-    var diagnostics = try client.invoke.buildInvocationDiagnosticsFromPreferredExecutionReport(
-        allocator,
-        &result.execution_report,
-    );
-    defer diagnostics.deinit(allocator);
-
     var buf: [4096]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&buf);
-    const writer = &stdout_writer.interface;
-
-    try writer.writeAll("{");
-    try writer.print("\"requested_mode\":\"{s}\"", .{if (result.execution_report.requested_mode) |mode| @tagName(mode) else "auto"});
-    try writer.print(",\"selected_mode\":\"{s}\"", .{if (result.execution_report.selected_mode) |mode| @tagName(mode) else "none"});
-    try writer.print(",\"requested_mode_buildable\":{s}", .{if (result.execution_report.requested_mode_buildable) "true" else "false"});
-    try writer.print(",\"used_fallback\":{s}", .{if (result.execution_report.used_fallback) "true" else "false"});
-    try writer.print(",\"can_execute_selected_mode\":{s}", .{if (result.execution_report.can_execute_selected_mode) "true" else "false"});
-    if (result.fee.value) |value| {
-        try writer.print(",\"fee\":{}", .{value});
-    } else {
-        try writer.writeAll(",\"fee\":null");
-    }
-    try writer.print(",\"diagnostic_error_count\":{}", .{diagnostics.errorCount()});
-    try writer.print(",\"diagnostic_warning_count\":{}", .{diagnostics.warningCount()});
-    try writer.print(",\"diagnostic_info_count\":{}", .{diagnostics.infoCount()});
-    try writer.writeAll(",\"diagnostics\":[");
-    for (diagnostics.items, 0..) |diagnostic, index| {
-        if (index != 0) try writer.writeAll(",");
-        try writer.writeAll("{");
-        try writer.print("\"severity\":\"{s}\"", .{@tagName(diagnostic.severity)});
-        try writer.print(",\"code\":\"{s}\"", .{@tagName(diagnostic.code)});
-        try writer.print(",\"message\":\"{s}\"", .{client.invoke.invocationDiagnosticMessage(diagnostic.code)});
-        if (client.invoke.invocationDiagnosticSuggestion(diagnostic.code)) |suggestion| {
-            try writer.print(",\"suggestion\":\"{s}\"", .{suggestion});
-        }
-        try writer.writeAll("}");
-    }
-    try writer.writeAll("]}");
-    try writer.writeAll("\n");
-    try writer.flush();
+    try client.invoke.writePreferredFeeExecutionResultJson(
+        &stdout_writer.interface,
+        allocator,
+        result,
+    );
+    try stdout_writer.interface.writeAll("\n");
+    try stdout_writer.interface.flush();
 }
 
 fn emitPreferredFeeExecutionResult(

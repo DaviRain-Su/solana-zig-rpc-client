@@ -746,6 +746,22 @@ fn writeJsonUsizeField(writer: *std.Io.Writer, first: *bool, name: []const u8, v
     try std.json.Stringify.value(value, .{}, writer);
 }
 
+fn writeJsonU64Field(writer: *std.Io.Writer, first: *bool, name: []const u8, value: u64) !void {
+    if (!first.*) try writer.writeAll(",");
+    first.* = false;
+    try std.json.Stringify.value(name, .{}, writer);
+    try writer.writeAll(":");
+    try std.json.Stringify.value(value, .{}, writer);
+}
+
+fn writeJsonOptionalU64Field(writer: *std.Io.Writer, first: *bool, name: []const u8, value: ?u64) !void {
+    if (!first.*) try writer.writeAll(",");
+    first.* = false;
+    try std.json.Stringify.value(name, .{}, writer);
+    try writer.writeAll(":");
+    try std.json.Stringify.value(value, .{}, writer);
+}
+
 fn writeJsonPubkeyArrayField(writer: *std.Io.Writer, first: *bool, name: []const u8, allocator: Allocator, pubkeys: anytype) !void {
     if (!first.*) try writer.writeAll(",");
     first.* = false;
@@ -869,6 +885,125 @@ pub fn allocPreferredInvocationAnalysisJson(
     var aw: std.Io.Writer.Allocating = .init(allocator);
     errdefer aw.deinit();
     try writePreferredInvocationAnalysisJson(&aw.writer, allocator, analysis);
+    return try aw.toOwnedSlice();
+}
+
+pub fn writePreferredSignatureExecutionResultJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    result: *const PreferredSignatureExecutionResult,
+) !void {
+    var first = true;
+    var diagnostics = try buildInvocationDiagnosticsFromPreferredExecutionReport(
+        allocator,
+        &result.execution_report,
+    );
+    defer diagnostics.deinit(allocator);
+
+    try writer.writeAll("{");
+    try writeJsonStringField(writer, &first, "requested_mode", invocationModeJsonLabel(result.execution_report.requested_mode));
+    try writeJsonStringField(writer, &first, "selected_mode", invocationModeJsonLabel(result.execution_report.selected_mode));
+    try writeJsonBoolField(writer, &first, "requested_mode_buildable", result.execution_report.requested_mode_buildable);
+    try writeJsonBoolField(writer, &first, "used_fallback", result.execution_report.used_fallback);
+    try writeJsonBoolField(writer, &first, "can_execute_selected_mode", result.execution_report.can_execute_selected_mode);
+    try writeJsonStringField(writer, &first, "signature", result.signature);
+    try writeJsonUsizeField(writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+    try writeJsonDiagnosticsField(writer, &first, diagnostics);
+    try writer.writeAll("}");
+}
+
+pub fn allocPreferredSignatureExecutionResultJson(
+    allocator: Allocator,
+    result: *const PreferredSignatureExecutionResult,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writePreferredSignatureExecutionResultJson(&aw.writer, allocator, result);
+    return try aw.toOwnedSlice();
+}
+
+pub fn writePreferredSimulationExecutionResultJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    result: *const PreferredSimulationExecutionResult,
+) !void {
+    var first = true;
+    var diagnostics = try buildInvocationDiagnosticsFromPreferredExecutionReport(
+        allocator,
+        &result.execution_report,
+    );
+    defer diagnostics.deinit(allocator);
+
+    try writer.writeAll("{");
+    try writeJsonStringField(writer, &first, "requested_mode", invocationModeJsonLabel(result.execution_report.requested_mode));
+    try writeJsonStringField(writer, &first, "selected_mode", invocationModeJsonLabel(result.execution_report.selected_mode));
+    try writeJsonBoolField(writer, &first, "requested_mode_buildable", result.execution_report.requested_mode_buildable);
+    try writeJsonBoolField(writer, &first, "used_fallback", result.execution_report.used_fallback);
+    try writeJsonBoolField(writer, &first, "can_execute_selected_mode", result.execution_report.can_execute_selected_mode);
+    try writeJsonU64Field(writer, &first, "context_slot", result.simulation.context_slot);
+    try writeJsonOptionalU64Field(writer, &first, "fee", result.simulation.fee);
+    try writeJsonOptionalU64Field(writer, &first, "units_consumed", result.simulation.units_consumed);
+    try writeJsonOptionalU64Field(
+        writer,
+        &first,
+        "loaded_accounts_data_size",
+        if (result.simulation.loaded_accounts_data_size) |value| @as(u64, value) else null,
+    );
+    try writeJsonBoolField(writer, &first, "has_logs", result.simulation.logs != null);
+    try writeJsonUsizeField(writer, &first, "logs_count", if (result.simulation.logs) |logs| logs.len else @as(usize, 0));
+    try writeJsonUsizeField(writer, &first, "accounts_count", if (result.simulation.accounts) |accounts| accounts.len else @as(usize, 0));
+    try writeJsonUsizeField(writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+    try writeJsonDiagnosticsField(writer, &first, diagnostics);
+    try writer.writeAll("}");
+}
+
+pub fn allocPreferredSimulationExecutionResultJson(
+    allocator: Allocator,
+    result: *const PreferredSimulationExecutionResult,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writePreferredSimulationExecutionResultJson(&aw.writer, allocator, result);
+    return try aw.toOwnedSlice();
+}
+
+pub fn writePreferredFeeExecutionResultJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    result: *const PreferredFeeExecutionResult,
+) !void {
+    var first = true;
+    var diagnostics = try buildInvocationDiagnosticsFromPreferredExecutionReport(
+        allocator,
+        &result.execution_report,
+    );
+    defer diagnostics.deinit(allocator);
+
+    try writer.writeAll("{");
+    try writeJsonStringField(writer, &first, "requested_mode", invocationModeJsonLabel(result.execution_report.requested_mode));
+    try writeJsonStringField(writer, &first, "selected_mode", invocationModeJsonLabel(result.execution_report.selected_mode));
+    try writeJsonBoolField(writer, &first, "requested_mode_buildable", result.execution_report.requested_mode_buildable);
+    try writeJsonBoolField(writer, &first, "used_fallback", result.execution_report.used_fallback);
+    try writeJsonBoolField(writer, &first, "can_execute_selected_mode", result.execution_report.can_execute_selected_mode);
+    try writeJsonOptionalU64Field(writer, &first, "fee", result.fee.value);
+    try writeJsonUsizeField(writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+    try writeJsonDiagnosticsField(writer, &first, diagnostics);
+    try writer.writeAll("}");
+}
+
+pub fn allocPreferredFeeExecutionResultJson(
+    allocator: Allocator,
+    result: *const PreferredFeeExecutionResult,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writePreferredFeeExecutionResultJson(&aw.writer, allocator, result);
     return try aw.toOwnedSlice();
 }
 
