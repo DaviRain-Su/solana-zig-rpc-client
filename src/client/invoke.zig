@@ -4384,6 +4384,186 @@ pub fn buildPreferredPreparedInvocationFromOwnedInvocationSpec(
     );
 }
 
+pub fn sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: SendPreferredInvocationSpecOptions,
+) !PreferredSignatureExecutionResult {
+    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
+    defer allocator.free(invocation_spec_json);
+
+    return try sendPreferredTransactionExecutionResultFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        invocation_spec_json,
+        options,
+    );
+}
+
+pub fn simulatePreferredTransactionExecutionResultFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: SimulatePreferredInvocationSpecOptions,
+) !PreferredSimulationExecutionResult {
+    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
+    defer allocator.free(invocation_spec_json);
+
+    return try simulatePreferredTransactionExecutionResultFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        invocation_spec_json,
+        options,
+    );
+}
+
+pub fn sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: SendAndConfirmPreferredInvocationSpecOptions,
+) !PreferredSignatureExecutionResult {
+    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
+    defer allocator.free(invocation_spec_json);
+
+    return try sendAndConfirmPreferredTransactionExecutionResultFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        invocation_spec_json,
+        options,
+    );
+}
+
+pub fn sendAndConfirmPreferredTransactionExecutionResultWithSpinnerFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: SendAndConfirmPreferredInvocationSpecOptions,
+) !PreferredSignatureExecutionResult {
+    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
+    defer allocator.free(invocation_spec_json);
+
+    return try sendAndConfirmPreferredTransactionExecutionResultWithSpinnerFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        invocation_spec_json,
+        options,
+    );
+}
+
+pub fn getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: GetFeeForPreferredInvocationSpecOptions,
+) !PreferredFeeExecutionResult {
+    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
+    defer allocator.free(invocation_spec_json);
+
+    return try getFeeForPreferredInvocationExecutionResultFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        invocation_spec_json,
+        options,
+    );
+}
+
+pub fn sendPreferredTransactionFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: SendPreferredInvocationSpecOptions,
+) !PreferredSignatureResult {
+    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
+    defer allocator.free(invocation_spec_json);
+
+    return try sendPreferredTransactionFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        invocation_spec_json,
+        options,
+    );
+}
+
+pub fn simulatePreferredTransactionFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: SimulatePreferredInvocationSpecOptions,
+) !PreferredSimulationResult {
+    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
+    defer allocator.free(invocation_spec_json);
+
+    return try simulatePreferredTransactionFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        invocation_spec_json,
+        options,
+    );
+}
+
+pub fn sendAndConfirmPreferredInvocationFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: SendAndConfirmPreferredInvocationSpecOptions,
+) !PreferredSignatureResult {
+    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
+    defer allocator.free(invocation_spec_json);
+
+    return try sendAndConfirmPreferredInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        invocation_spec_json,
+        options,
+    );
+}
+
+pub fn sendAndConfirmPreferredInvocationWithSpinnerFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: SendAndConfirmPreferredInvocationSpecOptions,
+) !PreferredSignatureResult {
+    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
+    defer allocator.free(invocation_spec_json);
+
+    return try sendAndConfirmPreferredInvocationSpecJsonWithSpinner(
+        allocator,
+        rpc,
+        .instructions,
+        invocation_spec_json,
+        options,
+    );
+}
+
+pub fn getFeeForPreferredInvocationSpecFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: GetFeeForPreferredInvocationSpecOptions,
+) !PreferredFeeResult {
+    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
+    defer allocator.free(invocation_spec_json);
+
+    return try getFeeForPreferredInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        invocation_spec_json,
+        options,
+    );
+}
+
 pub fn buildPreparedInvocationFromInvocationSpecJsonWithOptions(
     allocator: Allocator,
     rpc: anytype,
@@ -9916,6 +10096,216 @@ test "invoke.buildPreferredPreparedInvocationFromOwnedInvocationSpec preserves v
     try std.testing.expectEqual(InvocationMode.versioned, prepared.selected_mode);
     try std.testing.expect(prepared.used_fallback);
     try std.testing.expectEqual(InvocationMode.versioned, prepared.prepared.mode);
+}
+
+test "invoke.sendPreferredTransactionExecutionResultFromOwnedInvocationSpec preserves legacy selection" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn sendTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return "typed-preferred-send";
+        }
+
+        pub fn sendVersionedTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return error.UnexpectedVersionedCall;
+        }
+    };
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 145, 146, 147);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    var rpc = DummyRpc{};
+    var result = try sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
+        allocator,
+        &rpc,
+        &owned_spec,
+        .{},
+    );
+    defer result.deinit(allocator);
+
+    try std.testing.expectEqualStrings("typed-preferred-send", result.signature);
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), result.execution_report.selected_mode);
+    try std.testing.expect(result.execution_report.can_execute_selected_mode);
+}
+
+test "invoke.getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec preserves versioned fallback metadata" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn getFeeForMessageTyped(
+            self: *@This(),
+            message: sdk.LegacyMessage,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = message;
+            _ = commitment;
+            return error.UnexpectedLegacyCall;
+        }
+
+        pub fn getFeeForVersionedMessageTyped(
+            self: *@This(),
+            message: sdk.VersionedMessageV0,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = message;
+            _ = commitment;
+            return @as(rpc_types.FeeForMessage, 742);
+        }
+    };
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 148, 149, 150, 151, 152);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    var rpc = DummyRpc{};
+    var result = try getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
+        allocator,
+        &rpc,
+        &owned_spec,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+            .fee = .{ .commitment = .confirmed },
+        },
+    );
+    defer result.deinit(allocator);
+
+    try std.testing.expectEqual(@as(rpc_types.FeeForMessage, 742), result.fee);
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), result.execution_report.requested_mode);
+    try std.testing.expectEqual(@as(?InvocationMode, .versioned), result.execution_report.selected_mode);
+    try std.testing.expect(result.execution_report.used_fallback);
+}
+
+test "invoke.sendPreferredTransactionFromOwnedInvocationSpec returns preferred signature result" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn sendTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return "typed-preferred-signature";
+        }
+
+        pub fn sendVersionedTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return error.UnexpectedVersionedCall;
+        }
+    };
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 153, 154, 155);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    var rpc = DummyRpc{};
+    var result = try sendPreferredTransactionFromOwnedInvocationSpec(
+        allocator,
+        &rpc,
+        &owned_spec,
+        .{},
+    );
+    defer result.deinit(allocator);
+
+    try std.testing.expectEqualStrings("typed-preferred-signature", result.signature);
+    try std.testing.expectEqual(InvocationMode.legacy, result.mode);
+}
+
+test "invoke.getFeeForPreferredInvocationSpecFromOwnedInvocationSpec returns preferred fee result" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn getFeeForMessageTyped(
+            self: *@This(),
+            message: sdk.LegacyMessage,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = message;
+            _ = commitment;
+            return error.UnexpectedLegacyCall;
+        }
+
+        pub fn getFeeForVersionedMessageTyped(
+            self: *@This(),
+            message: sdk.VersionedMessageV0,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = message;
+            _ = commitment;
+            return @as(rpc_types.FeeForMessage, 843);
+        }
+    };
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 156, 157, 158, 159, 160);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    var rpc = DummyRpc{};
+    const result = try getFeeForPreferredInvocationSpecFromOwnedInvocationSpec(
+        allocator,
+        &rpc,
+        &owned_spec,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+            .fee = .{ .commitment = .confirmed },
+        },
+    );
+
+    try std.testing.expectEqual(@as(rpc_types.FeeForMessage, 843), result.fee);
+    try std.testing.expectEqual(InvocationMode.versioned, result.mode);
 }
 
 test "invoke.allocPreparedInvocationJson emits generic prepared fields" {
