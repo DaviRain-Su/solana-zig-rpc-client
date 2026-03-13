@@ -175,9 +175,6 @@ pub fn lookupInvokeCommandSpec(command: cli.Command) ?CliInvokeCommandSpec {
     return null;
 }
 
-pub const sendInvocationSpecJson = client.invoke.sendInvocationSpecJson;
-pub const simulateInvocationSpecJson = client.invoke.simulateInvocationSpecJson;
-
 pub fn buildInvocationSpecJsonForCommand(
     allocator: Allocator,
     command: cli.Command,
@@ -258,14 +255,16 @@ pub fn runGenericInvocationCommand(
 
     if (behavior.simulate) {
         const options = try callbacks.buildSimulationOptions(execution_args);
-        const simulation = try simulateInvocationSpecJson(
+        const simulation = try client.invoke.simulateTransactionFromInvocationSpecJson(
             allocator,
             rpc,
             behavior.family,
             behavior.versioned,
             invocation_spec_json,
-            execution_args.commitment,
-            options,
+            .{
+                .blockhash_commitment = execution_args.commitment,
+                .simulate_options = options,
+            },
         );
         defer callbacks.freeSimulation(allocator, simulation);
 
@@ -273,20 +272,34 @@ pub fn runGenericInvocationCommand(
         return;
     }
 
-    const tx_signature = try sendInvocationSpecJson(
-        allocator,
-        rpc,
-        behavior.family,
-        behavior.versioned,
-        behavior.confirm,
-        invocation_spec_json,
-        execution_args.commitment orelse execution_args.send_preflight_commitment,
-        execution_args.send_transaction_options,
-        execution_args.commitment,
-        execution_args.search_transaction_history,
-        execution_args.status_timeout_ms,
-        execution_args.status_poll_ms,
-    );
+    const tx_signature = if (behavior.confirm)
+        try client.invoke.sendAndConfirmInvocationSpecJson(
+            allocator,
+            rpc,
+            behavior.family,
+            behavior.versioned,
+            invocation_spec_json,
+            .{
+                .blockhash_commitment = execution_args.commitment orelse execution_args.send_preflight_commitment,
+                .send_transaction_options = execution_args.send_transaction_options,
+                .commitment = execution_args.commitment,
+                .search_transaction_history = execution_args.search_transaction_history,
+                .timeout_ms = execution_args.status_timeout_ms,
+                .poll_interval_ms = execution_args.status_poll_ms,
+            },
+        )
+    else
+        try client.invoke.sendTransactionFromInvocationSpecJson(
+            allocator,
+            rpc,
+            behavior.family,
+            behavior.versioned,
+            invocation_spec_json,
+            .{
+                .blockhash_commitment = execution_args.commitment orelse execution_args.send_preflight_commitment,
+                .send_transaction_options = execution_args.send_transaction_options,
+            },
+        );
     defer allocator.free(tx_signature);
 
     if (behavior.confirm) {
