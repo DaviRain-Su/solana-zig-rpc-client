@@ -1,5 +1,6 @@
 const std = @import("std");
 const instructions_invoke = @import("./instructions_invoke.zig");
+const invocation_spec_json = @import("./invocation_spec_json.zig");
 const rpc_types = @import("./rpc_types.zig");
 const sdk = @import("./sdk.zig");
 
@@ -485,91 +486,79 @@ fn buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
     const data_bytes_value = findJsonObjectField(object, &.{ "data_bytes", "dataBytes" });
     if (data_value != null and data_bytes_value != null) return error.InvalidProgramInvokeSpec;
 
-    var json_buffer: std.io.Writer.Allocating = .init(allocator);
-    defer json_buffer.deinit();
+    var owned_additional_signers_json: ?[]u8 = null;
+    defer if (owned_additional_signers_json) |value| allocator.free(value);
+    const additional_signer_secret_keys_json = if (findJsonObjectField(object, &.{ "additional_signer_secret_keys", "additionalSignerSecretKeys" })) |value| blk: {
+        const encoded = try stringifyJsonValue(allocator, value);
+        owned_additional_signers_json = encoded;
+        break :blk encoded;
+    } else null;
 
-    try json_buffer.writer.writeByte('{');
-    var has_field = false;
-    const Writer = struct {
-        fn writeFieldName(
-            buffer: *std.io.Writer.Allocating,
-            has_field_ptr: *bool,
-            name: []const u8,
-        ) !void {
-            if (has_field_ptr.*) try buffer.writer.writeByte(',');
-            try std.json.Stringify.value(name, .{}, &buffer.writer);
-            try buffer.writer.writeByte(':');
-            has_field_ptr.* = true;
-        }
+    var owned_lookup_tables_json: ?[]u8 = null;
+    defer if (owned_lookup_tables_json) |value| allocator.free(value);
+    const address_lookup_tables_json = if (findJsonObjectField(object, &.{ "address_lookup_tables", "addressLookupTables" })) |value| blk: {
+        const encoded = try stringifyJsonValue(allocator, value);
+        owned_lookup_tables_json = encoded;
+        break :blk encoded;
+    } else null;
+
+    const recent_blockhash = if (findJsonObjectField(object, &.{ "recent_blockhash", "recentBlockhash" })) |value| blk: {
+        if (value != .string) return error.InvalidProgramInvokeSpec;
+        break :blk value.string;
+    } else null;
+    const nonce_account = if (findJsonObjectField(object, &.{ "nonce_account", "nonceAccount" })) |value| blk: {
+        if (value != .string) return error.InvalidProgramInvokeSpec;
+        break :blk value.string;
+    } else null;
+    const nonce_authority_secret_key = if (findJsonObjectField(object, &.{ "nonce_authority_secret_key", "nonceAuthoritySecretKey" })) |value| blk: {
+        if (value != .string) return error.InvalidProgramInvokeSpec;
+        break :blk value.string;
+    } else null;
+
+    var owned_accounts_json: ?[]u8 = null;
+    defer if (owned_accounts_json) |value| allocator.free(value);
+    const accounts_json = if (accounts_value) |value| blk: {
+        const encoded = try stringifyJsonValue(allocator, value);
+        owned_accounts_json = encoded;
+        break :blk encoded;
+    } else null;
+
+    const data = if (data_value) |value| blk: {
+        if (value != .string) return error.InvalidProgramInvokeSpec;
+        break :blk value.string;
+    } else null;
+    const data_encoding = if (findJsonObjectField(object, &.{ "data_encoding", "dataEncoding", "encoding" })) |value| blk: {
+        if (value != .string) return error.InvalidProgramInvokeSpec;
+        break :blk value.string;
+    } else null;
+
+    var owned_data_bytes_json: ?[]u8 = null;
+    defer if (owned_data_bytes_json) |value| allocator.free(value);
+    const data_bytes_json = if (data_bytes_value) |value| blk: {
+        const encoded = try stringifyJsonValue(allocator, value);
+        owned_data_bytes_json = encoded;
+        break :blk encoded;
+    } else null;
+
+    return invocation_spec_json.buildInstructionInvocationSpecJson(allocator, .{
+        .payer_secret_key = payer_secret_key_value.string,
+        .additional_signer_secret_keys_json = additional_signer_secret_keys_json,
+        .address_lookup_tables_json = address_lookup_tables_json,
+        .recent_blockhash = recent_blockhash,
+        .nonce_account = nonce_account,
+        .nonce_authority_secret_key = nonce_authority_secret_key,
+        .instruction = .{
+            .program_id = program_id_value.string,
+            .accounts_json = accounts_json,
+            .data = data,
+            .data_encoding = data_encoding,
+            .data_bytes_json = data_bytes_json,
+        },
+    }) catch |err| switch (err) {
+        error.InvalidInvocationSpec => return error.InvalidProgramInvokeSpec,
+        error.OutOfMemory => return error.OutOfMemory,
+        error.WriteFailed => return error.WriteFailed,
     };
-
-    try Writer.writeFieldName(&json_buffer, &has_field, "payer_secret_key");
-    try std.json.Stringify.value(payer_secret_key_value.string, .{}, &json_buffer.writer);
-
-    if (findJsonObjectField(object, &.{ "additional_signer_secret_keys", "additionalSignerSecretKeys" })) |value| {
-        try Writer.writeFieldName(&json_buffer, &has_field, "additional_signer_secret_keys");
-        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
-    }
-    if (findJsonObjectField(object, &.{ "address_lookup_tables", "addressLookupTables" })) |value| {
-        try Writer.writeFieldName(&json_buffer, &has_field, "address_lookup_tables");
-        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
-    }
-    if (findJsonObjectField(object, &.{ "recent_blockhash", "recentBlockhash" })) |value| {
-        if (value != .string) return error.InvalidProgramInvokeSpec;
-        try Writer.writeFieldName(&json_buffer, &has_field, "recent_blockhash");
-        try std.json.Stringify.value(value.string, .{}, &json_buffer.writer);
-    }
-    if (findJsonObjectField(object, &.{ "nonce_account", "nonceAccount" })) |value| {
-        if (value != .string) return error.InvalidProgramInvokeSpec;
-        try Writer.writeFieldName(&json_buffer, &has_field, "nonce_account");
-        try std.json.Stringify.value(value.string, .{}, &json_buffer.writer);
-    }
-    if (findJsonObjectField(object, &.{ "nonce_authority_secret_key", "nonceAuthoritySecretKey" })) |value| {
-        if (value != .string) return error.InvalidProgramInvokeSpec;
-        try Writer.writeFieldName(&json_buffer, &has_field, "nonce_authority_secret_key");
-        try std.json.Stringify.value(value.string, .{}, &json_buffer.writer);
-    }
-
-    try Writer.writeFieldName(&json_buffer, &has_field, "instructions");
-    try json_buffer.writer.writeByte('[');
-    var has_instruction_field = false;
-    const InstructionWriter = struct {
-        fn writeFieldName(
-            buffer: *std.io.Writer.Allocating,
-            has_field_ptr: *bool,
-            name: []const u8,
-        ) !void {
-            if (has_field_ptr.*) try buffer.writer.writeByte(',');
-            try std.json.Stringify.value(name, .{}, &buffer.writer);
-            try buffer.writer.writeByte(':');
-            has_field_ptr.* = true;
-        }
-    };
-    try json_buffer.writer.writeByte('{');
-    try InstructionWriter.writeFieldName(&json_buffer, &has_instruction_field, "program_id");
-    try std.json.Stringify.value(program_id_value.string, .{}, &json_buffer.writer);
-    if (accounts_value) |value| {
-        try InstructionWriter.writeFieldName(&json_buffer, &has_instruction_field, "accounts");
-        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
-    }
-    if (data_value) |value| {
-        if (value != .string) return error.InvalidProgramInvokeSpec;
-        try InstructionWriter.writeFieldName(&json_buffer, &has_instruction_field, "data");
-        try std.json.Stringify.value(value.string, .{}, &json_buffer.writer);
-        if (findJsonObjectField(object, &.{ "data_encoding", "dataEncoding", "encoding" })) |encoding_value| {
-            if (encoding_value != .string) return error.InvalidProgramInvokeSpec;
-            try InstructionWriter.writeFieldName(&json_buffer, &has_instruction_field, "data_encoding");
-            try std.json.Stringify.value(encoding_value.string, .{}, &json_buffer.writer);
-        }
-    } else if (data_bytes_value) |value| {
-        try InstructionWriter.writeFieldName(&json_buffer, &has_instruction_field, "data_bytes");
-        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
-    }
-    try json_buffer.writer.writeByte('}');
-    try json_buffer.writer.writeByte(']');
-    try json_buffer.writer.writeByte('}');
-
-    return try allocator.dupe(u8, json_buffer.written());
 }
 
 fn decodeInstructionData(

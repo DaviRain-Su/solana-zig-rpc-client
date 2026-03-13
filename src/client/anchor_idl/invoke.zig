@@ -1,5 +1,6 @@
 const std = @import("std");
 const instructions_invoke = @import("../instructions_invoke.zig");
+const invocation_spec_json = @import("../invocation_spec_json.zig");
 const sdk = @import("../sdk.zig");
 const rpc_types = @import("../rpc_types.zig");
 const idl_types = @import("./types.zig");
@@ -2317,31 +2318,13 @@ fn buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
     const instruction_data_base64 = try sdk.encodeBase64(allocator, owned_instruction.instruction.data);
     defer allocator.free(instruction_data_base64);
 
-    var json_buffer: std.io.Writer.Allocating = .init(allocator);
-    defer json_buffer.deinit();
-
-    try json_buffer.writer.writeByte('{');
-    var has_field = false;
-    const Writer = struct {
-        fn writeFieldName(
-            buffer: *std.io.Writer.Allocating,
-            has_field_ptr: *bool,
-            name: []const u8,
-        ) !void {
-            if (has_field_ptr.*) try buffer.writer.writeByte(',');
-            try std.json.Stringify.value(name, .{}, &buffer.writer);
-            try buffer.writer.writeByte(':');
-            has_field_ptr.* = true;
-        }
-    };
-
-    try Writer.writeFieldName(&json_buffer, &has_field, "payer_secret_key");
-    try std.json.Stringify.value(payer_secret_key_value.string, .{}, &json_buffer.writer);
-
     const additional_signers_value = jsonObjectField(object, &.{ "additional_signer_secret_keys", "additionalSignerSecretKeys" });
     const include_default_signer = !std.mem.eql(u8, default_signer_secret_key, payer_secret_key_value.string);
-    if (include_default_signer or additional_signers_value != null) {
-        try Writer.writeFieldName(&json_buffer, &has_field, "additional_signer_secret_keys");
+    var owned_additional_signers_json: ?[]u8 = null;
+    defer if (owned_additional_signers_json) |value| allocator.free(value);
+    const additional_signer_secret_keys_json = if (include_default_signer or additional_signers_value != null) blk: {
+        var json_buffer: std.io.Writer.Allocating = .init(allocator);
+        defer json_buffer.deinit();
         try json_buffer.writer.writeByte('[');
         var wrote_signer = false;
         if (include_default_signer) {
@@ -2360,59 +2343,68 @@ fn buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
             }
         }
         try json_buffer.writer.writeByte(']');
-    }
+        const encoded = try allocator.dupe(u8, json_buffer.written());
+        owned_additional_signers_json = encoded;
+        break :blk encoded;
+    } else null;
 
-    if (jsonObjectField(object, &.{ "address_lookup_tables", "addressLookupTables" })) |value| {
-        try Writer.writeFieldName(&json_buffer, &has_field, "address_lookup_tables");
-        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
-    }
-    if (jsonObjectField(object, &.{ "recent_blockhash", "recentBlockhash" })) |value| {
-        if (value != .string) return error.InvalidInvocationSpec;
-        try Writer.writeFieldName(&json_buffer, &has_field, "recent_blockhash");
-        try std.json.Stringify.value(value.string, .{}, &json_buffer.writer);
-    }
-    if (jsonObjectField(object, &.{ "nonce_account", "nonceAccount" })) |value| {
-        if (value != .string) return error.InvalidInvocationSpec;
-        try Writer.writeFieldName(&json_buffer, &has_field, "nonce_account");
-        try std.json.Stringify.value(value.string, .{}, &json_buffer.writer);
-    }
-    if (jsonObjectField(object, &.{ "nonce_authority_secret_key", "nonceAuthoritySecretKey" })) |value| {
-        if (value != .string) return error.InvalidInvocationSpec;
-        try Writer.writeFieldName(&json_buffer, &has_field, "nonce_authority_secret_key");
-        try std.json.Stringify.value(value.string, .{}, &json_buffer.writer);
-    }
+    var owned_lookup_tables_json: ?[]u8 = null;
+    defer if (owned_lookup_tables_json) |value| allocator.free(value);
+    const address_lookup_tables_json = if (jsonObjectField(object, &.{ "address_lookup_tables", "addressLookupTables" })) |value| blk: {
+        const encoded = try stringifyJsonValue(allocator, value);
+        owned_lookup_tables_json = encoded;
+        break :blk encoded;
+    } else null;
 
-    try Writer.writeFieldName(&json_buffer, &has_field, "instructions");
-    try json_buffer.writer.writeByte('{');
-    var has_instruction_field = false;
-    try Writer.writeFieldName(&json_buffer, &has_instruction_field, "program_id");
-    try std.json.Stringify.value(instruction_program_id, .{}, &json_buffer.writer);
-    try Writer.writeFieldName(&json_buffer, &has_instruction_field, "accounts");
-    try json_buffer.writer.writeByte('[');
+    const recent_blockhash = if (jsonObjectField(object, &.{ "recent_blockhash", "recentBlockhash" })) |value| blk: {
+        if (value != .string) return error.InvalidInvocationSpec;
+        break :blk value.string;
+    } else null;
+    const nonce_account = if (jsonObjectField(object, &.{ "nonce_account", "nonceAccount" })) |value| blk: {
+        if (value != .string) return error.InvalidInvocationSpec;
+        break :blk value.string;
+    } else null;
+    const nonce_authority_secret_key = if (jsonObjectField(object, &.{ "nonce_authority_secret_key", "nonceAuthoritySecretKey" })) |value| blk: {
+        if (value != .string) return error.InvalidInvocationSpec;
+        break :blk value.string;
+    } else null;
+
+    var accounts_json_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer accounts_json_buffer.deinit();
+    try accounts_json_buffer.writer.writeByte('[');
     for (owned_instruction.instruction.accounts, 0..) |account, index| {
-        if (index != 0) try json_buffer.writer.writeByte(',');
+        if (index != 0) try accounts_json_buffer.writer.writeByte(',');
         const account_pubkey = try account.pubkey.toBase58(allocator);
         defer allocator.free(account_pubkey);
 
-        try json_buffer.writer.writeByte('{');
+        try accounts_json_buffer.writer.writeByte('{');
         var has_account_field = false;
-        try Writer.writeFieldName(&json_buffer, &has_account_field, "pubkey");
-        try std.json.Stringify.value(account_pubkey, .{}, &json_buffer.writer);
-        try Writer.writeFieldName(&json_buffer, &has_account_field, "is_signer");
-        try std.json.Stringify.value(account.is_signer, .{}, &json_buffer.writer);
-        try Writer.writeFieldName(&json_buffer, &has_account_field, "is_writable");
-        try std.json.Stringify.value(account.is_writable, .{}, &json_buffer.writer);
-        try json_buffer.writer.writeByte('}');
+        try invocation_spec_json.writeFieldName(&accounts_json_buffer, &has_account_field, "pubkey");
+        try std.json.Stringify.value(account_pubkey, .{}, &accounts_json_buffer.writer);
+        try invocation_spec_json.writeFieldName(&accounts_json_buffer, &has_account_field, "is_signer");
+        try std.json.Stringify.value(account.is_signer, .{}, &accounts_json_buffer.writer);
+        try invocation_spec_json.writeFieldName(&accounts_json_buffer, &has_account_field, "is_writable");
+        try std.json.Stringify.value(account.is_writable, .{}, &accounts_json_buffer.writer);
+        try accounts_json_buffer.writer.writeByte('}');
     }
-    try json_buffer.writer.writeByte(']');
-    try Writer.writeFieldName(&json_buffer, &has_instruction_field, "data");
-    try std.json.Stringify.value(instruction_data_base64, .{}, &json_buffer.writer);
-    try Writer.writeFieldName(&json_buffer, &has_instruction_field, "data_encoding");
-    try std.json.Stringify.value("base64", .{}, &json_buffer.writer);
-    try json_buffer.writer.writeByte('}');
+    try accounts_json_buffer.writer.writeByte(']');
+    const accounts_json = try allocator.dupe(u8, accounts_json_buffer.written());
+    defer allocator.free(accounts_json);
 
-    try json_buffer.writer.writeByte('}');
-    return try allocator.dupe(u8, json_buffer.written());
+    return try invocation_spec_json.buildInstructionInvocationSpecJson(allocator, .{
+        .payer_secret_key = payer_secret_key_value.string,
+        .additional_signer_secret_keys_json = additional_signer_secret_keys_json,
+        .address_lookup_tables_json = address_lookup_tables_json,
+        .recent_blockhash = recent_blockhash,
+        .nonce_account = nonce_account,
+        .nonce_authority_secret_key = nonce_authority_secret_key,
+        .instruction = .{
+            .program_id = instruction_program_id,
+            .accounts_json = accounts_json,
+            .data = instruction_data_base64,
+            .data_encoding = "base64",
+        },
+    });
 }
 
 pub fn sendLegacyTransactionFromInvocationSpecJson(
