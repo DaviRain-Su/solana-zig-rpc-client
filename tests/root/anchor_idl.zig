@@ -3720,3 +3720,320 @@ test "root.anchor_idl_invoke.sendAndConfirmVersionedTransactionFromInvocationSpe
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"skipPreflight\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"searchTransactionHistory\":true") != null);
 }
+
+test "root.anchor_idl_invoke.buildLegacyTransactionBase64FromInvocationSpecJson builds recent blockhash payloads without rpc" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{101} ** 32);
+    const authority_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{102} ** 32);
+    const target_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{103} ** 32);
+    const recent_blockhash = [_]u8{0xC3} ** 32;
+    const recent_blockhash_hash = client.Hash.fromBytes(recent_blockhash);
+    const recent_blockhash_base58 = try client.encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const authority = try client.Keypair.fromSecretKeyBytes(authority_raw.secret_key.toBytes());
+    const target = client.Pubkey.fromBytes(target_raw.public_key.toBytes());
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer.secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const authority_secret_key_base58 = try client.encodeBase58(allocator, &authority.secret_key);
+    defer allocator.free(authority_secret_key_base58);
+    const target_base58 = try target.toBase58(allocator);
+    defer allocator.free(target_base58);
+    const account_bindings_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"target\":\"{s}\"}}",
+        .{target_base58},
+    );
+    defer allocator.free(account_bindings_json);
+
+    const expected_encoded = try client.anchor_idl_invoke.buildLegacyTransactionBase64FromJson(
+        allocator,
+        rpc_test_idl_json,
+        "setValue",
+        .{
+            .payer = payer.public_key,
+            .recent_blockhash = recent_blockhash_hash,
+            .signers = &.{ payer, authority },
+            .instruction_options = .{
+                .args_json = "{\"value\":42}",
+                .account_bindings_json = account_bindings_json,
+                .default_signer = authority.public_key,
+            },
+        },
+    );
+    defer allocator.free(expected_encoded);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "default_signer_secret_key":"{s}",
+        \\  "recent_blockhash":"{s}",
+        \\  "idl":{s},
+        \\  "instruction_name":"setValue",
+        \\  "args":{{"value":42}},
+        \\  "account_bindings":{{"target":"{s}"}}
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            authority_secret_key_base58,
+            recent_blockhash_base58,
+            rpc_test_idl_json,
+            target_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    var dummy = try client.RpcClient.newMock(allocator, &.{});
+    defer dummy.deinit();
+    const actual_encoded = try client.anchor_idl_invoke.buildLegacyTransactionBase64FromInvocationSpecJson(
+        &dummy,
+        allocator,
+        .{ .anchor_idl_invocation_spec_json = spec_json },
+    );
+    defer allocator.free(actual_encoded);
+
+    try std.testing.expectEqualStrings(expected_encoded, actual_encoded);
+    try std.testing.expectEqual(@as(usize, 0), dummy.mockRequestCount());
+}
+
+test "root.anchor_idl_invoke.sendAndConfirmLegacyTransactionWithSpinnerFromInvocationSpecJson resolves nonce account specs" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{104} ** 32);
+    const nonce_authority_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{105} ** 32);
+    const nonce_account_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{106} ** 32);
+    const target_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{107} ** 32);
+    const recent_blockhash = [_]u8{0xC4} ** 32;
+    const recent_blockhash_base58 = try client.encodeBase58(allocator, &recent_blockhash);
+    defer allocator.free(recent_blockhash_base58);
+
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const nonce_authority = try client.Keypair.fromSecretKeyBytes(nonce_authority_raw.secret_key.toBytes());
+    const nonce_account = client.Pubkey.fromBytes(nonce_account_raw.public_key.toBytes());
+    const target = client.Pubkey.fromBytes(target_raw.public_key.toBytes());
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer.secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const nonce_authority_secret_key_base58 = try client.encodeBase58(allocator, &nonce_authority.secret_key);
+    defer allocator.free(nonce_authority_secret_key_base58);
+    const nonce_account_base58 = try nonce_account.toBase58(allocator);
+    defer allocator.free(nonce_account_base58);
+    const nonce_authority_base58 = try nonce_authority.public_key.toBase58(allocator);
+    defer allocator.free(nonce_authority_base58);
+    const target_base58 = try target.toBase58(allocator);
+    defer allocator.free(target_base58);
+    const account_bindings_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"target\":\"{s}\"}}",
+        .{target_base58},
+    );
+    defer allocator.free(account_bindings_json);
+    const nonce_account_result_json = try std.mem.concat(allocator, u8, &.{
+        "{\"context\":{\"slot\":240},\"value\":{\"data\":{\"program\":\"system\",\"parsed\":{\"type\":\"initialized\",\"info\":{\"authority\":\"",
+        nonce_authority_base58,
+        "\",\"blockhash\":\"",
+        recent_blockhash_base58,
+        "\",\"feeCalculator\":{\"lamportsPerSignature\":5000}}},\"space\":80},\"executable\":false,\"lamports\":123456,\"owner\":\"11111111111111111111111111111111\",\"rentEpoch\":0,\"space\":80}}",
+    });
+    defer allocator.free(nonce_account_result_json);
+
+    var expected_rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer expected_rpc.deinit();
+    try expected_rpc.pushMockResultJson(nonce_account_result_json);
+    const expected_encoded = try client.anchor_idl_invoke.buildLegacyTransactionBase64WithBlockhashQueryFromJson(
+        &expected_rpc,
+        allocator,
+        rpc_test_idl_json,
+        "setValue",
+        .{
+            .payer = payer.public_key,
+            .signers = &.{ payer, nonce_authority },
+            .instruction_options = .{
+                .args_json = "{\"value\":42}",
+                .account_bindings_json = account_bindings_json,
+                .default_signer = payer.public_key,
+            },
+            .blockhash_query = .{ .nonce_account = .{
+                .pubkey = nonce_account_base58,
+                .commitment = .finalized,
+            } },
+            .nonce_authority = nonce_authority.public_key,
+        },
+    );
+    defer allocator.free(expected_encoded);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "nonce_account":"{s}",
+        \\  "nonce_authority_secret_key":"{s}",
+        \\  "idl":{s},
+        \\  "instruction_name":"setValue",
+        \\  "args":{{"value":42}},
+        \\  "account_bindings":{{"target":"{s}"}}
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            nonce_account_base58,
+            nonce_authority_secret_key_base58,
+            rpc_test_idl_json,
+            target_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockResultJson(nonce_account_result_json);
+    try rpc.pushMockSendAndSignatureStatusPollFlow(
+        "SigAnchorInvocationLegacySpinner11111111111111111111111111111111111111111111",
+        &.{
+            .{ .context_slot = 14, .status = .{
+                .slot = 14,
+                .confirmations = 1,
+                .confirmation_status = "processed",
+                .has_error = false,
+            } },
+            .{ .context_slot = 15, .status = .{
+                .slot = 15,
+                .confirmations = 2,
+                .confirmation_status = "confirmed",
+                .has_error = false,
+            } },
+        },
+    );
+
+    const signature = try client.anchor_idl_invoke.sendAndConfirmLegacyTransactionWithSpinnerFromInvocationSpecJson(
+        &rpc,
+        allocator,
+        .{
+            .anchor_idl_invocation_spec_json = spec_json,
+            .blockhash_commitment = .finalized,
+            .send_transaction_options = .{ .skip_preflight = true },
+            .commitment = .confirmed,
+            .search_transaction_history = true,
+            .timeout_ms = 2_000,
+            .poll_interval_ms = 20,
+        },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings(
+        "SigAnchorInvocationLegacySpinner11111111111111111111111111111111111111111111",
+        signature,
+    );
+    try std.testing.expectEqual(@as(usize, 4), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getAccountInfo", rpc.capturedMockRequests()[0].method);
+    try std.testing.expectEqualStrings("sendTransaction", rpc.capturedMockRequests()[1].method);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[2].method);
+    try std.testing.expectEqualStrings("getSignatureStatuses", rpc.capturedMockRequests()[3].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, nonce_account_base58) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].request_body, expected_encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"skipPreflight\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[2].params_json, "\"searchTransactionHistory\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[3].params_json, "\"commitment\":\"confirmed\"") != null);
+}
+
+test "root.anchor_idl_invoke.getFeeForVersionedMessageFromInvocationSpecJson uses latest blockhash and lookup tables" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{108} ** 32);
+    const target_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{109} ** 32);
+    const lookup_table_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{110} ** 32);
+    const lookup_address_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{111} ** 32);
+    const latest_blockhash_base58 = "11111111111111111111111111111111";
+    const recent_blockhash = try client.Hash.fromBase58(allocator, latest_blockhash_base58);
+
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const target = client.Pubkey.fromBytes(target_raw.public_key.toBytes());
+    const lookup_table = client.Pubkey.fromBytes(lookup_table_raw.public_key.toBytes());
+    const lookup_address = client.Pubkey.fromBytes(lookup_address_raw.public_key.toBytes());
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer.secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const target_base58 = try target.toBase58(allocator);
+    defer allocator.free(target_base58);
+    const lookup_table_base58 = try lookup_table.toBase58(allocator);
+    defer allocator.free(lookup_table_base58);
+    const lookup_address_base58 = try lookup_address.toBase58(allocator);
+    defer allocator.free(lookup_address_base58);
+    const account_bindings_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"target\":\"{s}\"}}",
+        .{target_base58},
+    );
+    defer allocator.free(account_bindings_json);
+
+    var expected_message = try client.anchor_idl_invoke.buildOwnedVersionedMessageFromJson(
+        allocator,
+        rpc_test_idl_json,
+        "setValue",
+        .{
+            .payer = payer.public_key,
+            .recent_blockhash = recent_blockhash,
+            .address_lookup_tables = &.{
+                .{
+                    .account_key = lookup_table,
+                    .addresses = &.{lookup_address},
+                },
+            },
+            .instruction_options = .{
+                .args_json = "{\"value\":42}",
+                .account_bindings_json = account_bindings_json,
+                .default_signer = payer.public_key,
+            },
+        },
+    );
+    defer expected_message.deinit(allocator);
+    const expected_encoded = try expected_message.toBase64(allocator);
+    defer allocator.free(expected_encoded);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "idl":{s},
+        \\  "instruction_name":"setValue",
+        \\  "args":{{"value":42}},
+        \\  "account_bindings":{{"target":"{s}"}},
+        \\  "address_lookup_tables":[{{"account_key":"{s}","addresses":["{s}"]}}]
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            rpc_test_idl_json,
+            target_base58,
+            lookup_table_base58,
+            lookup_address_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    var rpc = try client.RpcClient.newMock(allocator, &.{});
+    defer rpc.deinit();
+    try rpc.pushMockJsonResponse(
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":250},\"value\":{\"blockhash\":\"11111111111111111111111111111111\",\"lastValidBlockHeight\":9999}},\"id\":1}",
+    );
+    try rpc.pushMockJsonResponse(
+        "{\"jsonrpc\":\"2.0\",\"result\":{\"context\":{\"slot\":251},\"value\":7777},\"id\":1}",
+    );
+
+    const fee = try client.anchor_idl_invoke.getFeeForVersionedMessageFromInvocationSpecJson(
+        &rpc,
+        allocator,
+        .{
+            .anchor_idl_invocation_spec_json = spec_json,
+            .blockhash_commitment = .confirmed,
+        },
+        .{ .commitment = .processed },
+    );
+
+    try std.testing.expectEqual(@as(?u64, 7777), fee.value);
+    try std.testing.expectEqual(@as(usize, 2), rpc.mockRequestCount());
+    try std.testing.expectEqualStrings("getLatestBlockhash", rpc.capturedMockRequests()[0].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[0].params_json, "\"commitment\":\"confirmed\"") != null);
+    try std.testing.expectEqualStrings("getFeeForMessage", rpc.capturedMockRequests()[1].method);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].request_body, expected_encoded) != null);
+    try std.testing.expect(std.mem.indexOf(u8, rpc.capturedMockRequests()[1].params_json, "\"commitment\":\"processed\"") != null);
+}

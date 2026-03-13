@@ -2166,6 +2166,11 @@ pub const SendAndConfirmOptions = struct {
     poll_interval_ms: u64 = sdk.signature_poll_interval_ms,
 };
 
+pub const AnchorIdlInvocationSpecRpcOptions = struct {
+    anchor_idl_invocation_spec_json: []const u8,
+    blockhash_commitment: ?rpc_types.Commitment = null,
+};
+
 pub const SendAnchorIdlInvocationSpecRpcOptions = struct {
     anchor_idl_invocation_spec_json: []const u8,
     blockhash_commitment: ?rpc_types.Commitment = null,
@@ -2428,6 +2433,91 @@ pub fn sendLegacyTransactionFromInvocationSpecJson(
     });
 }
 
+pub fn buildOwnedLegacyMessageFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: AnchorIdlInvocationSpecRpcOptions,
+) !sdk.OwnedLegacyMessage {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.buildOwnedLegacyMessageFromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildLegacyMessageBytesFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: AnchorIdlInvocationSpecRpcOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.buildLegacyMessageBytesFromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildLegacyMessageBase64FromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: AnchorIdlInvocationSpecRpcOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.buildLegacyMessageBase64FromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildSignedLegacyTransactionFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: AnchorIdlInvocationSpecRpcOptions,
+) !sdk.SignedLegacyTransaction {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.buildSignedLegacyTransactionFromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildLegacyTransactionBase64FromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: AnchorIdlInvocationSpecRpcOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.buildLegacyTransactionBase64FromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
 pub fn simulateLegacyTransactionFromInvocationSpecJson(
     rpc: anytype,
     allocator: Allocator,
@@ -2468,6 +2558,50 @@ pub fn sendAndConfirmLegacyTransactionFromInvocationSpecJson(
     });
 }
 
+pub fn sendAndConfirmLegacyTransactionWithSpinnerFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: SendAndConfirmAnchorIdlInvocationSpecRpcOptions,
+) ![]const u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.sendAndConfirmLegacyTransactionWithSpinnerFromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+        .send_transaction_options = options.send_transaction_options,
+        .commitment = options.commitment,
+        .search_transaction_history = options.search_transaction_history,
+        .timeout_ms = options.timeout_ms,
+        .poll_interval_ms = options.poll_interval_ms,
+    });
+}
+
+pub fn getFeeForLegacyMessageFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: AnchorIdlInvocationSpecRpcOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.getFeeForLegacyMessageFromInvocationSpecJson(
+        rpc,
+        .{
+            .instruction_spec_json = instruction_spec_json,
+            .blockhash_commitment = options.blockhash_commitment,
+        },
+        .{ .commitment = fee_options.commitment },
+    );
+}
+
 pub fn sendVersionedTransactionFromInvocationSpecJson(
     rpc: anytype,
     allocator: Allocator,
@@ -2483,6 +2617,91 @@ pub fn sendVersionedTransactionFromInvocationSpecJson(
         .instruction_spec_json = instruction_spec_json,
         .blockhash_commitment = options.blockhash_commitment,
         .send_transaction_options = options.send_transaction_options,
+    });
+}
+
+pub fn buildOwnedVersionedMessageFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: AnchorIdlInvocationSpecRpcOptions,
+) !sdk.OwnedVersionedMessageV0 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.buildOwnedVersionedMessageFromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildVersionedMessageBytesFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: AnchorIdlInvocationSpecRpcOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.buildVersionedMessageBytesFromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildVersionedMessageBase64FromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: AnchorIdlInvocationSpecRpcOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.buildVersionedMessageBase64FromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildSignedVersionedTransactionFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: AnchorIdlInvocationSpecRpcOptions,
+) !sdk.SignedVersionedTransaction {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.buildSignedVersionedTransactionFromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildVersionedTransactionBase64FromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: AnchorIdlInvocationSpecRpcOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.buildVersionedTransactionBase64FromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
     });
 }
 
@@ -2524,6 +2743,50 @@ pub fn sendAndConfirmVersionedTransactionFromInvocationSpecJson(
         .timeout_ms = options.timeout_ms,
         .poll_interval_ms = options.poll_interval_ms,
     });
+}
+
+pub fn sendAndConfirmVersionedTransactionWithSpinnerFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: SendAndConfirmAnchorIdlInvocationSpecRpcOptions,
+) ![]const u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.sendAndConfirmVersionedTransactionWithSpinnerFromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+        .send_transaction_options = options.send_transaction_options,
+        .commitment = options.commitment,
+        .search_transaction_history = options.search_transaction_history,
+        .timeout_ms = options.timeout_ms,
+        .poll_interval_ms = options.poll_interval_ms,
+    });
+}
+
+pub fn getFeeForVersionedMessageFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: AnchorIdlInvocationSpecRpcOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.getFeeForVersionedMessageFromInvocationSpecJson(
+        rpc,
+        .{
+            .instruction_spec_json = instruction_spec_json,
+            .blockhash_commitment = options.blockhash_commitment,
+        },
+        .{ .commitment = fee_options.commitment },
+    );
 }
 
 pub fn buildOwnedLegacyMessage(

@@ -1031,6 +1031,81 @@ pub fn sendLegacyTransactionFromInvocationSpecJson(
     });
 }
 
+pub fn buildOwnedLegacyMessageFromInvocationSpecJson(
+    self: anytype,
+    options: ProgramInvocationSpecRpcOptions,
+) !sdk.OwnedLegacyMessage {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        self.allocator,
+        options.program_invocation_spec_json,
+    );
+    defer self.allocator.free(instruction_spec_json);
+    return try instructions_invoke.buildOwnedLegacyMessageFromInvocationSpecJson(self, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildLegacyMessageBytesFromInvocationSpecJson(
+    self: anytype,
+    options: ProgramInvocationSpecRpcOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        self.allocator,
+        options.program_invocation_spec_json,
+    );
+    defer self.allocator.free(instruction_spec_json);
+    return try instructions_invoke.buildLegacyMessageBytesFromInvocationSpecJson(self, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildLegacyMessageBase64FromInvocationSpecJson(
+    self: anytype,
+    options: ProgramInvocationSpecRpcOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        self.allocator,
+        options.program_invocation_spec_json,
+    );
+    defer self.allocator.free(instruction_spec_json);
+    return try instructions_invoke.buildLegacyMessageBase64FromInvocationSpecJson(self, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildSignedLegacyTransactionFromInvocationSpecJson(
+    self: anytype,
+    options: ProgramInvocationSpecRpcOptions,
+) !sdk.SignedLegacyTransaction {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        self.allocator,
+        options.program_invocation_spec_json,
+    );
+    defer self.allocator.free(instruction_spec_json);
+    return try instructions_invoke.buildSignedLegacyTransactionFromInvocationSpecJson(self, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildLegacyTransactionBase64FromInvocationSpecJson(
+    self: anytype,
+    options: ProgramInvocationSpecRpcOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        self.allocator,
+        options.program_invocation_spec_json,
+    );
+    defer self.allocator.free(instruction_spec_json);
+    return try instructions_invoke.buildLegacyTransactionBase64FromInvocationSpecJson(self, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
 pub fn simulateVersionedTransaction(
     self: anytype,
     program_id: sdk.Pubkey,
@@ -1120,6 +1195,46 @@ pub fn sendAndConfirmLegacyTransactionFromInvocationSpecJson(
     });
 }
 
+pub fn sendAndConfirmLegacyTransactionWithSpinnerFromInvocationSpecJson(
+    self: anytype,
+    options: SendAndConfirmProgramInvocationSpecRpcOptions,
+) ![]const u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        self.allocator,
+        options.program_invocation_spec_json,
+    );
+    defer self.allocator.free(instruction_spec_json);
+    return try instructions_invoke.sendAndConfirmLegacyTransactionWithSpinnerFromInvocationSpecJson(self, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+        .send_transaction_options = options.send_transaction_options,
+        .commitment = options.commitment,
+        .search_transaction_history = options.search_transaction_history,
+        .timeout_ms = options.timeout_ms,
+        .poll_interval_ms = options.poll_interval_ms,
+    });
+}
+
+pub fn getFeeForLegacyMessageFromInvocationSpecJson(
+    self: anytype,
+    options: ProgramInvocationSpecRpcOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        self.allocator,
+        options.program_invocation_spec_json,
+    );
+    defer self.allocator.free(instruction_spec_json);
+    return try instructions_invoke.getFeeForLegacyMessageFromInvocationSpecJson(
+        self,
+        .{
+            .instruction_spec_json = instruction_spec_json,
+            .blockhash_commitment = options.blockhash_commitment,
+        },
+        .{ .commitment = fee_options.commitment },
+    );
+}
+
 pub fn sendVersionedTransactionFromInvocationSpecJson(
     self: anytype,
     options: SendProgramInvocationSpecRpcOptions,
@@ -1133,6 +1248,81 @@ pub fn sendVersionedTransactionFromInvocationSpecJson(
         .instruction_spec_json = instruction_spec_json,
         .blockhash_commitment = options.blockhash_commitment,
         .send_transaction_options = options.send_transaction_options,
+    });
+}
+
+pub fn buildOwnedVersionedMessageFromInvocationSpecJson(
+    self: anytype,
+    options: ProgramInvocationSpecRpcOptions,
+) !sdk.OwnedVersionedMessageV0 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        self.allocator,
+        options.program_invocation_spec_json,
+    );
+    defer self.allocator.free(instruction_spec_json);
+    return try instructions_invoke.buildOwnedVersionedMessageFromInvocationSpecJson(self, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildVersionedMessageBytesFromInvocationSpecJson(
+    self: anytype,
+    options: ProgramInvocationSpecRpcOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        self.allocator,
+        options.program_invocation_spec_json,
+    );
+    defer self.allocator.free(instruction_spec_json);
+    return try instructions_invoke.buildVersionedMessageBytesFromInvocationSpecJson(self, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildVersionedMessageBase64FromInvocationSpecJson(
+    self: anytype,
+    options: ProgramInvocationSpecRpcOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        self.allocator,
+        options.program_invocation_spec_json,
+    );
+    defer self.allocator.free(instruction_spec_json);
+    return try instructions_invoke.buildVersionedMessageBase64FromInvocationSpecJson(self, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildSignedVersionedTransactionFromInvocationSpecJson(
+    self: anytype,
+    options: ProgramInvocationSpecRpcOptions,
+) !sdk.SignedVersionedTransaction {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        self.allocator,
+        options.program_invocation_spec_json,
+    );
+    defer self.allocator.free(instruction_spec_json);
+    return try instructions_invoke.buildSignedVersionedTransactionFromInvocationSpecJson(self, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+    });
+}
+
+pub fn buildVersionedTransactionBase64FromInvocationSpecJson(
+    self: anytype,
+    options: ProgramInvocationSpecRpcOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        self.allocator,
+        options.program_invocation_spec_json,
+    );
+    defer self.allocator.free(instruction_spec_json);
+    return try instructions_invoke.buildVersionedTransactionBase64FromInvocationSpecJson(self, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
     });
 }
 
@@ -1170,6 +1360,46 @@ pub fn sendAndConfirmVersionedTransactionFromInvocationSpecJson(
         .timeout_ms = options.timeout_ms,
         .poll_interval_ms = options.poll_interval_ms,
     });
+}
+
+pub fn sendAndConfirmVersionedTransactionWithSpinnerFromInvocationSpecJson(
+    self: anytype,
+    options: SendAndConfirmProgramInvocationSpecRpcOptions,
+) ![]const u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        self.allocator,
+        options.program_invocation_spec_json,
+    );
+    defer self.allocator.free(instruction_spec_json);
+    return try instructions_invoke.sendAndConfirmVersionedTransactionWithSpinnerFromInvocationSpecJson(self, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+        .send_transaction_options = options.send_transaction_options,
+        .commitment = options.commitment,
+        .search_transaction_history = options.search_transaction_history,
+        .timeout_ms = options.timeout_ms,
+        .poll_interval_ms = options.poll_interval_ms,
+    });
+}
+
+pub fn getFeeForVersionedMessageFromInvocationSpecJson(
+    self: anytype,
+    options: ProgramInvocationSpecRpcOptions,
+    fee_options: GetFeeOptions,
+) !rpc_types.FeeForMessage {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        self.allocator,
+        options.program_invocation_spec_json,
+    );
+    defer self.allocator.free(instruction_spec_json);
+    return try instructions_invoke.getFeeForVersionedMessageFromInvocationSpecJson(
+        self,
+        .{
+            .instruction_spec_json = instruction_spec_json,
+            .blockhash_commitment = options.blockhash_commitment,
+        },
+        .{ .commitment = fee_options.commitment },
+    );
 }
 
 pub fn buildOwnedLegacyMessageWithOptions(
@@ -3695,6 +3925,224 @@ test "program_invoke.sendVersionedTransactionFromInvocationSpecJson forwards lat
     try std.testing.expectEqual(@as(usize, 1), mock.captured_signer_count);
     try std.testing.expectEqual(rpc_types.Commitment.processed, mock.captured_blockhash_commitment.?);
     try std.testing.expect(mock.captured_skip_preflight);
+}
+
+test "program_invoke.buildLegacyTransactionBase64FromInvocationSpecJson matches direct builder" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{153} ** 32);
+    const extra_raw = try sdk.Keypair.fromSecretKeyBytes(.{154} ** 32);
+    const program_id = sdk.Pubkey.fromBytes(.{155} ** 32);
+    const recent_blockhash = sdk.Hash.fromBytes(.{156} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const extra_secret_key = extra_raw.secret_key.toBytes();
+    const extra_secret_key_base58 = try sdk.encodeBase58(allocator, &extra_secret_key);
+    defer allocator.free(extra_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const recent_blockhash_base58 = try recent_blockhash.toBase58(allocator);
+    defer allocator.free(recent_blockhash_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "additional_signer_secret_keys":["{s}"],
+        \\  "program_id":"{s}",
+        \\  "dataBytes":[1,2,3],
+        \\  "recent_blockhash":"{s}"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            extra_secret_key_base58,
+            program_id_base58,
+            recent_blockhash_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const expected = try buildLegacyTransactionBase64(
+        allocator,
+        program_id,
+        .{
+            .payer = payer_raw.public_key,
+            .recent_blockhash = recent_blockhash,
+            .signers = &.{ payer_raw, extra_raw },
+            .instruction = .{
+                .data_bytes = &.{ 1, 2, 3 },
+            },
+        },
+    );
+    defer allocator.free(expected);
+
+    const Dummy = struct { allocator: Allocator };
+    var dummy = Dummy{ .allocator = allocator };
+    const actual = try buildLegacyTransactionBase64FromInvocationSpecJson(&dummy, .{
+        .program_invocation_spec_json = spec_json,
+    });
+    defer allocator.free(actual);
+
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
+test "program_invoke.sendAndConfirmVersionedTransactionWithSpinnerFromInvocationSpecJson forwards latest blockhash options and lookup tables" {
+    const allocator = std.testing.allocator;
+
+    const MockVersionedSpinnerInvocationClient = struct {
+        allocator: Allocator,
+        captured_program_id: ?sdk.Pubkey = null,
+        captured_lookup_count: usize = 0,
+        captured_signer_count: usize = 0,
+        captured_blockhash_commitment: ?rpc_types.Commitment = null,
+        captured_commitment: ?rpc_types.Commitment = null,
+
+        pub fn sendAndConfirmVersionedInstructionsWithSpinnerAndOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            address_lookup_tables: []const sdk.AddressLookupTableAccount,
+            signers: []const sdk.Keypair,
+            options: ?rpc_types.VersionedInstructionsOptions,
+        ) ![]const u8 {
+            _ = self.allocator;
+            _ = payer;
+            self.captured_program_id = instructions[0].program_id;
+            self.captured_lookup_count = address_lookup_tables.len;
+            self.captured_signer_count = signers.len;
+            self.captured_blockhash_commitment = options.?.blockhash_commitment.?;
+            self.captured_commitment = options.?.commitment.?;
+            return "mock-program-invoke-spinner-versioned-signature";
+        }
+    };
+
+    var mock = MockVersionedSpinnerInvocationClient{ .allocator = allocator };
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{157} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id = sdk.Pubkey.fromBytes(.{158} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const lookup_table_key = sdk.Pubkey.fromBytes(.{159} ** 32);
+    const lookup_table_key_base58 = try lookup_table_key.toBase58(allocator);
+    defer allocator.free(lookup_table_key_base58);
+    const lookup_table_address = sdk.Pubkey.fromBytes(.{160} ** 32);
+    const lookup_table_address_base58 = try lookup_table_address.toBase58(allocator);
+    defer allocator.free(lookup_table_address_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "address_lookup_tables":[{{"account_key":"{s}","addresses":["{s}"]}}],
+        \\  "data":"AQ==",
+        \\  "data_encoding":"base64"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+            lookup_table_key_base58,
+            lookup_table_address_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const signature = try sendAndConfirmVersionedTransactionWithSpinnerFromInvocationSpecJson(&mock, .{
+        .program_invocation_spec_json = spec_json,
+        .blockhash_commitment = .processed,
+        .commitment = .confirmed,
+        .timeout_ms = 123,
+    });
+
+    try std.testing.expectEqualStrings("mock-program-invoke-spinner-versioned-signature", signature);
+    try std.testing.expect(mock.captured_program_id.?.eql(program_id));
+    try std.testing.expectEqual(@as(usize, 1), mock.captured_lookup_count);
+    try std.testing.expectEqual(@as(usize, 1), mock.captured_signer_count);
+    try std.testing.expectEqual(rpc_types.Commitment.processed, mock.captured_blockhash_commitment.?);
+    try std.testing.expectEqual(rpc_types.Commitment.confirmed, mock.captured_commitment.?);
+}
+
+test "program_invoke.getFeeForLegacyMessageFromInvocationSpecJson forwards nonce query" {
+    const allocator = std.testing.allocator;
+
+    const MockLegacyInvocationFeeClient = struct {
+        captured_query: ?rpc_types.BlockhashQuery = null,
+        captured_nonce_authority: ?sdk.Pubkey = null,
+        captured_commitment: ?rpc_types.Commitment = null,
+
+        pub fn getFeeForLegacyInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            options: ?rpc_types.LegacyInstructionsBuildOptions,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = payer;
+            _ = instructions;
+            self.captured_query = options.?.blockhash_query.?;
+            self.captured_nonce_authority = options.?.nonce_authority.?;
+            self.captured_commitment = commitment;
+            return .{ .value = 2468 };
+        }
+    };
+
+    var mock = MockLegacyInvocationFeeClient{};
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{161} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const nonce_authority_raw = try sdk.Keypair.fromSecretKeyBytes(.{162} ** 32);
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const nonce_authority_secret_key_base58 = try sdk.encodeBase58(allocator, &nonce_authority_secret_key);
+    defer allocator.free(nonce_authority_secret_key_base58);
+    const program_id = sdk.Pubkey.fromBytes(.{163} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const nonce_account = sdk.Pubkey.fromBytes(.{164} ** 32);
+    const nonce_account_base58 = try nonce_account.toBase58(allocator);
+    defer allocator.free(nonce_account_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "dataBytes":[9,8,7],
+        \\  "nonce_account":"{s}",
+        \\  "nonce_authority_secret_key":"{s}"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+            nonce_account_base58,
+            nonce_authority_secret_key_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const fee = try getFeeForLegacyMessageFromInvocationSpecJson(&mock, .{
+        .program_invocation_spec_json = spec_json,
+        .blockhash_commitment = .finalized,
+    }, .{
+        .commitment = .confirmed,
+    });
+
+    try std.testing.expectEqual(@as(?u64, 2468), fee.value);
+    try std.testing.expectEqualDeep(
+        rpc_types.BlockhashQuery{ .nonce_account = .{
+            .pubkey = nonce_account_base58,
+            .commitment = .finalized,
+        } },
+        mock.captured_query.?,
+    );
+    try std.testing.expectEqual(nonce_authority_raw.public_key, mock.captured_nonce_authority.?);
+    try std.testing.expectEqual(rpc_types.Commitment.confirmed, mock.captured_commitment.?);
 }
 
 test "program_invoke.simulateVersionedTransaction delegates instruction and options" {
