@@ -102,7 +102,7 @@ const cli_option_help_params = clap.parseParamsComptime(
     \\    --limit <count>                     Maximum results to return (signatures-for-address)
     \\    --min-context-slot <slot>           Minimum context slot (send commands, signatures-for-address, account/program queries, or token-account)
     \\    --search-transaction-history        Search transaction history for status and confirmation queries
-    \\    --json                             Print invoke, explain, preview, validate, or prepare command output as JSON
+    \\    --json                             Print invoke, explain, preview, validate, prepare, estimate, or spec command output as JSON
     \\    --skip-preflight                    Skip tx preflight checks (send commands)
     \\    --sig-verify                        Verify signatures during simulation (simulate-transaction)
     \\    --replace-recent-blockhash          Replace recent blockhash during simulation
@@ -116,8 +116,8 @@ const cli_option_help_params = clap.parseParamsComptime(
     \\    --sender-keypair <path>             Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)
     \\    --sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer secret key (base58)
     \\    --additional-signer-secret-key <additional-signer-secret-key> Additional signer secret key (base58, repeatable)
-    \\    --invoke-mode <mode>               Preferred invocation mode: auto|legacy|versioned (invoke/explain/preview/validate/prepare commands)
-    \\    --no-mode-fallback                 Disable automatic legacy/versioned fallback for invoke/explain/preview/validate/prepare commands
+    \\    --invoke-mode <mode>               Preferred invocation mode: auto|legacy|versioned (invoke/explain/preview/validate/prepare/estimate/spec commands)
+    \\    --no-mode-fallback                 Disable automatic legacy/versioned fallback for invoke/explain/preview/validate/prepare/estimate/spec commands
     \\    --data-schema-json <json|@path>    Program-invoke instruction data schema JSON (used with --args-json)
     \\    --args-json <json|@path>           Program-invoke instruction args JSON (used with --data-schema-json)
     \\    --schema-encoding <encoding>       Program-invoke schema encoding (currently borsh)

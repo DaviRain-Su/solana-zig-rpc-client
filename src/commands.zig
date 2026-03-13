@@ -13462,6 +13462,133 @@ test "runCommand prepare-spec emits json prepared invocation" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"message_base64\":\"") != null);
 }
 
+test "runCommand validate-spec fails on missing required signer" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://validate-spec-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{94} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 55);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{12} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const missing_signer = client.Pubkey.fromBytes(.{13} ** 32);
+    const missing_signer_base58 = try missing_signer.toBase58(allocator);
+    defer allocator.free(missing_signer_base58);
+
+    const invocation_spec_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"payer_secret_key\":\"{s}\",\"recent_blockhash\":\"{s}\",\"instructions\":[{{\"program_id\":\"{s}\",\"accounts\":[{{\"pubkey\":\"{s}\",\"is_signer\":true}}],\"data_bytes\":[1]}}]}}",
+        .{ payer_secret_key_base58, recent_blockhash, program_id_base58, missing_signer_base58 },
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "validate-spec",
+        "--json",
+        invocation_spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.InvocationValidationFailed, runCommand(allocator, &rpc, &parsed));
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 8 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"code\":\"missing_required_signers\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"none\"") != null);
+}
+
+test "runCommand invoke-spec-simulate emits json execution result" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":71},"value":{"accounts":[],"err":null,"fee":44,"unitsConsumed":123,"logs":["Program log: spec-simulate-ok"]}}
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://invoke-spec-simulate-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{95} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 77);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{14} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const writable_pubkey = client.Pubkey.fromBytes(.{15} ** 32);
+    const writable_pubkey_base58 = try writable_pubkey.toBase58(allocator);
+    defer allocator.free(writable_pubkey_base58);
+
+    const invocation_spec_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"payer_secret_key\":\"{s}\",\"recent_blockhash\":\"{s}\",\"instructions\":[{{\"program_id\":\"{s}\",\"accounts\":[{{\"pubkey\":\"{s}\",\"is_writable\":true}}],\"data_bytes\":[9,8,7]}}]}}",
+        .{ payer_secret_key_base58, recent_blockhash, program_id_base58, writable_pubkey_base58 },
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "invoke-spec-simulate",
+        "--json",
+        invocation_spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 8 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"units_consumed\":123") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"fee\":44") != null);
+}
+
 test "runCommand explain-program-invoke honors explicit versioned mode" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
