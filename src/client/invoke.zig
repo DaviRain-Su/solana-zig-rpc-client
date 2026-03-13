@@ -233,6 +233,20 @@ pub const OwnedInvocationReport = struct {
     }
 };
 
+pub const InvocationMode = enum {
+    legacy,
+    versioned,
+};
+
+pub const InvocationModeReport = struct {
+    legacy_buildable: bool,
+    versioned_buildable: bool,
+    preferred_mode: ?InvocationMode,
+    validation_passed: bool,
+    uses_durable_nonce: bool,
+    address_lookup_table_count: usize,
+};
+
 pub fn buildInstructionInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
@@ -824,6 +838,61 @@ pub fn buildInvocationReportFromInvocationSpecJson(
         .has_extra_signers = validation.extra_signer_pubkeys.len != 0,
         .has_duplicate_signers = validation.duplicate_provided_signer_pubkeys.len != 0,
         .has_duplicate_lookup_tables = validation.duplicate_lookup_table_pubkeys.len != 0,
+    };
+}
+
+pub fn buildInvocationModeReportFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildInvocationSpecOptions,
+) !InvocationModeReport {
+    var report = try buildInvocationReportFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer report.deinit(allocator);
+
+    const legacy_buildable = blk: {
+        const encoded = buildLegacyTransactionBase64FromInvocationSpecJsonWithOptions(
+            allocator,
+            rpc,
+            family,
+            invocation_spec_json,
+            options,
+        ) catch break :blk false;
+        allocator.free(encoded);
+        break :blk true;
+    };
+
+    const versioned_buildable = blk: {
+        const encoded = buildVersionedTransactionBase64FromInvocationSpecJsonWithOptions(
+            allocator,
+            rpc,
+            family,
+            invocation_spec_json,
+            options,
+        ) catch break :blk false;
+        allocator.free(encoded);
+        break :blk true;
+    };
+
+    return .{
+        .legacy_buildable = legacy_buildable,
+        .versioned_buildable = versioned_buildable,
+        .preferred_mode = if (versioned_buildable and report.summary.address_lookup_table_count != 0)
+            .versioned
+        else if (legacy_buildable)
+            .legacy
+        else if (versioned_buildable)
+            .versioned
+        else
+            null,
+        .validation_passed = report.validation.is_valid,
+        .uses_durable_nonce = report.uses_durable_nonce,
+        .address_lookup_table_count = report.summary.address_lookup_table_count,
     };
 }
 
@@ -2627,6 +2696,70 @@ test "invoke.buildInvocationReportFromInvocationSpecJson summarizes invalid prog
     try std.testing.expect(!report.has_extra_signers);
     try std.testing.expect(report.has_full_lookup_coverage);
     try std.testing.expectEqual(InvocationBlockhashMode.explicit_recent_blockhash, report.preflight.blockhash_mode);
+}
+
+test "invoke.buildInvocationModeReportFromInvocationSpecJson prefers legacy without lookup tables" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 241, 242, 243);
+    defer allocator.free(spec_json);
+
+    const mode_report = try buildInvocationModeReportFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        spec_json,
+        .{},
+    );
+
+    try std.testing.expect(mode_report.legacy_buildable);
+    try std.testing.expect(mode_report.versioned_buildable);
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), mode_report.preferred_mode);
+    try std.testing.expect(mode_report.validation_passed);
+    try std.testing.expectEqual(@as(usize, 0), mode_report.address_lookup_table_count);
+}
+
+test "invoke.buildInvocationModeReportFromInvocationSpecJson prefers versioned with lookup tables" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 251, 252, 253, 254, 255);
+    defer allocator.free(spec_json);
+
+    const mode_report = try buildInvocationModeReportFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{},
+    );
+
+    try std.testing.expect(mode_report.versioned_buildable);
+    try std.testing.expectEqual(@as(?InvocationMode, .versioned), mode_report.preferred_mode);
+    try std.testing.expect(mode_report.validation_passed);
+    try std.testing.expectEqual(@as(usize, 1), mode_report.address_lookup_table_count);
+}
+
+test "invoke.buildInvocationModeReportFromInvocationSpecJson reports missing signer as not buildable" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocInstructionsInvocationSpecJsonWithMissingSignerAndExtraSigner(allocator, 261, 262, 263, 264, 265);
+    defer allocator.free(spec_json);
+
+    const mode_report = try buildInvocationModeReportFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        spec_json,
+        .{},
+    );
+
+    try std.testing.expect(!mode_report.legacy_buildable);
+    try std.testing.expect(!mode_report.versioned_buildable);
+    try std.testing.expectEqual(@as(?InvocationMode, null), mode_report.preferred_mode);
+    try std.testing.expect(!mode_report.validation_passed);
 }
 
 test "invoke.buildLegacyMessageBytesFromInvocationSpecJsonWithOptions matches generic builder" {
