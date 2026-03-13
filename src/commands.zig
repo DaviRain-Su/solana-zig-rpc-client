@@ -3850,7 +3850,7 @@ fn buildInstructionsInvocationSpecJsonForCommand(
     const command_label = if (lookupInvokeCommandSpec(command)) |spec|
         spec.label
     else switch (command) {
-        .preview_program_invoke => "preview-program-invoke",
+        .preview_instructions => "preview-instructions",
         else => unreachable,
     };
     const spec_arg = instructions_spec_arg orelse {
@@ -4638,6 +4638,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_instructions_and_confirm and
         command != .send_versioned_instructions and
         command != .send_versioned_instructions_and_confirm and
+        command != .preview_instructions and
         command != .simulate_instructions and
         command != .simulate_versioned_instructions and
         command != .preview_program_invoke and
@@ -4669,6 +4670,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_instructions_and_confirm and
         command != .send_versioned_instructions and
         command != .send_versioned_instructions_and_confirm and
+        command != .preview_instructions and
         command != .simulate_instructions and
         command != .simulate_versioned_instructions and
         command != .preview_program_invoke and
@@ -4685,7 +4687,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_idl_invoke and
         command != .send_versioned_idl_invoke_and_confirm)
     {
-        reportInvalidCliMessage("error: --sender-keypair/--sender-secret-key requires transfer, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, preview-program-invoke, simulate-instructions, simulate-versioned-instructions, send-program-invoke, send-program-invoke-and-confirm, send-versioned-program-invoke, send-versioned-program-invoke-and-confirm, simulate-program-invoke, simulate-versioned-program-invoke, send-idl-invoke, send-idl-invoke-and-confirm, send-versioned-idl-invoke, send-versioned-idl-invoke-and-confirm, simulate-idl-invoke, or simulate-versioned-idl-invoke commands\n", .{});
+        reportInvalidCliMessage("error: --sender-keypair/--sender-secret-key requires transfer, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, preview-instructions, preview-program-invoke, simulate-instructions, simulate-versioned-instructions, send-program-invoke, send-program-invoke-and-confirm, send-versioned-program-invoke, send-versioned-program-invoke-and-confirm, simulate-program-invoke, simulate-versioned-program-invoke, send-idl-invoke, send-idl-invoke-and-confirm, send-versioned-idl-invoke, send-versioned-idl-invoke-and-confirm, simulate-idl-invoke, or simulate-versioned-idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
@@ -5073,7 +5075,36 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return;
     }
 
+    if (command == .preview_instructions) {
+        const invocation_spec_json = try buildInstructionsInvocationSpecJsonForCommand(
+            allocator,
+            command,
+            instructions_spec_arg,
+            effective_sender_keypair_path,
+            sender_secret_key_arg,
+            program_invoke_additional_signer_secret_keys_arg,
+            recent_blockhash_arg,
+        );
+        defer allocator.free(invocation_spec_json);
+
+        var report = client.invoke.buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+            allocator,
+            rpc,
+            .instructions,
+            invocation_spec_json,
+            .{},
+        ) catch {
+            reportInvalidCliMessage("error: preview-instructions spec is invalid\n", .{});
+            return error.InvalidCli;
+        };
+        defer report.deinit(allocator);
+
+        try printPreferredInvocationExecutionReport(allocator, &report);
+        return;
+    }
+
     switch (command) {
+        .preview_instructions => unreachable,
         .preview_program_invoke => unreachable,
         .latest_blockhash => {
             if (with_context) {
