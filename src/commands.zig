@@ -3996,30 +3996,6 @@ fn simulateInvocationSpecJson(
     };
 }
 
-fn invokeCommandLabel(command: cli.Command) []const u8 {
-    return switch (command) {
-        .send_instructions => "send-instructions",
-        .send_instructions_and_confirm => "send-instructions-and-confirm",
-        .send_versioned_instructions => "send-versioned-instructions",
-        .send_versioned_instructions_and_confirm => "send-versioned-instructions-and-confirm",
-        .simulate_instructions => "simulate-instructions",
-        .simulate_versioned_instructions => "simulate-versioned-instructions",
-        .send_program_invoke => "send-program-invoke",
-        .send_program_invoke_and_confirm => "send-program-invoke-and-confirm",
-        .send_versioned_program_invoke => "send-versioned-program-invoke",
-        .send_versioned_program_invoke_and_confirm => "send-versioned-program-invoke-and-confirm",
-        .simulate_program_invoke => "simulate-program-invoke",
-        .simulate_versioned_program_invoke => "simulate-versioned-program-invoke",
-        .send_idl_invoke => "send-idl-invoke",
-        .send_idl_invoke_and_confirm => "send-idl-invoke-and-confirm",
-        .send_versioned_idl_invoke => "send-versioned-idl-invoke",
-        .send_versioned_idl_invoke_and_confirm => "send-versioned-idl-invoke-and-confirm",
-        .simulate_idl_invoke => "simulate-idl-invoke",
-        .simulate_versioned_idl_invoke => "simulate-versioned-idl-invoke",
-        else => unreachable,
-    };
-}
-
 const CliInvokeContextArgs = struct {
     payer_keypair_path_arg: ?[]const u8,
     payer_secret_key_arg: ?[]const u8,
@@ -4067,6 +4043,12 @@ const CliInvokeCommandBehavior = struct {
     versioned: bool,
     simulate: bool,
     confirm: bool,
+};
+
+const CliInvokeCommandSpec = struct {
+    command: cli.Command,
+    label: []const u8,
+    behavior: CliInvokeCommandBehavior,
 };
 
 fn buildCliInvokeContextArgs(
@@ -4153,31 +4135,34 @@ fn buildCliInvokeExecutionArgs(
     };
 }
 
-fn invokeCommandBehavior(command: cli.Command) ?CliInvokeCommandBehavior {
-    return switch (command) {
-        .send_instructions => .{ .family = .instructions, .versioned = false, .simulate = false, .confirm = false },
-        .send_instructions_and_confirm => .{ .family = .instructions, .versioned = false, .simulate = false, .confirm = true },
-        .send_versioned_instructions => .{ .family = .instructions, .versioned = true, .simulate = false, .confirm = false },
-        .send_versioned_instructions_and_confirm => .{ .family = .instructions, .versioned = true, .simulate = false, .confirm = true },
-        .simulate_instructions => .{ .family = .instructions, .versioned = false, .simulate = true, .confirm = false },
-        .simulate_versioned_instructions => .{ .family = .instructions, .versioned = true, .simulate = true, .confirm = false },
+const cli_invoke_command_specs = [_]CliInvokeCommandSpec{
+    .{ .command = .send_instructions, .label = "send-instructions", .behavior = .{ .family = .instructions, .versioned = false, .simulate = false, .confirm = false } },
+    .{ .command = .send_instructions_and_confirm, .label = "send-instructions-and-confirm", .behavior = .{ .family = .instructions, .versioned = false, .simulate = false, .confirm = true } },
+    .{ .command = .send_versioned_instructions, .label = "send-versioned-instructions", .behavior = .{ .family = .instructions, .versioned = true, .simulate = false, .confirm = false } },
+    .{ .command = .send_versioned_instructions_and_confirm, .label = "send-versioned-instructions-and-confirm", .behavior = .{ .family = .instructions, .versioned = true, .simulate = false, .confirm = true } },
+    .{ .command = .simulate_instructions, .label = "simulate-instructions", .behavior = .{ .family = .instructions, .versioned = false, .simulate = true, .confirm = false } },
+    .{ .command = .simulate_versioned_instructions, .label = "simulate-versioned-instructions", .behavior = .{ .family = .instructions, .versioned = true, .simulate = true, .confirm = false } },
 
-        .send_program_invoke => .{ .family = .program, .versioned = false, .simulate = false, .confirm = false },
-        .send_program_invoke_and_confirm => .{ .family = .program, .versioned = false, .simulate = false, .confirm = true },
-        .send_versioned_program_invoke => .{ .family = .program, .versioned = true, .simulate = false, .confirm = false },
-        .send_versioned_program_invoke_and_confirm => .{ .family = .program, .versioned = true, .simulate = false, .confirm = true },
-        .simulate_program_invoke => .{ .family = .program, .versioned = false, .simulate = true, .confirm = false },
-        .simulate_versioned_program_invoke => .{ .family = .program, .versioned = true, .simulate = true, .confirm = false },
+    .{ .command = .send_program_invoke, .label = "send-program-invoke", .behavior = .{ .family = .program, .versioned = false, .simulate = false, .confirm = false } },
+    .{ .command = .send_program_invoke_and_confirm, .label = "send-program-invoke-and-confirm", .behavior = .{ .family = .program, .versioned = false, .simulate = false, .confirm = true } },
+    .{ .command = .send_versioned_program_invoke, .label = "send-versioned-program-invoke", .behavior = .{ .family = .program, .versioned = true, .simulate = false, .confirm = false } },
+    .{ .command = .send_versioned_program_invoke_and_confirm, .label = "send-versioned-program-invoke-and-confirm", .behavior = .{ .family = .program, .versioned = true, .simulate = false, .confirm = true } },
+    .{ .command = .simulate_program_invoke, .label = "simulate-program-invoke", .behavior = .{ .family = .program, .versioned = false, .simulate = true, .confirm = false } },
+    .{ .command = .simulate_versioned_program_invoke, .label = "simulate-versioned-program-invoke", .behavior = .{ .family = .program, .versioned = true, .simulate = true, .confirm = false } },
 
-        .send_idl_invoke => .{ .family = .anchor_idl, .versioned = false, .simulate = false, .confirm = false },
-        .send_idl_invoke_and_confirm => .{ .family = .anchor_idl, .versioned = false, .simulate = false, .confirm = true },
-        .send_versioned_idl_invoke => .{ .family = .anchor_idl, .versioned = true, .simulate = false, .confirm = false },
-        .send_versioned_idl_invoke_and_confirm => .{ .family = .anchor_idl, .versioned = true, .simulate = false, .confirm = true },
-        .simulate_idl_invoke => .{ .family = .anchor_idl, .versioned = false, .simulate = true, .confirm = false },
-        .simulate_versioned_idl_invoke => .{ .family = .anchor_idl, .versioned = true, .simulate = true, .confirm = false },
+    .{ .command = .send_idl_invoke, .label = "send-idl-invoke", .behavior = .{ .family = .anchor_idl, .versioned = false, .simulate = false, .confirm = false } },
+    .{ .command = .send_idl_invoke_and_confirm, .label = "send-idl-invoke-and-confirm", .behavior = .{ .family = .anchor_idl, .versioned = false, .simulate = false, .confirm = true } },
+    .{ .command = .send_versioned_idl_invoke, .label = "send-versioned-idl-invoke", .behavior = .{ .family = .anchor_idl, .versioned = true, .simulate = false, .confirm = false } },
+    .{ .command = .send_versioned_idl_invoke_and_confirm, .label = "send-versioned-idl-invoke-and-confirm", .behavior = .{ .family = .anchor_idl, .versioned = true, .simulate = false, .confirm = true } },
+    .{ .command = .simulate_idl_invoke, .label = "simulate-idl-invoke", .behavior = .{ .family = .anchor_idl, .versioned = false, .simulate = true, .confirm = false } },
+    .{ .command = .simulate_versioned_idl_invoke, .label = "simulate-versioned-idl-invoke", .behavior = .{ .family = .anchor_idl, .versioned = true, .simulate = true, .confirm = false } },
+};
 
-        else => null,
-    };
+fn lookupInvokeCommandSpec(command: cli.Command) ?CliInvokeCommandSpec {
+    inline for (cli_invoke_command_specs) |spec| {
+        if (spec.command == command) return spec;
+    }
+    return null;
 }
 
 fn buildInstructionsInvocationSpecJsonForCommand(
@@ -4189,7 +4174,7 @@ fn buildInstructionsInvocationSpecJsonForCommand(
     additional_signer_secret_keys_arg: []const []const u8,
     recent_blockhash_arg: ?[]const u8,
 ) ![]u8 {
-    const command_label = invokeCommandLabel(command);
+    const command_label = (lookupInvokeCommandSpec(command) orelse unreachable).label;
     const spec_arg = instructions_spec_arg orelse {
         reportInvalidCliMessage("error: {s} requires <instruction-spec-json>\n", .{command_label});
         return error.InvalidCli;
@@ -4237,7 +4222,7 @@ fn buildProgramInvokeInvocationSpecJsonForCommand(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) ![]u8 {
-    const command_label = invokeCommandLabel(command);
+    const command_label = (lookupInvokeCommandSpec(command) orelse unreachable).label;
     const program_id = program_id_arg orelse {
         reportInvalidCliMessage("error: {s} requires <program-id> <accounts-json|@path>\n", .{command_label});
         return error.InvalidCli;
@@ -4287,7 +4272,7 @@ fn buildAnchorIdlInvokeInvocationSpecJsonForCommand(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) ![]u8 {
-    const command_label = invokeCommandLabel(command);
+    const command_label = (lookupInvokeCommandSpec(command) orelse unreachable).label;
     const idl = idl_arg orelse {
         reportInvalidCliMessage("error: {s} requires <idl-json|@path> <instruction-name>\n", .{command_label});
         return error.InvalidCli;
@@ -4390,7 +4375,8 @@ fn runGenericInvocationCommand(
     context_args: CliInvokeContextArgs,
     execution_args: CliInvokeExecutionArgs,
 ) !void {
-    const behavior = invokeCommandBehavior(command) orelse unreachable;
+    const spec = lookupInvokeCommandSpec(command) orelse unreachable;
+    const behavior = spec.behavior;
     const invocation_spec_json = try buildInvocationSpecJsonForCommand(
         allocator,
         command,
@@ -5297,7 +5283,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         simulate_inner_instructions,
     );
 
-    if (invokeCommandBehavior(command) != null) {
+    if (lookupInvokeCommandSpec(command) != null) {
         try runGenericInvocationCommand(
             allocator,
             rpc,
