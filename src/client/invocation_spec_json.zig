@@ -47,6 +47,9 @@ pub const BuildProgramInvocationSpecJsonOptions = struct {
     data: ?[]const u8 = null,
     data_encoding: ?[]const u8 = null,
     data_bytes_json: ?[]const u8 = null,
+    data_schema_json: ?[]const u8 = null,
+    args_json: ?[]const u8 = null,
+    schema_encoding: ?[]const u8 = null,
 };
 
 pub const BuildAnchorIdlInvocationSpecJsonOptions = struct {
@@ -172,7 +175,18 @@ pub fn buildProgramInvocationSpecJson(
     if (options.data != null and options.data_bytes_json != null) {
         return error.InvalidInvocationSpec;
     }
+    if ((options.data != null or options.data_bytes_json != null) and
+        (options.data_schema_json != null or options.args_json != null))
+    {
+        return error.InvalidInvocationSpec;
+    }
     if (options.data_encoding != null and options.data == null) {
+        return error.InvalidInvocationSpec;
+    }
+    if ((options.data_schema_json == null) != (options.args_json == null)) {
+        return error.InvalidInvocationSpec;
+    }
+    if (options.schema_encoding != null and options.data_schema_json == null) {
         return error.InvalidInvocationSpec;
     }
 
@@ -208,6 +222,18 @@ pub fn buildProgramInvocationSpecJson(
     if (options.data_bytes_json) |value| {
         try writeFieldName(&json_buffer, &has_field, "data_bytes");
         try json_buffer.writer.writeAll(value);
+    }
+    if (options.data_schema_json) |value| {
+        try writeFieldName(&json_buffer, &has_field, "data_schema");
+        try json_buffer.writer.writeAll(value);
+    }
+    if (options.args_json) |value| {
+        try writeFieldName(&json_buffer, &has_field, "args");
+        try json_buffer.writer.writeAll(value);
+    }
+    if (options.schema_encoding) |value| {
+        try writeFieldName(&json_buffer, &has_field, "schema_encoding");
+        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
     }
 
     try json_buffer.writer.writeByte('}');
@@ -394,4 +420,22 @@ test "invocation_spec_json.buildProgramInvocationSpecJson writes canonical progr
     try std.testing.expect(std.mem.indexOf(u8, encoded, "\"accounts\":[]") != null);
     try std.testing.expect(std.mem.indexOf(u8, encoded, "\"data\":\"AQ==\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, encoded, "\"data_encoding\":\"base64\"") != null);
+}
+
+test "invocation_spec_json.buildProgramInvocationSpecJson writes canonical schema-driven program invocation fields" {
+    const allocator = std.testing.allocator;
+
+    const encoded = try buildProgramInvocationSpecJson(allocator, .{
+        .payer_secret_key = "payer-secret",
+        .program_id = "program-id",
+        .data_schema_json = "{\"type\":\"struct\",\"fields\":[{\"name\":\"amount\",\"type\":\"u64\"}]}",
+        .args_json = "{\"amount\":\"42\"}",
+        .schema_encoding = "borsh",
+    });
+    defer allocator.free(encoded);
+
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"program_id\":\"program-id\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"data_schema\":{\"type\":\"struct\",\"fields\":[{\"name\":\"amount\",\"type\":\"u64\"}]}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"args\":{\"amount\":\"42\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"schema_encoding\":\"borsh\"") != null);
 }

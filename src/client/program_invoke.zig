@@ -12,6 +12,10 @@ pub const InstructionDataEncoding = enum {
     utf8,
 };
 
+pub const SchemaEncoding = enum {
+    borsh,
+};
+
 pub const BuildError = Allocator.Error || error{
     InvalidProgramInvokeSpec,
     InvalidHexData,
@@ -24,6 +28,9 @@ pub const BuildInstructionOptions = struct {
     data: ?[]const u8 = null,
     data_bytes: ?[]const u8 = null,
     data_encoding: InstructionDataEncoding = .base64,
+    data_schema_json: ?[]const u8 = null,
+    args_json: ?[]const u8 = null,
+    schema_encoding: SchemaEncoding = .borsh,
 };
 
 pub const BuildLegacyMessageOptions = struct {
@@ -484,7 +491,15 @@ pub fn buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
     const accounts_value = findJsonObjectField(object, &.{ "accounts", "accounts_json", "accountsJson" });
     const data_value = findJsonObjectField(object, &.{"data"});
     const data_bytes_value = findJsonObjectField(object, &.{ "data_bytes", "dataBytes" });
+    const data_schema_value = findJsonObjectField(object, &.{ "data_schema", "dataSchema" });
+    const args_value = findJsonObjectField(object, &.{"args"});
     if (data_value != null and data_bytes_value != null) return error.InvalidProgramInvokeSpec;
+    if ((data_value != null or data_bytes_value != null) and
+        (data_schema_value != null or args_value != null))
+    {
+        return error.InvalidProgramInvokeSpec;
+    }
+    if ((data_schema_value == null) != (args_value == null)) return error.InvalidProgramInvokeSpec;
 
     var owned_additional_signers_json: ?[]u8 = null;
     defer if (owned_additional_signers_json) |value| allocator.free(value);
@@ -531,14 +546,36 @@ pub fn buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
         if (value != .string) return error.InvalidProgramInvokeSpec;
         break :blk value.string;
     } else null;
+    const schema_encoding = if (findJsonObjectField(object, &.{ "schema_encoding", "schemaEncoding" })) |value| blk: {
+        if (value != .string) return error.InvalidProgramInvokeSpec;
+        break :blk try parseSchemaEncoding(value.string);
+    } else .borsh;
+    if (data_schema_value != null and data_encoding != null) return error.InvalidProgramInvokeSpec;
+    if (data_schema_value == null and findJsonObjectField(object, &.{ "schema_encoding", "schemaEncoding" }) != null) {
+        return error.InvalidProgramInvokeSpec;
+    }
 
     var owned_data_bytes_json: ?[]u8 = null;
     defer if (owned_data_bytes_json) |value| allocator.free(value);
-    const data_bytes_json = if (data_bytes_value) |value| blk: {
+    const data_bytes_json = if (data_schema_value) |schema| blk: {
+        const encoded_instruction_data = try encodeInstructionDataFromSchemaValue(
+            allocator,
+            schema,
+            args_value.?,
+            schema_encoding,
+        );
+        defer allocator.free(encoded_instruction_data);
+
+        const encoded = try stringifyByteArrayJson(allocator, encoded_instruction_data);
+        owned_data_bytes_json = encoded;
+        break :blk encoded;
+    } else if (data_bytes_value) |value| blk: {
         const encoded = try stringifyJsonValue(allocator, value);
         owned_data_bytes_json = encoded;
         break :blk encoded;
     } else null;
+    const resolved_data = if (data_schema_value != null) null else data;
+    const resolved_data_encoding = if (data_schema_value != null) null else data_encoding;
 
     return invocation_spec_json.buildInstructionInvocationSpecJson(allocator, .{
         .payer_secret_key = payer_secret_key_value.string,
@@ -550,8 +587,8 @@ pub fn buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
         .instruction = .{
             .program_id = program_id_value.string,
             .accounts_json = accounts_json,
-            .data = data,
-            .data_encoding = data_encoding,
+            .data = resolved_data,
+            .data_encoding = resolved_data_encoding,
             .data_bytes_json = data_bytes_json,
         },
     }) catch |err| switch (err) {
@@ -591,12 +628,303 @@ fn decodeInstructionData(
     };
 }
 
+fn parseSchemaEncoding(value: []const u8) BuildError!SchemaEncoding {
+    if (std.mem.eql(u8, value, "borsh")) return .borsh;
+    return error.InvalidProgramInvokeSpec;
+}
+
+fn parseSchemaUnsigned(comptime T: type, value: std.json.Value) BuildError!T {
+    return switch (value) {
+        .integer => {
+            if (value.integer < 0) return error.InvalidProgramInvokeSpec;
+            return std.math.cast(T, value.integer) orelse return error.InvalidProgramInvokeSpec;
+        },
+        .string => std.fmt.parseInt(T, value.string, 10) catch return error.InvalidProgramInvokeSpec,
+        else => error.InvalidProgramInvokeSpec,
+    };
+}
+
+fn parseSchemaSigned(comptime T: type, value: std.json.Value) BuildError!T {
+    return switch (value) {
+        .integer => std.math.cast(T, value.integer) orelse return error.InvalidProgramInvokeSpec,
+        .string => std.fmt.parseInt(T, value.string, 10) catch return error.InvalidProgramInvokeSpec,
+        else => error.InvalidProgramInvokeSpec,
+    };
+}
+
+fn appendLittleEndianInt(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    comptime T: type,
+    value: T,
+) BuildError!void {
+    var buffer: [@sizeOf(T)]u8 = undefined;
+    std.mem.writeInt(T, &buffer, value, .little);
+    try output.appendSlice(allocator, &buffer);
+}
+
+fn appendLengthPrefixedBytes(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    bytes: []const u8,
+) BuildError!void {
+    const len = std.math.cast(u32, bytes.len) orelse return error.InvalidProgramInvokeSpec;
+    try appendLittleEndianInt(allocator, output, u32, len);
+    try output.appendSlice(allocator, bytes);
+}
+
+fn stringifyByteArrayJson(
+    allocator: Allocator,
+    bytes: []const u8,
+) BuildError![]u8 {
+    var json_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer json_buffer.deinit();
+
+    try json_buffer.writer.writeByte('[');
+    for (bytes, 0..) |byte, index| {
+        if (index != 0) try json_buffer.writer.writeByte(',');
+        try json_buffer.writer.print("{d}", .{byte});
+    }
+    try json_buffer.writer.writeByte(']');
+    return try allocator.dupe(u8, json_buffer.written());
+}
+
+fn decodeSchemaBytesValue(
+    allocator: Allocator,
+    value: std.json.Value,
+) BuildError![]u8 {
+    return switch (value) {
+        .array => blk: {
+            const decoded = try allocator.alloc(u8, value.array.items.len);
+            errdefer allocator.free(decoded);
+            for (value.array.items, 0..) |item, index| {
+                decoded[index] = try parseSchemaUnsigned(u8, item);
+            }
+            break :blk decoded;
+        },
+        .string => blk: {
+            if (std.mem.startsWith(u8, value.string, "base64:")) {
+                break :blk try decodeInstructionData(allocator, value.string["base64:".len..], .base64);
+            }
+            if (std.mem.startsWith(u8, value.string, "hex:")) {
+                break :blk try decodeInstructionData(allocator, value.string["hex:".len..], .hex);
+            }
+            if (std.mem.startsWith(u8, value.string, "0x") or std.mem.startsWith(u8, value.string, "0X")) {
+                break :blk try decodeInstructionData(allocator, value.string, .hex);
+            }
+            if (std.mem.startsWith(u8, value.string, "utf8:")) {
+                break :blk try decodeInstructionData(allocator, value.string["utf8:".len..], .utf8);
+            }
+            break :blk try allocator.dupe(u8, value.string);
+        },
+        .object => blk: {
+            if (findJsonObjectField(value.object, &.{"bytes"})) |field| {
+                break :blk try decodeSchemaBytesValue(allocator, field);
+            }
+            if (findJsonObjectField(value.object, &.{"base64"})) |field| {
+                if (field != .string) return error.InvalidProgramInvokeSpec;
+                break :blk try decodeInstructionData(allocator, field.string, .base64);
+            }
+            if (findJsonObjectField(value.object, &.{"hex"})) |field| {
+                if (field != .string) return error.InvalidProgramInvokeSpec;
+                break :blk try decodeInstructionData(allocator, field.string, .hex);
+            }
+            if (findJsonObjectField(value.object, &.{"utf8"})) |field| {
+                if (field != .string) return error.InvalidProgramInvokeSpec;
+                break :blk try decodeInstructionData(allocator, field.string, .utf8);
+            }
+            return error.InvalidProgramInvokeSpec;
+        },
+        else => error.InvalidProgramInvokeSpec,
+    };
+}
+
+fn schemaTypeName(schema: std.json.Value) ?[]const u8 {
+    return switch (schema) {
+        .string => schema.string,
+        .object => if (findJsonObjectField(schema.object, &.{"type"})) |value|
+            switch (value) {
+                .string => value.string,
+                else => null,
+            }
+        else if (findJsonObjectField(schema.object, &.{"fields"})) |_|
+            "struct"
+        else
+            null,
+        else => null,
+    };
+}
+
+fn encodeBorshSchemaValue(
+    allocator: Allocator,
+    output: *std.ArrayList(u8),
+    schema: std.json.Value,
+    value: std.json.Value,
+) BuildError!void {
+    const type_name = schemaTypeName(schema) orelse return error.InvalidProgramInvokeSpec;
+
+    if (std.mem.eql(u8, type_name, "bool")) {
+        try output.append(allocator, if (try parseJsonBool(value)) 1 else 0);
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "u8")) {
+        try output.append(allocator, try parseSchemaUnsigned(u8, value));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "u16")) {
+        try appendLittleEndianInt(allocator, output, u16, try parseSchemaUnsigned(u16, value));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "u32")) {
+        try appendLittleEndianInt(allocator, output, u32, try parseSchemaUnsigned(u32, value));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "u64")) {
+        try appendLittleEndianInt(allocator, output, u64, try parseSchemaUnsigned(u64, value));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "i8")) {
+        const signed_value = try parseSchemaSigned(i8, value);
+        try output.append(allocator, @as(u8, @bitCast(signed_value)));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "i16")) {
+        const signed_value = try parseSchemaSigned(i16, value);
+        try appendLittleEndianInt(allocator, output, u16, @as(u16, @bitCast(signed_value)));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "i32")) {
+        const signed_value = try parseSchemaSigned(i32, value);
+        try appendLittleEndianInt(allocator, output, u32, @as(u32, @bitCast(signed_value)));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "i64")) {
+        const signed_value = try parseSchemaSigned(i64, value);
+        try appendLittleEndianInt(allocator, output, u64, @as(u64, @bitCast(signed_value)));
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "string")) {
+        if (value != .string) return error.InvalidProgramInvokeSpec;
+        try appendLengthPrefixedBytes(allocator, output, value.string);
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "bytes")) {
+        const bytes = try decodeSchemaBytesValue(allocator, value);
+        defer allocator.free(bytes);
+        try appendLengthPrefixedBytes(allocator, output, bytes);
+        return;
+    }
+    if (std.mem.eql(u8, type_name, "pubkey")) {
+        const pubkey = try parseJsonPubkey(allocator, value);
+        try output.appendSlice(allocator, &pubkey.bytes);
+        return;
+    }
+
+    if (schema != .object) return error.InvalidProgramInvokeSpec;
+
+    if (std.mem.eql(u8, type_name, "option")) {
+        const item_schema = findJsonObjectField(schema.object, &.{"item"}) orelse return error.InvalidProgramInvokeSpec;
+        if (value == .null) {
+            try output.append(allocator, 0);
+            return;
+        }
+        try output.append(allocator, 1);
+        try encodeBorshSchemaValue(allocator, output, item_schema, value);
+        return;
+    }
+
+    if (std.mem.eql(u8, type_name, "array")) {
+        const item_schema = findJsonObjectField(schema.object, &.{"item"}) orelse return error.InvalidProgramInvokeSpec;
+        const len_value = findJsonObjectField(schema.object, &.{"len"}) orelse return error.InvalidProgramInvokeSpec;
+        if (value != .array) return error.InvalidProgramInvokeSpec;
+        const expected_len = try parseSchemaUnsigned(usize, len_value);
+        if (value.array.items.len != expected_len) return error.InvalidProgramInvokeSpec;
+        for (value.array.items) |item| {
+            try encodeBorshSchemaValue(allocator, output, item_schema, item);
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, type_name, "vec")) {
+        const item_schema = findJsonObjectField(schema.object, &.{"item"}) orelse return error.InvalidProgramInvokeSpec;
+        if (value != .array) return error.InvalidProgramInvokeSpec;
+        const item_len = std.math.cast(u32, value.array.items.len) orelse return error.InvalidProgramInvokeSpec;
+        try appendLittleEndianInt(allocator, output, u32, item_len);
+        for (value.array.items) |item| {
+            try encodeBorshSchemaValue(allocator, output, item_schema, item);
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, type_name, "struct")) {
+        const fields_value = findJsonObjectField(schema.object, &.{"fields"}) orelse return error.InvalidProgramInvokeSpec;
+        if (fields_value != .array or value != .object) return error.InvalidProgramInvokeSpec;
+        for (fields_value.array.items) |field_value| {
+            if (field_value != .object) return error.InvalidProgramInvokeSpec;
+            const field_name_value = findJsonObjectField(field_value.object, &.{"name"}) orelse return error.InvalidProgramInvokeSpec;
+            const field_schema = findJsonObjectField(field_value.object, &.{"type"}) orelse return error.InvalidProgramInvokeSpec;
+            if (field_name_value != .string) return error.InvalidProgramInvokeSpec;
+            const field_arg = value.object.get(field_name_value.string) orelse return error.InvalidProgramInvokeSpec;
+            try encodeBorshSchemaValue(allocator, output, field_schema, field_arg);
+        }
+        return;
+    }
+
+    return error.InvalidProgramInvokeSpec;
+}
+
+fn encodeInstructionDataFromSchemaValue(
+    allocator: Allocator,
+    schema: std.json.Value,
+    args: std.json.Value,
+    schema_encoding: SchemaEncoding,
+) BuildError![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+
+    switch (schema_encoding) {
+        .borsh => try encodeBorshSchemaValue(allocator, &output, schema, args),
+    }
+
+    return try output.toOwnedSlice(allocator);
+}
+
+pub fn encodeInstructionDataFromSchemaJson(
+    allocator: Allocator,
+    schema_json: []const u8,
+    args_json: []const u8,
+    schema_encoding: SchemaEncoding,
+) BuildError![]u8 {
+    const parsed_schema = std.json.parseFromSlice(std.json.Value, allocator, schema_json, .{
+        .ignore_unknown_fields = true,
+    }) catch return error.InvalidProgramInvokeSpec;
+    defer parsed_schema.deinit();
+
+    const parsed_args = std.json.parseFromSlice(std.json.Value, allocator, args_json, .{
+        .ignore_unknown_fields = true,
+    }) catch return error.InvalidProgramInvokeSpec;
+    defer parsed_args.deinit();
+
+    return try encodeInstructionDataFromSchemaValue(
+        allocator,
+        parsed_schema.value,
+        parsed_args.value,
+        schema_encoding,
+    );
+}
+
 pub fn buildOwnedInstruction(
     allocator: Allocator,
     program_id: sdk.Pubkey,
     options: BuildInstructionOptions,
 ) BuildError!OwnedInstruction {
     if (options.data != null and options.data_bytes != null) return error.InvalidProgramInvokeSpec;
+    if ((options.data != null or options.data_bytes != null) and
+        (options.data_schema_json != null or options.args_json != null))
+    {
+        return error.InvalidProgramInvokeSpec;
+    }
+    if ((options.data_schema_json == null) != (options.args_json == null)) return error.InvalidProgramInvokeSpec;
 
     var json_accounts = if (options.accounts_json) |value|
         try parseAccountsJson(allocator, value)
@@ -622,6 +950,13 @@ pub fn buildOwnedInstruction(
 
     const data = if (options.data_bytes) |value|
         try allocator.dupe(u8, value)
+    else if (options.data_schema_json) |schema_json|
+        try encodeInstructionDataFromSchemaJson(
+            allocator,
+            schema_json,
+            options.args_json.?,
+            options.schema_encoding,
+        )
     else
         try decodeInstructionData(allocator, options.data, options.data_encoding);
     errdefer allocator.free(data);
@@ -2810,6 +3145,84 @@ test "program_invoke.buildOwnedInstruction decodes base64 data" {
 
     try std.testing.expectEqual(@as(usize, 0), owned_instruction.instruction.accounts.len);
     try std.testing.expectEqualStrings("ping", owned_instruction.instruction.data);
+}
+
+test "program_invoke.encodeInstructionDataFromSchemaJson encodes borsh struct fields" {
+    const allocator = std.testing.allocator;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(
+        allocator,
+        \\{"type":"struct","fields":[{"name":"amount","type":"u64"},{"name":"enabled","type":"bool"},{"name":"memo","type":"string"},{"name":"maybe_count","type":{"type":"option","item":"u16"}}]}
+    ,
+        \\{"amount":"42","enabled":true,"memo":"hi","maybe_count":7}
+    ,
+        .borsh,
+    );
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, &.{
+        42, 0, 0, 0, 0, 0,   0,   0,
+        1,  2, 0, 0, 0, 'h', 'i', 1,
+        7,  0,
+    }, encoded);
+}
+
+test "program_invoke.buildOwnedInstruction encodes schema-driven instruction data" {
+    const allocator = std.testing.allocator;
+
+    const authority = sdk.Pubkey.fromBytes(.{127} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+
+    const args_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"authority\":\"{s}\",\"payload\":\"hex:010203\",\"items\":[5,6]}}",
+        .{authority_base58},
+    );
+    defer allocator.free(args_json);
+
+    var owned_instruction = try buildOwnedInstruction(
+        allocator,
+        sdk.Pubkey.fromBytes(.{128} ** 32),
+        .{
+            .data_schema_json = "{\"type\":\"struct\",\"fields\":[{\"name\":\"authority\",\"type\":\"pubkey\"},{\"name\":\"payload\",\"type\":\"bytes\"},{\"name\":\"items\",\"type\":{\"type\":\"vec\",\"item\":\"u16\"}}]}",
+            .args_json = args_json,
+        },
+    );
+    defer owned_instruction.deinit(allocator);
+
+    const expected = [_]u8{
+        authority.bytes[0],  authority.bytes[1],  authority.bytes[2],  authority.bytes[3],  authority.bytes[4],  authority.bytes[5],  authority.bytes[6],  authority.bytes[7],
+        authority.bytes[8],  authority.bytes[9],  authority.bytes[10], authority.bytes[11], authority.bytes[12], authority.bytes[13], authority.bytes[14], authority.bytes[15],
+        authority.bytes[16], authority.bytes[17], authority.bytes[18], authority.bytes[19], authority.bytes[20], authority.bytes[21], authority.bytes[22], authority.bytes[23],
+        authority.bytes[24], authority.bytes[25], authority.bytes[26], authority.bytes[27], authority.bytes[28], authority.bytes[29], authority.bytes[30], authority.bytes[31],
+        3,                   0,                   0,                   0,                   1,                   2,                   3,                   2,
+        0,                   0,                   0,                   5,                   0,                   6,                   0,
+    };
+
+    try std.testing.expectEqual(@as(usize, 0), owned_instruction.instruction.accounts.len);
+    try std.testing.expectEqualSlices(u8, &expected, owned_instruction.instruction.data);
+}
+
+test "program_invoke.buildInstructionInvocationSpecJsonFromProgramInvokeSpec encodes schema args into data bytes" {
+    const allocator = std.testing.allocator;
+
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        allocator,
+        \\{
+        \\  "payer_secret_key":"payer-secret",
+        \\  "program_id":"program-id",
+        \\  "data_schema":{"type":"struct","fields":[{"name":"amount","type":"u16"}]},
+        \\  "args":{"amount":513},
+        \\  "schema_encoding":"borsh"
+        \\}
+        ,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, instruction_spec_json, "\"data_bytes\":[1,2]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, instruction_spec_json, "\"data_schema\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, instruction_spec_json, "\"args\"") == null);
 }
 
 test "program_invoke.buildOwnedInstruction accepts flexible json account forms" {
