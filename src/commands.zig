@@ -4191,18 +4191,26 @@ fn printPreferredInvocationAnalysis(
     try printInvocationAccounts(allocator, analysis.accounts);
 }
 
-fn printValidatedPreferredInvocationAnalysis(
+fn emitValidatedPreferredInvocationAnalysis(
     allocator: Allocator,
     analysis: *const client.invoke.PreferredInvocationAnalysis,
+    output_json: bool,
 ) !void {
-    try printPreferredInvocationExecutionReport(allocator, &analysis.execution_report);
     var diagnostics = try client.invoke.buildInvocationDiagnosticsFromPreferredExecutionReport(
         allocator,
         &analysis.execution_report,
     );
     defer diagnostics.deinit(allocator);
-    try printInvocationDiagnostics(diagnostics);
-    try printInvocationAccounts(allocator, analysis.accounts);
+
+    if (output_json) {
+        try printPreferredInvocationAnalysisJson(allocator, analysis);
+    } else {
+        try printPreferredInvocationExecutionReport(allocator, &analysis.execution_report);
+        try printInvocationDiagnostics(diagnostics);
+        try printInvocationAccounts(allocator, analysis.accounts);
+    }
+
+    if (diagnostics.errorCount() != 0) return error.InvocationValidationFailed;
 }
 
 fn printPreferredInvocationAnalysisJson(
@@ -5372,14 +5380,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer analysis.deinit(allocator);
 
-        if (output_json) {
+        if (command == .validate_program_invoke) {
+            try emitValidatedPreferredInvocationAnalysis(allocator, &analysis, output_json);
+        } else if (output_json) {
             try printPreferredInvocationAnalysisJson(allocator, &analysis);
         } else {
-            if (command == .validate_program_invoke) {
-                try printValidatedPreferredInvocationAnalysis(allocator, &analysis);
-            } else {
-                try printPreferredInvocationAnalysis(allocator, &analysis);
-            }
+            try printPreferredInvocationAnalysis(allocator, &analysis);
         }
         return;
     }
@@ -5440,14 +5446,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer analysis.deinit(allocator);
 
-        if (output_json) {
+        if (command == .validate_instructions) {
+            try emitValidatedPreferredInvocationAnalysis(allocator, &analysis, output_json);
+        } else if (output_json) {
             try printPreferredInvocationAnalysisJson(allocator, &analysis);
         } else {
-            if (command == .validate_instructions) {
-                try printValidatedPreferredInvocationAnalysis(allocator, &analysis);
-            } else {
-                try printPreferredInvocationAnalysis(allocator, &analysis);
-            }
+            try printPreferredInvocationAnalysis(allocator, &analysis);
         }
         return;
     }
@@ -5530,14 +5534,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer analysis.deinit(allocator);
 
-        if (output_json) {
+        if (command == .validate_idl_invoke) {
+            try emitValidatedPreferredInvocationAnalysis(allocator, &analysis, output_json);
+        } else if (output_json) {
             try printPreferredInvocationAnalysisJson(allocator, &analysis);
         } else {
-            if (command == .validate_idl_invoke) {
-                try printValidatedPreferredInvocationAnalysis(allocator, &analysis);
-            } else {
-                try printPreferredInvocationAnalysis(allocator, &analysis);
-            }
+            try printPreferredInvocationAnalysis(allocator, &analysis);
         }
         return;
     }
@@ -12369,7 +12371,7 @@ test "runCommand validate-program-invoke emits diagnostics for missing signer" {
     });
     defer parsed.deinit(allocator);
 
-    try runCommand(allocator, &rpc, &parsed);
+    try std.testing.expectError(error.InvocationValidationFailed, runCommand(allocator, &rpc, &parsed));
 
     try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
