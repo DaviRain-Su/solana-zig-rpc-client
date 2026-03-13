@@ -4061,6 +4061,111 @@ fn buildInstructionsInvocationSpecJsonForCommand(
     };
 }
 
+fn buildProgramInvokeInvocationSpecJsonForCommand(
+    allocator: Allocator,
+    command: cli.Command,
+    program_id_arg: ?[]const u8,
+    accounts_arg: ?[]const u8,
+    data_arg: ?[]const u8,
+    data_encoding_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+) ![]u8 {
+    const command_label = invokeCommandLabel(command);
+    const program_id = program_id_arg orelse {
+        reportInvalidCliMessage("error: {s} requires <program-id> <accounts-json|@path>\n", .{command_label});
+        return error.InvalidCli;
+    };
+    const accounts = accounts_arg orelse {
+        reportInvalidCliMessage("error: {s} requires <program-id> <accounts-json|@path>\n", .{command_label});
+        return error.InvalidCli;
+    };
+
+    return buildProgramInvokeInvocationSpecJson(
+        allocator,
+        program_id,
+        accounts,
+        data_arg,
+        data_encoding_arg,
+        payer_keypair_path_arg,
+        payer_secret_key_arg,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+        recent_blockhash_arg,
+        nonce_account_arg,
+        nonce_authority_keypair_path_arg,
+        additional_signer_secret_keys_arg,
+    ) catch {
+        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+        return error.InvalidCli;
+    };
+}
+
+fn buildAnchorIdlInvokeInvocationSpecJsonForCommand(
+    allocator: Allocator,
+    command: cli.Command,
+    idl_arg: ?[]const u8,
+    instruction_name_arg: ?[]const u8,
+    program_id_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    accounts_json_arg: ?[]const u8,
+    account_bindings: []const []const u8,
+    remaining_accounts: []const []const u8,
+    remaining_accounts_json_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+) ![]u8 {
+    const command_label = invokeCommandLabel(command);
+    const idl = idl_arg orelse {
+        reportInvalidCliMessage("error: {s} requires <idl-json|@path> <instruction-name>\n", .{command_label});
+        return error.InvalidCli;
+    };
+    const instruction_name = instruction_name_arg orelse {
+        reportInvalidCliMessage("error: {s} requires <idl-json|@path> <instruction-name>\n", .{command_label});
+        return error.InvalidCli;
+    };
+
+    if (recent_blockhash_arg != null and nonce_account_arg != null) {
+        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+        return error.InvalidCli;
+    }
+
+    return buildAnchorIdlInvokeInvocationSpecJson(
+        allocator,
+        idl,
+        instruction_name,
+        program_id_arg,
+        args_json_arg,
+        accounts_json_arg,
+        account_bindings,
+        remaining_accounts,
+        remaining_accounts_json_arg,
+        payer_keypair_path_arg,
+        payer_secret_key_arg,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+        recent_blockhash_arg,
+        nonce_account_arg,
+        nonce_authority_keypair_path_arg,
+        additional_signer_secret_keys_arg,
+    ) catch {
+        reportInvalidCliMessage("error: {s} currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{command_label});
+        return error.InvalidCli;
+    };
+}
+
 fn buildProgramInvokeInvocationSpecJson(
     allocator: Allocator,
     program_id: []const u8,
@@ -5191,19 +5296,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .send_program_invoke => {
-            const program_id = program_invoke_program_id_arg orelse {
-                reportInvalidCliMessage("error: send-program-invoke requires <program-id> <accounts-json|@path>\n", .{});
-                return error.InvalidCli;
-            };
-            const accounts_arg = program_invoke_accounts_arg orelse {
-                reportInvalidCliMessage("error: send-program-invoke requires <program-id> <accounts-json|@path>\n", .{});
-                return error.InvalidCli;
-            };
-
-            const invocation_spec_json = buildProgramInvokeInvocationSpecJson(
+            const invocation_spec_json = buildProgramInvokeInvocationSpecJsonForCommand(
                 allocator,
-                program_id,
-                accounts_arg,
+                command,
+                program_invoke_program_id_arg,
+                program_invoke_accounts_arg,
                 program_invoke_data_arg,
                 program_invoke_data_encoding_arg,
                 effective_sender_keypair_path,
@@ -5214,10 +5311,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const tx_signature = try sendInvocationSpecJson(
@@ -5240,19 +5334,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .send_program_invoke_and_confirm => {
-            const program_id = program_invoke_program_id_arg orelse {
-                reportInvalidCliMessage("error: send-program-invoke-and-confirm requires <program-id> <accounts-json|@path>\n", .{});
-                return error.InvalidCli;
-            };
-            const accounts_arg = program_invoke_accounts_arg orelse {
-                reportInvalidCliMessage("error: send-program-invoke-and-confirm requires <program-id> <accounts-json|@path>\n", .{});
-                return error.InvalidCli;
-            };
-
-            const invocation_spec_json = buildProgramInvokeInvocationSpecJson(
+            const invocation_spec_json = buildProgramInvokeInvocationSpecJsonForCommand(
                 allocator,
-                program_id,
-                accounts_arg,
+                command,
+                program_invoke_program_id_arg,
+                program_invoke_accounts_arg,
                 program_invoke_data_arg,
                 program_invoke_data_encoding_arg,
                 effective_sender_keypair_path,
@@ -5263,10 +5349,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-program-invoke-and-confirm arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const tx_signature = try sendInvocationSpecJson(
@@ -5289,19 +5372,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .send_versioned_program_invoke => {
-            const program_id = program_invoke_program_id_arg orelse {
-                reportInvalidCliMessage("error: send-versioned-program-invoke requires <program-id> <accounts-json|@path>\n", .{});
-                return error.InvalidCli;
-            };
-            const accounts_arg = program_invoke_accounts_arg orelse {
-                reportInvalidCliMessage("error: send-versioned-program-invoke requires <program-id> <accounts-json|@path>\n", .{});
-                return error.InvalidCli;
-            };
-
-            const invocation_spec_json = buildProgramInvokeInvocationSpecJson(
+            const invocation_spec_json = buildProgramInvokeInvocationSpecJsonForCommand(
                 allocator,
-                program_id,
-                accounts_arg,
+                command,
+                program_invoke_program_id_arg,
+                program_invoke_accounts_arg,
                 program_invoke_data_arg,
                 program_invoke_data_encoding_arg,
                 effective_sender_keypair_path,
@@ -5312,10 +5387,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-versioned-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const tx_signature = try sendInvocationSpecJson(
@@ -5338,19 +5410,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .send_versioned_program_invoke_and_confirm => {
-            const program_id = program_invoke_program_id_arg orelse {
-                reportInvalidCliMessage("error: send-versioned-program-invoke-and-confirm requires <program-id> <accounts-json|@path>\n", .{});
-                return error.InvalidCli;
-            };
-            const accounts_arg = program_invoke_accounts_arg orelse {
-                reportInvalidCliMessage("error: send-versioned-program-invoke-and-confirm requires <program-id> <accounts-json|@path>\n", .{});
-                return error.InvalidCli;
-            };
-
-            const invocation_spec_json = buildProgramInvokeInvocationSpecJson(
+            const invocation_spec_json = buildProgramInvokeInvocationSpecJsonForCommand(
                 allocator,
-                program_id,
-                accounts_arg,
+                command,
+                program_invoke_program_id_arg,
+                program_invoke_accounts_arg,
                 program_invoke_data_arg,
                 program_invoke_data_encoding_arg,
                 effective_sender_keypair_path,
@@ -5361,10 +5425,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-versioned-program-invoke-and-confirm arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const tx_signature = try sendInvocationSpecJson(
@@ -5387,23 +5448,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .send_idl_invoke => {
-            const idl_arg = idl_spec_arg orelse {
-                reportInvalidCliMessage("error: send-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
-                return error.InvalidCli;
-            };
-            const instruction_name = idl_instruction_arg orelse {
-                reportInvalidCliMessage("error: send-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
-                return error.InvalidCli;
-            };
-            if (recent_blockhash_arg != null and program_invoke_nonce_account_arg != null) {
-                reportInvalidCliMessage("error: send-idl-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            }
-
-            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJson(
+            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJsonForCommand(
                 allocator,
-                idl_arg,
-                instruction_name,
+                command,
+                idl_spec_arg,
+                idl_instruction_arg,
                 idl_program_id_arg,
                 idl_args_json_arg,
                 args.idl_accounts_json_arg,
@@ -5418,10 +5467,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-idl-invoke currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const tx_signature = try sendInvocationSpecJson(
@@ -5444,23 +5490,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .send_idl_invoke_and_confirm => {
-            const idl_arg = idl_spec_arg orelse {
-                reportInvalidCliMessage("error: send-idl-invoke-and-confirm requires <idl-json|@path> <instruction-name>\n", .{});
-                return error.InvalidCli;
-            };
-            const instruction_name = idl_instruction_arg orelse {
-                reportInvalidCliMessage("error: send-idl-invoke-and-confirm requires <idl-json|@path> <instruction-name>\n", .{});
-                return error.InvalidCli;
-            };
-            if (recent_blockhash_arg != null and program_invoke_nonce_account_arg != null) {
-                reportInvalidCliMessage("error: send-idl-invoke-and-confirm arguments are invalid\n", .{});
-                return error.InvalidCli;
-            }
-
-            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJson(
+            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJsonForCommand(
                 allocator,
-                idl_arg,
-                instruction_name,
+                command,
+                idl_spec_arg,
+                idl_instruction_arg,
                 idl_program_id_arg,
                 idl_args_json_arg,
                 args.idl_accounts_json_arg,
@@ -5475,10 +5509,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-idl-invoke-and-confirm currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const tx_signature = try sendInvocationSpecJson(
@@ -5501,23 +5532,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .send_versioned_idl_invoke => {
-            const idl_arg = idl_spec_arg orelse {
-                reportInvalidCliMessage("error: send-versioned-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
-                return error.InvalidCli;
-            };
-            const instruction_name = idl_instruction_arg orelse {
-                reportInvalidCliMessage("error: send-versioned-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
-                return error.InvalidCli;
-            };
-            if (recent_blockhash_arg != null and program_invoke_nonce_account_arg != null) {
-                reportInvalidCliMessage("error: send-versioned-idl-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            }
-
-            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJson(
+            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJsonForCommand(
                 allocator,
-                idl_arg,
-                instruction_name,
+                command,
+                idl_spec_arg,
+                idl_instruction_arg,
                 idl_program_id_arg,
                 idl_args_json_arg,
                 args.idl_accounts_json_arg,
@@ -5532,10 +5551,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-versioned-idl-invoke currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const tx_signature = try sendInvocationSpecJson(
@@ -5558,23 +5574,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .send_versioned_idl_invoke_and_confirm => {
-            const idl_arg = idl_spec_arg orelse {
-                reportInvalidCliMessage("error: send-versioned-idl-invoke-and-confirm requires <idl-json|@path> <instruction-name>\n", .{});
-                return error.InvalidCli;
-            };
-            const instruction_name = idl_instruction_arg orelse {
-                reportInvalidCliMessage("error: send-versioned-idl-invoke-and-confirm requires <idl-json|@path> <instruction-name>\n", .{});
-                return error.InvalidCli;
-            };
-            if (recent_blockhash_arg != null and program_invoke_nonce_account_arg != null) {
-                reportInvalidCliMessage("error: send-versioned-idl-invoke-and-confirm arguments are invalid\n", .{});
-                return error.InvalidCli;
-            }
-
-            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJson(
+            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJsonForCommand(
                 allocator,
-                idl_arg,
-                instruction_name,
+                command,
+                idl_spec_arg,
+                idl_instruction_arg,
                 idl_program_id_arg,
                 idl_args_json_arg,
                 args.idl_accounts_json_arg,
@@ -5589,10 +5593,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-versioned-idl-invoke-and-confirm currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const tx_signature = try sendInvocationSpecJson(
@@ -5817,19 +5818,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .simulate_program_invoke => {
-            const program_id = program_invoke_program_id_arg orelse {
-                reportInvalidCliMessage("error: simulate-program-invoke requires <program-id> <accounts-json|@path>\n", .{});
-                return error.InvalidCli;
-            };
-            const accounts_arg = program_invoke_accounts_arg orelse {
-                reportInvalidCliMessage("error: simulate-program-invoke requires <program-id> <accounts-json|@path>\n", .{});
-                return error.InvalidCli;
-            };
-
-            const invocation_spec_json = buildProgramInvokeInvocationSpecJson(
+            const invocation_spec_json = buildProgramInvokeInvocationSpecJsonForCommand(
                 allocator,
-                program_id,
-                accounts_arg,
+                command,
+                program_invoke_program_id_arg,
+                program_invoke_accounts_arg,
                 program_invoke_data_arg,
                 program_invoke_data_encoding_arg,
                 effective_sender_keypair_path,
@@ -5840,10 +5833,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
-            ) catch {
-                reportInvalidCliMessage("error: simulate-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const options = try buildCliSimulationOptions(
@@ -5871,19 +5861,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .simulate_versioned_program_invoke => {
-            const program_id = program_invoke_program_id_arg orelse {
-                reportInvalidCliMessage("error: simulate-versioned-program-invoke requires <program-id> <accounts-json|@path>\n", .{});
-                return error.InvalidCli;
-            };
-            const accounts_arg = program_invoke_accounts_arg orelse {
-                reportInvalidCliMessage("error: simulate-versioned-program-invoke requires <program-id> <accounts-json|@path>\n", .{});
-                return error.InvalidCli;
-            };
-
-            const invocation_spec_json = buildProgramInvokeInvocationSpecJson(
+            const invocation_spec_json = buildProgramInvokeInvocationSpecJsonForCommand(
                 allocator,
-                program_id,
-                accounts_arg,
+                command,
+                program_invoke_program_id_arg,
+                program_invoke_accounts_arg,
                 program_invoke_data_arg,
                 program_invoke_data_encoding_arg,
                 effective_sender_keypair_path,
@@ -5894,10 +5876,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
-            ) catch {
-                reportInvalidCliMessage("error: simulate-versioned-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const options = try buildCliSimulationOptions(
@@ -5925,23 +5904,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .simulate_idl_invoke => {
-            const idl_arg = idl_spec_arg orelse {
-                reportInvalidCliMessage("error: simulate-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
-                return error.InvalidCli;
-            };
-            const instruction_name = idl_instruction_arg orelse {
-                reportInvalidCliMessage("error: simulate-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
-                return error.InvalidCli;
-            };
-            if (recent_blockhash_arg != null and program_invoke_nonce_account_arg != null) {
-                reportInvalidCliMessage("error: simulate-idl-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            }
-
-            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJson(
+            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJsonForCommand(
                 allocator,
-                idl_arg,
-                instruction_name,
+                command,
+                idl_spec_arg,
+                idl_instruction_arg,
                 idl_program_id_arg,
                 idl_args_json_arg,
                 args.idl_accounts_json_arg,
@@ -5956,10 +5923,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
-            ) catch {
-                reportInvalidCliMessage("error: simulate-idl-invoke currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const options = try buildCliSimulationOptions(
@@ -5986,23 +5950,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         },
 
         .simulate_versioned_idl_invoke => {
-            const idl_arg = idl_spec_arg orelse {
-                reportInvalidCliMessage("error: simulate-versioned-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
-                return error.InvalidCli;
-            };
-            const instruction_name = idl_instruction_arg orelse {
-                reportInvalidCliMessage("error: simulate-versioned-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
-                return error.InvalidCli;
-            };
-            if (recent_blockhash_arg != null and program_invoke_nonce_account_arg != null) {
-                reportInvalidCliMessage("error: simulate-versioned-idl-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            }
-
-            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJson(
+            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJsonForCommand(
                 allocator,
-                idl_arg,
-                instruction_name,
+                command,
+                idl_spec_arg,
+                idl_instruction_arg,
                 idl_program_id_arg,
                 idl_args_json_arg,
                 args.idl_accounts_json_arg,
@@ -6017,10 +5969,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
-            ) catch {
-                reportInvalidCliMessage("error: simulate-versioned-idl-invoke currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
-                return error.InvalidCli;
-            };
+            ) catch return error.InvalidCli;
             defer allocator.free(invocation_spec_json);
 
             const options = try buildCliSimulationOptions(
