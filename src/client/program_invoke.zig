@@ -459,7 +459,7 @@ fn stringifyJsonValue(
     return try allocator.dupe(u8, json_buffer.written());
 }
 
-fn buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+pub fn buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
     allocator: Allocator,
     program_invocation_spec_json: []const u8,
 ) BuildError![]u8 {

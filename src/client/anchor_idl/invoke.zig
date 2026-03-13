@@ -2198,7 +2198,7 @@ pub const GetFeeOptions = struct {
     commitment: ?rpc_types.Commitment = null,
 };
 
-fn buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+pub fn buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
     allocator: Allocator,
     anchor_idl_invocation_spec_json: []const u8,
 ) BuildError![]u8 {

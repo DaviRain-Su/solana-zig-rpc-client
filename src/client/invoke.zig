@@ -56,6 +56,51 @@ pub const SignedInvocationTransaction = union(enum) {
     versioned: sdk.SignedVersionedTransaction,
 };
 
+pub const OwnedInvocationSpec = client.instructions_invoke.OwnedInvocationSpec;
+
+pub fn buildInstructionInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) ![]u8 {
+    return switch (family) {
+        .instructions => try allocator.dupe(u8, invocation_spec_json),
+        .program => try client.program_invoke.buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+            allocator,
+            invocation_spec_json,
+        ),
+        .anchor_idl => try client.anchor_idl_invoke.buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+            allocator,
+            invocation_spec_json,
+        ),
+    };
+}
+
+pub fn buildOwnedInvocationSpecFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !OwnedInvocationSpec {
+    if (family == .instructions) {
+        return try client.instructions_invoke.buildOwnedInvocationSpecFromJson(
+            allocator,
+            invocation_spec_json,
+        );
+    }
+
+    const instruction_spec_json = try buildInstructionInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try client.instructions_invoke.buildOwnedInvocationSpecFromJson(
+        allocator,
+        instruction_spec_json,
+    );
+}
+
 pub fn sendInvocationSpecJson(
     allocator: Allocator,
     rpc: anytype,
@@ -1097,6 +1142,81 @@ fn allocMinimalInstructionsInvocationSpecJson(
             program_id_base58,
         },
     );
+}
+
+fn allocMinimalProgramInvocationSpecJson(
+    allocator: Allocator,
+    payer_fill: u8,
+    program_fill: u8,
+    blockhash_fill: u8,
+) ![]u8 {
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{payer_fill} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{program_fill} ** 32);
+    const recent_blockhash_bytes = [_]u8{blockhash_fill} ** 32;
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const recent_blockhash_base58 = try sdk.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash_base58);
+
+    return std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "recent_blockhash":"{s}",
+        \\  "program_id":"{s}",
+        \\  "accounts":[{{"pubkey":"{s}","isSigner":true,"isWritable":false}}],
+        \\  "dataBytes":[9,8,7]
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            recent_blockhash_base58,
+            program_id_base58,
+            program_id_base58,
+        },
+    );
+}
+
+test "invoke.buildInstructionInvocationSpecJson dispatches program family" {
+    const allocator = std.testing.allocator;
+
+    const program_spec_json = try allocMinimalProgramInvocationSpecJson(allocator, 41, 42, 43);
+    defer allocator.free(program_spec_json);
+
+    const instruction_spec_json = try buildInstructionInvocationSpecJson(
+        allocator,
+        .program,
+        program_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, instruction_spec_json, "\"instructions\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, instruction_spec_json, "\"program_id\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, instruction_spec_json, "\"payer_secret_key\"") != null);
+}
+
+test "invoke.buildOwnedInvocationSpecFromInvocationSpecJson dispatches program family" {
+    const allocator = std.testing.allocator;
+
+    const program_spec_json = try allocMinimalProgramInvocationSpecJson(allocator, 51, 52, 53);
+    defer allocator.free(program_spec_json);
+
+    var owned = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        program_spec_json,
+    );
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), owned.instructions.len);
+    try std.testing.expectEqual(@as(usize, 0), owned.additional_signers.len);
+    try std.testing.expectEqual(@as(usize, 0), owned.address_lookup_tables.len);
+    try std.testing.expectEqual(@as(usize, 1), owned.instructions[0].accounts.len);
+    try std.testing.expectEqualSlices(u8, &.{ 9, 8, 7 }, owned.instructions[0].data);
 }
 
 test "invoke.buildLegacyMessageBytesFromInvocationSpecJsonWithOptions matches generic builder" {
