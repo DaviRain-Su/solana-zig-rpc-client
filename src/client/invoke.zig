@@ -1072,6 +1072,227 @@ pub fn writePreferredFeeExecutionResultText(
     }
 }
 
+pub fn writeInvocationPubkeysText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    label: []const u8,
+    pubkeys: anytype,
+) !void {
+    try writer.print("{s} ({d}):\n", .{ label, pubkeys.len });
+    for (pubkeys) |pubkey| {
+        const base58 = try pubkey.toBase58(allocator);
+        defer allocator.free(base58);
+        try writer.print("  {s}\n", .{base58});
+    }
+}
+
+pub fn writeInvocationAccountsText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    accounts: OwnedInvocationAccounts,
+) !void {
+    if (accounts.accounts.len == 0) return;
+
+    try writer.print("accounts ({d}):\n", .{accounts.accounts.len});
+    for (accounts.accounts) |account| {
+        const base58 = try account.pubkey.toBase58(allocator);
+        defer allocator.free(base58);
+
+        try writer.print(
+            "  {s} [{s}{s}{s}{s}{s}, {s}]\n",
+            .{
+                base58,
+                if (account.is_payer) "payer " else "",
+                if (account.is_program) "program " else "",
+                if (account.is_nonce_account) "nonce " else "",
+                if (account.is_signer) "signer " else "",
+                if (!account.is_payer and !account.is_program and !account.is_nonce_account and !account.is_signer) "account" else "",
+                if (account.is_writable) "writable" else "readonly",
+            },
+        );
+    }
+}
+
+pub fn writePreferredInvocationExecutionReportText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    report: *const PreferredInvocationExecutionReport,
+) !void {
+    const payer_base58 = try report.report.summary.payer.toBase58(allocator);
+    defer allocator.free(payer_base58);
+
+    try writer.print("preferred mode: {s}\n", .{selectedModeText(report.mode_report.preferred_mode)});
+    try writer.print("requested mode: {s}\n", .{requestedModeText(report.requested_mode)});
+    try writer.print("selected mode: {s}\n", .{selectedModeText(report.selected_mode)});
+    try writer.print("used fallback: {}\n", .{report.used_fallback});
+    try writer.print("legacy buildable: {}\n", .{report.mode_report.legacy_buildable});
+    try writer.print("versioned buildable: {}\n", .{report.mode_report.versioned_buildable});
+    try writer.print("validation passed: {}\n", .{report.mode_report.validation_passed});
+    try writer.print("can execute selected mode: {}\n", .{report.can_execute_selected_mode});
+    try writer.print("payer: {s}\n", .{payer_base58});
+    try writer.print("blockhash mode: {s}\n", .{invocationBlockhashModeJsonLabel(report.report.plan.blockhash_mode)});
+    try writer.print("instruction count: {d}\n", .{report.report.summary.instruction_count});
+    try writer.print("account count: {d}\n", .{report.report.summary.account_count});
+    try writer.print("signer count: {d}\n", .{report.report.summary.signer_count});
+    try writer.print("writable accounts: {d}\n", .{report.report.summary.writable_account_count});
+    try writer.print("readonly accounts: {d}\n", .{report.report.summary.readonly_account_count});
+    try writer.print("lookup tables: {d}\n", .{report.report.summary.address_lookup_table_count});
+    try writer.print("full lookup coverage: {}\n", .{report.report.has_full_lookup_coverage});
+    try writer.print("missing required signers: {d}\n", .{report.report.validation.missing_required_signer_pubkeys.len});
+    try writer.print("extra signers: {d}\n", .{report.report.validation.extra_signer_pubkeys.len});
+    try writer.print("duplicate signers: {d}\n", .{report.report.validation.duplicate_provided_signer_pubkeys.len});
+    try writer.print("duplicate lookup tables: {d}\n", .{report.report.validation.duplicate_lookup_table_pubkeys.len});
+
+    try writeInvocationPubkeysText(writer, allocator, "program ids", report.report.summary.program_ids);
+    if (report.report.preflight.provided_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "provided signer pubkeys", report.report.preflight.provided_signer_pubkeys);
+    }
+    if (report.report.preflight.required_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "required signer pubkeys", report.report.preflight.required_signer_pubkeys);
+    }
+    if (report.report.preflight.writable_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "writable pubkeys", report.report.preflight.writable_pubkeys);
+    }
+    if (report.report.preflight.readonly_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "readonly pubkeys", report.report.preflight.readonly_pubkeys);
+    }
+    if (report.report.plan.lookup_table_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup table pubkeys", report.report.plan.lookup_table_pubkeys);
+    }
+    if (report.report.lookup_coverage.covered_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup covered pubkeys", report.report.lookup_coverage.covered_pubkeys);
+    }
+    if (report.report.lookup_coverage.uncovered_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup uncovered pubkeys", report.report.lookup_coverage.uncovered_pubkeys);
+    }
+    if (report.report.validation.missing_required_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "missing required signer pubkeys", report.report.validation.missing_required_signer_pubkeys);
+    }
+    if (report.report.validation.extra_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "extra signer pubkeys", report.report.validation.extra_signer_pubkeys);
+    }
+    if (report.report.validation.duplicate_provided_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "duplicate signer pubkeys", report.report.validation.duplicate_provided_signer_pubkeys);
+    }
+    if (report.report.validation.duplicate_lookup_table_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "duplicate lookup table pubkeys", report.report.validation.duplicate_lookup_table_pubkeys);
+    }
+}
+
+pub fn writePreferredInvocationAnalysisText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    analysis: *const PreferredInvocationAnalysis,
+) !void {
+    try writePreferredInvocationExecutionReportText(writer, allocator, &analysis.execution_report);
+    try writeInvocationAccountsText(writer, allocator, analysis.accounts);
+}
+
+pub fn writePreferredPreparedInvocationText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    prepared: *const PreferredPreparedInvocation,
+) !void {
+    const payer_base58 = try prepared.payer().toBase58(allocator);
+    defer allocator.free(payer_base58);
+
+    const transaction_base64 = try prepared.toBase64(allocator);
+    defer allocator.free(transaction_base64);
+
+    const message_base64 = try prepared.messageToBase64(allocator);
+    defer allocator.free(message_base64);
+
+    const first_signature_base58 = if (prepared.firstSignature()) |signature|
+        try signature.toBase58(allocator)
+    else
+        null;
+    defer if (first_signature_base58) |value| allocator.free(value);
+
+    var diagnostics = try buildInvocationDiagnosticsFromReport(
+        allocator,
+        &prepared.prepared.report,
+    );
+    defer diagnostics.deinit(allocator);
+
+    try writer.print("preferred mode: {s}\n", .{selectedModeText(prepared.mode_report.preferred_mode)});
+    try writer.print("requested mode: {s}\n", .{requestedModeText(prepared.requested_mode)});
+    try writer.print("selected mode: {s}\n", .{@tagName(prepared.selected_mode)});
+    try writer.print("used fallback: {}\n", .{prepared.used_fallback});
+    try writer.print("requested mode buildable: {}\n", .{prepared.requested_mode_buildable});
+    try writer.print("can execute selected mode: {}\n", .{prepared.can_execute_selected_mode});
+    try writer.print("validation passed: {}\n", .{prepared.prepared.report.validation.is_valid});
+    try writer.print("payer: {s}\n", .{payer_base58});
+    try writer.print("blockhash mode: {s}\n", .{invocationBlockhashModeJsonLabel(prepared.prepared.report.plan.blockhash_mode)});
+    if (prepared.prepared.report.plan.recent_blockhash) |value| {
+        const recent_blockhash_base58 = try value.toBase58(allocator);
+        defer allocator.free(recent_blockhash_base58);
+        try writer.print("recent blockhash: {s}\n", .{recent_blockhash_base58});
+    }
+    if (prepared.prepared.report.plan.nonce_account) |value| {
+        const nonce_account_base58 = try value.toBase58(allocator);
+        defer allocator.free(nonce_account_base58);
+        try writer.print("nonce account: {s}\n", .{nonce_account_base58});
+    }
+    if (prepared.prepared.report.plan.nonce_authority) |value| {
+        const nonce_authority_base58 = try value.toBase58(allocator);
+        defer allocator.free(nonce_authority_base58);
+        try writer.print("nonce authority: {s}\n", .{nonce_authority_base58});
+    }
+    try writer.print("instruction count: {}\n", .{prepared.prepared.report.summary.instruction_count});
+    try writer.print("account count: {}\n", .{prepared.prepared.report.summary.account_count});
+    try writer.print("signer count: {}\n", .{prepared.prepared.report.summary.signer_count});
+    try writer.print("lookup table count: {}\n", .{prepared.prepared.report.summary.address_lookup_table_count});
+    if (first_signature_base58) |value| {
+        try writer.print("first signature: {s}\n", .{value});
+    }
+    try writer.print("transaction base64: {s}\n", .{transaction_base64});
+    try writer.print("message base64: {s}\n", .{message_base64});
+    if (prepared.prepared.report.summary.program_ids.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "program ids", prepared.prepared.report.summary.program_ids);
+    }
+    if (prepared.prepared.report.preflight.provided_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "provided signer pubkeys", prepared.prepared.report.preflight.provided_signer_pubkeys);
+    }
+    if (prepared.prepared.report.preflight.required_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "required signer pubkeys", prepared.prepared.report.preflight.required_signer_pubkeys);
+    }
+    if (prepared.prepared.report.preflight.writable_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "writable pubkeys", prepared.prepared.report.preflight.writable_pubkeys);
+    }
+    if (prepared.prepared.report.preflight.readonly_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "readonly pubkeys", prepared.prepared.report.preflight.readonly_pubkeys);
+    }
+    if (prepared.prepared.report.plan.lookup_table_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup table pubkeys", prepared.prepared.report.plan.lookup_table_pubkeys);
+    }
+    if (prepared.prepared.report.lookup_coverage.lookup_table_address_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup table address pubkeys", prepared.prepared.report.lookup_coverage.lookup_table_address_pubkeys);
+    }
+    if (prepared.prepared.report.lookup_coverage.candidate_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup candidate pubkeys", prepared.prepared.report.lookup_coverage.candidate_pubkeys);
+    }
+    if (prepared.prepared.report.lookup_coverage.covered_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup covered pubkeys", prepared.prepared.report.lookup_coverage.covered_pubkeys);
+    }
+    if (prepared.prepared.report.lookup_coverage.uncovered_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup uncovered pubkeys", prepared.prepared.report.lookup_coverage.uncovered_pubkeys);
+    }
+    if (prepared.prepared.report.validation.missing_required_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "missing required signer pubkeys", prepared.prepared.report.validation.missing_required_signer_pubkeys);
+    }
+    if (prepared.prepared.report.validation.extra_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "extra signer pubkeys", prepared.prepared.report.validation.extra_signer_pubkeys);
+    }
+    if (prepared.prepared.report.validation.duplicate_provided_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "duplicate signer pubkeys", prepared.prepared.report.validation.duplicate_provided_signer_pubkeys);
+    }
+    if (prepared.prepared.report.validation.duplicate_lookup_table_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "duplicate lookup table pubkeys", prepared.prepared.report.validation.duplicate_lookup_table_pubkeys);
+    }
+    try writeInvocationDiagnosticsText(writer, diagnostics);
+    try writeInvocationAccountsText(writer, allocator, prepared.prepared.accounts);
+}
+
 pub fn writePreferredPreparedInvocationJson(
     writer: *std.Io.Writer,
     allocator: Allocator,
