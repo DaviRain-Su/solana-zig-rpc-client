@@ -20,6 +20,7 @@ const cli_params = clap.parseParamsComptime(
     \\    --poll-ms <u64>...
     \\    --skip-preflight
     \\    --search-transaction-history
+    \\    --json
     \\    --sig-verify
     \\    --replace-recent-blockhash
     \\    --inner-instructions
@@ -99,6 +100,7 @@ const cli_option_help_params = clap.parseParamsComptime(
     \\    --limit <count>                     Maximum results to return (signatures-for-address)
     \\    --min-context-slot <slot>           Minimum context slot (send commands, signatures-for-address, account/program queries, or token-account)
     \\    --search-transaction-history        Search transaction history for status and confirmation queries
+    \\    --json                             Print preview command output as JSON
     \\    --skip-preflight                    Skip tx preflight checks (send commands)
     \\    --sig-verify                        Verify signatures during simulation (simulate-transaction)
     \\    --replace-recent-blockhash          Replace recent blockhash during simulation
@@ -995,6 +997,7 @@ pub const ParsedArgs = struct {
     program_memcmp_offset_arg: ?[]const u8,
     program_sort_results: bool,
     program_with_context: bool,
+    output_json: bool,
     signatures_for_address_arg: ?[]const u8,
     signatures_for_address_before_arg: ?[]const u8,
     signatures_for_address_until_arg: ?[]const u8,
@@ -1379,6 +1382,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .program_memcmp_offset_arg = null,
         .program_sort_results = false,
         .program_with_context = false,
+        .output_json = false,
         .signatures_for_address_arg = null,
         .signatures_for_address_before_arg = null,
         .signatures_for_address_until_arg = null,
@@ -1523,6 +1527,8 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
     if (try requireZeroOrOne(@field(result.args, "limit"))) |value| parsed.signatures_for_address_limit_arg = value;
     if (try requireZeroOrOne(@field(result.args, "mint"))) |value| parsed.mint_arg = value;
     if (try requireZeroOrOne(@field(result.args, "token-program-id"))) |value| parsed.token_program_id_arg = value;
+
+    parsed.output_json = @field(result.args, "json") != 0;
 
     if (parsed.sender_keypair_path_arg != null and parsed.sender_secret_key_arg != null) {
         return error.InvalidCli;
