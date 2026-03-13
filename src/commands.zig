@@ -3873,6 +3873,7 @@ fn buildInstructionsInvocationSpecJsonForCommand(
         spec.label
     else switch (command) {
         .preview_instructions => "preview-instructions",
+        .explain_instructions => "explain-instructions",
         .validate_instructions => "validate-instructions",
         .prepare_instructions => "prepare-instructions",
         else => unreachable,
@@ -3931,10 +3932,9 @@ fn buildProgramInvokeInvocationSpecJsonForCommand(
         spec.label
     else switch (command) {
         .preview_program_invoke => "preview-program-invoke",
+        .explain_program_invoke => "explain-program-invoke",
         .validate_program_invoke => "validate-program-invoke",
         .prepare_program_invoke => "prepare-program-invoke",
-        .preview_idl_invoke => "preview-idl-invoke",
-        .validate_idl_invoke => "validate-idl-invoke",
         else => unreachable,
     };
     const program_id = program_id_arg orelse {
@@ -3993,6 +3993,7 @@ fn buildAnchorIdlInvokeInvocationSpecJsonForCommand(
         spec.label
     else switch (command) {
         .preview_idl_invoke => "preview-idl-invoke",
+        .explain_idl_invoke => "explain-idl-invoke",
         .validate_idl_invoke => "validate-idl-invoke",
         .prepare_idl_invoke => "prepare-idl-invoke",
         else => unreachable,
@@ -4900,11 +4901,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_instructions and
         command != .send_versioned_instructions_and_confirm and
         command != .preview_instructions and
+        command != .explain_instructions and
         command != .validate_instructions and
         command != .prepare_instructions and
         command != .simulate_instructions and
         command != .simulate_versioned_instructions and
         command != .preview_program_invoke and
+        command != .explain_program_invoke and
         command != .validate_program_invoke and
         command != .prepare_program_invoke and
         command != .send_program_invoke and
@@ -4912,6 +4915,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_program_invoke and
         command != .send_versioned_program_invoke_and_confirm and
         command != .preview_idl_invoke and
+        command != .explain_idl_invoke and
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
         command != .send_idl_invoke and
@@ -4934,31 +4938,37 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
     if (output_json and
         command != .preview_instructions and
+        command != .explain_instructions and
         command != .validate_instructions and
         command != .prepare_instructions and
         command != .preview_program_invoke and
+        command != .explain_program_invoke and
         command != .validate_program_invoke and
         command != .prepare_program_invoke and
         command != .preview_idl_invoke and
+        command != .explain_idl_invoke and
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke)
     {
-        reportInvalidCliMessage("error: --json requires preview-instructions, validate-instructions, prepare-instructions, preview-program-invoke, validate-program-invoke, prepare-program-invoke, preview-idl-invoke, validate-idl-invoke, or prepare-idl-invoke\n", .{});
+        reportInvalidCliMessage("error: --json requires preview-instructions, explain-instructions, validate-instructions, prepare-instructions, preview-program-invoke, explain-program-invoke, validate-program-invoke, prepare-program-invoke, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, or prepare-idl-invoke\n", .{});
         return error.InvalidCli;
     }
 
     if ((invoke_mode_arg != null or no_mode_fallback) and
         command != .preview_instructions and
+        command != .explain_instructions and
         command != .validate_instructions and
         command != .prepare_instructions and
         command != .preview_program_invoke and
+        command != .explain_program_invoke and
         command != .validate_program_invoke and
         command != .prepare_program_invoke and
         command != .preview_idl_invoke and
+        command != .explain_idl_invoke and
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke)
     {
-        reportInvalidCliMessage("error: --invoke-mode/--no-mode-fallback require preview-instructions, validate-instructions, prepare-instructions, preview-program-invoke, validate-program-invoke, prepare-program-invoke, preview-idl-invoke, validate-idl-invoke, or prepare-idl-invoke\n", .{});
+        reportInvalidCliMessage("error: --invoke-mode/--no-mode-fallback require preview-instructions, explain-instructions, validate-instructions, prepare-instructions, preview-program-invoke, explain-program-invoke, validate-program-invoke, prepare-program-invoke, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, or prepare-idl-invoke\n", .{});
         return error.InvalidCli;
     }
 
@@ -4969,11 +4979,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_instructions and
         command != .send_versioned_instructions_and_confirm and
         command != .preview_instructions and
+        command != .explain_instructions and
         command != .validate_instructions and
         command != .prepare_instructions and
         command != .simulate_instructions and
         command != .simulate_versioned_instructions and
         command != .preview_program_invoke and
+        command != .explain_program_invoke and
         command != .validate_program_invoke and
         command != .prepare_program_invoke and
         command != .send_program_invoke and
@@ -4983,6 +4995,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_program_invoke_and_confirm and
         command != .simulate_versioned_program_invoke and
         command != .preview_idl_invoke and
+        command != .explain_idl_invoke and
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
         command != .simulate_idl_invoke and
@@ -4992,7 +5005,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_idl_invoke and
         command != .send_versioned_idl_invoke_and_confirm)
     {
-        reportInvalidCliMessage("error: --sender-keypair/--sender-secret-key requires transfer, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, preview-instructions, validate-instructions, prepare-instructions, preview-program-invoke, validate-program-invoke, prepare-program-invoke, simulate-instructions, simulate-versioned-instructions, send-program-invoke, send-program-invoke-and-confirm, send-versioned-program-invoke, send-versioned-program-invoke-and-confirm, simulate-program-invoke, simulate-versioned-program-invoke, send-idl-invoke, send-idl-invoke-and-confirm, send-versioned-idl-invoke, send-versioned-idl-invoke-and-confirm, preview-idl-invoke, validate-idl-invoke, prepare-idl-invoke, simulate-idl-invoke, or simulate-versioned-idl-invoke commands\n", .{});
+        reportInvalidCliMessage("error: --sender-keypair/--sender-secret-key requires transfer, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, preview-instructions, explain-instructions, validate-instructions, prepare-instructions, preview-program-invoke, explain-program-invoke, validate-program-invoke, prepare-program-invoke, simulate-instructions, simulate-versioned-instructions, send-program-invoke, send-program-invoke-and-confirm, send-versioned-program-invoke, send-versioned-program-invoke-and-confirm, simulate-program-invoke, simulate-versioned-program-invoke, send-idl-invoke, send-idl-invoke-and-confirm, send-versioned-idl-invoke, send-versioned-idl-invoke-and-confirm, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, prepare-idl-invoke, simulate-idl-invoke, or simulate-versioned-idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
@@ -5003,6 +5016,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
     if (idl_args_json_arg != null and
         command != .preview_idl_invoke and
+        command != .explain_idl_invoke and
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
         command != .simulate_idl_invoke and
@@ -5018,6 +5032,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
     if (idl_program_id_arg != null and
         command != .preview_idl_invoke and
+        command != .explain_idl_invoke and
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
         command != .simulate_idl_invoke and
@@ -5037,6 +5052,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_program_invoke and
         command != .send_program_invoke_and_confirm and
         command != .preview_program_invoke and
+        command != .explain_program_invoke and
         command != .validate_program_invoke and
         command != .prepare_program_invoke and
         command != .simulate_program_invoke and
@@ -5050,6 +5066,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
     if (idl_account_bindings.items.len > 0 and
         command != .preview_idl_invoke and
+        command != .explain_idl_invoke and
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
         command != .simulate_idl_invoke and
@@ -5067,6 +5084,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_program_invoke and
         command != .send_program_invoke_and_confirm and
         command != .preview_program_invoke and
+        command != .explain_program_invoke and
         command != .validate_program_invoke and
         command != .prepare_program_invoke and
         command != .simulate_program_invoke and
@@ -5074,6 +5092,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_program_invoke_and_confirm and
         command != .simulate_versioned_program_invoke and
         command != .preview_idl_invoke and
+        command != .explain_idl_invoke and
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
         command != .simulate_idl_invoke and
@@ -5091,6 +5110,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_program_invoke and
         command != .send_program_invoke_and_confirm and
         command != .preview_program_invoke and
+        command != .explain_program_invoke and
         command != .validate_program_invoke and
         command != .prepare_program_invoke and
         command != .simulate_program_invoke and
@@ -5098,6 +5118,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_program_invoke_and_confirm and
         command != .simulate_versioned_program_invoke and
         command != .preview_idl_invoke and
+        command != .explain_idl_invoke and
         command != .validate_idl_invoke and
         command != .prepare_idl_invoke and
         command != .simulate_idl_invoke and
@@ -5410,7 +5431,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return;
     }
 
-    if (command == .preview_program_invoke or command == .validate_program_invoke) {
+    if (command == .preview_program_invoke or command == .explain_program_invoke or command == .validate_program_invoke) {
         const invocation_spec_json = try buildProgramInvokeInvocationSpecJsonForCommand(
             allocator,
             command,
@@ -5439,7 +5460,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invocation_spec_json,
             .{ .mode = preferred_invocation_mode_options },
         ) catch {
-            reportInvalidCliMessage("error: {s} arguments are invalid\n", .{if (command == .preview_program_invoke) "preview-program-invoke" else "validate-program-invoke"});
+            reportInvalidCliMessage("error: {s} arguments are invalid\n", .{switch (command) {
+                .preview_program_invoke => "preview-program-invoke",
+                .explain_program_invoke => "explain-program-invoke",
+                .validate_program_invoke => "validate-program-invoke",
+                else => unreachable,
+            }});
             return error.InvalidCli;
         };
         defer analysis.deinit(allocator);
@@ -5486,7 +5512,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return;
     }
 
-    if (command == .preview_instructions or command == .validate_instructions) {
+    if (command == .preview_instructions or command == .explain_instructions or command == .validate_instructions) {
         const invocation_spec_json = try buildInstructionsInvocationSpecJsonForCommand(
             allocator,
             command,
@@ -5505,7 +5531,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invocation_spec_json,
             .{ .mode = preferred_invocation_mode_options },
         ) catch {
-            reportInvalidCliMessage("error: {s} spec is invalid\n", .{if (command == .preview_instructions) "preview-instructions" else "validate-instructions"});
+            reportInvalidCliMessage("error: {s} spec is invalid\n", .{switch (command) {
+                .preview_instructions => "preview-instructions",
+                .explain_instructions => "explain-instructions",
+                .validate_instructions => "validate-instructions",
+                else => unreachable,
+            }});
             return error.InvalidCli;
         };
         defer analysis.deinit(allocator);
@@ -5563,7 +5594,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return;
     }
 
-    if (command == .preview_idl_invoke or command == .validate_idl_invoke) {
+    if (command == .preview_idl_invoke or command == .explain_idl_invoke or command == .validate_idl_invoke) {
         const invocation_spec_json = try buildAnchorIdlInvokeInvocationSpecJsonForCommand(
             allocator,
             command,
@@ -5593,7 +5624,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invocation_spec_json,
             .{ .mode = preferred_invocation_mode_options },
         ) catch {
-            reportInvalidCliMessage("error: {s} arguments are invalid\n", .{if (command == .preview_idl_invoke) "preview-idl-invoke" else "validate-idl-invoke"});
+            reportInvalidCliMessage("error: {s} arguments are invalid\n", .{switch (command) {
+                .preview_idl_invoke => "preview-idl-invoke",
+                .explain_idl_invoke => "explain-idl-invoke",
+                .validate_idl_invoke => "validate-idl-invoke",
+                else => unreachable,
+            }});
             return error.InvalidCli;
         };
         defer analysis.deinit(allocator);
@@ -5610,12 +5646,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
 
     switch (command) {
         .preview_instructions => unreachable,
+        .explain_instructions => unreachable,
         .validate_instructions => unreachable,
         .prepare_instructions => unreachable,
         .preview_program_invoke => unreachable,
+        .explain_program_invoke => unreachable,
         .validate_program_invoke => unreachable,
         .prepare_program_invoke => unreachable,
         .preview_idl_invoke => unreachable,
+        .explain_idl_invoke => unreachable,
         .validate_idl_invoke => unreachable,
         .prepare_idl_invoke => unreachable,
         .latest_blockhash => {
@@ -12301,6 +12340,106 @@ test "runCommand preview-program-invoke emits json analysis for schema args" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"legacy\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"blockhash_mode\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"instruction_count\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"can_execute_selected_mode\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, expected_program_ids) != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, expected_signers) != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"accounts\":[") != null);
+}
+
+test "runCommand explain-program-invoke emits json analysis for schema args" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://explain-program-invoke-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{91} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_bytes = payer_raw.public_key.toBytes();
+    const payer_pubkey_base58 = try client.encodeBase58(allocator, &payer_pubkey_bytes);
+    defer allocator.free(payer_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 49);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{53} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const state_pubkey = client.Pubkey.fromBytes(.{63} ** 32);
+    const state_pubkey_base58 = try state_pubkey.toBase58(allocator);
+    defer allocator.free(state_pubkey_base58);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"isWritable\":true}}]",
+        .{state_pubkey_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    const schema_json =
+        \\{"type":"struct","fields":[{"name":"enabled","type":"bool"},{"name":"count","type":"u16"}]}
+    ;
+    const args_json =
+        \\{"enabled":true,"count":11}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "explain-program-invoke",
+        "--json",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--data-schema-json",
+        schema_json,
+        "--args-json",
+        args_json,
+        "--schema-encoding",
+        "borsh",
+        program_id_base58,
+        accounts_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    const expected_program_ids = try std.fmt.allocPrint(
+        allocator,
+        "\"program_ids\":[\"{s}\"]",
+        .{program_id_base58},
+    );
+    defer allocator.free(expected_program_ids);
+    const expected_signers = try std.fmt.allocPrint(
+        allocator,
+        "\"provided_signer_pubkeys\":[\"{s}\"]",
+        .{payer_pubkey_base58},
+    );
+    defer allocator.free(expected_signers);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"preferred_mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"legacy\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"can_execute_selected_mode\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, expected_program_ids) != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, expected_signers) != null);
