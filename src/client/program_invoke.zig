@@ -755,6 +755,35 @@ fn schemaTypeName(schema: std.json.Value) ?[]const u8 {
     };
 }
 
+fn parseEnumInput(
+    value: std.json.Value,
+) BuildError!struct {
+    name: []const u8,
+    payload: ?std.json.Value,
+} {
+    return switch (value) {
+        .string => .{ .name = value.string, .payload = null },
+        .object => blk: {
+            if (findJsonObjectField(value.object, &.{"variant"})) |variant_value| {
+                if (variant_value != .string) return error.InvalidProgramInvokeSpec;
+                break :blk .{
+                    .name = variant_value.string,
+                    .payload = value.object.get("value"),
+                };
+            }
+
+            if (value.object.count() != 1) return error.InvalidProgramInvokeSpec;
+            var iterator = value.object.iterator();
+            const entry = iterator.next() orelse return error.InvalidProgramInvokeSpec;
+            break :blk .{
+                .name = entry.key_ptr.*,
+                .payload = entry.value_ptr.*,
+            };
+        },
+        else => error.InvalidProgramInvokeSpec,
+    };
+}
+
 fn encodeBorshSchemaValue(
     allocator: Allocator,
     output: *std.ArrayList(u8),
@@ -868,6 +897,42 @@ fn encodeBorshSchemaValue(
             try encodeBorshSchemaValue(allocator, output, field_schema, field_arg);
         }
         return;
+    }
+
+    if (std.mem.eql(u8, type_name, "enum")) {
+        const variants_value = findJsonObjectField(schema.object, &.{"variants"}) orelse return error.InvalidProgramInvokeSpec;
+        if (variants_value != .array) return error.InvalidProgramInvokeSpec;
+
+        const input = try parseEnumInput(value);
+        for (variants_value.array.items, 0..) |variant_value, index| {
+            if (variant_value != .object) return error.InvalidProgramInvokeSpec;
+            const variant_name_value = findJsonObjectField(variant_value.object, &.{"name"}) orelse return error.InvalidProgramInvokeSpec;
+            if (variant_name_value != .string) return error.InvalidProgramInvokeSpec;
+            if (!std.mem.eql(u8, variant_name_value.string, input.name)) continue;
+
+            const discriminant = std.math.cast(u8, index) orelse return error.InvalidProgramInvokeSpec;
+            try output.append(allocator, discriminant);
+
+            const inline_schema = findJsonObjectField(variant_value.object, &.{"type"});
+            const fields_schema = findJsonObjectField(variant_value.object, &.{"fields"});
+            if (inline_schema == null and fields_schema == null) {
+                if (input.payload) |payload| {
+                    if (payload != .null) return error.InvalidProgramInvokeSpec;
+                }
+                return;
+            }
+
+            const payload = input.payload orelse return error.InvalidProgramInvokeSpec;
+            try encodeBorshSchemaValue(
+                allocator,
+                output,
+                inline_schema orelse variant_value,
+                payload,
+            );
+            return;
+        }
+
+        return error.InvalidProgramInvokeSpec;
     }
 
     return error.InvalidProgramInvokeSpec;
@@ -3165,6 +3230,32 @@ test "program_invoke.encodeInstructionDataFromSchemaJson encodes borsh struct fi
         1,  2, 0, 0, 0, 'h', 'i', 1,
         7,  0,
     }, encoded);
+}
+
+test "program_invoke.encodeInstructionDataFromSchemaJson encodes borsh enum variants" {
+    const allocator = std.testing.allocator;
+
+    const unit_encoded = try encodeInstructionDataFromSchemaJson(
+        allocator,
+        \\{"type":"enum","variants":[{"name":"Ping"},{"name":"SetAmount","type":"u16"}]}
+    ,
+        \\{"variant":"Ping"}
+    ,
+        .borsh,
+    );
+    defer allocator.free(unit_encoded);
+    try std.testing.expectEqualSlices(u8, &.{0}, unit_encoded);
+
+    const payload_encoded = try encodeInstructionDataFromSchemaJson(
+        allocator,
+        \\{"type":"enum","variants":[{"name":"Ping"},{"name":"SetAmount","type":"u16"},{"name":"Configure","fields":[{"name":"enabled","type":"bool"},{"name":"count","type":"u8"}]}]}
+    ,
+        \\{"variant":"Configure","value":{"enabled":true,"count":9}}
+    ,
+        .borsh,
+    );
+    defer allocator.free(payload_encoded);
+    try std.testing.expectEqualSlices(u8, &.{ 2, 1, 9 }, payload_encoded);
 }
 
 test "program_invoke.buildOwnedInstruction encodes schema-driven instruction data" {
