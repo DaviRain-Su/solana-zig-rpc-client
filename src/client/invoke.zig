@@ -4723,6 +4723,20 @@ pub fn buildOwnedLegacyMessageFromOwnedInvocationSpecWithOptions(
     );
 }
 
+pub fn buildOwnedLegacyMessageFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) !sdk.OwnedLegacyMessage {
+    return buildOwnedLegacyMessageFromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
+}
+
 pub fn buildLegacyMessageBytesFromOwnedInvocationSpecWithOptions(
     allocator: Allocator,
     rpc: anytype,
@@ -4738,6 +4752,20 @@ pub fn buildLegacyMessageBytesFromOwnedInvocationSpecWithOptions(
         .instructions,
         invocation_spec_json,
         options,
+    );
+}
+
+pub fn buildLegacyMessageBytesFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) ![]u8 {
+    return buildLegacyMessageBytesFromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
     );
 }
 
@@ -4759,6 +4787,20 @@ pub fn buildLegacyMessageBase64FromOwnedInvocationSpecWithOptions(
     );
 }
 
+pub fn buildLegacyMessageBase64FromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) ![]u8 {
+    return buildLegacyMessageBase64FromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
+}
+
 pub fn buildSignedLegacyTransactionFromOwnedInvocationSpecWithOptions(
     allocator: Allocator,
     rpc: anytype,
@@ -4774,6 +4816,20 @@ pub fn buildSignedLegacyTransactionFromOwnedInvocationSpecWithOptions(
         .instructions,
         invocation_spec_json,
         options,
+    );
+}
+
+pub fn buildSignedLegacyTransactionFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) !sdk.SignedLegacyTransaction {
+    return buildSignedLegacyTransactionFromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
     );
 }
 
@@ -4795,6 +4851,20 @@ pub fn buildLegacyTransactionBase64FromOwnedInvocationSpecWithOptions(
     );
 }
 
+pub fn buildLegacyTransactionBase64FromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) ![]u8 {
+    return buildLegacyTransactionBase64FromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
+}
+
 pub fn buildOwnedVersionedMessageFromOwnedInvocationSpecWithOptions(
     allocator: Allocator,
     rpc: anytype,
@@ -4810,6 +4880,20 @@ pub fn buildOwnedVersionedMessageFromOwnedInvocationSpecWithOptions(
         .instructions,
         invocation_spec_json,
         options,
+    );
+}
+
+pub fn buildOwnedVersionedMessageFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) !sdk.OwnedVersionedMessageV0 {
+    return buildOwnedVersionedMessageFromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
     );
 }
 
@@ -4831,6 +4915,20 @@ pub fn buildVersionedMessageBytesFromOwnedInvocationSpecWithOptions(
     );
 }
 
+pub fn buildVersionedMessageBytesFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) ![]u8 {
+    return buildVersionedMessageBytesFromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
+}
+
 pub fn buildVersionedMessageBase64FromOwnedInvocationSpecWithOptions(
     allocator: Allocator,
     rpc: anytype,
@@ -4846,6 +4944,20 @@ pub fn buildVersionedMessageBase64FromOwnedInvocationSpecWithOptions(
         .instructions,
         invocation_spec_json,
         options,
+    );
+}
+
+pub fn buildVersionedMessageBase64FromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) ![]u8 {
+    return buildVersionedMessageBase64FromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
     );
 }
 
@@ -4867,6 +4979,20 @@ pub fn buildSignedVersionedTransactionFromOwnedInvocationSpecWithOptions(
     );
 }
 
+pub fn buildSignedVersionedTransactionFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) !sdk.SignedVersionedTransaction {
+    return buildSignedVersionedTransactionFromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
+}
+
 pub fn buildVersionedTransactionBase64FromOwnedInvocationSpecWithOptions(
     allocator: Allocator,
     rpc: anytype,
@@ -4885,6 +5011,20 @@ pub fn buildVersionedTransactionBase64FromOwnedInvocationSpecWithOptions(
     );
 }
 
+pub fn buildVersionedTransactionBase64FromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) ![]u8 {
+    return buildVersionedTransactionBase64FromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
+}
+
 pub fn buildOwnedMessageFromOwnedInvocationSpecWithOptions(
     allocator: Allocator,
     rpc: anytype,
@@ -4896,6 +5036,22 @@ pub fn buildOwnedMessageFromOwnedInvocationSpecWithOptions(
         .{ .versioned = try buildOwnedVersionedMessageFromOwnedInvocationSpecWithOptions(allocator, rpc, owned_spec, options) }
     else
         .{ .legacy = try buildOwnedLegacyMessageFromOwnedInvocationSpecWithOptions(allocator, rpc, owned_spec, options) };
+}
+
+pub fn buildOwnedMessageFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) !OwnedInvocationMessage {
+    return buildOwnedMessageFromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        versioned,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
 }
 
 pub fn buildMessageBytesFromOwnedInvocationSpecWithOptions(
@@ -4911,6 +5067,22 @@ pub fn buildMessageBytesFromOwnedInvocationSpecWithOptions(
         try buildLegacyMessageBytesFromOwnedInvocationSpecWithOptions(allocator, rpc, owned_spec, options);
 }
 
+pub fn buildMessageBytesFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) ![]u8 {
+    return buildMessageBytesFromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        versioned,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
+}
+
 pub fn buildMessageBase64FromOwnedInvocationSpecWithOptions(
     allocator: Allocator,
     rpc: anytype,
@@ -4922,6 +5094,22 @@ pub fn buildMessageBase64FromOwnedInvocationSpecWithOptions(
         try buildVersionedMessageBase64FromOwnedInvocationSpecWithOptions(allocator, rpc, owned_spec, options)
     else
         try buildLegacyMessageBase64FromOwnedInvocationSpecWithOptions(allocator, rpc, owned_spec, options);
+}
+
+pub fn buildMessageBase64FromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) ![]u8 {
+    return buildMessageBase64FromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        versioned,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
 }
 
 pub fn buildSignedTransactionFromOwnedInvocationSpecWithOptions(
@@ -4937,6 +5125,22 @@ pub fn buildSignedTransactionFromOwnedInvocationSpecWithOptions(
         .{ .legacy = try buildSignedLegacyTransactionFromOwnedInvocationSpecWithOptions(allocator, rpc, owned_spec, options) };
 }
 
+pub fn buildSignedTransactionFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) !SignedInvocationTransaction {
+    return buildSignedTransactionFromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        versioned,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
+}
+
 pub fn buildTransactionBase64FromOwnedInvocationSpecWithOptions(
     allocator: Allocator,
     rpc: anytype,
@@ -4948,6 +5152,22 @@ pub fn buildTransactionBase64FromOwnedInvocationSpecWithOptions(
         try buildVersionedTransactionBase64FromOwnedInvocationSpecWithOptions(allocator, rpc, owned_spec, options)
     else
         try buildLegacyTransactionBase64FromOwnedInvocationSpecWithOptions(allocator, rpc, owned_spec, options);
+}
+
+pub fn buildTransactionBase64FromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: *const OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) ![]u8 {
+    return buildTransactionBase64FromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        versioned,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
 }
 
 pub fn writePreferredSignatureExecutionResultTextFromOwnedInvocationSpec(
@@ -11371,6 +11591,39 @@ test "invoke.buildLegacyMessageBytesFromOwnedInvocationSpecWithOptions matches e
     try std.testing.expectEqualSlices(u8, expected, actual);
 }
 
+test "invoke.buildLegacyMessageBytesFromOwnedInvocationSpec wraps WithOptions" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 10, 11, 12);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    const actual = try buildLegacyMessageBytesFromOwnedInvocationSpec(
+        allocator,
+        DummyRpc{},
+        &owned_spec,
+        .confirmed,
+    );
+    defer allocator.free(actual);
+
+    const expected = try buildLegacyMessageBytesFromOwnedInvocationSpecWithOptions(
+        allocator,
+        DummyRpc{},
+        &owned_spec,
+        .{ .blockhash_commitment = .confirmed },
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualSlices(u8, expected, actual);
+}
+
 test "invoke.buildVersionedTransactionBase64FromOwnedInvocationSpecWithOptions matches explicit json builder" {
     const allocator = std.testing.allocator;
     const DummyRpc = struct {};
@@ -11405,6 +11658,39 @@ test "invoke.buildVersionedTransactionBase64FromOwnedInvocationSpecWithOptions m
     try std.testing.expectEqualStrings(expected, actual);
 }
 
+test "invoke.buildVersionedTransactionBase64FromOwnedInvocationSpec wraps WithOptions" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 13, 14, 15, 16, 17);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    const actual = try buildVersionedTransactionBase64FromOwnedInvocationSpec(
+        allocator,
+        DummyRpc{},
+        &owned_spec,
+        .processed,
+    );
+    defer allocator.free(actual);
+
+    const expected = try buildVersionedTransactionBase64FromOwnedInvocationSpecWithOptions(
+        allocator,
+        DummyRpc{},
+        &owned_spec,
+        .{ .blockhash_commitment = .processed },
+    );
+    defer allocator.free(expected);
+
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
 test "invoke.buildOwnedMessageFromOwnedInvocationSpecWithOptions returns typed versioned message" {
     const allocator = std.testing.allocator;
     const DummyRpc = struct {};
@@ -11431,6 +11717,35 @@ test "invoke.buildOwnedMessageFromOwnedInvocationSpecWithOptions returns typed v
     switch (message) {
         .versioned => |value| try std.testing.expect(value.instructions.len > 0),
         .legacy => return error.UnexpectedLegacyMode,
+    }
+}
+
+test "invoke.buildOwnedMessageFromOwnedInvocationSpec wraps WithOptions" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 18, 19, 20);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    var message = try buildOwnedMessageFromOwnedInvocationSpec(
+        allocator,
+        DummyRpc{},
+        false,
+        &owned_spec,
+        .finalized,
+    );
+    defer message.deinit(allocator);
+
+    switch (message) {
+        .legacy => |value| try std.testing.expect(value.instructions.len > 0),
+        .versioned => return error.UnexpectedVersionedMode,
     }
 }
 
