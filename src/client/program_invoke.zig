@@ -14,6 +14,7 @@ pub const InstructionDataEncoding = enum {
 pub const BuildError = Allocator.Error || error{
     InvalidProgramInvokeSpec,
     InvalidHexData,
+    WriteFailed,
 };
 
 pub const BuildInstructionOptions = struct {

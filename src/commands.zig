@@ -3503,6 +3503,142 @@ fn loadProgramInvokeDataArg(
     );
 }
 
+fn buildProgramInvokeInvocationSpecJson(
+    allocator: Allocator,
+    program_id: []const u8,
+    accounts_arg: []const u8,
+    data_arg: ?[]const u8,
+    data_encoding_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+) ![]u8 {
+    if (recent_blockhash_arg != null and nonce_account_arg != null) return error.InvalidCli;
+
+    const payer_secret_key = try resolveInstructionKeypairSecretKeyBase58(
+        allocator,
+        payer_secret_key_arg,
+        payer_keypair_path_arg,
+    ) orelse return error.InvalidCli;
+    defer allocator.free(payer_secret_key);
+
+    const accounts_source = try loadInstructionSpecSource(allocator, accounts_arg);
+    defer allocator.free(accounts_source);
+
+    const instruction_data = try loadProgramInvokeDataArg(
+        allocator,
+        data_arg,
+        data_encoding_arg,
+    );
+    defer allocator.free(instruction_data);
+    const instruction_data_base64 = try client.encodeBase64(allocator, instruction_data);
+    defer allocator.free(instruction_data_base64);
+
+    const nonce_authority_secret_key = try resolveInstructionKeypairSecretKeyBase58(
+        allocator,
+        null,
+        nonce_authority_keypair_path_arg,
+    );
+    defer if (nonce_authority_secret_key) |value| allocator.free(value);
+
+    var parsed_signer_keypair_paths: ?std.json.Parsed([]const []const u8) = null;
+    defer if (parsed_signer_keypair_paths) |*value| value.deinit();
+    if (signer_keypair_paths_arg) |value| {
+        const signer_paths_source = try loadInstructionSpecSource(allocator, value);
+        defer allocator.free(signer_paths_source);
+
+        parsed_signer_keypair_paths = std.json.parseFromSlice([]const []const u8, allocator, signer_paths_source, .{
+            .allocate = .alloc_always,
+        }) catch return error.InvalidCli;
+    }
+
+    const lookup_tables_source = if (lookup_tables_arg) |value|
+        try loadInstructionSpecSource(allocator, value)
+    else
+        null;
+    defer if (lookup_tables_source) |value| allocator.free(value);
+
+    var owned_additional_signer_secret_keys = std.ArrayListUnmanaged([]u8){};
+    defer {
+        for (owned_additional_signer_secret_keys.items) |value| allocator.free(value);
+        owned_additional_signer_secret_keys.deinit(allocator);
+    }
+    var effective_additional_signer_secret_keys = std.ArrayListUnmanaged([]const u8){};
+    defer effective_additional_signer_secret_keys.deinit(allocator);
+
+    for (additional_signer_secret_keys_arg) |value| {
+        try effective_additional_signer_secret_keys.append(allocator, value);
+    }
+    if (parsed_signer_keypair_paths) |value| {
+        for (value.value) |path| {
+            const resolved = try resolveInstructionKeypairSecretKeyBase58(allocator, null, path) orelse return error.InvalidCli;
+            try owned_additional_signer_secret_keys.append(allocator, resolved);
+            try effective_additional_signer_secret_keys.append(allocator, resolved);
+        }
+    }
+
+    var buffer: std.io.Writer.Allocating = .init(allocator);
+    defer buffer.deinit();
+
+    try buffer.writer.writeByte('{');
+    var has_field = false;
+    const WriteFieldName = struct {
+        fn write(
+            buffer_inner: *std.io.Writer.Allocating,
+            has_field_inner: *bool,
+            name: []const u8,
+        ) !void {
+            if (has_field_inner.*) try buffer_inner.writer.writeByte(',');
+            try std.json.Stringify.value(name, .{}, &buffer_inner.writer);
+            try buffer_inner.writer.writeByte(':');
+            has_field_inner.* = true;
+        }
+    };
+
+    try WriteFieldName.write(&buffer, &has_field, "payer_secret_key");
+    try std.json.Stringify.value(payer_secret_key, .{}, &buffer.writer);
+
+    try WriteFieldName.write(&buffer, &has_field, "additional_signer_secret_keys");
+    try std.json.Stringify.value(effective_additional_signer_secret_keys.items, .{}, &buffer.writer);
+
+    try WriteFieldName.write(&buffer, &has_field, "program_id");
+    try std.json.Stringify.value(program_id, .{}, &buffer.writer);
+
+    try WriteFieldName.write(&buffer, &has_field, "accounts");
+    try buffer.writer.writeAll(accounts_source);
+
+    try WriteFieldName.write(&buffer, &has_field, "data");
+    try std.json.Stringify.value(instruction_data_base64, .{}, &buffer.writer);
+
+    try WriteFieldName.write(&buffer, &has_field, "data_encoding");
+    try std.json.Stringify.value("base64", .{}, &buffer.writer);
+
+    if (lookup_tables_source) |value| {
+        try WriteFieldName.write(&buffer, &has_field, "address_lookup_tables");
+        try buffer.writer.writeAll(value);
+    }
+    if (recent_blockhash_arg) |value| {
+        try WriteFieldName.write(&buffer, &has_field, "recent_blockhash");
+        try std.json.Stringify.value(value, .{}, &buffer.writer);
+    }
+    if (nonce_account_arg) |value| {
+        try WriteFieldName.write(&buffer, &has_field, "nonce_account");
+        try std.json.Stringify.value(value, .{}, &buffer.writer);
+    }
+    if (nonce_authority_secret_key) |value| {
+        try WriteFieldName.write(&buffer, &has_field, "nonce_authority_secret_key");
+        try std.json.Stringify.value(value, .{}, &buffer.writer);
+    }
+
+    try buffer.writer.writeByte('}');
+    return try allocator.dupe(u8, buffer.written());
+}
+
 fn loadProgramInvokeInstructionSpec(
     allocator: Allocator,
     program_id: []const u8,
@@ -4566,16 +4702,17 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
+            const invocation_spec_json = buildProgramInvokeInvocationSpecJson(
                 allocator,
                 program_id,
                 accounts_arg,
                 program_invoke_data_arg,
                 program_invoke_data_encoding_arg,
-                program_invoke_signer_keypair_paths_arg,
-                null,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
+                program_invoke_signer_keypair_paths_arg,
+                null,
+                recent_blockhash_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
@@ -4583,49 +4720,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-program-invoke arguments are invalid\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash_arg,
-                commitment orelse send_preflight_commitment,
-            ) catch {
-                reportInvalidCliMessage("error: send-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch {
-                reportInvalidCliMessage("error: send-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(accounts_source);
-            const instruction_data = loadProgramInvokeDataArg(
-                allocator,
-                program_invoke_data_arg,
-                program_invoke_data_encoding_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(instruction_data);
+            defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.program_invoke.sendLegacyTransactionFromJson(
-                rpc,
-                program_id,
-                .{
-                    .payer = loaded.payer,
-                    .signers = loaded.signers,
-                    .instruction = .{
-                        .accounts_json = accounts_source,
-                        .data_bytes = instruction_data,
-                    },
-                    .rpc = .{
-                        .recent_blockhash = build_context.recent_blockhash,
-                        .blockhash_commitment = build_context.blockhash_commitment,
-                        .blockhash_query = build_context.blockhash_query,
-                        .nonce_authority = build_context.nonce_authority,
-                        .send_transaction_options = send_transaction_options,
-                    },
-                },
-            );
+            const tx_signature = try client.program_invoke.sendLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .program_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = commitment orelse send_preflight_commitment,
+                .send_transaction_options = send_transaction_options,
+            });
             defer allocator.free(tx_signature);
 
             std.debug.print("signature: {s}\n", .{tx_signature});
@@ -4641,16 +4742,17 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
+            const invocation_spec_json = buildProgramInvokeInvocationSpecJson(
                 allocator,
                 program_id,
                 accounts_arg,
                 program_invoke_data_arg,
                 program_invoke_data_encoding_arg,
-                program_invoke_signer_keypair_paths_arg,
-                null,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
+                program_invoke_signer_keypair_paths_arg,
+                null,
+                recent_blockhash_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
@@ -4658,53 +4760,17 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-program-invoke-and-confirm arguments are invalid\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash_arg,
-                commitment orelse send_preflight_commitment,
-            ) catch {
-                reportInvalidCliMessage("error: send-program-invoke-and-confirm arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch {
-                reportInvalidCliMessage("error: send-program-invoke-and-confirm arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(accounts_source);
-            const instruction_data = loadProgramInvokeDataArg(
-                allocator,
-                program_invoke_data_arg,
-                program_invoke_data_encoding_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-program-invoke-and-confirm arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(instruction_data);
+            defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.program_invoke.sendAndConfirmLegacyTransactionFromJson(
-                rpc,
-                program_id,
-                .{
-                    .payer = loaded.payer,
-                    .signers = loaded.signers,
-                    .instruction = .{
-                        .accounts_json = accounts_source,
-                        .data_bytes = instruction_data,
-                    },
-                    .rpc = .{
-                        .recent_blockhash = build_context.recent_blockhash,
-                        .blockhash_commitment = build_context.blockhash_commitment,
-                        .blockhash_query = build_context.blockhash_query,
-                        .nonce_authority = build_context.nonce_authority,
-                        .send_transaction_options = send_transaction_options,
-                        .commitment = commitment,
-                        .search_transaction_history = search_transaction_history,
-                        .timeout_ms = status_timeout_ms,
-                        .poll_interval_ms = status_poll_ms,
-                    },
-                },
-            );
+            const tx_signature = try client.program_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .program_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = commitment orelse send_preflight_commitment,
+                .send_transaction_options = send_transaction_options,
+                .commitment = commitment,
+                .search_transaction_history = search_transaction_history,
+                .timeout_ms = status_timeout_ms,
+                .poll_interval_ms = status_poll_ms,
+            });
             defer allocator.free(tx_signature);
 
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
@@ -4720,16 +4786,17 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
+            const invocation_spec_json = buildProgramInvokeInvocationSpecJson(
                 allocator,
                 program_id,
                 accounts_arg,
                 program_invoke_data_arg,
                 program_invoke_data_encoding_arg,
-                program_invoke_signer_keypair_paths_arg,
-                program_invoke_lookup_tables_arg,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
+                program_invoke_signer_keypair_paths_arg,
+                program_invoke_lookup_tables_arg,
+                recent_blockhash_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
@@ -4737,50 +4804,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-versioned-program-invoke arguments are invalid\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash_arg,
-                commitment orelse send_preflight_commitment,
-            ) catch {
-                reportInvalidCliMessage("error: send-versioned-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch {
-                reportInvalidCliMessage("error: send-versioned-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(accounts_source);
-            const instruction_data = loadProgramInvokeDataArg(
-                allocator,
-                program_invoke_data_arg,
-                program_invoke_data_encoding_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-versioned-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(instruction_data);
+            defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.program_invoke.sendVersionedTransactionFromJson(
-                rpc,
-                program_id,
-                .{
-                    .payer = loaded.payer,
-                    .address_lookup_tables = loaded.address_lookup_tables,
-                    .signers = loaded.signers,
-                    .instruction = .{
-                        .accounts_json = accounts_source,
-                        .data_bytes = instruction_data,
-                    },
-                    .rpc = .{
-                        .recent_blockhash = build_context.recent_blockhash,
-                        .blockhash_commitment = build_context.blockhash_commitment,
-                        .blockhash_query = build_context.blockhash_query,
-                        .nonce_authority = build_context.nonce_authority,
-                        .send_transaction_options = send_transaction_options,
-                    },
-                },
-            );
+            const tx_signature = try client.program_invoke.sendVersionedTransactionFromInvocationSpecJson(rpc, .{
+                .program_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = commitment orelse send_preflight_commitment,
+                .send_transaction_options = send_transaction_options,
+            });
             defer allocator.free(tx_signature);
 
             std.debug.print("signature: {s}\n", .{tx_signature});
@@ -4796,16 +4826,17 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
+            const invocation_spec_json = buildProgramInvokeInvocationSpecJson(
                 allocator,
                 program_id,
                 accounts_arg,
                 program_invoke_data_arg,
                 program_invoke_data_encoding_arg,
-                program_invoke_signer_keypair_paths_arg,
-                program_invoke_lookup_tables_arg,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
+                program_invoke_signer_keypair_paths_arg,
+                program_invoke_lookup_tables_arg,
+                recent_blockhash_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
@@ -4813,54 +4844,17 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-versioned-program-invoke-and-confirm arguments are invalid\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash_arg,
-                commitment orelse send_preflight_commitment,
-            ) catch {
-                reportInvalidCliMessage("error: send-versioned-program-invoke-and-confirm arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch {
-                reportInvalidCliMessage("error: send-versioned-program-invoke-and-confirm arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(accounts_source);
-            const instruction_data = loadProgramInvokeDataArg(
-                allocator,
-                program_invoke_data_arg,
-                program_invoke_data_encoding_arg,
-            ) catch {
-                reportInvalidCliMessage("error: send-versioned-program-invoke-and-confirm arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(instruction_data);
+            defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.program_invoke.sendAndConfirmVersionedTransactionFromJson(
-                rpc,
-                program_id,
-                .{
-                    .payer = loaded.payer,
-                    .address_lookup_tables = loaded.address_lookup_tables,
-                    .signers = loaded.signers,
-                    .instruction = .{
-                        .accounts_json = accounts_source,
-                        .data_bytes = instruction_data,
-                    },
-                    .rpc = .{
-                        .recent_blockhash = build_context.recent_blockhash,
-                        .blockhash_commitment = build_context.blockhash_commitment,
-                        .blockhash_query = build_context.blockhash_query,
-                        .nonce_authority = build_context.nonce_authority,
-                        .send_transaction_options = send_transaction_options,
-                        .commitment = commitment,
-                        .search_transaction_history = search_transaction_history,
-                        .timeout_ms = status_timeout_ms,
-                        .poll_interval_ms = status_poll_ms,
-                    },
-                },
-            );
+            const tx_signature = try client.program_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(rpc, .{
+                .program_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = commitment orelse send_preflight_commitment,
+                .send_transaction_options = send_transaction_options,
+                .commitment = commitment,
+                .search_transaction_history = search_transaction_history,
+                .timeout_ms = status_timeout_ms,
+                .poll_interval_ms = status_poll_ms,
+            });
             defer allocator.free(tx_signature);
 
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
@@ -5429,16 +5423,17 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
+            const invocation_spec_json = buildProgramInvokeInvocationSpecJson(
                 allocator,
                 program_id,
                 accounts_arg,
                 program_invoke_data_arg,
                 program_invoke_data_encoding_arg,
-                program_invoke_signer_keypair_paths_arg,
-                null,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
+                program_invoke_signer_keypair_paths_arg,
+                null,
+                recent_blockhash_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
@@ -5446,7 +5441,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: simulate-program-invoke arguments are invalid\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
+            defer allocator.free(invocation_spec_json);
 
             const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
                 parseAccountEncoding(value) orelse return error.InvalidCli
@@ -5479,52 +5474,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             else
                 null;
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash_arg,
-                commitment,
-            ) catch {
-                reportInvalidCliMessage("error: simulate-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            const build_options = if (build_context.recent_blockhash != null or build_context.blockhash_commitment != null or build_context.blockhash_query != null or build_context.nonce_authority != null)
-                client.LegacyInstructionsBuildOptions{
-                    .recent_blockhash = build_context.recent_blockhash,
-                    .blockhash_commitment = build_context.blockhash_commitment,
-                    .blockhash_query = build_context.blockhash_query,
-                    .nonce_authority = build_context.nonce_authority,
-                }
-            else
-                null;
-            const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch {
-                reportInvalidCliMessage("error: simulate-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(accounts_source);
-            const instruction_data = loadProgramInvokeDataArg(
-                allocator,
-                program_invoke_data_arg,
-                program_invoke_data_encoding_arg,
-            ) catch {
-                reportInvalidCliMessage("error: simulate-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(instruction_data);
 
-            const simulation = try client.program_invoke.simulateLegacyTransactionFromJson(
-                rpc,
-                program_id,
-                .{
-                    .payer = loaded.payer,
-                    .signers = loaded.signers,
-                    .instruction = .{
-                        .accounts_json = accounts_source,
-                        .data_bytes = instruction_data,
-                    },
-                    .build = build_options,
-                    .rpc = options,
-                },
-            );
+            const simulation = try client.program_invoke.simulateLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .program_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = commitment,
+                .simulate_options = options,
+            });
             defer freeSimulatedTransaction(allocator, simulation);
 
             printSimulationResult(simulation);
@@ -5540,16 +5495,17 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            var loaded = loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
+            const invocation_spec_json = buildProgramInvokeInvocationSpecJson(
                 allocator,
                 program_id,
                 accounts_arg,
                 program_invoke_data_arg,
                 program_invoke_data_encoding_arg,
-                program_invoke_signer_keypair_paths_arg,
-                program_invoke_lookup_tables_arg,
                 effective_sender_keypair_path,
                 sender_secret_key_arg,
+                program_invoke_signer_keypair_paths_arg,
+                program_invoke_lookup_tables_arg,
+                recent_blockhash_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
@@ -5557,7 +5513,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: simulate-versioned-program-invoke arguments are invalid\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
+            defer allocator.free(invocation_spec_json);
 
             const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
                 parseAccountEncoding(value) orelse return error.InvalidCli
@@ -5590,53 +5546,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             else
                 null;
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash_arg,
-                commitment,
-            ) catch {
-                reportInvalidCliMessage("error: simulate-versioned-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            const build_options = if (build_context.recent_blockhash != null or build_context.blockhash_commitment != null or build_context.blockhash_query != null or build_context.nonce_authority != null)
-                client.VersionedInstructionsBuildOptions{
-                    .recent_blockhash = build_context.recent_blockhash,
-                    .blockhash_commitment = build_context.blockhash_commitment,
-                    .blockhash_query = build_context.blockhash_query,
-                    .nonce_authority = build_context.nonce_authority,
-                }
-            else
-                null;
-            const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch {
-                reportInvalidCliMessage("error: simulate-versioned-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(accounts_source);
-            const instruction_data = loadProgramInvokeDataArg(
-                allocator,
-                program_invoke_data_arg,
-                program_invoke_data_encoding_arg,
-            ) catch {
-                reportInvalidCliMessage("error: simulate-versioned-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer allocator.free(instruction_data);
 
-            const simulation = try client.program_invoke.simulateVersionedTransactionFromJson(
-                rpc,
-                program_id,
-                .{
-                    .payer = loaded.payer,
-                    .address_lookup_tables = loaded.address_lookup_tables,
-                    .signers = loaded.signers,
-                    .instruction = .{
-                        .accounts_json = accounts_source,
-                        .data_bytes = instruction_data,
-                    },
-                    .build = build_options,
-                    .rpc = options,
-                },
-            );
+            const simulation = try client.program_invoke.simulateVersionedTransactionFromInvocationSpecJson(rpc, .{
+                .program_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = commitment,
+                .simulate_options = options,
+            });
             defer freeSimulatedTransaction(allocator, simulation);
 
             printSimulationResult(simulation);
