@@ -4237,6 +4237,21 @@ fn printPreferredInvocationAnalysisJson(
     try stdout_writer.interface.flush();
 }
 
+fn emitPreferredInvocationAnalysis(
+    allocator: Allocator,
+    analysis: *const client.invoke.PreferredInvocationAnalysis,
+    output_json: bool,
+    validated: bool,
+) !void {
+    if (validated) {
+        try emitValidatedPreferredInvocationAnalysis(allocator, analysis, output_json);
+    } else if (output_json) {
+        try printPreferredInvocationAnalysisJson(allocator, analysis);
+    } else {
+        try printPreferredInvocationAnalysis(allocator, analysis);
+    }
+}
+
 fn printPreferredSignatureExecutionResult(
     result: *const client.invoke.PreferredSignatureExecutionResult,
     confirmed: bool,
@@ -4286,6 +4301,19 @@ fn printPreferredSignatureExecutionResultJson(
     try writer.writeAll("]}");
     try writer.writeAll("\n");
     try writer.flush();
+}
+
+fn emitPreferredSignatureExecutionResult(
+    allocator: Allocator,
+    result: *const client.invoke.PreferredSignatureExecutionResult,
+    output_json: bool,
+    confirmed: bool,
+) !void {
+    if (output_json) {
+        try printPreferredSignatureExecutionResultJson(allocator, result);
+    } else {
+        printPreferredSignatureExecutionResult(result, confirmed);
+    }
 }
 
 fn printPreferredSimulationExecutionResult(
@@ -4344,6 +4372,18 @@ fn printPreferredSimulationExecutionResultJson(
     try writer.flush();
 }
 
+fn emitPreferredSimulationExecutionResult(
+    allocator: Allocator,
+    result: *const client.invoke.PreferredSimulationExecutionResult,
+    output_json: bool,
+) !void {
+    if (output_json) {
+        try printPreferredSimulationExecutionResultJson(allocator, result);
+    } else {
+        printPreferredSimulationExecutionResult(result);
+    }
+}
+
 fn printPreferredFeeExecutionResult(
     result: *const client.invoke.PreferredFeeExecutionResult,
 ) void {
@@ -4400,6 +4440,18 @@ fn printPreferredFeeExecutionResultJson(
     try writer.writeAll("]}");
     try writer.writeAll("\n");
     try writer.flush();
+}
+
+fn emitPreferredFeeExecutionResult(
+    allocator: Allocator,
+    result: *const client.invoke.PreferredFeeExecutionResult,
+    output_json: bool,
+) !void {
+    if (output_json) {
+        try printPreferredFeeExecutionResultJson(allocator, result);
+    } else {
+        printPreferredFeeExecutionResult(result);
+    }
 }
 
 fn printPreferredPreparedInvocation(
@@ -4514,6 +4566,18 @@ fn printPreferredPreparedInvocationJson(
     try client.invoke.writePreferredPreparedInvocationJson(&stdout_writer.interface, allocator, prepared);
     try stdout_writer.interface.writeAll("\n");
     try stdout_writer.interface.flush();
+}
+
+fn emitPreferredPreparedInvocation(
+    allocator: Allocator,
+    prepared: *const client.invoke.PreferredPreparedInvocation,
+    output_json: bool,
+) !void {
+    if (output_json) {
+        try printPreferredPreparedInvocationJson(allocator, prepared);
+    } else {
+        try printPreferredPreparedInvocation(allocator, prepared);
+    }
 }
 
 fn runGenericInvocationCommand(
@@ -5720,11 +5784,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer result.deinit(allocator);
 
-        if (output_json) {
-            try printPreferredSignatureExecutionResultJson(allocator, &result);
-        } else {
-            printPreferredSignatureExecutionResult(&result, command == .invoke_program_invoke_and_confirm);
-        }
+        try emitPreferredSignatureExecutionResult(
+            allocator,
+            &result,
+            output_json,
+            command == .invoke_program_invoke_and_confirm,
+        );
         return;
     }
 
@@ -5773,11 +5838,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         defer result.deinit(allocator);
         defer freeSimulatedTransaction(allocator, result.simulation);
 
-        if (output_json) {
-            try printPreferredSimulationExecutionResultJson(allocator, &result);
-        } else {
-            printPreferredSimulationExecutionResult(&result);
-        }
+        try emitPreferredSimulationExecutionResult(allocator, &result, output_json);
         return;
     }
 
@@ -5824,11 +5885,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer result.deinit(allocator);
 
-        if (output_json) {
-            try printPreferredFeeExecutionResultJson(allocator, &result);
-        } else {
-            printPreferredFeeExecutionResult(&result);
-        }
+        try emitPreferredFeeExecutionResult(allocator, &result, output_json);
         return;
     }
 
@@ -5885,11 +5942,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer result.deinit(allocator);
 
-        if (output_json) {
-            try printPreferredSignatureExecutionResultJson(allocator, &result);
-        } else {
-            printPreferredSignatureExecutionResult(&result, command == .invoke_instructions_and_confirm);
-        }
+        try emitPreferredSignatureExecutionResult(
+            allocator,
+            &result,
+            output_json,
+            command == .invoke_instructions_and_confirm,
+        );
         return;
     }
 
@@ -5928,11 +5986,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         defer result.deinit(allocator);
         defer freeSimulatedTransaction(allocator, result.simulation);
 
-        if (output_json) {
-            try printPreferredSimulationExecutionResultJson(allocator, &result);
-        } else {
-            printPreferredSimulationExecutionResult(&result);
-        }
+        try emitPreferredSimulationExecutionResult(allocator, &result, output_json);
         return;
     }
 
@@ -5970,11 +6024,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer prepared.deinit(allocator);
 
-        if (output_json) {
-            try printPreferredPreparedInvocationJson(allocator, &prepared);
-        } else {
-            try printPreferredPreparedInvocation(allocator, &prepared);
-        }
+        try emitPreferredPreparedInvocation(allocator, &prepared, output_json);
         return;
     }
 
@@ -6017,13 +6067,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer analysis.deinit(allocator);
 
-        if (command == .validate_program_invoke) {
-            try emitValidatedPreferredInvocationAnalysis(allocator, &analysis, output_json);
-        } else if (output_json) {
-            try printPreferredInvocationAnalysisJson(allocator, &analysis);
-        } else {
-            try printPreferredInvocationAnalysis(allocator, &analysis);
-        }
+        try emitPreferredInvocationAnalysis(
+            allocator,
+            &analysis,
+            output_json,
+            command == .validate_program_invoke,
+        );
         return;
     }
 
@@ -6051,11 +6100,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer prepared.deinit(allocator);
 
-        if (output_json) {
-            try printPreferredPreparedInvocationJson(allocator, &prepared);
-        } else {
-            try printPreferredPreparedInvocation(allocator, &prepared);
-        }
+        try emitPreferredPreparedInvocation(allocator, &prepared, output_json);
         return;
     }
 
@@ -6092,11 +6137,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer result.deinit(allocator);
 
-        if (output_json) {
-            try printPreferredFeeExecutionResultJson(allocator, &result);
-        } else {
-            printPreferredFeeExecutionResult(&result);
-        }
+        try emitPreferredFeeExecutionResult(allocator, &result, output_json);
         return;
     }
 
@@ -6129,13 +6170,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer analysis.deinit(allocator);
 
-        if (command == .validate_instructions) {
-            try emitValidatedPreferredInvocationAnalysis(allocator, &analysis, output_json);
-        } else if (output_json) {
-            try printPreferredInvocationAnalysisJson(allocator, &analysis);
-        } else {
-            try printPreferredInvocationAnalysis(allocator, &analysis);
-        }
+        try emitPreferredInvocationAnalysis(
+            allocator,
+            &analysis,
+            output_json,
+            command == .validate_instructions,
+        );
         return;
     }
 
@@ -6209,11 +6249,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer result.deinit(allocator);
 
-        if (output_json) {
-            try printPreferredSignatureExecutionResultJson(allocator, &result);
-        } else {
-            printPreferredSignatureExecutionResult(&result, command == .invoke_idl_invoke_and_confirm);
-        }
+        try emitPreferredSignatureExecutionResult(
+            allocator,
+            &result,
+            output_json,
+            command == .invoke_idl_invoke_and_confirm,
+        );
         return;
     }
 
@@ -6263,11 +6304,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         defer result.deinit(allocator);
         defer freeSimulatedTransaction(allocator, result.simulation);
 
-        if (output_json) {
-            try printPreferredSimulationExecutionResultJson(allocator, &result);
-        } else {
-            printPreferredSimulationExecutionResult(&result);
-        }
+        try emitPreferredSimulationExecutionResult(allocator, &result, output_json);
         return;
     }
 
@@ -6306,11 +6343,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer prepared.deinit(allocator);
 
-        if (output_json) {
-            try printPreferredPreparedInvocationJson(allocator, &prepared);
-        } else {
-            try printPreferredPreparedInvocation(allocator, &prepared);
-        }
+        try emitPreferredPreparedInvocation(allocator, &prepared, output_json);
         return;
     }
 
@@ -6358,11 +6391,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer result.deinit(allocator);
 
-        if (output_json) {
-            try printPreferredFeeExecutionResultJson(allocator, &result);
-        } else {
-            printPreferredFeeExecutionResult(&result);
-        }
+        try emitPreferredFeeExecutionResult(allocator, &result, output_json);
         return;
     }
 
@@ -6406,13 +6435,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         };
         defer analysis.deinit(allocator);
 
-        if (command == .validate_idl_invoke) {
-            try emitValidatedPreferredInvocationAnalysis(allocator, &analysis, output_json);
-        } else if (output_json) {
-            try printPreferredInvocationAnalysisJson(allocator, &analysis);
-        } else {
-            try printPreferredInvocationAnalysis(allocator, &analysis);
-        }
+        try emitPreferredInvocationAnalysis(
+            allocator,
+            &analysis,
+            output_json,
+            command == .validate_idl_invoke,
+        );
         return;
     }
 
