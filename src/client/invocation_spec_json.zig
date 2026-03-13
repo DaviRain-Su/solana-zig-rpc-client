@@ -49,6 +49,15 @@ pub const BuildProgramInvocationSpecJsonOptions = struct {
     data_bytes_json: ?[]const u8 = null,
 };
 
+pub const InvocationContextJsonOptions = struct {
+    payer_secret_key: []const u8,
+    additional_signer_secret_keys_json: ?[]const u8 = null,
+    address_lookup_tables_json: ?[]const u8 = null,
+    recent_blockhash: ?[]const u8 = null,
+    nonce_account: ?[]const u8 = null,
+    nonce_authority_secret_key: ?[]const u8 = null,
+};
+
 pub fn writeFieldName(
     buffer: *std.io.Writer.Allocating,
     has_field_ptr: *bool,
@@ -58,6 +67,36 @@ pub fn writeFieldName(
     try std.json.Stringify.value(name, .{}, &buffer.writer);
     try buffer.writer.writeByte(':');
     has_field_ptr.* = true;
+}
+
+pub fn writeInvocationContextFields(
+    buffer: *std.io.Writer.Allocating,
+    has_field_ptr: *bool,
+    options: InvocationContextJsonOptions,
+) !void {
+    try writeFieldName(buffer, has_field_ptr, "payer_secret_key");
+    try std.json.Stringify.value(options.payer_secret_key, .{}, &buffer.writer);
+
+    if (options.additional_signer_secret_keys_json) |value| {
+        try writeFieldName(buffer, has_field_ptr, "additional_signer_secret_keys");
+        try buffer.writer.writeAll(value);
+    }
+    if (options.address_lookup_tables_json) |value| {
+        try writeFieldName(buffer, has_field_ptr, "address_lookup_tables");
+        try buffer.writer.writeAll(value);
+    }
+    if (options.recent_blockhash) |value| {
+        try writeFieldName(buffer, has_field_ptr, "recent_blockhash");
+        try std.json.Stringify.value(value, .{}, &buffer.writer);
+    }
+    if (options.nonce_account) |value| {
+        try writeFieldName(buffer, has_field_ptr, "nonce_account");
+        try std.json.Stringify.value(value, .{}, &buffer.writer);
+    }
+    if (options.nonce_authority_secret_key) |value| {
+        try writeFieldName(buffer, has_field_ptr, "nonce_authority_secret_key");
+        try std.json.Stringify.value(value, .{}, &buffer.writer);
+    }
 }
 
 pub fn buildInstructionInvocationSpecJson(
@@ -127,30 +166,14 @@ pub fn buildProgramInvocationSpecJson(
 
     try json_buffer.writer.writeByte('{');
     var has_field = false;
-
-    try writeFieldName(&json_buffer, &has_field, "payer_secret_key");
-    try std.json.Stringify.value(options.payer_secret_key, .{}, &json_buffer.writer);
-
-    if (options.additional_signer_secret_keys_json) |value| {
-        try writeFieldName(&json_buffer, &has_field, "additional_signer_secret_keys");
-        try json_buffer.writer.writeAll(value);
-    }
-    if (options.address_lookup_tables_json) |value| {
-        try writeFieldName(&json_buffer, &has_field, "address_lookup_tables");
-        try json_buffer.writer.writeAll(value);
-    }
-    if (options.recent_blockhash) |value| {
-        try writeFieldName(&json_buffer, &has_field, "recent_blockhash");
-        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
-    }
-    if (options.nonce_account) |value| {
-        try writeFieldName(&json_buffer, &has_field, "nonce_account");
-        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
-    }
-    if (options.nonce_authority_secret_key) |value| {
-        try writeFieldName(&json_buffer, &has_field, "nonce_authority_secret_key");
-        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
-    }
+    try writeInvocationContextFields(&json_buffer, &has_field, .{
+        .payer_secret_key = options.payer_secret_key,
+        .additional_signer_secret_keys_json = options.additional_signer_secret_keys_json,
+        .address_lookup_tables_json = options.address_lookup_tables_json,
+        .recent_blockhash = options.recent_blockhash,
+        .nonce_account = options.nonce_account,
+        .nonce_authority_secret_key = options.nonce_authority_secret_key,
+    });
 
     try writeFieldName(&json_buffer, &has_field, "program_id");
     try std.json.Stringify.value(options.program_id, .{}, &json_buffer.writer);
@@ -185,30 +208,14 @@ pub fn buildInvocationSpecJson(
 
     try json_buffer.writer.writeByte('{');
     var has_field = false;
-
-    try writeFieldName(&json_buffer, &has_field, "payer_secret_key");
-    try std.json.Stringify.value(options.payer_secret_key, .{}, &json_buffer.writer);
-
-    if (options.additional_signer_secret_keys_json) |value| {
-        try writeFieldName(&json_buffer, &has_field, "additional_signer_secret_keys");
-        try json_buffer.writer.writeAll(value);
-    }
-    if (options.address_lookup_tables_json) |value| {
-        try writeFieldName(&json_buffer, &has_field, "address_lookup_tables");
-        try json_buffer.writer.writeAll(value);
-    }
-    if (options.recent_blockhash) |value| {
-        try writeFieldName(&json_buffer, &has_field, "recent_blockhash");
-        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
-    }
-    if (options.nonce_account) |value| {
-        try writeFieldName(&json_buffer, &has_field, "nonce_account");
-        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
-    }
-    if (options.nonce_authority_secret_key) |value| {
-        try writeFieldName(&json_buffer, &has_field, "nonce_authority_secret_key");
-        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
-    }
+    try writeInvocationContextFields(&json_buffer, &has_field, .{
+        .payer_secret_key = options.payer_secret_key,
+        .additional_signer_secret_keys_json = options.additional_signer_secret_keys_json,
+        .address_lookup_tables_json = options.address_lookup_tables_json,
+        .recent_blockhash = options.recent_blockhash,
+        .nonce_account = options.nonce_account,
+        .nonce_authority_secret_key = options.nonce_authority_secret_key,
+    });
 
     try writeFieldName(&json_buffer, &has_field, "instructions");
     try json_buffer.writer.writeAll(options.instructions_json);

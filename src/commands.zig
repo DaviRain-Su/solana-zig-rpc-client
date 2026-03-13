@@ -3791,62 +3791,39 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
 
     try buffer.writer.writeByte('{');
     var has_field = false;
-    const WriteFieldName = struct {
-        fn write(
-            buffer_inner: *std.io.Writer.Allocating,
-            has_field_inner: *bool,
-            name: []const u8,
-        ) !void {
-            if (has_field_inner.*) try buffer_inner.writer.writeByte(',');
-            try std.json.Stringify.value(name, .{}, &buffer_inner.writer);
-            try buffer_inner.writer.writeByte(':');
-            has_field_inner.* = true;
-        }
-    };
+    var additional_signers_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer additional_signers_buffer.deinit();
+    std.json.Stringify.value(effective_additional_signer_secret_keys.items, .{}, &additional_signers_buffer.writer) catch unreachable;
+    try client.invocation_spec_json.writeInvocationContextFields(&buffer, &has_field, .{
+        .payer_secret_key = payer_secret_key,
+        .additional_signer_secret_keys_json = additional_signers_buffer.written(),
+        .address_lookup_tables_json = lookup_tables_source,
+        .recent_blockhash = recent_blockhash_arg,
+        .nonce_account = nonce_account_arg,
+        .nonce_authority_secret_key = nonce_authority_secret_key,
+    });
 
-    try WriteFieldName.write(&buffer, &has_field, "payer_secret_key");
-    try std.json.Stringify.value(payer_secret_key, .{}, &buffer.writer);
-
-    try WriteFieldName.write(&buffer, &has_field, "additional_signer_secret_keys");
-    try std.json.Stringify.value(effective_additional_signer_secret_keys.items, .{}, &buffer.writer);
-
-    try WriteFieldName.write(&buffer, &has_field, "idl");
+    try client.invocation_spec_json.writeFieldName(&buffer, &has_field, "idl");
     try buffer.writer.writeAll(idl_source);
 
-    try WriteFieldName.write(&buffer, &has_field, "instruction_name");
+    try client.invocation_spec_json.writeFieldName(&buffer, &has_field, "instruction_name");
     try std.json.Stringify.value(instruction_name, .{}, &buffer.writer);
 
     if (program_id_override_arg) |value| {
-        try WriteFieldName.write(&buffer, &has_field, "program_id");
+        try client.invocation_spec_json.writeFieldName(&buffer, &has_field, "program_id");
         try std.json.Stringify.value(value, .{}, &buffer.writer);
     }
     if (args_json_source) |value| {
-        try WriteFieldName.write(&buffer, &has_field, "args");
+        try client.invocation_spec_json.writeFieldName(&buffer, &has_field, "args");
         try buffer.writer.writeAll(value);
     }
     if (combined_account_bindings_json_source) |value| {
-        try WriteFieldName.write(&buffer, &has_field, "account_bindings");
+        try client.invocation_spec_json.writeFieldName(&buffer, &has_field, "account_bindings");
         try buffer.writer.writeAll(value);
     }
     if (canonical_remaining_accounts.len > 0) {
-        try WriteFieldName.write(&buffer, &has_field, "remaining_accounts");
+        try client.invocation_spec_json.writeFieldName(&buffer, &has_field, "remaining_accounts");
         try std.json.Stringify.value(canonical_remaining_accounts, .{}, &buffer.writer);
-    }
-    if (lookup_tables_source) |value| {
-        try WriteFieldName.write(&buffer, &has_field, "address_lookup_tables");
-        try buffer.writer.writeAll(value);
-    }
-    if (recent_blockhash_arg) |value| {
-        try WriteFieldName.write(&buffer, &has_field, "recent_blockhash");
-        try std.json.Stringify.value(value, .{}, &buffer.writer);
-    }
-    if (nonce_account_arg) |value| {
-        try WriteFieldName.write(&buffer, &has_field, "nonce_account");
-        try std.json.Stringify.value(value, .{}, &buffer.writer);
-    }
-    if (nonce_authority_secret_key) |value| {
-        try WriteFieldName.write(&buffer, &has_field, "nonce_authority_secret_key");
-        try std.json.Stringify.value(value, .{}, &buffer.writer);
     }
 
     try buffer.writer.writeByte('}');
