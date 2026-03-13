@@ -3781,6 +3781,221 @@ fn loadCliInstructionSpecFromSingleInstructionWithContext(
     return try loadCliInstructionSpec(allocator, &spec);
 }
 
+const InvokeFamily = enum {
+    instructions,
+    program,
+    anchor_idl,
+};
+
+fn sendInvocationSpecJson(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    family: InvokeFamily,
+    versioned: bool,
+    confirm: bool,
+    invocation_spec_json: []const u8,
+    blockhash_commitment: ?client.Commitment,
+    send_transaction_options: anytype,
+    confirm_commitment: ?client.Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) ![]const u8 {
+    return switch (family) {
+        .instructions => if (versioned)
+            if (confirm)
+                client.instructions_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(rpc, .{
+                    .instruction_spec_json = invocation_spec_json,
+                    .blockhash_commitment = blockhash_commitment,
+                    .send_transaction_options = send_transaction_options,
+                    .commitment = confirm_commitment,
+                    .search_transaction_history = search_transaction_history,
+                    .timeout_ms = timeout_ms,
+                    .poll_interval_ms = poll_interval_ms,
+                })
+            else
+                client.instructions_invoke.sendVersionedTransactionFromInvocationSpecJson(rpc, .{
+                    .instruction_spec_json = invocation_spec_json,
+                    .blockhash_commitment = blockhash_commitment,
+                    .send_transaction_options = send_transaction_options,
+                })
+        else if (confirm)
+            client.instructions_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .instruction_spec_json = invocation_spec_json,
+                .blockhash_commitment = blockhash_commitment,
+                .send_transaction_options = send_transaction_options,
+                .commitment = confirm_commitment,
+                .search_transaction_history = search_transaction_history,
+                .timeout_ms = timeout_ms,
+                .poll_interval_ms = poll_interval_ms,
+            })
+        else
+            client.instructions_invoke.sendLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .instruction_spec_json = invocation_spec_json,
+                .blockhash_commitment = blockhash_commitment,
+                .send_transaction_options = send_transaction_options,
+            }),
+        .program => if (versioned)
+            if (confirm)
+                client.program_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(rpc, .{
+                    .program_invocation_spec_json = invocation_spec_json,
+                    .blockhash_commitment = blockhash_commitment,
+                    .send_transaction_options = send_transaction_options,
+                    .commitment = confirm_commitment,
+                    .search_transaction_history = search_transaction_history,
+                    .timeout_ms = timeout_ms,
+                    .poll_interval_ms = poll_interval_ms,
+                })
+            else
+                client.program_invoke.sendVersionedTransactionFromInvocationSpecJson(rpc, .{
+                    .program_invocation_spec_json = invocation_spec_json,
+                    .blockhash_commitment = blockhash_commitment,
+                    .send_transaction_options = send_transaction_options,
+                })
+        else if (confirm)
+            client.program_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .program_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = blockhash_commitment,
+                .send_transaction_options = send_transaction_options,
+                .commitment = confirm_commitment,
+                .search_transaction_history = search_transaction_history,
+                .timeout_ms = timeout_ms,
+                .poll_interval_ms = poll_interval_ms,
+            })
+        else
+            client.program_invoke.sendLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .program_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = blockhash_commitment,
+                .send_transaction_options = send_transaction_options,
+            }),
+        .anchor_idl => if (versioned)
+            if (confirm)
+                client.anchor_idl_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(rpc, allocator, .{
+                    .anchor_idl_invocation_spec_json = invocation_spec_json,
+                    .blockhash_commitment = blockhash_commitment,
+                    .send_transaction_options = send_transaction_options,
+                    .commitment = confirm_commitment,
+                    .search_transaction_history = search_transaction_history,
+                    .timeout_ms = timeout_ms,
+                    .poll_interval_ms = poll_interval_ms,
+                })
+            else
+                client.anchor_idl_invoke.sendVersionedTransactionFromInvocationSpecJson(rpc, allocator, .{
+                    .anchor_idl_invocation_spec_json = invocation_spec_json,
+                    .blockhash_commitment = blockhash_commitment,
+                    .send_transaction_options = send_transaction_options,
+                })
+        else if (confirm)
+            client.anchor_idl_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(rpc, allocator, .{
+                .anchor_idl_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = blockhash_commitment,
+                .send_transaction_options = send_transaction_options,
+                .commitment = confirm_commitment,
+                .search_transaction_history = search_transaction_history,
+                .timeout_ms = timeout_ms,
+                .poll_interval_ms = poll_interval_ms,
+            })
+        else
+            client.anchor_idl_invoke.sendLegacyTransactionFromInvocationSpecJson(rpc, allocator, .{
+                .anchor_idl_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = blockhash_commitment,
+                .send_transaction_options = send_transaction_options,
+            }),
+    };
+}
+
+fn buildCliSimulationOptions(
+    simulation_account_encoding_arg: ?[]const u8,
+    simulation_min_context_slot_arg: ?[]const u8,
+    simulation_accounts: []const []const u8,
+    simulate_sig_verify: bool,
+    simulate_replace_recent_blockhash: bool,
+    simulate_inner_instructions: bool,
+    commitment: ?client.Commitment,
+) !?client.SimulateTransactionOptions {
+    const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
+        parseAccountEncoding(value) orelse return error.InvalidCli
+    else
+        null;
+    const simulation_min_context_slot = if (simulation_min_context_slot_arg) |value|
+        std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
+    else
+        null;
+    const simulation_accounts_options = if (simulation_accounts.len > 0)
+        client.SimulationAccountsOptions{
+            .addresses = simulation_accounts,
+            .encoding = simulation_account_encoding,
+        }
+    else
+        null;
+
+    return if (simulate_sig_verify or
+        simulate_replace_recent_blockhash or
+        simulate_inner_instructions or
+        commitment != null or
+        simulation_min_context_slot != null or
+        simulation_accounts_options != null)
+        client.SimulateTransactionOptions{
+            .sig_verify = simulate_sig_verify,
+            .replace_recent_blockhash = simulate_replace_recent_blockhash,
+            .commitment = commitment,
+            .min_context_slot = simulation_min_context_slot,
+            .inner_instructions = simulate_inner_instructions,
+            .accounts = simulation_accounts_options,
+        }
+    else
+        null;
+}
+
+fn simulateInvocationSpecJson(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    blockhash_commitment: ?client.Commitment,
+    simulate_options: ?client.SimulateTransactionOptions,
+) !client.SimulatedTransaction {
+    return switch (family) {
+        .instructions => if (versioned)
+            client.instructions_invoke.simulateVersionedTransactionFromInvocationSpecJson(rpc, .{
+                .instruction_spec_json = invocation_spec_json,
+                .blockhash_commitment = blockhash_commitment,
+                .simulate_options = simulate_options,
+            })
+        else
+            client.instructions_invoke.simulateLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .instruction_spec_json = invocation_spec_json,
+                .blockhash_commitment = blockhash_commitment,
+                .simulate_options = simulate_options,
+            }),
+        .program => if (versioned)
+            client.program_invoke.simulateVersionedTransactionFromInvocationSpecJson(rpc, .{
+                .program_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = blockhash_commitment,
+                .simulate_options = simulate_options,
+            })
+        else
+            client.program_invoke.simulateLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .program_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = blockhash_commitment,
+                .simulate_options = simulate_options,
+            }),
+        .anchor_idl => if (versioned)
+            client.anchor_idl_invoke.simulateVersionedTransactionFromInvocationSpecJson(rpc, allocator, .{
+                .anchor_idl_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = blockhash_commitment,
+                .simulate_options = simulate_options,
+            })
+        else
+            client.anchor_idl_invoke.simulateLegacyTransactionFromInvocationSpecJson(rpc, allocator, .{
+                .anchor_idl_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = blockhash_commitment,
+                .simulate_options = simulate_options,
+            }),
+    };
+}
+
 fn buildProgramInvokeInvocationSpecJson(
     allocator: Allocator,
     program_id: []const u8,
@@ -4817,11 +5032,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.instructions_invoke.sendLegacyTransactionFromInvocationSpecJson(rpc, .{
-                .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = commitment orelse send_preflight_commitment,
-                .send_transaction_options = send_transaction_options,
-            });
+            const tx_signature = try sendInvocationSpecJson(
+                allocator,
+                rpc,
+                .instructions,
+                false,
+                false,
+                invocation_spec_json,
+                commitment orelse send_preflight_commitment,
+                send_transaction_options,
+                commitment,
+                search_transaction_history,
+                status_timeout_ms,
+                status_poll_ms,
+            );
             defer allocator.free(tx_signature);
 
             std.debug.print("signature: {s}\n", .{tx_signature});
@@ -4858,15 +5082,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.instructions_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(rpc, .{
-                .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = commitment orelse send_preflight_commitment,
-                .send_transaction_options = send_transaction_options,
-                .commitment = commitment,
-                .search_transaction_history = search_transaction_history,
-                .timeout_ms = status_timeout_ms,
-                .poll_interval_ms = status_poll_ms,
-            });
+            const tx_signature = try sendInvocationSpecJson(
+                allocator,
+                rpc,
+                .instructions,
+                false,
+                true,
+                invocation_spec_json,
+                commitment orelse send_preflight_commitment,
+                send_transaction_options,
+                commitment,
+                search_transaction_history,
+                status_timeout_ms,
+                status_poll_ms,
+            );
             defer allocator.free(tx_signature);
 
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
@@ -4903,11 +5132,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.instructions_invoke.sendVersionedTransactionFromInvocationSpecJson(rpc, .{
-                .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = commitment orelse send_preflight_commitment,
-                .send_transaction_options = send_transaction_options,
-            });
+            const tx_signature = try sendInvocationSpecJson(
+                allocator,
+                rpc,
+                .instructions,
+                true,
+                false,
+                invocation_spec_json,
+                commitment orelse send_preflight_commitment,
+                send_transaction_options,
+                commitment,
+                search_transaction_history,
+                status_timeout_ms,
+                status_poll_ms,
+            );
             defer allocator.free(tx_signature);
 
             std.debug.print("signature: {s}\n", .{tx_signature});
@@ -4944,15 +5182,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.instructions_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(rpc, .{
-                .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = commitment orelse send_preflight_commitment,
-                .send_transaction_options = send_transaction_options,
-                .commitment = commitment,
-                .search_transaction_history = search_transaction_history,
-                .timeout_ms = status_timeout_ms,
-                .poll_interval_ms = status_poll_ms,
-            });
+            const tx_signature = try sendInvocationSpecJson(
+                allocator,
+                rpc,
+                .instructions,
+                true,
+                true,
+                invocation_spec_json,
+                commitment orelse send_preflight_commitment,
+                send_transaction_options,
+                commitment,
+                search_transaction_history,
+                status_timeout_ms,
+                status_poll_ms,
+            );
             defer allocator.free(tx_signature);
 
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
@@ -4988,11 +5231,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.program_invoke.sendLegacyTransactionFromInvocationSpecJson(rpc, .{
-                .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = commitment orelse send_preflight_commitment,
-                .send_transaction_options = send_transaction_options,
-            });
+            const tx_signature = try sendInvocationSpecJson(
+                allocator,
+                rpc,
+                .program,
+                false,
+                false,
+                invocation_spec_json,
+                commitment orelse send_preflight_commitment,
+                send_transaction_options,
+                commitment,
+                search_transaction_history,
+                status_timeout_ms,
+                status_poll_ms,
+            );
             defer allocator.free(tx_signature);
 
             std.debug.print("signature: {s}\n", .{tx_signature});
@@ -5028,15 +5280,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.program_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(rpc, .{
-                .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = commitment orelse send_preflight_commitment,
-                .send_transaction_options = send_transaction_options,
-                .commitment = commitment,
-                .search_transaction_history = search_transaction_history,
-                .timeout_ms = status_timeout_ms,
-                .poll_interval_ms = status_poll_ms,
-            });
+            const tx_signature = try sendInvocationSpecJson(
+                allocator,
+                rpc,
+                .program,
+                false,
+                true,
+                invocation_spec_json,
+                commitment orelse send_preflight_commitment,
+                send_transaction_options,
+                commitment,
+                search_transaction_history,
+                status_timeout_ms,
+                status_poll_ms,
+            );
             defer allocator.free(tx_signature);
 
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
@@ -5072,11 +5329,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.program_invoke.sendVersionedTransactionFromInvocationSpecJson(rpc, .{
-                .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = commitment orelse send_preflight_commitment,
-                .send_transaction_options = send_transaction_options,
-            });
+            const tx_signature = try sendInvocationSpecJson(
+                allocator,
+                rpc,
+                .program,
+                true,
+                false,
+                invocation_spec_json,
+                commitment orelse send_preflight_commitment,
+                send_transaction_options,
+                commitment,
+                search_transaction_history,
+                status_timeout_ms,
+                status_poll_ms,
+            );
             defer allocator.free(tx_signature);
 
             std.debug.print("signature: {s}\n", .{tx_signature});
@@ -5112,15 +5378,20 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.program_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(rpc, .{
-                .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = commitment orelse send_preflight_commitment,
-                .send_transaction_options = send_transaction_options,
-                .commitment = commitment,
-                .search_transaction_history = search_transaction_history,
-                .timeout_ms = status_timeout_ms,
-                .poll_interval_ms = status_poll_ms,
-            });
+            const tx_signature = try sendInvocationSpecJson(
+                allocator,
+                rpc,
+                .program,
+                true,
+                true,
+                invocation_spec_json,
+                commitment orelse send_preflight_commitment,
+                send_transaction_options,
+                commitment,
+                search_transaction_history,
+                status_timeout_ms,
+                status_poll_ms,
+            );
             defer allocator.free(tx_signature);
 
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
@@ -5164,14 +5435,19 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.anchor_idl_invoke.sendLegacyTransactionFromInvocationSpecJson(
-                rpc,
+            const tx_signature = try sendInvocationSpecJson(
                 allocator,
-                .{
-                    .anchor_idl_invocation_spec_json = invocation_spec_json,
-                    .blockhash_commitment = commitment orelse send_preflight_commitment,
-                    .send_transaction_options = send_transaction_options,
-                },
+                rpc,
+                .anchor_idl,
+                false,
+                false,
+                invocation_spec_json,
+                commitment orelse send_preflight_commitment,
+                send_transaction_options,
+                commitment,
+                search_transaction_history,
+                status_timeout_ms,
+                status_poll_ms,
             );
             defer allocator.free(tx_signature);
 
@@ -5216,18 +5492,19 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.anchor_idl_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(
-                rpc,
+            const tx_signature = try sendInvocationSpecJson(
                 allocator,
-                .{
-                    .anchor_idl_invocation_spec_json = invocation_spec_json,
-                    .blockhash_commitment = commitment orelse send_preflight_commitment,
-                    .send_transaction_options = send_transaction_options,
-                    .commitment = commitment,
-                    .search_transaction_history = search_transaction_history,
-                    .timeout_ms = status_timeout_ms,
-                    .poll_interval_ms = status_poll_ms,
-                },
+                rpc,
+                .anchor_idl,
+                false,
+                true,
+                invocation_spec_json,
+                commitment orelse send_preflight_commitment,
+                send_transaction_options,
+                commitment,
+                search_transaction_history,
+                status_timeout_ms,
+                status_poll_ms,
             );
             defer allocator.free(tx_signature);
 
@@ -5456,38 +5733,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 return error.InvalidCli;
             };
 
-            const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
-                parseAccountEncoding(value) orelse return error.InvalidCli
-            else
-                null;
-            const simulation_min_context_slot = if (simulation_min_context_slot_arg) |value|
-                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
-            else
-                null;
-            const simulation_accounts_options = if (simulation_accounts.items.len > 0)
-                client.SimulationAccountsOptions{
-                    .addresses = simulation_accounts.items,
-                    .encoding = simulation_account_encoding,
-                }
-            else
-                null;
-
-            const options = if (simulate_sig_verify or
-                simulate_replace_recent_blockhash or
-                simulate_inner_instructions or
-                commitment != null or
-                simulation_min_context_slot != null or
-                simulation_accounts_options != null)
-                client.SimulateTransactionOptions{
-                    .sig_verify = simulate_sig_verify,
-                    .replace_recent_blockhash = simulate_replace_recent_blockhash,
-                    .commitment = commitment,
-                    .min_context_slot = simulation_min_context_slot,
-                    .inner_instructions = simulate_inner_instructions,
-                    .accounts = simulation_accounts_options,
-                }
-            else
-                null;
+            const options = try buildCliSimulationOptions(
+                simulation_account_encoding_arg,
+                simulation_min_context_slot_arg,
+                simulation_accounts.items,
+                simulate_sig_verify,
+                simulate_replace_recent_blockhash,
+                simulate_inner_instructions,
+                commitment,
+            );
 
             const simulation = try rpc.simulateTransaction(tx, options);
             defer freeSimulatedTransaction(allocator, simulation);
@@ -5526,43 +5780,25 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
-                parseAccountEncoding(value) orelse return error.InvalidCli
-            else
-                null;
-            const simulation_min_context_slot = if (simulation_min_context_slot_arg) |value|
-                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
-            else
-                null;
-            const simulation_accounts_options = if (simulation_accounts.items.len > 0)
-                client.SimulationAccountsOptions{
-                    .addresses = simulation_accounts.items,
-                    .encoding = simulation_account_encoding,
-                }
-            else
-                null;
-            const options = if (simulate_sig_verify or
-                simulate_replace_recent_blockhash or
-                simulate_inner_instructions or
-                commitment != null or
-                simulation_min_context_slot != null or
-                simulation_accounts_options != null)
-                client.SimulateTransactionOptions{
-                    .sig_verify = simulate_sig_verify,
-                    .replace_recent_blockhash = simulate_replace_recent_blockhash,
-                    .commitment = commitment,
-                    .min_context_slot = simulation_min_context_slot,
-                    .inner_instructions = simulate_inner_instructions,
-                    .accounts = simulation_accounts_options,
-                }
-            else
-                null;
+            const options = try buildCliSimulationOptions(
+                simulation_account_encoding_arg,
+                simulation_min_context_slot_arg,
+                simulation_accounts.items,
+                simulate_sig_verify,
+                simulate_replace_recent_blockhash,
+                simulate_inner_instructions,
+                commitment,
+            );
 
-            const simulation = try client.instructions_invoke.simulateLegacyTransactionFromInvocationSpecJson(rpc, .{
-                .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = commitment,
-                .simulate_options = options,
-            });
+            const simulation = try simulateInvocationSpecJson(
+                allocator,
+                rpc,
+                .instructions,
+                false,
+                invocation_spec_json,
+                commitment,
+                options,
+            );
             defer freeSimulatedTransaction(allocator, simulation);
 
             printSimulationResult(simulation);
@@ -5599,43 +5835,25 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
-                parseAccountEncoding(value) orelse return error.InvalidCli
-            else
-                null;
-            const simulation_min_context_slot = if (simulation_min_context_slot_arg) |value|
-                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
-            else
-                null;
-            const simulation_accounts_options = if (simulation_accounts.items.len > 0)
-                client.SimulationAccountsOptions{
-                    .addresses = simulation_accounts.items,
-                    .encoding = simulation_account_encoding,
-                }
-            else
-                null;
-            const options = if (simulate_sig_verify or
-                simulate_replace_recent_blockhash or
-                simulate_inner_instructions or
-                commitment != null or
-                simulation_min_context_slot != null or
-                simulation_accounts_options != null)
-                client.SimulateTransactionOptions{
-                    .sig_verify = simulate_sig_verify,
-                    .replace_recent_blockhash = simulate_replace_recent_blockhash,
-                    .commitment = commitment,
-                    .min_context_slot = simulation_min_context_slot,
-                    .inner_instructions = simulate_inner_instructions,
-                    .accounts = simulation_accounts_options,
-                }
-            else
-                null;
+            const options = try buildCliSimulationOptions(
+                simulation_account_encoding_arg,
+                simulation_min_context_slot_arg,
+                simulation_accounts.items,
+                simulate_sig_verify,
+                simulate_replace_recent_blockhash,
+                simulate_inner_instructions,
+                commitment,
+            );
 
-            const simulation = try client.instructions_invoke.simulateVersionedTransactionFromInvocationSpecJson(rpc, .{
-                .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = commitment,
-                .simulate_options = options,
-            });
+            const simulation = try simulateInvocationSpecJson(
+                allocator,
+                rpc,
+                .instructions,
+                true,
+                invocation_spec_json,
+                commitment,
+                options,
+            );
             defer freeSimulatedTransaction(allocator, simulation);
 
             printSimulationResult(simulation);
@@ -5671,43 +5889,25 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
-                parseAccountEncoding(value) orelse return error.InvalidCli
-            else
-                null;
-            const simulation_min_context_slot = if (simulation_min_context_slot_arg) |value|
-                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
-            else
-                null;
-            const simulation_accounts_options = if (simulation_accounts.items.len > 0)
-                client.SimulationAccountsOptions{
-                    .addresses = simulation_accounts.items,
-                    .encoding = simulation_account_encoding,
-                }
-            else
-                null;
-            const options = if (simulate_sig_verify or
-                simulate_replace_recent_blockhash or
-                simulate_inner_instructions or
-                commitment != null or
-                simulation_min_context_slot != null or
-                simulation_accounts_options != null)
-                client.SimulateTransactionOptions{
-                    .sig_verify = simulate_sig_verify,
-                    .replace_recent_blockhash = simulate_replace_recent_blockhash,
-                    .commitment = commitment,
-                    .min_context_slot = simulation_min_context_slot,
-                    .inner_instructions = simulate_inner_instructions,
-                    .accounts = simulation_accounts_options,
-                }
-            else
-                null;
+            const options = try buildCliSimulationOptions(
+                simulation_account_encoding_arg,
+                simulation_min_context_slot_arg,
+                simulation_accounts.items,
+                simulate_sig_verify,
+                simulate_replace_recent_blockhash,
+                simulate_inner_instructions,
+                commitment,
+            );
 
-            const simulation = try client.program_invoke.simulateLegacyTransactionFromInvocationSpecJson(rpc, .{
-                .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = commitment,
-                .simulate_options = options,
-            });
+            const simulation = try simulateInvocationSpecJson(
+                allocator,
+                rpc,
+                .program,
+                false,
+                invocation_spec_json,
+                commitment,
+                options,
+            );
             defer freeSimulatedTransaction(allocator, simulation);
 
             printSimulationResult(simulation);
@@ -5743,43 +5943,25 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
-                parseAccountEncoding(value) orelse return error.InvalidCli
-            else
-                null;
-            const simulation_min_context_slot = if (simulation_min_context_slot_arg) |value|
-                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
-            else
-                null;
-            const simulation_accounts_options = if (simulation_accounts.items.len > 0)
-                client.SimulationAccountsOptions{
-                    .addresses = simulation_accounts.items,
-                    .encoding = simulation_account_encoding,
-                }
-            else
-                null;
-            const options = if (simulate_sig_verify or
-                simulate_replace_recent_blockhash or
-                simulate_inner_instructions or
-                commitment != null or
-                simulation_min_context_slot != null or
-                simulation_accounts_options != null)
-                client.SimulateTransactionOptions{
-                    .sig_verify = simulate_sig_verify,
-                    .replace_recent_blockhash = simulate_replace_recent_blockhash,
-                    .commitment = commitment,
-                    .min_context_slot = simulation_min_context_slot,
-                    .inner_instructions = simulate_inner_instructions,
-                    .accounts = simulation_accounts_options,
-                }
-            else
-                null;
+            const options = try buildCliSimulationOptions(
+                simulation_account_encoding_arg,
+                simulation_min_context_slot_arg,
+                simulation_accounts.items,
+                simulate_sig_verify,
+                simulate_replace_recent_blockhash,
+                simulate_inner_instructions,
+                commitment,
+            );
 
-            const simulation = try client.program_invoke.simulateVersionedTransactionFromInvocationSpecJson(rpc, .{
-                .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = commitment,
-                .simulate_options = options,
-            });
+            const simulation = try simulateInvocationSpecJson(
+                allocator,
+                rpc,
+                .program,
+                true,
+                invocation_spec_json,
+                commitment,
+                options,
+            );
             defer freeSimulatedTransaction(allocator, simulation);
 
             printSimulationResult(simulation);
@@ -5823,45 +6005,23 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             };
             defer allocator.free(invocation_spec_json);
 
-            const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
-                parseAccountEncoding(value) orelse return error.InvalidCli
-            else
-                null;
-            const simulation_min_context_slot = if (simulation_min_context_slot_arg) |value|
-                std.fmt.parseInt(u64, value, 10) catch return error.InvalidCli
-            else
-                null;
-            const simulation_accounts_options = if (simulation_accounts.items.len > 0)
-                client.SimulationAccountsOptions{
-                    .addresses = simulation_accounts.items,
-                    .encoding = simulation_account_encoding,
-                }
-            else
-                null;
-            const options = if (simulate_sig_verify or
-                simulate_replace_recent_blockhash or
-                simulate_inner_instructions or
-                commitment != null or
-                simulation_min_context_slot != null or
-                simulation_accounts_options != null)
-                client.SimulateTransactionOptions{
-                    .sig_verify = simulate_sig_verify,
-                    .replace_recent_blockhash = simulate_replace_recent_blockhash,
-                    .commitment = commitment,
-                    .min_context_slot = simulation_min_context_slot,
-                    .inner_instructions = simulate_inner_instructions,
-                    .accounts = simulation_accounts_options,
-                }
-            else
-                null;
-            const simulation = try client.anchor_idl_invoke.simulateLegacyTransactionFromInvocationSpecJson(
-                rpc,
+            const options = try buildCliSimulationOptions(
+                simulation_account_encoding_arg,
+                simulation_min_context_slot_arg,
+                simulation_accounts.items,
+                simulate_sig_verify,
+                simulate_replace_recent_blockhash,
+                simulate_inner_instructions,
+                commitment,
+            );
+            const simulation = try simulateInvocationSpecJson(
                 allocator,
-                .{
-                    .anchor_idl_invocation_spec_json = invocation_spec_json,
-                    .blockhash_commitment = commitment,
-                    .simulate_options = options,
-                },
+                rpc,
+                .anchor_idl,
+                false,
+                invocation_spec_json,
+                commitment,
+                options,
             );
             defer freeSimulatedTransaction(allocator, simulation);
 
