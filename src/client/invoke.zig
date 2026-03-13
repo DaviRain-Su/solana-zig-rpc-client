@@ -415,6 +415,106 @@ pub const OwnedInvocationReport = struct {
     }
 };
 
+pub const InvocationDiagnosticSeverity = enum {
+    info,
+    warning,
+    err,
+};
+
+pub const InvocationDiagnosticCode = enum {
+    no_buildable_mode,
+    mode_fallback,
+    missing_required_signers,
+    extra_signers,
+    duplicate_signers,
+    duplicate_lookup_tables,
+    incomplete_lookup_coverage,
+    durable_nonce,
+};
+
+pub const InvocationDiagnostic = struct {
+    severity: InvocationDiagnosticSeverity,
+    code: InvocationDiagnosticCode,
+};
+
+pub const OwnedInvocationDiagnostics = struct {
+    items: []InvocationDiagnostic,
+
+    pub fn deinit(self: *OwnedInvocationDiagnostics, allocator: Allocator) void {
+        allocator.free(self.items);
+        self.* = undefined;
+    }
+
+    pub fn errorCount(self: OwnedInvocationDiagnostics) usize {
+        var count: usize = 0;
+        for (self.items) |item| {
+            if (item.severity == .err) count += 1;
+        }
+        return count;
+    }
+
+    pub fn warningCount(self: OwnedInvocationDiagnostics) usize {
+        var count: usize = 0;
+        for (self.items) |item| {
+            if (item.severity == .warning) count += 1;
+        }
+        return count;
+    }
+
+    pub fn infoCount(self: OwnedInvocationDiagnostics) usize {
+        var count: usize = 0;
+        for (self.items) |item| {
+            if (item.severity == .info) count += 1;
+        }
+        return count;
+    }
+
+    pub fn hasCode(self: OwnedInvocationDiagnostics, code: InvocationDiagnosticCode) bool {
+        for (self.items) |item| {
+            if (item.code == code) return true;
+        }
+        return false;
+    }
+};
+
+pub fn invocationDiagnosticSeverityLabel(severity: InvocationDiagnosticSeverity) []const u8 {
+    return switch (severity) {
+        .info => "info",
+        .warning => "warning",
+        .err => "error",
+    };
+}
+
+pub fn invocationDiagnosticCodeLabel(code: InvocationDiagnosticCode) []const u8 {
+    return @tagName(code);
+}
+
+pub fn invocationDiagnosticMessage(code: InvocationDiagnosticCode) []const u8 {
+    return switch (code) {
+        .no_buildable_mode => "No invocation mode can be built with the current inputs.",
+        .mode_fallback => "Requested invocation mode was not used and the runtime fell back to another mode.",
+        .missing_required_signers => "Required signer pubkeys are missing from the provided signer set.",
+        .extra_signers => "Extra signer pubkeys were provided but are not required by the invocation.",
+        .duplicate_signers => "Duplicate signer pubkeys were provided.",
+        .duplicate_lookup_tables => "Duplicate address lookup tables were provided.",
+        .incomplete_lookup_coverage => "Not all lookup candidate pubkeys are covered by the provided address lookup tables.",
+        .durable_nonce => "Invocation uses a durable nonce account instead of a recent blockhash.",
+    };
+}
+
+pub fn invocationDiagnosticSuggestion(code: InvocationDiagnosticCode) ?[]const u8 {
+    return switch (code) {
+        .no_buildable_mode => "Add the missing signers or switch invocation mode inputs so at least one mode becomes buildable.",
+        .mode_fallback => "If the fallback is undesirable, rerun with --no-mode-fallback or change --invoke-mode.",
+        .missing_required_signers => "Add the missing signer keypairs or remove signer requirements from the invocation inputs.",
+        .extra_signers => "Remove the unnecessary signer keypairs to keep the signer set minimal.",
+        .duplicate_signers => "Deduplicate signer inputs before sending the invocation.",
+        .duplicate_lookup_tables => "Deduplicate address lookup table inputs before building the transaction.",
+        .incomplete_lookup_coverage => "Provide additional address lookup tables or drop unnecessary lookup-table-only accounts.",
+        .durable_nonce => "Ensure the nonce account and nonce authority are valid for the target cluster before sending.",
+    };
+}
+
 pub const InvocationMode = enum {
     legacy,
     versioned,
@@ -682,12 +782,39 @@ fn writeJsonAccountsField(writer: *std.Io.Writer, first: *bool, allocator: Alloc
     try writer.writeAll("]");
 }
 
+fn writeJsonDiagnosticsField(
+    writer: *std.Io.Writer,
+    first: *bool,
+    diagnostics: OwnedInvocationDiagnostics,
+) !void {
+    if (!first.*) try writer.writeAll(",");
+    first.* = false;
+    try std.json.Stringify.value("diagnostics", .{}, writer);
+    try writer.writeAll(":[");
+    for (diagnostics.items, 0..) |item, index| {
+        if (index != 0) try writer.writeAll(",");
+        try writer.writeAll("{");
+        var item_first = true;
+        try writeJsonStringField(writer, &item_first, "severity", invocationDiagnosticSeverityLabel(item.severity));
+        try writeJsonStringField(writer, &item_first, "code", invocationDiagnosticCodeLabel(item.code));
+        try writeJsonStringField(writer, &item_first, "message", invocationDiagnosticMessage(item.code));
+        try writeJsonStringField(writer, &item_first, "suggestion", invocationDiagnosticSuggestion(item.code));
+        try writer.writeAll("}");
+    }
+    try writer.writeAll("]");
+}
+
 pub fn writePreferredInvocationAnalysisJson(
     writer: *std.Io.Writer,
     allocator: Allocator,
     analysis: *const PreferredInvocationAnalysis,
 ) !void {
     var first = true;
+    var diagnostics = try buildInvocationDiagnosticsFromPreferredExecutionReport(
+        allocator,
+        &analysis.execution_report,
+    );
+    defer diagnostics.deinit(allocator);
 
     try writer.writeAll("{");
     try writeJsonStringField(writer, &first, "preferred_mode", invocationModeJsonLabel(analysis.execution_report.mode_report.preferred_mode));
@@ -730,6 +857,7 @@ pub fn writePreferredInvocationAnalysisJson(
     try writeJsonPubkeyArrayField(writer, &first, "extra_signer_pubkeys", allocator, analysis.execution_report.report.validation.extra_signer_pubkeys);
     try writeJsonPubkeyArrayField(writer, &first, "duplicate_signer_pubkeys", allocator, analysis.execution_report.report.validation.duplicate_provided_signer_pubkeys);
     try writeJsonPubkeyArrayField(writer, &first, "duplicate_lookup_table_pubkeys", allocator, analysis.execution_report.report.validation.duplicate_lookup_table_pubkeys);
+    try writeJsonDiagnosticsField(writer, &first, diagnostics);
     try writeJsonAccountsField(writer, &first, allocator, analysis.accounts);
     try writer.writeAll("}");
 }
@@ -2524,6 +2652,82 @@ pub fn buildInvocationReportFromInvocationSpecJson(
             invocation_spec_json,
         ),
     );
+}
+
+pub fn buildInvocationDiagnosticsFromReport(
+    allocator: Allocator,
+    report: *const OwnedInvocationReport,
+) !OwnedInvocationDiagnostics {
+    var diagnostics: std.ArrayList(InvocationDiagnostic) = .empty;
+    errdefer diagnostics.deinit(allocator);
+
+    if (report.has_missing_required_signers) {
+        try diagnostics.append(allocator, .{
+            .severity = .err,
+            .code = .missing_required_signers,
+        });
+    }
+    if (report.has_extra_signers) {
+        try diagnostics.append(allocator, .{
+            .severity = .warning,
+            .code = .extra_signers,
+        });
+    }
+    if (report.has_duplicate_signers) {
+        try diagnostics.append(allocator, .{
+            .severity = .err,
+            .code = .duplicate_signers,
+        });
+    }
+    if (report.has_duplicate_lookup_tables) {
+        try diagnostics.append(allocator, .{
+            .severity = .err,
+            .code = .duplicate_lookup_tables,
+        });
+    }
+    if (report.usesLookupTables() and !report.has_full_lookup_coverage) {
+        try diagnostics.append(allocator, .{
+            .severity = .warning,
+            .code = .incomplete_lookup_coverage,
+        });
+    }
+    if (report.uses_durable_nonce) {
+        try diagnostics.append(allocator, .{
+            .severity = .info,
+            .code = .durable_nonce,
+        });
+    }
+
+    return .{
+        .items = try diagnostics.toOwnedSlice(allocator),
+    };
+}
+
+pub fn buildInvocationDiagnosticsFromPreferredExecutionReport(
+    allocator: Allocator,
+    report: *const PreferredInvocationExecutionReport,
+) !OwnedInvocationDiagnostics {
+    var diagnostics = try buildInvocationDiagnosticsFromReport(allocator, &report.report);
+    defer diagnostics.deinit(allocator);
+
+    var items: std.ArrayList(InvocationDiagnostic) = .empty;
+    errdefer items.deinit(allocator);
+    try items.appendSlice(allocator, diagnostics.items);
+    if (report.selected_mode == null) {
+        try items.append(allocator, .{
+            .severity = .err,
+            .code = .no_buildable_mode,
+        });
+    } else if (report.used_fallback) {
+        try items.append(allocator, .{
+            .severity = .warning,
+            .code = .mode_fallback,
+        });
+    }
+
+    return .{
+        .items = try items.toOwnedSlice(allocator),
+    };
 }
 
 pub fn buildInvocationModeReportFromInvocationSpecJson(

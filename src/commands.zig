@@ -4161,11 +4161,47 @@ fn printPreferredInvocationExecutionReport(
     }
 }
 
+fn printInvocationDiagnostics(
+    diagnostics: client.invoke.OwnedInvocationDiagnostics,
+) !void {
+    std.debug.print(
+        "diagnostics: {d} error(s), {d} warning(s), {d} info item(s)\n",
+        .{ diagnostics.errorCount(), diagnostics.warningCount(), diagnostics.infoCount() },
+    );
+    for (diagnostics.items) |item| {
+        std.debug.print(
+            "  [{s}] {s}: {s}\n",
+            .{
+                client.invoke.invocationDiagnosticSeverityLabel(item.severity),
+                client.invoke.invocationDiagnosticCodeLabel(item.code),
+                client.invoke.invocationDiagnosticMessage(item.code),
+            },
+        );
+        if (client.invoke.invocationDiagnosticSuggestion(item.code)) |suggestion| {
+            std.debug.print("    suggestion: {s}\n", .{suggestion});
+        }
+    }
+}
+
 fn printPreferredInvocationAnalysis(
     allocator: Allocator,
     analysis: *const client.invoke.PreferredInvocationAnalysis,
 ) !void {
     try printPreferredInvocationExecutionReport(allocator, &analysis.execution_report);
+    try printInvocationAccounts(allocator, analysis.accounts);
+}
+
+fn printValidatedPreferredInvocationAnalysis(
+    allocator: Allocator,
+    analysis: *const client.invoke.PreferredInvocationAnalysis,
+) !void {
+    try printPreferredInvocationExecutionReport(allocator, &analysis.execution_report);
+    var diagnostics = try client.invoke.buildInvocationDiagnosticsFromPreferredExecutionReport(
+        allocator,
+        &analysis.execution_report,
+    );
+    defer diagnostics.deinit(allocator);
+    try printInvocationDiagnostics(diagnostics);
     try printInvocationAccounts(allocator, analysis.accounts);
 }
 
@@ -5339,7 +5375,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         if (output_json) {
             try printPreferredInvocationAnalysisJson(allocator, &analysis);
         } else {
-            try printPreferredInvocationAnalysis(allocator, &analysis);
+            if (command == .validate_program_invoke) {
+                try printValidatedPreferredInvocationAnalysis(allocator, &analysis);
+            } else {
+                try printPreferredInvocationAnalysis(allocator, &analysis);
+            }
         }
         return;
     }
@@ -5403,7 +5443,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         if (output_json) {
             try printPreferredInvocationAnalysisJson(allocator, &analysis);
         } else {
-            try printPreferredInvocationAnalysis(allocator, &analysis);
+            if (command == .validate_instructions) {
+                try printValidatedPreferredInvocationAnalysis(allocator, &analysis);
+            } else {
+                try printPreferredInvocationAnalysis(allocator, &analysis);
+            }
         }
         return;
     }
@@ -5489,7 +5533,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         if (output_json) {
             try printPreferredInvocationAnalysisJson(allocator, &analysis);
         } else {
-            try printPreferredInvocationAnalysis(allocator, &analysis);
+            if (command == .validate_idl_invoke) {
+                try printValidatedPreferredInvocationAnalysis(allocator, &analysis);
+            } else {
+                try printPreferredInvocationAnalysis(allocator, &analysis);
+            }
         }
         return;
     }
@@ -12261,7 +12309,79 @@ test "runCommand validate-program-invoke emits json analysis for schema args" {
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"legacy\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"validation_passed\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostics\":[]") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"program_ids\":[") != null);
+}
+
+test "runCommand validate-program-invoke emits diagnostics for missing signer" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://validate-program-invoke-missing-signer" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{84} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 41);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{37} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const missing_signer = client.Pubkey.fromBytes(.{73} ** 32);
+    const missing_signer_base58 = try missing_signer.toBase58(allocator);
+    defer allocator.free(missing_signer_base58);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"isSigner\":true}}]",
+        .{missing_signer_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "validate-program-invoke",
+        "--json",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        program_id_base58,
+        accounts_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"none\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"can_execute_selected_mode\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"code\":\"missing_required_signers\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"code\":\"no_buildable_mode\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"missing_required_signer_pubkeys\":[") != null);
 }
 
 test "runCommand prepare-program-invoke emits json prepared transaction for schema args" {
