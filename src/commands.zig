@@ -3314,29 +3314,30 @@ fn buildInvocationSpecJsonFromCliSpec(
     additional_signer_secret_keys_arg: []const []const u8,
     recent_blockhash_arg: ?[]const u8,
 ) ![]u8 {
-    var payer_inputs = if (sender_keypair_path_arg != null or sender_secret_key_arg != null)
-        try loadRequiredCliInvokePayerInputs(allocator, sender_secret_key_arg, sender_keypair_path_arg)
-    else
-        try loadRequiredCliInvokePayerInputs(allocator, spec.payer_secret_key, spec.payer_keypair_path);
+    const context_args: CliInvocationContextArgs = .{
+        .payer_keypair_path_arg = if (sender_keypair_path_arg != null or sender_secret_key_arg != null) sender_keypair_path_arg else spec.payer_keypair_path,
+        .payer_secret_key_arg = if (sender_keypair_path_arg != null or sender_secret_key_arg != null) sender_secret_key_arg else spec.payer_secret_key,
+        .recent_blockhash_arg = recent_blockhash_arg orelse spec.recent_blockhash,
+        .nonce_account_arg = spec.nonce_account,
+        .nonce_authority_secret_key_arg = spec.nonce_authority_secret_key,
+        .nonce_authority_keypair_path_arg = spec.nonce_authority_keypair_path,
+        .base_additional_signer_secret_keys = spec.additional_signer_secret_keys,
+        .base_additional_signer_keypair_paths = spec.additional_signer_keypair_paths,
+        .base_address_lookup_tables = spec.address_lookup_tables,
+        .additional_signer_secret_keys_arg = additional_signer_secret_keys_arg,
+    };
+
+    var payer_inputs = try loadRequiredCliInvokePayerInputs(
+        allocator,
+        context_args.payer_secret_key_arg,
+        context_args.payer_keypair_path_arg,
+    );
     defer payer_inputs.deinit(allocator);
 
-    const nonce_authority_secret_key = try resolveInstructionKeypairSecretKeyBase58(
-        allocator,
-        spec.nonce_authority_secret_key,
-        spec.nonce_authority_keypair_path,
-    );
-    defer if (nonce_authority_secret_key) |value| allocator.free(value);
+    if (context_args.recent_blockhash_arg != null and context_args.nonce_account_arg != null) return error.InvalidCli;
 
-    const effective_recent_blockhash = recent_blockhash_arg orelse spec.recent_blockhash;
-    if (effective_recent_blockhash != null and spec.nonce_account != null) return error.InvalidCli;
-
-    const additional_signer_secret_keys_json = try encodeResolvedSignerSecretKeysJson(
-        allocator,
-        spec.additional_signer_secret_keys,
-        spec.additional_signer_keypair_paths,
-        additional_signer_secret_keys_arg,
-    );
-    defer allocator.free(additional_signer_secret_keys_json);
+    var invocation_context = try loadCliInvocationContextJsonInputs(allocator, context_args);
+    defer invocation_context.deinit(allocator);
 
     const canonical_instructions = try allocator.alloc(JsonCliInstructionSpec, spec.instructions.len);
     defer allocator.free(canonical_instructions);
@@ -3362,21 +3363,13 @@ fn buildInvocationSpecJsonFromCliSpec(
     defer instructions_buffer.deinit();
     std.json.Stringify.value(canonical_instructions, .{}, &instructions_buffer.writer) catch unreachable;
 
-    var lookup_tables_buffer: ?std.io.Writer.Allocating = null;
-    defer if (lookup_tables_buffer) |*value| value.deinit();
-    const address_lookup_tables_json = if (spec.address_lookup_tables.len > 0) blk: {
-        lookup_tables_buffer = .init(allocator);
-        std.json.Stringify.value(spec.address_lookup_tables, .{}, &lookup_tables_buffer.?.writer) catch unreachable;
-        break :blk lookup_tables_buffer.?.written();
-    } else null;
-
     return try client.invocation_spec_json.buildInvocationSpecJson(allocator, .{
         .payer_secret_key = payer_inputs.secret_key,
-        .additional_signer_secret_keys_json = additional_signer_secret_keys_json,
-        .address_lookup_tables_json = address_lookup_tables_json,
-        .recent_blockhash = effective_recent_blockhash,
-        .nonce_account = spec.nonce_account,
-        .nonce_authority_secret_key = nonce_authority_secret_key,
+        .additional_signer_secret_keys_json = invocation_context.additional_signer_secret_keys_json,
+        .address_lookup_tables_json = invocation_context.lookup_tables_source,
+        .recent_blockhash = context_args.recent_blockhash_arg,
+        .nonce_account = context_args.nonce_account_arg,
+        .nonce_authority_secret_key = invocation_context.nonce_authority_secret_key,
         .instructions_json = instructions_buffer.written(),
     });
 }
@@ -3533,7 +3526,11 @@ const CliInvocationContextArgs = struct {
     lookup_tables_arg: ?[]const u8 = null,
     recent_blockhash_arg: ?[]const u8 = null,
     nonce_account_arg: ?[]const u8 = null,
+    nonce_authority_secret_key_arg: ?[]const u8 = null,
     nonce_authority_keypair_path_arg: ?[]const u8 = null,
+    base_additional_signer_secret_keys: []const []const u8 = &.{},
+    base_additional_signer_keypair_paths: []const []const u8 = &.{},
+    base_address_lookup_tables: []const CliAddressLookupTableSpec = &.{},
     additional_signer_secret_keys_arg: []const []const u8 = &.{},
 };
 
@@ -3591,20 +3588,27 @@ fn loadCliInvocationContextJsonInputs(
     var parsed_signer_keypair_paths = try parseCliSignerKeypairPathsJsonSource(allocator, signer_keypair_paths_source);
     defer if (parsed_signer_keypair_paths) |*value| value.deinit();
 
-    const lookup_tables_source = try loadOptionalInstructionSpecSource(allocator, context_args.lookup_tables_arg);
+    const lookup_tables_source = if (context_args.lookup_tables_arg) |value|
+        try loadInstructionSpecSource(allocator, value)
+    else if (context_args.base_address_lookup_tables.len > 0) blk: {
+        var buffer: std.io.Writer.Allocating = .init(allocator);
+        defer buffer.deinit();
+        std.json.Stringify.value(context_args.base_address_lookup_tables, .{}, &buffer.writer) catch unreachable;
+        break :blk try allocator.dupe(u8, buffer.written());
+    } else null;
     errdefer if (lookup_tables_source) |value| allocator.free(value);
 
     const nonce_authority_secret_key = try resolveInstructionKeypairSecretKeyBase58(
         allocator,
-        null,
+        context_args.nonce_authority_secret_key_arg,
         context_args.nonce_authority_keypair_path_arg,
     );
     errdefer if (nonce_authority_secret_key) |value| allocator.free(value);
 
     const additional_signer_secret_keys_json = try encodeResolvedSignerSecretKeysJson(
         allocator,
-        &.{},
-        if (parsed_signer_keypair_paths) |value| value.value else &.{},
+        context_args.base_additional_signer_secret_keys,
+        if (parsed_signer_keypair_paths) |value| value.value else context_args.base_additional_signer_keypair_paths,
         context_args.additional_signer_secret_keys_arg,
     );
     errdefer allocator.free(additional_signer_secret_keys_json);
