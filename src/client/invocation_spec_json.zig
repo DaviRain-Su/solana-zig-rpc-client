@@ -25,6 +25,16 @@ pub const BuildInstructionInvocationSpecJsonOptions = struct {
     instruction: InstructionJson,
 };
 
+pub const BuildInvocationSpecJsonOptions = struct {
+    payer_secret_key: []const u8,
+    additional_signer_secret_keys_json: ?[]const u8 = null,
+    address_lookup_tables_json: ?[]const u8 = null,
+    recent_blockhash: ?[]const u8 = null,
+    nonce_account: ?[]const u8 = null,
+    nonce_authority_secret_key: ?[]const u8 = null,
+    instructions_json: []const u8,
+};
+
 pub fn writeFieldName(
     buffer: *std.io.Writer.Allocating,
     has_field_ptr: *bool,
@@ -47,6 +57,50 @@ pub fn buildInstructionInvocationSpecJson(
         return error.InvalidInvocationSpec;
     }
 
+    var instruction_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer instruction_buffer.deinit();
+    try instruction_buffer.writer.writeByte('[');
+    try instruction_buffer.writer.writeByte('{');
+    var has_instruction_field = false;
+
+    try writeFieldName(&instruction_buffer, &has_instruction_field, "program_id");
+    try std.json.Stringify.value(options.instruction.program_id, .{}, &instruction_buffer.writer);
+
+    if (options.instruction.accounts_json) |value| {
+        try writeFieldName(&instruction_buffer, &has_instruction_field, "accounts");
+        try instruction_buffer.writer.writeAll(value);
+    }
+    if (options.instruction.data) |value| {
+        try writeFieldName(&instruction_buffer, &has_instruction_field, "data");
+        try std.json.Stringify.value(value, .{}, &instruction_buffer.writer);
+    }
+    if (options.instruction.data_encoding) |value| {
+        try writeFieldName(&instruction_buffer, &has_instruction_field, "data_encoding");
+        try std.json.Stringify.value(value, .{}, &instruction_buffer.writer);
+    }
+    if (options.instruction.data_bytes_json) |value| {
+        try writeFieldName(&instruction_buffer, &has_instruction_field, "data_bytes");
+        try instruction_buffer.writer.writeAll(value);
+    }
+
+    try instruction_buffer.writer.writeByte('}');
+    try instruction_buffer.writer.writeByte(']');
+
+    return try buildInvocationSpecJson(allocator, .{
+        .payer_secret_key = options.payer_secret_key,
+        .additional_signer_secret_keys_json = options.additional_signer_secret_keys_json,
+        .address_lookup_tables_json = options.address_lookup_tables_json,
+        .recent_blockhash = options.recent_blockhash,
+        .nonce_account = options.nonce_account,
+        .nonce_authority_secret_key = options.nonce_authority_secret_key,
+        .instructions_json = instruction_buffer.written(),
+    });
+}
+
+pub fn buildInvocationSpecJson(
+    allocator: Allocator,
+    options: BuildInvocationSpecJsonOptions,
+) BuildError![]u8 {
     var json_buffer: std.io.Writer.Allocating = .init(allocator);
     defer json_buffer.deinit();
 
@@ -78,32 +132,7 @@ pub fn buildInstructionInvocationSpecJson(
     }
 
     try writeFieldName(&json_buffer, &has_field, "instructions");
-    try json_buffer.writer.writeByte('[');
-    try json_buffer.writer.writeByte('{');
-    var has_instruction_field = false;
-
-    try writeFieldName(&json_buffer, &has_instruction_field, "program_id");
-    try std.json.Stringify.value(options.instruction.program_id, .{}, &json_buffer.writer);
-
-    if (options.instruction.accounts_json) |value| {
-        try writeFieldName(&json_buffer, &has_instruction_field, "accounts");
-        try json_buffer.writer.writeAll(value);
-    }
-    if (options.instruction.data) |value| {
-        try writeFieldName(&json_buffer, &has_instruction_field, "data");
-        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
-    }
-    if (options.instruction.data_encoding) |value| {
-        try writeFieldName(&json_buffer, &has_instruction_field, "data_encoding");
-        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
-    }
-    if (options.instruction.data_bytes_json) |value| {
-        try writeFieldName(&json_buffer, &has_instruction_field, "data_bytes");
-        try json_buffer.writer.writeAll(value);
-    }
-
-    try json_buffer.writer.writeByte('}');
-    try json_buffer.writer.writeByte(']');
+    try json_buffer.writer.writeAll(options.instructions_json);
     try json_buffer.writer.writeByte('}');
 
     return try allocator.dupe(u8, json_buffer.written());
@@ -150,4 +179,21 @@ test "invocation_spec_json.buildInstructionInvocationSpecJson rejects conflictin
             },
         }),
     );
+}
+
+test "invocation_spec_json.buildInvocationSpecJson writes canonical outer fields for instruction arrays" {
+    const allocator = std.testing.allocator;
+
+    const encoded = try buildInvocationSpecJson(allocator, .{
+        .payer_secret_key = "payer-secret",
+        .additional_signer_secret_keys_json = "[\"extra-signer\"]",
+        .recent_blockhash = "recent-blockhash",
+        .instructions_json = "[{\"program_id\":\"program-id\",\"data\":\"AQ==\",\"data_encoding\":\"base64\"}]",
+    });
+    defer allocator.free(encoded);
+
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"payer_secret_key\":\"payer-secret\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"additional_signer_secret_keys\":[\"extra-signer\"]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"recent_blockhash\":\"recent-blockhash\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, encoded, "\"instructions\":[{\"program_id\":\"program-id\",\"data\":\"AQ==\",\"data_encoding\":\"base64\"}]") != null);
 }

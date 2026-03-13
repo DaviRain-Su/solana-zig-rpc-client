@@ -3421,48 +3421,31 @@ fn buildInvocationSpecJsonFromCliSpec(
         };
     }
 
-    var buffer: std.io.Writer.Allocating = .init(allocator);
-    defer buffer.deinit();
+    var additional_signers_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer additional_signers_buffer.deinit();
+    std.json.Stringify.value(effective_additional_signer_secret_keys.items, .{}, &additional_signers_buffer.writer) catch unreachable;
 
-    try buffer.writer.writeByte('{');
-    var has_field = false;
-    const WriteFieldName = struct {
-        fn write(buffer_inner: *std.io.Writer.Allocating, has_field_inner: *bool, name: []const u8) !void {
-            if (has_field_inner.*) try buffer_inner.writer.writeByte(',');
-            try std.json.Stringify.value(name, .{}, &buffer_inner.writer);
-            try buffer_inner.writer.writeByte(':');
-            has_field_inner.* = true;
-        }
-    };
+    var instructions_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer instructions_buffer.deinit();
+    std.json.Stringify.value(canonical_instructions, .{}, &instructions_buffer.writer) catch unreachable;
 
-    try WriteFieldName.write(&buffer, &has_field, "payer_secret_key");
-    try std.json.Stringify.value(effective_payer_secret_key, .{}, &buffer.writer);
+    var lookup_tables_buffer: ?std.io.Writer.Allocating = null;
+    defer if (lookup_tables_buffer) |*value| value.deinit();
+    const address_lookup_tables_json = if (spec.address_lookup_tables.len > 0) blk: {
+        lookup_tables_buffer = .init(allocator);
+        std.json.Stringify.value(spec.address_lookup_tables, .{}, &lookup_tables_buffer.?.writer) catch unreachable;
+        break :blk lookup_tables_buffer.?.written();
+    } else null;
 
-    try WriteFieldName.write(&buffer, &has_field, "additional_signer_secret_keys");
-    try std.json.Stringify.value(effective_additional_signer_secret_keys.items, .{}, &buffer.writer);
-
-    try WriteFieldName.write(&buffer, &has_field, "instructions");
-    try std.json.Stringify.value(canonical_instructions, .{}, &buffer.writer);
-
-    if (spec.address_lookup_tables.len > 0) {
-        try WriteFieldName.write(&buffer, &has_field, "address_lookup_tables");
-        try std.json.Stringify.value(spec.address_lookup_tables, .{}, &buffer.writer);
-    }
-    if (effective_recent_blockhash) |value| {
-        try WriteFieldName.write(&buffer, &has_field, "recent_blockhash");
-        try std.json.Stringify.value(value, .{}, &buffer.writer);
-    }
-    if (spec.nonce_account) |value| {
-        try WriteFieldName.write(&buffer, &has_field, "nonce_account");
-        try std.json.Stringify.value(value, .{}, &buffer.writer);
-    }
-    if (nonce_authority_secret_key) |value| {
-        try WriteFieldName.write(&buffer, &has_field, "nonce_authority_secret_key");
-        try std.json.Stringify.value(value, .{}, &buffer.writer);
-    }
-
-    try buffer.writer.writeByte('}');
-    return try allocator.dupe(u8, buffer.written());
+    return try client.invocation_spec_json.buildInvocationSpecJson(allocator, .{
+        .payer_secret_key = effective_payer_secret_key,
+        .additional_signer_secret_keys_json = additional_signers_buffer.written(),
+        .address_lookup_tables_json = address_lookup_tables_json,
+        .recent_blockhash = effective_recent_blockhash,
+        .nonce_account = spec.nonce_account,
+        .nonce_authority_secret_key = nonce_authority_secret_key,
+        .instructions_json = instructions_buffer.written(),
+    });
 }
 
 fn parseInstructionDataEncodingArg(value: ?[]const u8) !InstructionDataEncoding {
