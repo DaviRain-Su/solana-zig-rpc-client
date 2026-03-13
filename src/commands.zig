@@ -4153,11 +4153,6 @@ fn buildCliInvokeExecutionArgs(
     };
 }
 
-fn invokeFamilyForCommand(command: cli.Command) ?InvokeFamily {
-    const behavior = invokeCommandBehavior(command) orelse return null;
-    return behavior.family;
-}
-
 fn invokeCommandBehavior(command: cli.Command) ?CliInvokeCommandBehavior {
     return switch (command) {
         .send_instructions => .{ .family = .instructions, .versioned = false, .simulate = false, .confirm = false },
@@ -5496,6 +5491,18 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         simulate_inner_instructions,
     );
 
+    if (invokeCommandBehavior(command) != null) {
+        try runGenericInvocationCommand(
+            allocator,
+            rpc,
+            command,
+            invoke_payload_args,
+            invoke_context_args,
+            invoke_execution_args,
+        );
+        return;
+    }
+
     switch (command) {
         .latest_blockhash => {
             if (with_context) {
@@ -5710,16 +5717,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         .send_versioned_idl_invoke_and_confirm,
         .simulate_idl_invoke,
         .simulate_versioned_idl_invoke,
-        => {
-            try runGenericInvocationCommand(
-                allocator,
-                rpc,
-                command,
-                invoke_payload_args,
-                invoke_context_args,
-                invoke_execution_args,
-            );
-        },
+        => unreachable,
 
         .raw_rpc => {
             const method = raw_rpc_method_arg orelse {
