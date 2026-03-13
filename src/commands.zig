@@ -4575,33 +4575,26 @@ fn runAnchorIdlInvocationCommand(
     }
 }
 
-fn runGenericInvocationCommand(
+fn buildInvocationSpecJsonForCommand(
     allocator: Allocator,
-    rpc: *client.RpcClient,
     command: cli.Command,
+    behavior: CliInvokeCommandBehavior,
     payload_args: CliInvokePayloadArgs,
     context_args: CliInvokeContextArgs,
-    execution_args: CliInvokeExecutionArgs,
-) !void {
-    const behavior = invokeCommandBehavior(command) orelse unreachable;
+) ![]u8 {
     return switch (behavior.family) {
-        .instructions => runInstructionsInvocationCommand(
+        .instructions => buildInstructionsInvocationSpecJsonForCommand(
             allocator,
-            rpc,
             command,
-            behavior,
             payload_args.instructions_spec_arg,
             context_args.payer_keypair_path_arg,
             context_args.payer_secret_key_arg,
             context_args.additional_signer_secret_keys_arg,
             context_args.recent_blockhash_arg,
-            execution_args,
         ),
-        .program => runProgramInvocationCommand(
+        .program => buildProgramInvokeInvocationSpecJsonForCommand(
             allocator,
-            rpc,
             command,
-            behavior,
             payload_args.program_id_arg,
             payload_args.program_accounts_arg,
             payload_args.program_data_arg,
@@ -4609,18 +4602,15 @@ fn runGenericInvocationCommand(
             context_args.payer_keypair_path_arg,
             context_args.payer_secret_key_arg,
             context_args.signer_keypair_paths_arg,
-            context_args.lookup_tables_arg,
+            if (behavior.versioned) context_args.lookup_tables_arg else null,
             context_args.recent_blockhash_arg,
             context_args.nonce_account_arg,
             context_args.nonce_authority_keypair_path_arg,
             context_args.additional_signer_secret_keys_arg,
-            execution_args,
         ),
-        .anchor_idl => runAnchorIdlInvocationCommand(
+        .anchor_idl => buildAnchorIdlInvokeInvocationSpecJsonForCommand(
             allocator,
-            rpc,
             command,
-            behavior,
             payload_args.idl_arg,
             payload_args.idl_instruction_arg,
             payload_args.idl_program_id_arg,
@@ -4632,14 +4622,79 @@ fn runGenericInvocationCommand(
             context_args.payer_keypair_path_arg,
             context_args.payer_secret_key_arg,
             context_args.signer_keypair_paths_arg,
-            context_args.lookup_tables_arg,
+            if (behavior.versioned) context_args.lookup_tables_arg else null,
             context_args.recent_blockhash_arg,
             context_args.nonce_account_arg,
             context_args.nonce_authority_keypair_path_arg,
             context_args.additional_signer_secret_keys_arg,
-            execution_args,
         ),
     };
+}
+
+fn runGenericInvocationCommand(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    command: cli.Command,
+    payload_args: CliInvokePayloadArgs,
+    context_args: CliInvokeContextArgs,
+    execution_args: CliInvokeExecutionArgs,
+) !void {
+    const behavior = invokeCommandBehavior(command) orelse unreachable;
+    const invocation_spec_json = try buildInvocationSpecJsonForCommand(
+        allocator,
+        command,
+        behavior,
+        payload_args,
+        context_args,
+    );
+    defer allocator.free(invocation_spec_json);
+
+    if (behavior.simulate) {
+        const options = try buildCliSimulationOptions(
+            execution_args.simulation_account_encoding_arg,
+            execution_args.simulation_min_context_slot_arg,
+            execution_args.simulation_accounts,
+            execution_args.simulate_sig_verify,
+            execution_args.simulate_replace_recent_blockhash,
+            execution_args.simulate_inner_instructions,
+            execution_args.commitment,
+        );
+        const simulation = try simulateInvocationSpecJson(
+            allocator,
+            rpc,
+            behavior.family,
+            behavior.versioned,
+            invocation_spec_json,
+            execution_args.commitment,
+            options,
+        );
+        defer freeSimulatedTransaction(allocator, simulation);
+
+        printSimulationResult(simulation);
+        return;
+    }
+
+    const tx_signature = try sendInvocationSpecJson(
+        allocator,
+        rpc,
+        behavior.family,
+        behavior.versioned,
+        behavior.confirm,
+        invocation_spec_json,
+        execution_args.commitment orelse execution_args.send_preflight_commitment,
+        execution_args.send_transaction_options,
+        execution_args.commitment,
+        execution_args.search_transaction_history,
+        execution_args.status_timeout_ms,
+        execution_args.status_poll_ms,
+    );
+    defer allocator.free(tx_signature);
+
+    if (behavior.confirm) {
+        std.debug.print("confirmed signature: {s}\n", .{tx_signature});
+    } else {
+        std.debug.print("signature: {s}\n", .{tx_signature});
+    }
 }
 
 fn buildProgramInvokeInvocationSpecJson(
