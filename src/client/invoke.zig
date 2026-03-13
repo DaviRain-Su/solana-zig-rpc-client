@@ -211,6 +211,28 @@ pub const OwnedInvocationLookupCoverage = struct {
     }
 };
 
+pub const OwnedInvocationReport = struct {
+    summary: OwnedInvocationSummary,
+    preflight: OwnedInvocationPreflight,
+    validation: OwnedInvocationValidation,
+    lookup_coverage: OwnedInvocationLookupCoverage,
+    can_execute: bool,
+    uses_durable_nonce: bool,
+    has_full_lookup_coverage: bool,
+    has_missing_required_signers: bool,
+    has_extra_signers: bool,
+    has_duplicate_signers: bool,
+    has_duplicate_lookup_tables: bool,
+
+    pub fn deinit(self: *OwnedInvocationReport, allocator: Allocator) void {
+        self.summary.deinit(allocator);
+        self.preflight.deinit(allocator);
+        self.validation.deinit(allocator);
+        self.lookup_coverage.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 pub fn buildInstructionInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
@@ -754,6 +776,54 @@ pub fn buildInvocationLookupCoverageFromInvocationSpecJson(
         .covered_pubkeys = try covered_pubkeys.toOwnedSlice(allocator),
         .uncovered_pubkeys = try uncovered_pubkeys.toOwnedSlice(allocator),
         .fully_covered = covered_pubkeys.items.len == candidate_pubkeys.items.len,
+    };
+}
+
+pub fn buildInvocationReportFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !OwnedInvocationReport {
+    var summary = try buildInvocationSummaryFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer summary.deinit(allocator);
+
+    var preflight = try buildInvocationPreflightFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer preflight.deinit(allocator);
+
+    var validation = try buildInvocationValidationFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer validation.deinit(allocator);
+
+    var lookup_coverage = try buildInvocationLookupCoverageFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer lookup_coverage.deinit(allocator);
+
+    return .{
+        .summary = summary,
+        .preflight = preflight,
+        .validation = validation,
+        .lookup_coverage = lookup_coverage,
+        .can_execute = validation.is_valid,
+        .uses_durable_nonce = summary.nonce_account != null,
+        .has_full_lookup_coverage = lookup_coverage.fully_covered,
+        .has_missing_required_signers = validation.missing_required_signer_pubkeys.len != 0,
+        .has_extra_signers = validation.extra_signer_pubkeys.len != 0,
+        .has_duplicate_signers = validation.duplicate_provided_signer_pubkeys.len != 0,
+        .has_duplicate_lookup_tables = validation.duplicate_lookup_table_pubkeys.len != 0,
     };
 }
 
@@ -2510,6 +2580,53 @@ test "invoke.buildInvocationLookupCoverageFromInvocationSpecJson detects full pr
     try std.testing.expectEqual(@as(usize, 1), coverage.covered_pubkeys.len);
     try std.testing.expectEqual(@as(usize, 0), coverage.uncovered_pubkeys.len);
     try std.testing.expect(coverage.fully_covered);
+}
+
+test "invoke.buildInvocationReportFromInvocationSpecJson summarizes valid durable nonce flow" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocRichInstructionsInvocationSpecJson(allocator, 221, 222, 223, 224, 225, 226);
+    defer allocator.free(spec_json);
+
+    var report = try buildInvocationReportFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer report.deinit(allocator);
+
+    try std.testing.expect(report.can_execute);
+    try std.testing.expect(report.uses_durable_nonce);
+    try std.testing.expect(!report.has_missing_required_signers);
+    try std.testing.expect(!report.has_extra_signers);
+    try std.testing.expect(!report.has_duplicate_signers);
+    try std.testing.expect(!report.has_duplicate_lookup_tables);
+    try std.testing.expect(!report.has_full_lookup_coverage);
+    try std.testing.expectEqual(InvocationBlockhashMode.durable_nonce, report.preflight.blockhash_mode);
+    try std.testing.expectEqual(@as(usize, 1), report.summary.instruction_count);
+}
+
+test "invoke.buildInvocationReportFromInvocationSpecJson summarizes invalid program flow" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithDuplicateSignerAndLookupTable(allocator, 231, 232, 233, 234, 235, 236);
+    defer allocator.free(spec_json);
+
+    var report = try buildInvocationReportFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer report.deinit(allocator);
+
+    try std.testing.expect(!report.can_execute);
+    try std.testing.expect(!report.uses_durable_nonce);
+    try std.testing.expect(report.has_duplicate_signers);
+    try std.testing.expect(report.has_duplicate_lookup_tables);
+    try std.testing.expect(!report.has_missing_required_signers);
+    try std.testing.expect(!report.has_extra_signers);
+    try std.testing.expect(report.has_full_lookup_coverage);
+    try std.testing.expectEqual(InvocationBlockhashMode.explicit_recent_blockhash, report.preflight.blockhash_mode);
 }
 
 test "invoke.buildLegacyMessageBytesFromInvocationSpecJsonWithOptions matches generic builder" {
