@@ -4091,8 +4091,26 @@ fn printPreferredInvocationExecutionReport(
     std.debug.print("duplicate lookup tables: {d}\n", .{report.report.validation.duplicate_lookup_table_pubkeys.len});
 
     try printInvocationPubkeys("program ids", allocator, report.report.summary.program_ids);
+    if (report.report.preflight.provided_signer_pubkeys.len != 0) {
+        try printInvocationPubkeys("provided signer pubkeys", allocator, report.report.preflight.provided_signer_pubkeys);
+    }
+    if (report.report.preflight.required_signer_pubkeys.len != 0) {
+        try printInvocationPubkeys("required signer pubkeys", allocator, report.report.preflight.required_signer_pubkeys);
+    }
+    if (report.report.preflight.writable_pubkeys.len != 0) {
+        try printInvocationPubkeys("writable pubkeys", allocator, report.report.preflight.writable_pubkeys);
+    }
+    if (report.report.preflight.readonly_pubkeys.len != 0) {
+        try printInvocationPubkeys("readonly pubkeys", allocator, report.report.preflight.readonly_pubkeys);
+    }
     if (report.report.plan.lookup_table_pubkeys.len != 0) {
         try printInvocationPubkeys("lookup table pubkeys", allocator, report.report.plan.lookup_table_pubkeys);
+    }
+    if (report.report.lookup_coverage.covered_pubkeys.len != 0) {
+        try printInvocationPubkeys("lookup covered pubkeys", allocator, report.report.lookup_coverage.covered_pubkeys);
+    }
+    if (report.report.lookup_coverage.uncovered_pubkeys.len != 0) {
+        try printInvocationPubkeys("lookup uncovered pubkeys", allocator, report.report.lookup_coverage.uncovered_pubkeys);
     }
     if (report.report.validation.missing_required_signer_pubkeys.len != 0) {
         try printInvocationPubkeys("missing required signer pubkeys", allocator, report.report.validation.missing_required_signer_pubkeys);
