@@ -381,6 +381,17 @@ pub const PreferredSignedTransactionExecutionResult = struct {
     }
 };
 
+pub const PreferredResolvedInvocationExecutionResult = struct {
+    execution_report: PreferredInvocationExecutionReport,
+    resolved_invocation: OwnedResolvedInvocation,
+
+    pub fn deinit(self: *PreferredResolvedInvocationExecutionResult, allocator: Allocator) void {
+        self.execution_report.deinit(allocator);
+        self.resolved_invocation.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 pub const PreferredSignatureExecutionResult = struct {
     execution_report: PreferredInvocationExecutionReport,
     signature: []const u8,
@@ -1242,6 +1253,32 @@ pub fn buildPreferredTransactionBase64ExecutionResultFromInvocationSpecJson(
             mode == .versioned,
             invocation_spec_json,
             options.build,
+        ),
+    };
+}
+
+pub fn buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredResolvedInvocationExecutionResult {
+    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    errdefer execution_report.deinit(allocator);
+
+    return .{
+        .execution_report = execution_report,
+        .resolved_invocation = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+            allocator,
+            family,
+            invocation_spec_json,
         ),
     };
 }
@@ -5335,6 +5372,62 @@ test "invoke.buildPreferredTransactionBase64ExecutionResultFromInvocationSpecJso
     try std.testing.expectEqual(@as(?InvocationMode, .legacy), result.execution_report.requested_mode);
     try std.testing.expectEqual(@as(?InvocationMode, .versioned), result.execution_report.selected_mode);
     try std.testing.expect(result.execution_report.used_fallback);
+}
+
+test "invoke.buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJson preserves default legacy selection" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 356, 357, 358);
+    defer allocator.free(spec_json);
+
+    var result = try buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        spec_json,
+        .{},
+    );
+    defer result.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), result.execution_report.selected_mode);
+    try std.testing.expect(result.execution_report.can_execute_selected_mode);
+    try std.testing.expectEqual(@as(usize, 1), result.resolved_invocation.signer_pubkeys.len);
+    try std.testing.expectEqual(@as(usize, 1), result.resolved_invocation.owned_instructions.instructions.len);
+}
+
+test "invoke.buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJson preserves fallback metadata" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(
+        allocator,
+        361,
+        362,
+        363,
+        364,
+        365,
+    );
+    defer allocator.free(spec_json);
+
+    var result = try buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer result.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), result.execution_report.requested_mode);
+    try std.testing.expectEqual(@as(?InvocationMode, .versioned), result.execution_report.selected_mode);
+    try std.testing.expect(result.execution_report.used_fallback);
+    try std.testing.expectEqual(@as(usize, 1), result.resolved_invocation.address_lookup_tables.len);
 }
 
 test "invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson preserves execution report" {
