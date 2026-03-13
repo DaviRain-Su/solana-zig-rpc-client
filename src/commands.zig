@@ -3639,6 +3639,273 @@ fn buildProgramInvokeInvocationSpecJson(
     return try allocator.dupe(u8, buffer.written());
 }
 
+fn buildAnchorIdlInvokeInvocationSpecJson(
+    allocator: Allocator,
+    idl_arg: []const u8,
+    instruction_name: []const u8,
+    program_id_override_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    accounts_json_arg: ?[]const u8,
+    account_bindings: []const []const u8,
+    remaining_accounts: []const []const u8,
+    remaining_accounts_json_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+) ![]u8 {
+    const payer_keypair = try resolveOptionalInstructionKeypair(
+        allocator,
+        payer_secret_key_arg,
+        payer_keypair_path_arg,
+    ) orelse return error.InvalidCli;
+    const payer_secret_key = try client.encodeBase58(allocator, &payer_keypair.secret_key);
+    defer allocator.free(payer_secret_key);
+
+    const idl_source = try loadInstructionSpecSource(allocator, idl_arg);
+    defer allocator.free(idl_source);
+
+    const args_json_source = if (args_json_arg) |value|
+        try loadInstructionSpecSource(allocator, value)
+    else
+        null;
+    defer if (args_json_source) |value| allocator.free(value);
+
+    const accounts_json_source = if (accounts_json_arg) |value|
+        try loadInstructionSpecSource(allocator, value)
+    else
+        null;
+    defer if (accounts_json_source) |value| allocator.free(value);
+
+    var parsed_cli_account_bindings = try parseCliAnchorInvokeBindings(allocator, account_bindings);
+    defer parsed_cli_account_bindings.deinit(allocator);
+
+    const merged_accounts_json_source = try mergeAnchorInvokeAccountBindingsJson(
+        allocator,
+        accounts_json_source,
+        parsed_cli_account_bindings.json_overlay_source,
+    );
+    defer if (merged_accounts_json_source) |value| allocator.free(value);
+    var typed_account_bindings_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer typed_account_bindings_buffer.deinit();
+    var has_typed_account_bindings = false;
+    if (parsed_cli_account_bindings.typed_bindings.len > 0) {
+        try typed_account_bindings_buffer.writer.writeByte('{');
+        for (parsed_cli_account_bindings.typed_bindings, 0..) |binding, index| {
+            if (index != 0) try typed_account_bindings_buffer.writer.writeByte(',');
+            const encoded_pubkey = try binding.pubkey.toBase58(allocator);
+            defer allocator.free(encoded_pubkey);
+            try std.json.Stringify.value(binding.path, .{}, &typed_account_bindings_buffer.writer);
+            try typed_account_bindings_buffer.writer.writeByte(':');
+            try std.json.Stringify.value(encoded_pubkey, .{}, &typed_account_bindings_buffer.writer);
+        }
+        try typed_account_bindings_buffer.writer.writeByte('}');
+        has_typed_account_bindings = true;
+    }
+    const combined_account_bindings_json_source = if (has_typed_account_bindings)
+        try mergeAnchorInvokeAccountBindingsJson(
+            allocator,
+            if (merged_accounts_json_source) |value| value else accounts_json_source,
+            typed_account_bindings_buffer.written(),
+        )
+    else if (merged_accounts_json_source) |value|
+        try allocator.dupe(u8, value)
+    else if (accounts_json_source) |value|
+        try allocator.dupe(u8, value)
+    else
+        null;
+    defer if (combined_account_bindings_json_source) |value| allocator.free(value);
+
+    const remaining_accounts_json_source = if (remaining_accounts_json_arg) |value|
+        try loadInstructionSpecSource(allocator, value)
+    else
+        null;
+    defer if (remaining_accounts_json_source) |value| allocator.free(value);
+
+    var parsed_remaining_accounts: ?std.json.Parsed([]CliInstructionAccountMeta) = null;
+    defer if (parsed_remaining_accounts) |*value| value.deinit();
+    if (remaining_accounts_json_source) |value| {
+        parsed_remaining_accounts = std.json.parseFromSlice([]CliInstructionAccountMeta, allocator, value, .{
+            .ignore_unknown_fields = true,
+        }) catch return error.InvalidCli;
+    }
+
+    var parsed_signer_keypair_paths: ?std.json.Parsed([]const []const u8) = null;
+    defer if (parsed_signer_keypair_paths) |*value| value.deinit();
+    if (signer_keypair_paths_arg) |value| {
+        const signer_paths_source = try loadInstructionSpecSource(allocator, value);
+        defer allocator.free(signer_paths_source);
+
+        parsed_signer_keypair_paths = std.json.parseFromSlice([]const []const u8, allocator, signer_paths_source, .{
+            .allocate = .alloc_always,
+        }) catch return error.InvalidCli;
+    }
+
+    const lookup_tables_source = if (lookup_tables_arg) |value|
+        try loadInstructionSpecSource(allocator, value)
+    else
+        null;
+    defer if (lookup_tables_source) |value| allocator.free(value);
+
+    var parsed_lookup_tables: ?std.json.Parsed([]CliAddressLookupTableSpec) = null;
+    defer if (parsed_lookup_tables) |*value| value.deinit();
+    if (lookup_tables_source) |value| {
+        parsed_lookup_tables = std.json.parseFromSlice([]CliAddressLookupTableSpec, allocator, value, .{
+            .allocate = .alloc_always,
+            .ignore_unknown_fields = true,
+        }) catch return error.InvalidCli;
+    }
+
+    const nonce_authority_keypair = try resolveOptionalInstructionKeypair(
+        allocator,
+        null,
+        nonce_authority_keypair_path_arg,
+    );
+    const nonce_authority_secret_key = if (nonce_authority_keypair) |value|
+        try client.encodeBase58(allocator, &value.secret_key)
+    else
+        null;
+    defer if (nonce_authority_secret_key) |value| allocator.free(value);
+
+    var owned_additional_signer_secret_keys = std.ArrayListUnmanaged([]u8){};
+    defer {
+        for (owned_additional_signer_secret_keys.items) |value| allocator.free(value);
+        owned_additional_signer_secret_keys.deinit(allocator);
+    }
+    var effective_additional_signer_secret_keys = std.ArrayListUnmanaged([]const u8){};
+    defer effective_additional_signer_secret_keys.deinit(allocator);
+
+    for (additional_signer_secret_keys_arg) |value| {
+        try effective_additional_signer_secret_keys.append(allocator, value);
+    }
+    if (parsed_signer_keypair_paths) |value| {
+        for (value.value) |path| {
+            const signer_keypair = try loadInstructionKeypairFromPath(allocator, path);
+            const encoded = try client.encodeBase58(allocator, &signer_keypair.secret_key);
+            try owned_additional_signer_secret_keys.append(allocator, encoded);
+            try effective_additional_signer_secret_keys.append(allocator, encoded);
+        }
+    }
+
+    const remaining_account_count = remaining_accounts.len + if (parsed_remaining_accounts) |value| value.value.len else 0;
+    const canonical_remaining_accounts = try allocator.alloc(CliInstructionAccountMeta, remaining_account_count);
+    defer allocator.free(canonical_remaining_accounts);
+    const typed_remaining_accounts = try allocator.alloc(client.AccountMeta, remaining_account_count);
+    defer allocator.free(typed_remaining_accounts);
+    var remaining_account_index: usize = 0;
+    for (remaining_accounts) |raw_remaining_account| {
+        const parsed_account = try parseCliRemainingAccountMeta(raw_remaining_account);
+        canonical_remaining_accounts[remaining_account_index] = parsed_account;
+        typed_remaining_accounts[remaining_account_index] = client.AccountMeta.init(
+            client.Pubkey.fromBase58(allocator, parsed_account.pubkey) catch return error.InvalidCli,
+            parsed_account.is_signer,
+            parsed_account.is_writable,
+        );
+        remaining_account_index += 1;
+    }
+    if (parsed_remaining_accounts) |value| {
+        for (value.value) |account| {
+            canonical_remaining_accounts[remaining_account_index] = account;
+            typed_remaining_accounts[remaining_account_index] = client.AccountMeta.init(
+                client.Pubkey.fromBase58(allocator, account.pubkey) catch return error.InvalidCli,
+                account.is_signer,
+                account.is_writable,
+            );
+            remaining_account_index += 1;
+        }
+    }
+
+    const program_id_override = if (program_id_override_arg) |value|
+        client.Pubkey.fromBase58(allocator, value) catch return error.InvalidCli
+    else
+        null;
+
+    var owned_instruction = client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+        allocator,
+        idl_source,
+        instruction_name,
+        .{
+            .program_id = program_id_override,
+            .args_json = args_json_source,
+            .account_bindings = parsed_cli_account_bindings.typed_bindings,
+            .account_bindings_json = if (merged_accounts_json_source) |value| value else accounts_json_source,
+            .remaining_accounts = typed_remaining_accounts,
+            .default_signer = payer_keypair.public_key,
+        },
+    ) catch return error.InvalidCli;
+    defer owned_instruction.deinit(allocator);
+
+    var buffer: std.io.Writer.Allocating = .init(allocator);
+    defer buffer.deinit();
+
+    try buffer.writer.writeByte('{');
+    var has_field = false;
+    const WriteFieldName = struct {
+        fn write(
+            buffer_inner: *std.io.Writer.Allocating,
+            has_field_inner: *bool,
+            name: []const u8,
+        ) !void {
+            if (has_field_inner.*) try buffer_inner.writer.writeByte(',');
+            try std.json.Stringify.value(name, .{}, &buffer_inner.writer);
+            try buffer_inner.writer.writeByte(':');
+            has_field_inner.* = true;
+        }
+    };
+
+    try WriteFieldName.write(&buffer, &has_field, "payer_secret_key");
+    try std.json.Stringify.value(payer_secret_key, .{}, &buffer.writer);
+
+    try WriteFieldName.write(&buffer, &has_field, "additional_signer_secret_keys");
+    try std.json.Stringify.value(effective_additional_signer_secret_keys.items, .{}, &buffer.writer);
+
+    try WriteFieldName.write(&buffer, &has_field, "idl");
+    try buffer.writer.writeAll(idl_source);
+
+    try WriteFieldName.write(&buffer, &has_field, "instruction_name");
+    try std.json.Stringify.value(instruction_name, .{}, &buffer.writer);
+
+    if (program_id_override_arg) |value| {
+        try WriteFieldName.write(&buffer, &has_field, "program_id");
+        try std.json.Stringify.value(value, .{}, &buffer.writer);
+    }
+    if (args_json_source) |value| {
+        try WriteFieldName.write(&buffer, &has_field, "args");
+        try buffer.writer.writeAll(value);
+    }
+    if (combined_account_bindings_json_source) |value| {
+        try WriteFieldName.write(&buffer, &has_field, "account_bindings");
+        try buffer.writer.writeAll(value);
+    }
+    if (canonical_remaining_accounts.len > 0) {
+        try WriteFieldName.write(&buffer, &has_field, "remaining_accounts");
+        try std.json.Stringify.value(canonical_remaining_accounts, .{}, &buffer.writer);
+    }
+    if (lookup_tables_source) |value| {
+        try WriteFieldName.write(&buffer, &has_field, "address_lookup_tables");
+        try buffer.writer.writeAll(value);
+    }
+    if (recent_blockhash_arg) |value| {
+        try WriteFieldName.write(&buffer, &has_field, "recent_blockhash");
+        try std.json.Stringify.value(value, .{}, &buffer.writer);
+    }
+    if (nonce_account_arg) |value| {
+        try WriteFieldName.write(&buffer, &has_field, "nonce_account");
+        try std.json.Stringify.value(value, .{}, &buffer.writer);
+    }
+    if (nonce_authority_secret_key) |value| {
+        try WriteFieldName.write(&buffer, &has_field, "nonce_authority_secret_key");
+        try std.json.Stringify.value(value, .{}, &buffer.writer);
+    }
+
+    try buffer.writer.writeByte('}');
+    return try allocator.dupe(u8, buffer.written());
+}
+
 fn loadProgramInvokeInstructionSpec(
     allocator: Allocator,
     program_id: []const u8,
@@ -4869,8 +5136,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
                 return error.InvalidCli;
             };
+            if (recent_blockhash_arg != null and program_invoke_nonce_account_arg != null) {
+                reportInvalidCliMessage("error: send-idl-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            }
 
-            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
+            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJson(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -4884,6 +5155,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 sender_secret_key_arg,
                 program_invoke_signer_keypair_paths_arg,
                 null,
+                recent_blockhash_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
@@ -4891,29 +5163,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-idl-invoke currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash_arg,
-                commitment orelse send_preflight_commitment,
-            ) catch {
-                reportInvalidCliMessage("error: send-idl-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
+            defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.instructions_invoke.sendLegacyTransaction(
+            const tx_signature = try client.anchor_idl_invoke.sendLegacyTransactionFromInvocationSpecJson(
                 rpc,
+                allocator,
                 .{
-                    .payer = loaded.payer,
-                    .instructions = loaded.owned_instructions.instructions,
-                    .signers = loaded.signers,
-                    .rpc = .{
-                        .recent_blockhash = build_context.recent_blockhash,
-                        .blockhash_commitment = build_context.blockhash_commitment,
-                        .blockhash_query = build_context.blockhash_query,
-                        .nonce_authority = build_context.nonce_authority,
-                        .send_transaction_options = send_transaction_options,
-                    },
+                    .anchor_idl_invocation_spec_json = invocation_spec_json,
+                    .blockhash_commitment = commitment orelse send_preflight_commitment,
+                    .send_transaction_options = send_transaction_options,
                 },
             );
             defer allocator.free(tx_signature);
@@ -4930,8 +5188,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-idl-invoke-and-confirm requires <idl-json|@path> <instruction-name>\n", .{});
                 return error.InvalidCli;
             };
+            if (recent_blockhash_arg != null and program_invoke_nonce_account_arg != null) {
+                reportInvalidCliMessage("error: send-idl-invoke-and-confirm arguments are invalid\n", .{});
+                return error.InvalidCli;
+            }
 
-            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
+            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJson(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -4945,6 +5207,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 sender_secret_key_arg,
                 program_invoke_signer_keypair_paths_arg,
                 null,
+                recent_blockhash_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
@@ -4952,33 +5215,19 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-idl-invoke-and-confirm currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash_arg,
-                commitment orelse send_preflight_commitment,
-            ) catch {
-                reportInvalidCliMessage("error: send-idl-invoke-and-confirm arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
+            defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.instructions_invoke.sendAndConfirmLegacyTransaction(
+            const tx_signature = try client.anchor_idl_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(
                 rpc,
+                allocator,
                 .{
-                    .payer = loaded.payer,
-                    .instructions = loaded.owned_instructions.instructions,
-                    .signers = loaded.signers,
-                    .rpc = .{
-                        .recent_blockhash = build_context.recent_blockhash,
-                        .blockhash_commitment = build_context.blockhash_commitment,
-                        .blockhash_query = build_context.blockhash_query,
-                        .nonce_authority = build_context.nonce_authority,
-                        .send_transaction_options = send_transaction_options,
-                        .commitment = commitment,
-                        .search_transaction_history = search_transaction_history,
-                        .timeout_ms = status_timeout_ms,
-                        .poll_interval_ms = status_poll_ms,
-                    },
+                    .anchor_idl_invocation_spec_json = invocation_spec_json,
+                    .blockhash_commitment = commitment orelse send_preflight_commitment,
+                    .send_transaction_options = send_transaction_options,
+                    .commitment = commitment,
+                    .search_transaction_history = search_transaction_history,
+                    .timeout_ms = status_timeout_ms,
+                    .poll_interval_ms = status_poll_ms,
                 },
             );
             defer allocator.free(tx_signature);
@@ -4995,8 +5244,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-versioned-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
                 return error.InvalidCli;
             };
+            if (recent_blockhash_arg != null and program_invoke_nonce_account_arg != null) {
+                reportInvalidCliMessage("error: send-versioned-idl-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            }
 
-            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
+            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJson(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -5010,6 +5263,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 sender_secret_key_arg,
                 program_invoke_signer_keypair_paths_arg,
                 program_invoke_lookup_tables_arg,
+                recent_blockhash_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
@@ -5017,30 +5271,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-versioned-idl-invoke currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash_arg,
-                commitment orelse send_preflight_commitment,
-            ) catch {
-                reportInvalidCliMessage("error: send-versioned-idl-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
+            defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.instructions_invoke.sendVersionedTransaction(
+            const tx_signature = try client.anchor_idl_invoke.sendVersionedTransactionFromInvocationSpecJson(
                 rpc,
+                allocator,
                 .{
-                    .payer = loaded.payer,
-                    .instructions = loaded.owned_instructions.instructions,
-                    .address_lookup_tables = loaded.address_lookup_tables,
-                    .signers = loaded.signers,
-                    .rpc = .{
-                        .recent_blockhash = build_context.recent_blockhash,
-                        .blockhash_commitment = build_context.blockhash_commitment,
-                        .blockhash_query = build_context.blockhash_query,
-                        .nonce_authority = build_context.nonce_authority,
-                        .send_transaction_options = send_transaction_options,
-                    },
+                    .anchor_idl_invocation_spec_json = invocation_spec_json,
+                    .blockhash_commitment = commitment orelse send_preflight_commitment,
+                    .send_transaction_options = send_transaction_options,
                 },
             );
             defer allocator.free(tx_signature);
@@ -5057,8 +5296,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-versioned-idl-invoke-and-confirm requires <idl-json|@path> <instruction-name>\n", .{});
                 return error.InvalidCli;
             };
+            if (recent_blockhash_arg != null and program_invoke_nonce_account_arg != null) {
+                reportInvalidCliMessage("error: send-versioned-idl-invoke-and-confirm arguments are invalid\n", .{});
+                return error.InvalidCli;
+            }
 
-            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
+            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJson(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -5072,6 +5315,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 sender_secret_key_arg,
                 program_invoke_signer_keypair_paths_arg,
                 program_invoke_lookup_tables_arg,
+                recent_blockhash_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
@@ -5079,34 +5323,19 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: send-versioned-idl-invoke-and-confirm currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash_arg,
-                commitment orelse send_preflight_commitment,
-            ) catch {
-                reportInvalidCliMessage("error: send-versioned-idl-invoke-and-confirm arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
+            defer allocator.free(invocation_spec_json);
 
-            const tx_signature = try client.instructions_invoke.sendAndConfirmVersionedTransaction(
+            const tx_signature = try client.anchor_idl_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(
                 rpc,
+                allocator,
                 .{
-                    .payer = loaded.payer,
-                    .instructions = loaded.owned_instructions.instructions,
-                    .address_lookup_tables = loaded.address_lookup_tables,
-                    .signers = loaded.signers,
-                    .rpc = .{
-                        .recent_blockhash = build_context.recent_blockhash,
-                        .blockhash_commitment = build_context.blockhash_commitment,
-                        .blockhash_query = build_context.blockhash_query,
-                        .nonce_authority = build_context.nonce_authority,
-                        .send_transaction_options = send_transaction_options,
-                        .commitment = commitment,
-                        .search_transaction_history = search_transaction_history,
-                        .timeout_ms = status_timeout_ms,
-                        .poll_interval_ms = status_poll_ms,
-                    },
+                    .anchor_idl_invocation_spec_json = invocation_spec_json,
+                    .blockhash_commitment = commitment orelse send_preflight_commitment,
+                    .send_transaction_options = send_transaction_options,
+                    .commitment = commitment,
+                    .search_transaction_history = search_transaction_history,
+                    .timeout_ms = status_timeout_ms,
+                    .poll_interval_ms = status_poll_ms,
                 },
             );
             defer allocator.free(tx_signature);
@@ -5566,8 +5795,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: simulate-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
                 return error.InvalidCli;
             };
+            if (recent_blockhash_arg != null and program_invoke_nonce_account_arg != null) {
+                reportInvalidCliMessage("error: simulate-idl-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            }
 
-            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
+            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJson(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -5581,6 +5814,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 sender_secret_key_arg,
                 program_invoke_signer_keypair_paths_arg,
                 null,
+                recent_blockhash_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
@@ -5588,7 +5822,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: simulate-idl-invoke currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
+            defer allocator.free(invocation_spec_json);
 
             const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
                 parseAccountEncoding(value) orelse return error.InvalidCli
@@ -5621,32 +5855,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             else
                 null;
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash_arg,
-                commitment,
-            ) catch {
-                reportInvalidCliMessage("error: simulate-idl-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            const build_options = if (build_context.recent_blockhash != null or build_context.blockhash_commitment != null or build_context.blockhash_query != null or build_context.nonce_authority != null)
-                client.LegacyInstructionsBuildOptions{
-                    .recent_blockhash = build_context.recent_blockhash,
-                    .blockhash_commitment = build_context.blockhash_commitment,
-                    .blockhash_query = build_context.blockhash_query,
-                    .nonce_authority = build_context.nonce_authority,
-                }
-            else
-                null;
-
-            const simulation = try client.instructions_invoke.simulateLegacyTransaction(
+            const simulation = try client.anchor_idl_invoke.simulateLegacyTransactionFromInvocationSpecJson(
                 rpc,
+                allocator,
                 .{
-                    .payer = loaded.payer,
-                    .instructions = loaded.owned_instructions.instructions,
-                    .signers = loaded.signers,
-                    .build = build_options,
-                    .rpc = options,
+                    .anchor_idl_invocation_spec_json = invocation_spec_json,
+                    .blockhash_commitment = commitment,
+                    .simulate_options = options,
                 },
             );
             defer freeSimulatedTransaction(allocator, simulation);
@@ -5663,8 +5878,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: simulate-versioned-idl-invoke requires <idl-json|@path> <instruction-name>\n", .{});
                 return error.InvalidCli;
             };
+            if (recent_blockhash_arg != null and program_invoke_nonce_account_arg != null) {
+                reportInvalidCliMessage("error: simulate-versioned-idl-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            }
 
-            var loaded = loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
+            const invocation_spec_json = buildAnchorIdlInvokeInvocationSpecJson(
                 allocator,
                 idl_arg,
                 instruction_name,
@@ -5678,6 +5897,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 sender_secret_key_arg,
                 program_invoke_signer_keypair_paths_arg,
                 program_invoke_lookup_tables_arg,
+                recent_blockhash_arg,
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
@@ -5685,7 +5905,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 reportInvalidCliMessage("error: simulate-versioned-idl-invoke currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{});
                 return error.InvalidCli;
             };
-            defer loaded.deinit(allocator);
+            defer allocator.free(invocation_spec_json);
 
             const simulation_account_encoding = if (simulation_account_encoding_arg) |value|
                 parseAccountEncoding(value) orelse return error.InvalidCli
@@ -5718,33 +5938,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 }
             else
                 null;
-            const build_context = resolveCliInstructionBuildContext(
-                &loaded,
-                recent_blockhash_arg,
-                commitment,
-            ) catch {
-                reportInvalidCliMessage("error: simulate-versioned-idl-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            const build_options = if (build_context.recent_blockhash != null or build_context.blockhash_commitment != null or build_context.blockhash_query != null or build_context.nonce_authority != null)
-                client.VersionedInstructionsBuildOptions{
-                    .recent_blockhash = build_context.recent_blockhash,
-                    .blockhash_commitment = build_context.blockhash_commitment,
-                    .blockhash_query = build_context.blockhash_query,
-                    .nonce_authority = build_context.nonce_authority,
-                }
-            else
-                null;
-
-            const simulation = try client.instructions_invoke.simulateVersionedTransaction(
+            const simulation = try client.anchor_idl_invoke.simulateVersionedTransactionFromInvocationSpecJson(
                 rpc,
+                allocator,
                 .{
-                    .payer = loaded.payer,
-                    .instructions = loaded.owned_instructions.instructions,
-                    .address_lookup_tables = loaded.address_lookup_tables,
-                    .signers = loaded.signers,
-                    .build = build_options,
-                    .rpc = options,
+                    .anchor_idl_invocation_spec_json = invocation_spec_json,
+                    .blockhash_commitment = commitment,
+                    .simulate_options = options,
                 },
             );
             defer freeSimulatedTransaction(allocator, simulation);
