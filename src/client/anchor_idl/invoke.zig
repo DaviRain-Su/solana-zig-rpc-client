@@ -1,4 +1,5 @@
 const std = @import("std");
+const instructions_invoke = @import("../instructions_invoke.zig");
 const sdk = @import("../sdk.zig");
 const rpc_types = @import("../rpc_types.zig");
 const idl_types = @import("./types.zig");
@@ -16,7 +17,9 @@ pub const BuildError = Allocator.Error || ParseIdlError || EncodeInstructionData
     MissingAnchorIdlProgramId,
     MissingAnchorIdlAccountBinding,
     InvalidAnchorIdlAccountSpec,
+    InvalidInvocationSpec,
     UnsupportedAnchorIdlAccountFeature,
+    WriteFailed,
 };
 
 pub const BuildLegacyTransactionError = BuildError || SignLegacyMessageError;
@@ -149,6 +152,23 @@ fn findJsonObjectField(object: std.json.ObjectMap, key: []const u8) ?std.json.Va
     }
 
     return null;
+}
+
+fn jsonObjectField(object: std.json.ObjectMap, comptime keys: []const []const u8) ?std.json.Value {
+    inline for (keys) |key| {
+        if (findJsonObjectField(object, key)) |value| return value;
+    }
+    return null;
+}
+
+fn stringifyJsonValue(
+    allocator: Allocator,
+    value: std.json.Value,
+) Allocator.Error![]u8 {
+    var json_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer json_buffer.deinit();
+    std.json.Stringify.value(value, .{}, &json_buffer.writer) catch unreachable;
+    return try allocator.dupe(u8, json_buffer.written());
 }
 
 fn findJsonValue(value: *const std.json.Value, path: []const u8) ?std.json.Value {
@@ -2146,9 +2166,365 @@ pub const SendAndConfirmOptions = struct {
     poll_interval_ms: u64 = sdk.signature_poll_interval_ms,
 };
 
+pub const SendAnchorIdlInvocationSpecRpcOptions = struct {
+    anchor_idl_invocation_spec_json: []const u8,
+    blockhash_commitment: ?rpc_types.Commitment = null,
+    send_transaction_options: ?rpc_types.SendTransactionOptions = null,
+};
+
+pub const SimulateAnchorIdlInvocationSpecRpcOptions = struct {
+    anchor_idl_invocation_spec_json: []const u8,
+    blockhash_commitment: ?rpc_types.Commitment = null,
+    simulate_options: ?rpc_types.SimulateTransactionOptions = null,
+};
+
+pub const SendAndConfirmAnchorIdlInvocationSpecRpcOptions = struct {
+    anchor_idl_invocation_spec_json: []const u8,
+    blockhash_commitment: ?rpc_types.Commitment = null,
+    send_transaction_options: ?rpc_types.SendTransactionOptions = null,
+    commitment: ?rpc_types.Commitment = null,
+    search_transaction_history: bool = true,
+    timeout_ms: u64 = sdk.poll_for_signature_confirmation_timeout_ms,
+    poll_interval_ms: u64 = sdk.signature_poll_interval_ms,
+};
+
 pub const GetFeeOptions = struct {
     commitment: ?rpc_types.Commitment = null,
 };
+
+fn buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) BuildError![]u8 {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, anchor_idl_invocation_spec_json, .{
+        .ignore_unknown_fields = true,
+    }) catch return error.InvalidInvocationSpec;
+    defer parsed.deinit();
+
+    const object = switch (parsed.value) {
+        .object => parsed.value.object,
+        else => return error.InvalidInvocationSpec,
+    };
+
+    const payer_secret_key_value = jsonObjectField(object, &.{ "payer_secret_key", "payerSecretKey" }) orelse
+        return error.InvalidInvocationSpec;
+    if (payer_secret_key_value != .string) return error.InvalidInvocationSpec;
+    const payer_keypair = sdk.Keypair.fromBase58SecretKey(allocator, payer_secret_key_value.string) catch {
+        return error.InvalidInvocationSpec;
+    };
+
+    const default_signer_secret_key_value = jsonObjectField(object, &.{ "default_signer_secret_key", "defaultSignerSecretKey" });
+    const default_signer_keypair = if (default_signer_secret_key_value) |value| blk: {
+        if (value != .string) return error.InvalidInvocationSpec;
+        break :blk sdk.Keypair.fromBase58SecretKey(allocator, value.string) catch return error.InvalidInvocationSpec;
+    } else payer_keypair;
+    const default_signer_secret_key = if (default_signer_secret_key_value) |value| value.string else payer_secret_key_value.string;
+
+    const idl_value = jsonObjectField(object, &.{ "idl", "idl_json", "idlJson" }) orelse
+        return error.InvalidInvocationSpec;
+    var owned_idl_json_source: ?[]u8 = null;
+    defer if (owned_idl_json_source) |value| allocator.free(value);
+    const idl_json_source = switch (idl_value) {
+        .string => idl_value.string,
+        else => blk: {
+            const encoded = try stringifyJsonValue(allocator, idl_value);
+            owned_idl_json_source = encoded;
+            break :blk encoded;
+        },
+    };
+
+    const instruction_name_value = jsonObjectField(object, &.{ "instruction_name", "instructionName" }) orelse
+        return error.InvalidInvocationSpec;
+    if (instruction_name_value != .string) return error.InvalidInvocationSpec;
+
+    const program_id = if (jsonObjectField(object, &.{ "program_id", "programId" })) |value| blk: {
+        if (value != .string) return error.InvalidInvocationSpec;
+        break :blk sdk.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidInvocationSpec;
+    } else null;
+
+    var owned_args_json: ?[]u8 = null;
+    defer if (owned_args_json) |value| allocator.free(value);
+    const args_json = if (jsonObjectField(object, &.{ "args_json", "argsJson" })) |value| blk: {
+        break :blk switch (value) {
+            .string => value.string,
+            else => source: {
+                const encoded = try stringifyJsonValue(allocator, value);
+                owned_args_json = encoded;
+                break :source encoded;
+            },
+        };
+    } else if (jsonObjectField(object, &.{"args"})) |value| blk: {
+        const encoded = try stringifyJsonValue(allocator, value);
+        owned_args_json = encoded;
+        break :blk encoded;
+    } else null;
+
+    var owned_account_bindings_json: ?[]u8 = null;
+    defer if (owned_account_bindings_json) |value| allocator.free(value);
+    const account_bindings_json = if (jsonObjectField(object, &.{ "account_bindings_json", "accountBindingsJson" })) |value| blk: {
+        break :blk switch (value) {
+            .string => value.string,
+            else => source: {
+                const encoded = try stringifyJsonValue(allocator, value);
+                owned_account_bindings_json = encoded;
+                break :source encoded;
+            },
+        };
+    } else if (jsonObjectField(object, &.{ "account_bindings", "accountBindings" })) |value| blk: {
+        const encoded = try stringifyJsonValue(allocator, value);
+        owned_account_bindings_json = encoded;
+        break :blk encoded;
+    } else null;
+
+    var owned_remaining_accounts_json: ?[]u8 = null;
+    defer if (owned_remaining_accounts_json) |value| allocator.free(value);
+    const remaining_accounts_json = if (jsonObjectField(object, &.{ "remaining_accounts_json", "remainingAccountsJson" })) |value| blk: {
+        break :blk switch (value) {
+            .string => value.string,
+            else => source: {
+                const encoded = try stringifyJsonValue(allocator, value);
+                owned_remaining_accounts_json = encoded;
+                break :source encoded;
+            },
+        };
+    } else if (jsonObjectField(object, &.{ "remaining_accounts", "remainingAccounts" })) |value| blk: {
+        const encoded = try stringifyJsonValue(allocator, value);
+        owned_remaining_accounts_json = encoded;
+        break :blk encoded;
+    } else null;
+
+    var owned_instruction = try buildOwnedInstructionFromJson(
+        allocator,
+        idl_json_source,
+        instruction_name_value.string,
+        .{
+            .program_id = program_id,
+            .args_json = args_json,
+            .account_bindings_json = account_bindings_json,
+            .remaining_accounts_json = remaining_accounts_json,
+            .default_signer = default_signer_keypair.public_key,
+        },
+    );
+    defer owned_instruction.deinit(allocator);
+
+    const instruction_program_id = try owned_instruction.instruction.program_id.toBase58(allocator);
+    defer allocator.free(instruction_program_id);
+    const instruction_data_base64 = try sdk.encodeBase64(allocator, owned_instruction.instruction.data);
+    defer allocator.free(instruction_data_base64);
+
+    var json_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer json_buffer.deinit();
+
+    try json_buffer.writer.writeByte('{');
+    var has_field = false;
+    const Writer = struct {
+        fn writeFieldName(
+            buffer: *std.io.Writer.Allocating,
+            has_field_ptr: *bool,
+            name: []const u8,
+        ) !void {
+            if (has_field_ptr.*) try buffer.writer.writeByte(',');
+            try std.json.Stringify.value(name, .{}, &buffer.writer);
+            try buffer.writer.writeByte(':');
+            has_field_ptr.* = true;
+        }
+    };
+
+    try Writer.writeFieldName(&json_buffer, &has_field, "payer_secret_key");
+    try std.json.Stringify.value(payer_secret_key_value.string, .{}, &json_buffer.writer);
+
+    const additional_signers_value = jsonObjectField(object, &.{ "additional_signer_secret_keys", "additionalSignerSecretKeys" });
+    const include_default_signer = !std.mem.eql(u8, default_signer_secret_key, payer_secret_key_value.string);
+    if (include_default_signer or additional_signers_value != null) {
+        try Writer.writeFieldName(&json_buffer, &has_field, "additional_signer_secret_keys");
+        try json_buffer.writer.writeByte('[');
+        var wrote_signer = false;
+        if (include_default_signer) {
+            try std.json.Stringify.value(default_signer_secret_key, .{}, &json_buffer.writer);
+            wrote_signer = true;
+        }
+        if (additional_signers_value) |value| {
+            if (value != .array) return error.InvalidInvocationSpec;
+            for (value.array.items) |secret_key_value| {
+                if (secret_key_value != .string) return error.InvalidInvocationSpec;
+                if (std.mem.eql(u8, secret_key_value.string, payer_secret_key_value.string)) continue;
+                if (std.mem.eql(u8, secret_key_value.string, default_signer_secret_key)) continue;
+                if (wrote_signer) try json_buffer.writer.writeByte(',');
+                try std.json.Stringify.value(secret_key_value.string, .{}, &json_buffer.writer);
+                wrote_signer = true;
+            }
+        }
+        try json_buffer.writer.writeByte(']');
+    }
+
+    if (jsonObjectField(object, &.{ "address_lookup_tables", "addressLookupTables" })) |value| {
+        try Writer.writeFieldName(&json_buffer, &has_field, "address_lookup_tables");
+        try std.json.Stringify.value(value, .{}, &json_buffer.writer);
+    }
+    if (jsonObjectField(object, &.{ "recent_blockhash", "recentBlockhash" })) |value| {
+        if (value != .string) return error.InvalidInvocationSpec;
+        try Writer.writeFieldName(&json_buffer, &has_field, "recent_blockhash");
+        try std.json.Stringify.value(value.string, .{}, &json_buffer.writer);
+    }
+    if (jsonObjectField(object, &.{ "nonce_account", "nonceAccount" })) |value| {
+        if (value != .string) return error.InvalidInvocationSpec;
+        try Writer.writeFieldName(&json_buffer, &has_field, "nonce_account");
+        try std.json.Stringify.value(value.string, .{}, &json_buffer.writer);
+    }
+    if (jsonObjectField(object, &.{ "nonce_authority_secret_key", "nonceAuthoritySecretKey" })) |value| {
+        if (value != .string) return error.InvalidInvocationSpec;
+        try Writer.writeFieldName(&json_buffer, &has_field, "nonce_authority_secret_key");
+        try std.json.Stringify.value(value.string, .{}, &json_buffer.writer);
+    }
+
+    try Writer.writeFieldName(&json_buffer, &has_field, "instructions");
+    try json_buffer.writer.writeByte('{');
+    var has_instruction_field = false;
+    try Writer.writeFieldName(&json_buffer, &has_instruction_field, "program_id");
+    try std.json.Stringify.value(instruction_program_id, .{}, &json_buffer.writer);
+    try Writer.writeFieldName(&json_buffer, &has_instruction_field, "accounts");
+    try json_buffer.writer.writeByte('[');
+    for (owned_instruction.instruction.accounts, 0..) |account, index| {
+        if (index != 0) try json_buffer.writer.writeByte(',');
+        const account_pubkey = try account.pubkey.toBase58(allocator);
+        defer allocator.free(account_pubkey);
+
+        try json_buffer.writer.writeByte('{');
+        var has_account_field = false;
+        try Writer.writeFieldName(&json_buffer, &has_account_field, "pubkey");
+        try std.json.Stringify.value(account_pubkey, .{}, &json_buffer.writer);
+        try Writer.writeFieldName(&json_buffer, &has_account_field, "is_signer");
+        try std.json.Stringify.value(account.is_signer, .{}, &json_buffer.writer);
+        try Writer.writeFieldName(&json_buffer, &has_account_field, "is_writable");
+        try std.json.Stringify.value(account.is_writable, .{}, &json_buffer.writer);
+        try json_buffer.writer.writeByte('}');
+    }
+    try json_buffer.writer.writeByte(']');
+    try Writer.writeFieldName(&json_buffer, &has_instruction_field, "data");
+    try std.json.Stringify.value(instruction_data_base64, .{}, &json_buffer.writer);
+    try Writer.writeFieldName(&json_buffer, &has_instruction_field, "data_encoding");
+    try std.json.Stringify.value("base64", .{}, &json_buffer.writer);
+    try json_buffer.writer.writeByte('}');
+
+    try json_buffer.writer.writeByte('}');
+    return try allocator.dupe(u8, json_buffer.written());
+}
+
+pub fn sendLegacyTransactionFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: SendAnchorIdlInvocationSpecRpcOptions,
+) ![]const u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.sendLegacyTransactionFromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+        .send_transaction_options = options.send_transaction_options,
+    });
+}
+
+pub fn simulateLegacyTransactionFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: SimulateAnchorIdlInvocationSpecRpcOptions,
+) !rpc_types.SimulatedTransaction {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.simulateLegacyTransactionFromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+        .simulate_options = options.simulate_options,
+    });
+}
+
+pub fn sendAndConfirmLegacyTransactionFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: SendAndConfirmAnchorIdlInvocationSpecRpcOptions,
+) ![]const u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+        .send_transaction_options = options.send_transaction_options,
+        .commitment = options.commitment,
+        .search_transaction_history = options.search_transaction_history,
+        .timeout_ms = options.timeout_ms,
+        .poll_interval_ms = options.poll_interval_ms,
+    });
+}
+
+pub fn sendVersionedTransactionFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: SendAnchorIdlInvocationSpecRpcOptions,
+) ![]const u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.sendVersionedTransactionFromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+        .send_transaction_options = options.send_transaction_options,
+    });
+}
+
+pub fn simulateVersionedTransactionFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: SimulateAnchorIdlInvocationSpecRpcOptions,
+) !rpc_types.SimulatedTransaction {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.simulateVersionedTransactionFromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+        .simulate_options = options.simulate_options,
+    });
+}
+
+pub fn sendAndConfirmVersionedTransactionFromInvocationSpecJson(
+    rpc: anytype,
+    allocator: Allocator,
+    options: SendAndConfirmAnchorIdlInvocationSpecRpcOptions,
+) ![]const u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        options.anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    return try instructions_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(rpc, .{
+        .instruction_spec_json = instruction_spec_json,
+        .blockhash_commitment = options.blockhash_commitment,
+        .send_transaction_options = options.send_transaction_options,
+        .commitment = options.commitment,
+        .search_transaction_history = options.search_transaction_history,
+        .timeout_ms = options.timeout_ms,
+        .poll_interval_ms = options.poll_interval_ms,
+    });
+}
 
 pub fn buildOwnedLegacyMessage(
     allocator: Allocator,
