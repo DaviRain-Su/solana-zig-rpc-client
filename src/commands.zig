@@ -3381,25 +3381,13 @@ fn buildInvocationSpecJsonFromCliSpec(
     const effective_recent_blockhash = recent_blockhash_arg orelse spec.recent_blockhash;
     if (effective_recent_blockhash != null and spec.nonce_account != null) return error.InvalidCli;
 
-    var owned_additional_signer_secret_keys = std.ArrayListUnmanaged([]u8){};
-    defer {
-        for (owned_additional_signer_secret_keys.items) |value| allocator.free(value);
-        owned_additional_signer_secret_keys.deinit(allocator);
-    }
-    var effective_additional_signer_secret_keys = std.ArrayListUnmanaged([]const u8){};
-    defer effective_additional_signer_secret_keys.deinit(allocator);
-
-    for (spec.additional_signer_secret_keys) |value| {
-        try effective_additional_signer_secret_keys.append(allocator, value);
-    }
-    for (spec.additional_signer_keypair_paths) |value| {
-        const resolved = try resolveInstructionKeypairSecretKeyBase58(allocator, null, value) orelse return error.InvalidCli;
-        try owned_additional_signer_secret_keys.append(allocator, resolved);
-        try effective_additional_signer_secret_keys.append(allocator, resolved);
-    }
-    for (additional_signer_secret_keys_arg) |value| {
-        try effective_additional_signer_secret_keys.append(allocator, value);
-    }
+    const additional_signer_secret_keys_json = try encodeResolvedSignerSecretKeysJson(
+        allocator,
+        spec.additional_signer_secret_keys,
+        spec.additional_signer_keypair_paths,
+        additional_signer_secret_keys_arg,
+    );
+    defer allocator.free(additional_signer_secret_keys_json);
 
     const canonical_instructions = try allocator.alloc(JsonCliInstructionSpec, spec.instructions.len);
     defer allocator.free(canonical_instructions);
@@ -3421,10 +3409,6 @@ fn buildInvocationSpecJsonFromCliSpec(
         };
     }
 
-    var additional_signers_buffer: std.io.Writer.Allocating = .init(allocator);
-    defer additional_signers_buffer.deinit();
-    std.json.Stringify.value(effective_additional_signer_secret_keys.items, .{}, &additional_signers_buffer.writer) catch unreachable;
-
     var instructions_buffer: std.io.Writer.Allocating = .init(allocator);
     defer instructions_buffer.deinit();
     std.json.Stringify.value(canonical_instructions, .{}, &instructions_buffer.writer) catch unreachable;
@@ -3439,7 +3423,7 @@ fn buildInvocationSpecJsonFromCliSpec(
 
     return try client.invocation_spec_json.buildInvocationSpecJson(allocator, .{
         .payer_secret_key = effective_payer_secret_key,
-        .additional_signer_secret_keys_json = additional_signers_buffer.written(),
+        .additional_signer_secret_keys_json = additional_signer_secret_keys_json,
         .address_lookup_tables_json = address_lookup_tables_json,
         .recent_blockhash = effective_recent_blockhash,
         .nonce_account = spec.nonce_account,
@@ -3484,6 +3468,39 @@ fn loadProgramInvokeDataArg(
             .data_encoding = data_encoding,
         },
     );
+}
+
+fn encodeResolvedSignerSecretKeysJson(
+    allocator: Allocator,
+    base_secret_keys: []const []const u8,
+    keypair_paths: []const []const u8,
+    additional_secret_keys: []const []const u8,
+) ![]u8 {
+    var owned_resolved_secret_keys = std.ArrayListUnmanaged([]u8){};
+    defer {
+        for (owned_resolved_secret_keys.items) |value| allocator.free(value);
+        owned_resolved_secret_keys.deinit(allocator);
+    }
+
+    var effective_secret_keys = std.ArrayListUnmanaged([]const u8){};
+    defer effective_secret_keys.deinit(allocator);
+
+    for (base_secret_keys) |value| {
+        try effective_secret_keys.append(allocator, value);
+    }
+    for (keypair_paths) |value| {
+        const resolved = try resolveInstructionKeypairSecretKeyBase58(allocator, null, value) orelse return error.InvalidCli;
+        try owned_resolved_secret_keys.append(allocator, resolved);
+        try effective_secret_keys.append(allocator, resolved);
+    }
+    for (additional_secret_keys) |value| {
+        try effective_secret_keys.append(allocator, value);
+    }
+
+    var json_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer json_buffer.deinit();
+    std.json.Stringify.value(effective_secret_keys.items, .{}, &json_buffer.writer) catch unreachable;
+    return try allocator.dupe(u8, json_buffer.written());
 }
 
 fn buildProgramInvokeInvocationSpecJson(
@@ -3546,32 +3563,17 @@ fn buildProgramInvokeInvocationSpecJson(
         null;
     defer if (lookup_tables_source) |value| allocator.free(value);
 
-    var owned_additional_signer_secret_keys = std.ArrayListUnmanaged([]u8){};
-    defer {
-        for (owned_additional_signer_secret_keys.items) |value| allocator.free(value);
-        owned_additional_signer_secret_keys.deinit(allocator);
-    }
-    var effective_additional_signer_secret_keys = std.ArrayListUnmanaged([]const u8){};
-    defer effective_additional_signer_secret_keys.deinit(allocator);
-
-    for (additional_signer_secret_keys_arg) |value| {
-        try effective_additional_signer_secret_keys.append(allocator, value);
-    }
-    if (parsed_signer_keypair_paths) |value| {
-        for (value.value) |path| {
-            const resolved = try resolveInstructionKeypairSecretKeyBase58(allocator, null, path) orelse return error.InvalidCli;
-            try owned_additional_signer_secret_keys.append(allocator, resolved);
-            try effective_additional_signer_secret_keys.append(allocator, resolved);
-        }
-    }
-
-    var additional_signers_buffer: std.io.Writer.Allocating = .init(allocator);
-    defer additional_signers_buffer.deinit();
-    std.json.Stringify.value(effective_additional_signer_secret_keys.items, .{}, &additional_signers_buffer.writer) catch unreachable;
+    const additional_signer_secret_keys_json = try encodeResolvedSignerSecretKeysJson(
+        allocator,
+        &.{},
+        if (parsed_signer_keypair_paths) |value| value.value else &.{},
+        additional_signer_secret_keys_arg,
+    );
+    defer allocator.free(additional_signer_secret_keys_json);
 
     return client.invocation_spec_json.buildProgramInvocationSpecJson(allocator, .{
         .payer_secret_key = payer_secret_key,
-        .additional_signer_secret_keys_json = additional_signers_buffer.written(),
+        .additional_signer_secret_keys_json = additional_signer_secret_keys_json,
         .address_lookup_tables_json = lookup_tables_source,
         .recent_blockhash = recent_blockhash_arg,
         .nonce_account = nonce_account_arg,
@@ -3718,25 +3720,13 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
         null;
     defer if (nonce_authority_secret_key) |value| allocator.free(value);
 
-    var owned_additional_signer_secret_keys = std.ArrayListUnmanaged([]u8){};
-    defer {
-        for (owned_additional_signer_secret_keys.items) |value| allocator.free(value);
-        owned_additional_signer_secret_keys.deinit(allocator);
-    }
-    var effective_additional_signer_secret_keys = std.ArrayListUnmanaged([]const u8){};
-    defer effective_additional_signer_secret_keys.deinit(allocator);
-
-    for (additional_signer_secret_keys_arg) |value| {
-        try effective_additional_signer_secret_keys.append(allocator, value);
-    }
-    if (parsed_signer_keypair_paths) |value| {
-        for (value.value) |path| {
-            const signer_keypair = try loadInstructionKeypairFromPath(allocator, path);
-            const encoded = try client.encodeBase58(allocator, &signer_keypair.secret_key);
-            try owned_additional_signer_secret_keys.append(allocator, encoded);
-            try effective_additional_signer_secret_keys.append(allocator, encoded);
-        }
-    }
+    const additional_signer_secret_keys_json = try encodeResolvedSignerSecretKeysJson(
+        allocator,
+        &.{},
+        if (parsed_signer_keypair_paths) |value| value.value else &.{},
+        additional_signer_secret_keys_arg,
+    );
+    defer allocator.free(additional_signer_secret_keys_json);
 
     const remaining_account_count = remaining_accounts.len + if (parsed_remaining_accounts) |value| value.value.len else 0;
     const canonical_remaining_accounts = try allocator.alloc(CliInstructionAccountMeta, remaining_account_count);
@@ -3786,48 +3776,31 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
     ) catch return error.InvalidCli;
     defer owned_instruction.deinit(allocator);
 
-    var buffer: std.io.Writer.Allocating = .init(allocator);
-    defer buffer.deinit();
+    var remaining_accounts_buffer: ?std.io.Writer.Allocating = null;
+    defer if (remaining_accounts_buffer) |*value| value.deinit();
+    const remaining_accounts_json = if (canonical_remaining_accounts.len > 0) blk: {
+        remaining_accounts_buffer = .init(allocator);
+        std.json.Stringify.value(canonical_remaining_accounts, .{}, &remaining_accounts_buffer.?.writer) catch unreachable;
+        break :blk remaining_accounts_buffer.?.written();
+    } else null;
 
-    try buffer.writer.writeByte('{');
-    var has_field = false;
-    var additional_signers_buffer: std.io.Writer.Allocating = .init(allocator);
-    defer additional_signers_buffer.deinit();
-    std.json.Stringify.value(effective_additional_signer_secret_keys.items, .{}, &additional_signers_buffer.writer) catch unreachable;
-    try client.invocation_spec_json.writeInvocationContextFields(&buffer, &has_field, .{
+    return client.invocation_spec_json.buildAnchorIdlInvocationSpecJson(allocator, .{
         .payer_secret_key = payer_secret_key,
-        .additional_signer_secret_keys_json = additional_signers_buffer.written(),
+        .additional_signer_secret_keys_json = additional_signer_secret_keys_json,
         .address_lookup_tables_json = lookup_tables_source,
         .recent_blockhash = recent_blockhash_arg,
         .nonce_account = nonce_account_arg,
         .nonce_authority_secret_key = nonce_authority_secret_key,
-    });
-
-    try client.invocation_spec_json.writeFieldName(&buffer, &has_field, "idl");
-    try buffer.writer.writeAll(idl_source);
-
-    try client.invocation_spec_json.writeFieldName(&buffer, &has_field, "instruction_name");
-    try std.json.Stringify.value(instruction_name, .{}, &buffer.writer);
-
-    if (program_id_override_arg) |value| {
-        try client.invocation_spec_json.writeFieldName(&buffer, &has_field, "program_id");
-        try std.json.Stringify.value(value, .{}, &buffer.writer);
-    }
-    if (args_json_source) |value| {
-        try client.invocation_spec_json.writeFieldName(&buffer, &has_field, "args");
-        try buffer.writer.writeAll(value);
-    }
-    if (combined_account_bindings_json_source) |value| {
-        try client.invocation_spec_json.writeFieldName(&buffer, &has_field, "account_bindings");
-        try buffer.writer.writeAll(value);
-    }
-    if (canonical_remaining_accounts.len > 0) {
-        try client.invocation_spec_json.writeFieldName(&buffer, &has_field, "remaining_accounts");
-        try std.json.Stringify.value(canonical_remaining_accounts, .{}, &buffer.writer);
-    }
-
-    try buffer.writer.writeByte('}');
-    return try allocator.dupe(u8, buffer.written());
+        .idl_json = idl_source,
+        .instruction_name = instruction_name,
+        .program_id = program_id_override_arg,
+        .args_json = args_json_source,
+        .account_bindings_json = combined_account_bindings_json_source,
+        .remaining_accounts_json = remaining_accounts_json,
+    }) catch |err| switch (err) {
+        error.InvalidInvocationSpec => return error.InvalidCli,
+        else => return err,
+    };
 }
 
 fn loadProgramInvokeInstructionSpec(
