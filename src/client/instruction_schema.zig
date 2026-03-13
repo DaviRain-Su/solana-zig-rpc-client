@@ -517,12 +517,21 @@ fn findArraySpec(schema_object: std.json.ObjectMap) ?struct { item_schema: std.j
 }
 
 fn findVecItemSchema(schema_object: std.json.ObjectMap) ?std.json.Value {
-    return findJsonObjectField(schema_object, &.{ "item", "itemType", "item_type", "element", "elementType", "element_type", "vec" });
+    if (findJsonObjectField(schema_object, &.{"vec"})) |tagged_vec| {
+        return switch (tagged_vec) {
+            .object => findJsonObjectField(tagged_vec.object, &.{ "item", "itemType", "item_type", "element", "elementType", "element_type", "type", "kind", "schema", "value" }) orelse tagged_vec,
+            else => tagged_vec,
+        };
+    }
+    return findJsonObjectField(schema_object, &.{ "item", "itemType", "item_type", "element", "elementType", "element_type" });
 }
 
 fn findSetItemSchema(schema_object: std.json.ObjectMap) ?std.json.Value {
     if (findJsonObjectField(schema_object, &.{ "set", "hashSet", "hash_set", "bTreeSet", "btree_set" })) |tagged_set| {
-        return tagged_set;
+        return switch (tagged_set) {
+            .object => findJsonObjectField(tagged_set.object, &.{ "item", "itemType", "item_type", "element", "elementType", "element_type", "type", "kind", "schema", "value" }) orelse tagged_set,
+            else => tagged_set,
+        };
     }
     return findJsonObjectField(schema_object, &.{ "item", "itemType", "item_type", "element", "elementType", "element_type" });
 }
@@ -552,15 +561,34 @@ fn findMapSpec(schema_object: std.json.ObjectMap) ?struct { key_schema: std.json
 }
 
 fn findTupleItemsSchema(schema_object: std.json.ObjectMap) ?std.json.Value {
-    return findJsonObjectField(schema_object, &.{ "items", "tuple" });
+    if (findJsonObjectField(schema_object, &.{"tuple"})) |tagged_tuple| {
+        return switch (tagged_tuple) {
+            .object => findJsonObjectField(tagged_tuple.object, &.{"items"}) orelse return null,
+            .array => tagged_tuple,
+            else => null,
+        };
+    }
+    return findJsonObjectField(schema_object, &.{"items"});
 }
 
 fn findStructFieldsSchema(schema_object: std.json.ObjectMap) ?std.json.Value {
-    return findJsonObjectField(schema_object, &.{ "fields", "struct" });
+    if (findJsonObjectField(schema_object, &.{"struct"})) |tagged_struct| {
+        return switch (tagged_struct) {
+            .object => findJsonObjectField(tagged_struct.object, &.{"fields"}) orelse tagged_struct,
+            else => tagged_struct,
+        };
+    }
+    return findJsonObjectField(schema_object, &.{"fields"});
 }
 
 fn findEnumVariantsSchema(schema_object: std.json.ObjectMap) ?std.json.Value {
-    return findJsonObjectField(schema_object, &.{ "variants", "enum" });
+    if (findJsonObjectField(schema_object, &.{"enum"})) |tagged_enum| {
+        return switch (tagged_enum) {
+            .object => findJsonObjectField(tagged_enum.object, &.{"variants"}) orelse tagged_enum,
+            else => tagged_enum,
+        };
+    }
+    return findJsonObjectField(schema_object, &.{"variants"});
 }
 
 fn sortEncodedSlices(items: [][]u8) void {
@@ -1714,6 +1742,78 @@ test "instruction_schema accepts tagged map and enum shorthands" {
         0x00,
         0x00,
         'b',
+        0x02,
+    }, encoded);
+}
+
+test "instruction_schema accepts nested tagged container configs" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "struct": {
+        \\    "blob": { "vec": { "itemType": "u8" } },
+        \\    "ids": { "set": { "itemType": "u16" } }
+        \\  }
+        \\}
+    ;
+    const args_json =
+        \\{
+        \\  "blob": "hex:dead",
+        \\  "ids": [2, 1]
+        \\}
+    ;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x02,
+        0x00,
+        0x00,
+        0x00,
+        0xde,
+        0xad,
+        0x02,
+        0x00,
+        0x00,
+        0x00,
+        0x01,
+        0x00,
+        0x02,
+        0x00,
+    }, encoded);
+}
+
+test "instruction_schema accepts nested tagged struct tuple and enum configs" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "enum": {
+        \\    "Set": {
+        \\      "discriminant": 4,
+        \\      "struct": {
+        \\        "pair": { "tuple": { "items": ["u8", "u16"] } }
+        \\      }
+        \\    }
+        \\  }
+        \\}
+    ;
+    const args_json =
+        \\{
+        \\  "variant": "Set",
+        \\  "value": {
+        \\    "pair": [7, 513]
+        \\  }
+        \\}
+    ;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x04,
+        0x07,
+        0x01,
         0x02,
     }, encoded);
 }
