@@ -94,6 +94,27 @@ pub const OwnedInvocationAccounts = struct {
     }
 };
 
+pub const OwnedInvocationSummary = struct {
+    payer: sdk.Pubkey,
+    signer_pubkeys: []sdk.Pubkey,
+    program_ids: []sdk.Pubkey,
+    instruction_count: usize,
+    account_count: usize,
+    signer_count: usize,
+    writable_account_count: usize,
+    readonly_account_count: usize,
+    address_lookup_table_count: usize,
+    recent_blockhash: ?sdk.Hash = null,
+    nonce_account: ?sdk.Pubkey = null,
+    nonce_authority: ?sdk.Pubkey = null,
+
+    pub fn deinit(self: *OwnedInvocationSummary, allocator: Allocator) void {
+        allocator.free(self.signer_pubkeys);
+        allocator.free(self.program_ids);
+        self.* = undefined;
+    }
+};
+
 pub fn buildInstructionInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
@@ -225,18 +246,10 @@ fn appendOrMergeInvocationAccountInfo(
     try accounts.append(allocator, incoming);
 }
 
-pub fn buildInvocationAccountsFromInvocationSpecJson(
+fn buildOwnedInvocationAccountsFromResolved(
     allocator: Allocator,
-    family: InvokeFamily,
-    invocation_spec_json: []const u8,
+    resolved: *const OwnedResolvedInvocation,
 ) !OwnedInvocationAccounts {
-    var resolved = try buildOwnedResolvedInvocationFromInvocationSpecJson(
-        allocator,
-        family,
-        invocation_spec_json,
-    );
-    defer resolved.deinit(allocator);
-
     var accounts: std.ArrayList(InvocationAccountInfo) = .empty;
     errdefer accounts.deinit(allocator);
 
@@ -284,6 +297,77 @@ pub fn buildInvocationAccountsFromInvocationSpecJson(
     }
 
     return .{ .accounts = try accounts.toOwnedSlice(allocator) };
+}
+
+pub fn buildInvocationAccountsFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !OwnedInvocationAccounts {
+    var resolved = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer resolved.deinit(allocator);
+
+    return try buildOwnedInvocationAccountsFromResolved(allocator, &resolved);
+}
+
+fn appendUniquePubkey(
+    allocator: Allocator,
+    pubkeys: *std.ArrayList(sdk.Pubkey),
+    pubkey: sdk.Pubkey,
+) !void {
+    for (pubkeys.items) |existing| {
+        if (std.meta.eql(existing, pubkey)) return;
+    }
+    try pubkeys.append(allocator, pubkey);
+}
+
+pub fn buildInvocationSummaryFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !OwnedInvocationSummary {
+    var resolved = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer resolved.deinit(allocator);
+
+    var accounts = try buildOwnedInvocationAccountsFromResolved(allocator, &resolved);
+    defer accounts.deinit(allocator);
+
+    var writable_account_count: usize = 0;
+    for (accounts.accounts) |account| {
+        if (account.is_writable) writable_account_count += 1;
+    }
+
+    var program_ids: std.ArrayList(sdk.Pubkey) = .empty;
+    errdefer program_ids.deinit(allocator);
+    for (resolved.owned_instructions.instructions) |instruction| {
+        try appendUniquePubkey(allocator, &program_ids, instruction.program_id);
+    }
+
+    const signer_pubkeys = resolved.signer_pubkeys;
+    resolved.signer_pubkeys = &.{};
+
+    return .{
+        .payer = resolved.payer,
+        .signer_pubkeys = signer_pubkeys,
+        .program_ids = try program_ids.toOwnedSlice(allocator),
+        .instruction_count = resolved.owned_instructions.instructions.len,
+        .account_count = accounts.accounts.len,
+        .signer_count = signer_pubkeys.len,
+        .writable_account_count = writable_account_count,
+        .readonly_account_count = accounts.accounts.len - writable_account_count,
+        .address_lookup_table_count = resolved.address_lookup_tables.len,
+        .recent_blockhash = resolved.recent_blockhash,
+        .nonce_account = resolved.nonce_account,
+        .nonce_authority = resolved.nonce_authority,
+    };
 }
 
 pub fn sendInvocationSpecJson(
@@ -1596,6 +1680,53 @@ test "invoke.buildInvocationAccountsFromInvocationSpecJson dispatches program fa
     try std.testing.expect(accounts.accounts.len >= 3);
     const program_info = findInvocationAccountInfo(accounts.accounts, program_id).?;
     try std.testing.expect(program_info.is_program);
+}
+
+test "invoke.buildInvocationSummaryFromInvocationSpecJson summarizes instructions family" {
+    const allocator = std.testing.allocator;
+    const program_id = sdk.Pubkey.fromBytes([_]u8{114} ** 32);
+
+    const spec_json = try allocRichInstructionsInvocationSpecJson(allocator, 111, 112, 113, 114, 115, 116);
+    defer allocator.free(spec_json);
+
+    var summary = try buildInvocationSummaryFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer summary.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), summary.instruction_count);
+    try std.testing.expectEqual(@as(usize, 6), summary.account_count);
+    try std.testing.expectEqual(@as(usize, 3), summary.signer_count);
+    try std.testing.expectEqual(@as(usize, 4), summary.writable_account_count);
+    try std.testing.expectEqual(@as(usize, 2), summary.readonly_account_count);
+    try std.testing.expectEqual(@as(usize, 1), summary.program_ids.len);
+    try std.testing.expect(std.meta.eql(summary.program_ids[0], program_id));
+    try std.testing.expect(summary.recent_blockhash == null);
+    try std.testing.expect(summary.nonce_account != null);
+    try std.testing.expect(summary.nonce_authority != null);
+}
+
+test "invoke.buildInvocationSummaryFromInvocationSpecJson dispatches program family" {
+    const allocator = std.testing.allocator;
+    const program_id = sdk.Pubkey.fromBytes([_]u8{122} ** 32);
+
+    const program_spec_json = try allocMinimalProgramInvocationSpecJson(allocator, 121, 122, 123);
+    defer allocator.free(program_spec_json);
+
+    var summary = try buildInvocationSummaryFromInvocationSpecJson(
+        allocator,
+        .program,
+        program_spec_json,
+    );
+    defer summary.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), summary.instruction_count);
+    try std.testing.expectEqual(@as(usize, 1), summary.signer_count);
+    try std.testing.expectEqual(@as(usize, 1), summary.program_ids.len);
+    try std.testing.expect(std.meta.eql(summary.program_ids[0], program_id));
+    try std.testing.expect(summary.recent_blockhash != null);
 }
 
 test "invoke.buildLegacyMessageBytesFromInvocationSpecJsonWithOptions matches generic builder" {
