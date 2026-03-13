@@ -2735,28 +2735,12 @@ fn loadAnchorIdlInvokeInstructionSpecViaReusableBuilderWithPayerSecret(
     ) catch return error.InvalidCli;
     defer owned_instruction.deinit(allocator);
 
-    var serialized_instruction = try serializeCliInstruction(allocator, owned_instruction.instruction);
-    defer serialized_instruction.deinit(allocator);
-
-    const instruction_specs = [_]CliInstructionSpec{
-        .{
-            .program_id = serialized_instruction.program_id,
-            .accounts = serialized_instruction.accounts,
-            .data = serialized_instruction.data_hex,
-            .data_encoding = .hex,
-        },
-    };
-    const spec = CliSimulateInstructionsSpec{
-        .payer_secret_key = context_args.payer_secret_key_arg,
-        .payer_keypair_path = context_args.payer_keypair_path_arg,
-        .nonce_account = context_args.nonce_account_arg,
-        .nonce_authority_keypair_path = context_args.nonce_authority_keypair_path_arg,
-        .additional_signer_secret_keys = context_args.additional_signer_secret_keys_arg,
-        .additional_signer_keypair_paths = context_spec_inputs.additionalSignerKeypairPaths(),
-        .address_lookup_tables = context_spec_inputs.addressLookupTables(),
-        .instructions = &instruction_specs,
-    };
-    return try loadCliInstructionSpec(allocator, &spec);
+    return try loadCliInstructionSpecFromSingleInstructionWithContext(
+        allocator,
+        owned_instruction.instruction,
+        context_args,
+        &context_spec_inputs,
+    );
 }
 
 fn loadAnchorIdlInvokeInstructionSpecLegacyWithPayerSecret(
@@ -3767,6 +3751,36 @@ fn loadCliAnchorInvokeAccountInputs(
     };
 }
 
+fn loadCliInstructionSpecFromSingleInstructionWithContext(
+    allocator: Allocator,
+    instruction: client.Instruction,
+    context_args: CliInvocationContextArgs,
+    context_spec_inputs: *const LoadedCliInvocationContextSpecInputs,
+) !LoadedCliInstructionSpec {
+    var serialized_instruction = try serializeCliInstruction(allocator, instruction);
+    defer serialized_instruction.deinit(allocator);
+
+    const instruction_specs = [_]CliInstructionSpec{
+        .{
+            .program_id = serialized_instruction.program_id,
+            .accounts = serialized_instruction.accounts,
+            .data = serialized_instruction.data_hex,
+            .data_encoding = .hex,
+        },
+    };
+    const spec = CliSimulateInstructionsSpec{
+        .payer_secret_key = context_args.payer_secret_key_arg,
+        .payer_keypair_path = context_args.payer_keypair_path_arg,
+        .nonce_account = context_args.nonce_account_arg,
+        .nonce_authority_keypair_path = context_args.nonce_authority_keypair_path_arg,
+        .additional_signer_secret_keys = context_args.additional_signer_secret_keys_arg,
+        .additional_signer_keypair_paths = context_spec_inputs.additionalSignerKeypairPaths(),
+        .address_lookup_tables = context_spec_inputs.addressLookupTables(),
+        .instructions = &instruction_specs,
+    };
+    return try loadCliInstructionSpec(allocator, &spec);
+}
+
 fn buildProgramInvokeInvocationSpecJson(
     allocator: Allocator,
     program_id: []const u8,
@@ -4042,29 +4056,12 @@ fn loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
     ) catch return error.InvalidCli;
     defer owned_instruction.deinit(allocator);
 
-    var serialized_instruction = try serializeCliInstruction(allocator, owned_instruction.instruction);
-    defer serialized_instruction.deinit(allocator);
-
-    const instruction_specs = [_]CliInstructionSpec{
-        .{
-            .program_id = serialized_instruction.program_id,
-            .accounts = serialized_instruction.accounts,
-            .data = serialized_instruction.data_hex,
-            .data_encoding = .hex,
-        },
-    };
-    const spec = CliSimulateInstructionsSpec{
-        .payer_secret_key = context_args.payer_secret_key_arg,
-        .payer_keypair_path = context_args.payer_keypair_path_arg,
-        .nonce_account = context_args.nonce_account_arg,
-        .nonce_authority_keypair_path = context_args.nonce_authority_keypair_path_arg,
-        .additional_signer_secret_keys = context_args.additional_signer_secret_keys_arg,
-        .additional_signer_keypair_paths = context_spec_inputs.additionalSignerKeypairPaths(),
-        .address_lookup_tables = context_spec_inputs.addressLookupTables(),
-        .instructions = &instruction_specs,
-    };
-
-    return try loadCliInstructionSpec(allocator, &spec);
+    return try loadCliInstructionSpecFromSingleInstructionWithContext(
+        allocator,
+        owned_instruction.instruction,
+        context_args,
+        &context_spec_inputs,
+    );
 }
 
 fn printSimulationResult(simulation: client.SimulatedTransaction) void {
