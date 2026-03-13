@@ -33,6 +33,8 @@ fn isBuiltinSchemaType(name: []const u8) bool {
         std.mem.eql(u8, name, "option") or
         std.mem.eql(u8, name, "array") or
         std.mem.eql(u8, name, "vec") or
+        std.mem.eql(u8, name, "set") or
+        std.mem.eql(u8, name, "map") or
         std.mem.eql(u8, name, "tuple") or
         std.mem.eql(u8, name, "struct") or
         std.mem.eql(u8, name, "enum");
@@ -324,6 +326,42 @@ fn maybeDecodeByteSequenceValue(
     };
 }
 
+fn sortEncodedSlices(items: [][]u8) void {
+    var i: usize = 1;
+    while (i < items.len) : (i += 1) {
+        const current = items[i];
+        var j = i;
+        while (j > 0 and std.mem.order(u8, current, items[j - 1]) == .lt) : (j -= 1) {
+            items[j] = items[j - 1];
+        }
+        items[j] = current;
+    }
+}
+
+const EncodedMapEntry = struct {
+    key: []u8,
+    value: []u8,
+};
+
+fn sortEncodedMapEntries(entries: []EncodedMapEntry) void {
+    var i: usize = 1;
+    while (i < entries.len) : (i += 1) {
+        const current = entries[i];
+        var j = i;
+        while (j > 0) : (j -= 1) {
+            const key_order = std.mem.order(u8, current.key, entries[j - 1].key);
+            const less_than_previous = switch (key_order) {
+                .lt => true,
+                .eq => std.mem.order(u8, current.value, entries[j - 1].value) == .lt,
+                .gt => false,
+            };
+            if (!less_than_previous) break;
+            entries[j] = entries[j - 1];
+        }
+        entries[j] = current;
+    }
+}
+
 fn encodeBorshSchemaValue(
     allocator: Allocator,
     output: *std.ArrayList(u8),
@@ -453,6 +491,88 @@ fn encodeBorshSchemaValue(
         try appendLittleEndianInt(allocator, output, u32, item_len);
         for (value.array.items) |item| {
             try encodeBorshSchemaValue(allocator, output, root_schema, item_schema, item);
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, type_name, "set")) {
+        const item_schema = findJsonObjectField(resolved_schema.object, &.{"item"}) orelse return error.InvalidInstructionSchema;
+        if (value != .array) return error.InvalidInstructionSchema;
+
+        var encoded_items: std.ArrayList([]u8) = .empty;
+        defer {
+            for (encoded_items.items) |item_bytes| allocator.free(item_bytes);
+            encoded_items.deinit(allocator);
+        }
+
+        try encoded_items.ensureTotalCapacity(allocator, value.array.items.len);
+        for (value.array.items) |item_value| {
+            var item_output: std.ArrayList(u8) = .empty;
+            errdefer item_output.deinit(allocator);
+            try encodeBorshSchemaValue(allocator, &item_output, root_schema, item_schema, item_value);
+            try encoded_items.append(allocator, try item_output.toOwnedSlice(allocator));
+        }
+
+        sortEncodedSlices(encoded_items.items);
+        const item_len = std.math.cast(u32, encoded_items.items.len) orelse return error.InvalidInstructionSchema;
+        try appendLittleEndianInt(allocator, output, u32, item_len);
+        for (encoded_items.items) |item_bytes| {
+            try output.appendSlice(allocator, item_bytes);
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, type_name, "map")) {
+        const key_schema = findJsonObjectField(resolved_schema.object, &.{"key"}) orelse return error.InvalidInstructionSchema;
+        const value_schema = findJsonObjectField(resolved_schema.object, &.{"value"}) orelse return error.InvalidInstructionSchema;
+        if (value != .array) return error.InvalidInstructionSchema;
+
+        var encoded_entries: std.ArrayList(EncodedMapEntry) = .empty;
+        defer {
+            for (encoded_entries.items) |entry| {
+                allocator.free(entry.key);
+                allocator.free(entry.value);
+            }
+            encoded_entries.deinit(allocator);
+        }
+
+        try encoded_entries.ensureTotalCapacity(allocator, value.array.items.len);
+        for (value.array.items) |entry_value| {
+            const key_and_value = switch (entry_value) {
+                .object => blk: {
+                    const key_value = findJsonObjectField(entry_value.object, &.{"key"}) orelse return error.InvalidInstructionSchema;
+                    const mapped_value = findJsonObjectField(entry_value.object, &.{"value"}) orelse return error.InvalidInstructionSchema;
+                    break :blk .{ key_value, mapped_value };
+                },
+                .array => blk: {
+                    if (entry_value.array.items.len != 2) return error.InvalidInstructionSchema;
+                    break :blk .{ entry_value.array.items[0], entry_value.array.items[1] };
+                },
+                else => return error.InvalidInstructionSchema,
+            };
+            const key_value = key_and_value[0];
+            const mapped_value = key_and_value[1];
+
+            var key_output: std.ArrayList(u8) = .empty;
+            errdefer key_output.deinit(allocator);
+            try encodeBorshSchemaValue(allocator, &key_output, root_schema, key_schema, key_value);
+
+            var value_output: std.ArrayList(u8) = .empty;
+            errdefer value_output.deinit(allocator);
+            try encodeBorshSchemaValue(allocator, &value_output, root_schema, value_schema, mapped_value);
+
+            try encoded_entries.append(allocator, .{
+                .key = try key_output.toOwnedSlice(allocator),
+                .value = try value_output.toOwnedSlice(allocator),
+            });
+        }
+
+        sortEncodedMapEntries(encoded_entries.items);
+        const entry_len = std.math.cast(u32, encoded_entries.items.len) orelse return error.InvalidInstructionSchema;
+        try appendLittleEndianInt(allocator, output, u32, entry_len);
+        for (encoded_entries.items) |entry| {
+            try output.appendSlice(allocator, entry.key);
+            try output.appendSlice(allocator, entry.value);
         }
         return;
     }
@@ -741,5 +861,71 @@ test "instruction_schema encodes fixed u8 array from base64 string input" {
         0xad,
         0xbe,
         0xef,
+    }, encoded);
+}
+
+test "instruction_schema encodes borsh set in deterministic order" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "type": "set",
+        \\  "item": "u16"
+        \\}
+    ;
+    const args_json = "[2,1,256]";
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x03,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x01,
+        0x01,
+        0x00,
+        0x02,
+        0x00,
+    }, encoded);
+}
+
+test "instruction_schema encodes borsh map from object and tuple entries" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "type": "map",
+        \\  "key": "string",
+        \\  "value": "u8"
+        \\}
+    ;
+    const args_json =
+        \\[
+        \\  {"key":"b","value":2},
+        \\  ["a",1]
+        \\]
+    ;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x02,
+        0x00,
+        0x00,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        'a',
+        0x01,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        'b',
+        0x02,
     }, encoded);
 }
