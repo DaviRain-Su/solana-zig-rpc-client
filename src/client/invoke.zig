@@ -9770,6 +9770,61 @@ test "invoke.PreparedInvocation allocInstructionsJson emits canonical instructio
     );
 }
 
+test "invoke.SentPreparedInvocation exports canonical resolved and instruction json" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn sendTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return "owned-prepared-export";
+        }
+
+        pub fn sendVersionedTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return error.UnexpectedVersionedCall;
+        }
+    };
+
+    const spec_json = try allocRichInstructionsInvocationSpecJson(allocator, 264, 265, 266, 267, 268, 269);
+    defer allocator.free(spec_json);
+
+    var rpc = DummyRpc{};
+    var sent = try sendOwnedPreparedInvocation(
+        allocator,
+        &rpc,
+        try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+            allocator,
+            DummyRpc{},
+            .instructions,
+            false,
+            spec_json,
+            .{},
+        ),
+        null,
+    );
+    defer sent.deinit(allocator);
+
+    const resolved_json = try sent.allocResolvedInvocationJson(allocator);
+    defer allocator.free(resolved_json);
+    const instructions_json = try sent.allocInstructionsJson(allocator);
+    defer allocator.free(instructions_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, resolved_json, "\"nonce_account\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"program_id\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"data_bytes\":[4,5,6]") != null);
+}
+
 test "invoke.writePreparedInvocationText emits generic prepared summary" {
     const allocator = std.testing.allocator;
     const DummyRpc = struct {};
@@ -10731,6 +10786,49 @@ test "invoke.SentPreferredPreparedExecution exports canonical resolved and instr
     const resolved_json = try sent.allocResolvedInvocationJson(allocator);
     defer allocator.free(resolved_json);
     const instructions_json = try sent.allocInstructionsJson(allocator);
+    defer allocator.free(instructions_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, resolved_json, "\"address_lookup_tables\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"program_id\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"data_bytes\":[1]") != null);
+}
+
+test "invoke.PreferredPreparedExecutionFee exports canonical resolved and instruction json" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn getFeeForMessageTyped(
+            self: *@This(),
+            message: anytype,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = message;
+            _ = commitment;
+            return .{ .value = 991 };
+        }
+    };
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 270, 271, 272, 273, 274);
+    defer allocator.free(spec_json);
+
+    var rpc = DummyRpc{};
+    var fee_result = try getFeeForOwnedPreferredPreparedExecution(
+        allocator,
+        &rpc,
+        try buildPreferredPreparedInvocationFromInvocationSpecJson(
+            allocator,
+            DummyRpc{},
+            .program,
+            spec_json,
+            .{},
+        ),
+        null,
+    );
+    defer fee_result.deinit(allocator);
+
+    const resolved_json = try fee_result.allocResolvedInvocationJson(allocator);
+    defer allocator.free(resolved_json);
+    const instructions_json = try fee_result.allocInstructionsJson(allocator);
     defer allocator.free(instructions_json);
 
     try std.testing.expect(std.mem.indexOf(u8, resolved_json, "\"address_lookup_tables\":[") != null);
