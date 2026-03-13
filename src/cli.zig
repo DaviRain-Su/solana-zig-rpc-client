@@ -725,6 +725,7 @@ const command_usage_entries = [_]CommandUsageEntry{
     .{ .command = .explain_instructions, .style = .instruction, .parse_style = .instruction },
     .{ .command = .validate_instructions, .style = .instruction, .parse_style = .instruction },
     .{ .command = .prepare_instructions, .style = .instruction, .parse_style = .instruction },
+    .{ .command = .estimate_instructions_fee, .style = .instruction, .parse_style = .instruction },
     .{ .command = .send_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]", .parse_style = .program_invoke_legacy },
     .{ .command = .send_program_invoke_and_confirm, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]", .parse_style = .program_invoke_legacy },
     .{ .command = .send_versioned_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
@@ -736,6 +737,7 @@ const command_usage_entries = [_]CommandUsageEntry{
     .{ .command = .explain_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
     .{ .command = .validate_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
     .{ .command = .prepare_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
+    .{ .command = .estimate_program_invoke_fee, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
     .{ .command = .transfer, .style = .literal, .suffix = "[--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>", .parse_style = .transfer },
     .{ .command = .simulate_transaction, .style = .signed_transaction, .parse_style = .signed_transaction },
     .{ .command = .simulate_instructions, .style = .instruction, .parse_style = .instruction },
@@ -755,6 +757,7 @@ const command_usage_entries = [_]CommandUsageEntry{
     .{ .command = .explain_idl_invoke, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .idl_invoke_versioned },
     .{ .command = .validate_idl_invoke, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .idl_invoke_versioned },
     .{ .command = .prepare_idl_invoke, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .idl_invoke_versioned },
+    .{ .command = .estimate_idl_invoke_fee, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .idl_invoke_versioned },
     .{ .command = .raw_rpc, .style = .raw_rpc, .suffix = " [params-json]", .parse_style = .raw_rpc },
     .{ .command = .slot, .style = .literal },
     .{ .command = .block_height, .style = .literal },
@@ -1630,6 +1633,7 @@ pub const Command = enum {
     explain_instructions,
     validate_instructions,
     prepare_instructions,
+    estimate_instructions_fee,
     send_program_invoke,
     send_program_invoke_and_confirm,
     send_versioned_program_invoke,
@@ -1641,6 +1645,7 @@ pub const Command = enum {
     explain_program_invoke,
     validate_program_invoke,
     prepare_program_invoke,
+    estimate_program_invoke_fee,
     send_idl_invoke,
     send_idl_invoke_and_confirm,
     send_versioned_idl_invoke,
@@ -1652,6 +1657,7 @@ pub const Command = enum {
     explain_idl_invoke,
     validate_idl_invoke,
     prepare_idl_invoke,
+    estimate_idl_invoke_fee,
     transfer,
     simulate_transaction,
     simulate_instructions,
@@ -2251,6 +2257,28 @@ test "cli.parseCliArgs parses invoke-instructions-simulate spec" {
     );
 }
 
+test "cli.parseCliArgs parses estimate-instructions-fee spec" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "estimate-instructions-fee",
+        "--json",
+        "--invoke-mode",
+        "legacy",
+        "--sender-secret-key",
+        "SecretEstimateInstructions11111111111111111111111",
+        "--recent-blockhash",
+        "RecentEstimateInstructions111111111111111111111",
+        "{\"instructions\":[]}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.estimate_instructions_fee, parsed.command);
+    try std.testing.expectEqualStrings("legacy", parsed.invoke_mode_arg orelse "");
+    try std.testing.expectEqualStrings(
+        "{\"instructions\":[]}",
+        parsed.instructions_spec_arg orelse "",
+    );
+}
+
 test "cli.parseCliArgs parses simulate-versioned-instructions spec" {
     var parsed = try parseCliArgs(std.testing.allocator, &.{
         "simulate-versioned-instructions",
@@ -2602,6 +2630,28 @@ test "cli.parseCliArgs parses invoke-idl-invoke-simulate args" {
     try std.testing.expectEqualStrings("{\"enabled\":true}", parsed.idl_args_json_arg orelse "");
 }
 
+test "cli.parseCliArgs parses estimate-idl-invoke-fee args" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "estimate-idl-invoke-fee",
+        "--json",
+        "--invoke-mode",
+        "versioned",
+        "--sender-secret-key",
+        "SecretEstimateIdl111111111111111111111111111111111",
+        "--program-id",
+        "ProgEstimateIdl1111111111111111111111111111111111",
+        "--idl-args-json",
+        "{\"enabled\":true}",
+        "@target/idl/hello_world.json",
+        "initialize",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.estimate_idl_invoke_fee, parsed.command);
+    try std.testing.expectEqualStrings("versioned", parsed.invoke_mode_arg orelse "");
+    try std.testing.expectEqualStrings("ProgEstimateIdl1111111111111111111111111111111111", parsed.idl_program_id_arg orelse "");
+}
+
 test "cli.parseCliArgs parses send-program-invoke args" {
     var parsed = try parseCliArgs(std.testing.allocator, &.{
         "send-program-invoke",
@@ -2800,6 +2850,32 @@ test "cli.parseCliArgs parses invoke-program-invoke-simulate with schema args an
     try std.testing.expectEqualStrings("{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}", parsed.program_invoke_data_schema_json_arg orelse "");
     try std.testing.expectEqualStrings("{\"enabled\":true}", parsed.program_invoke_args_json_arg orelse "");
     try std.testing.expectEqualStrings("borsh", parsed.program_invoke_schema_encoding_arg orelse "");
+}
+
+test "cli.parseCliArgs parses estimate-program-invoke-fee with schema args and lookup tables" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "estimate-program-invoke-fee",
+        "--json",
+        "--invoke-mode",
+        "versioned",
+        "--sender-secret-key",
+        "SecretEstimateProgram1111111111111111111111111111",
+        "--data-schema-json",
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}",
+        "--args-json",
+        "{\"enabled\":true}",
+        "--schema-encoding",
+        "borsh",
+        "11111111111111111111111111111111",
+        "[]",
+        "[]",
+        "[{\"account_key\":\"LookupEstimate1111111111111111111111111111\",\"addresses\":[\"AddrEstimate11111111111111111111111111111111\"]}]",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.estimate_program_invoke_fee, parsed.command);
+    try std.testing.expectEqualStrings("versioned", parsed.invoke_mode_arg orelse "");
+    try std.testing.expectEqualStrings("{\"enabled\":true}", parsed.program_invoke_args_json_arg orelse "");
 }
 
 test "cli.parseCliArgs parses explain-program-invoke with schema args and lookup tables" {
