@@ -1507,36 +1507,67 @@ pub fn buildOwnedInvocationSpecFromInvocationSpecJson(
     );
 }
 
+fn buildOwnedResolvedInvocationFromOwnedSpec(
+    allocator: Allocator,
+    owned_spec: OwnedInvocationSpec,
+) !OwnedResolvedInvocation {
+    var mutable = owned_spec;
+
+    const signer_pubkeys = try allocator.alloc(sdk.Pubkey, mutable.signers.len);
+    errdefer allocator.free(signer_pubkeys);
+    for (mutable.signers, 0..) |signer, index| {
+        signer_pubkeys[index] = signer.public_key;
+    }
+
+    const owned_instructions = mutable.owned_instructions;
+    mutable.owned_instructions.instructions = &.{};
+    const address_lookup_tables = mutable.address_lookup_tables;
+    mutable.address_lookup_tables = &.{};
+    allocator.free(mutable.signers);
+    mutable.signers = &.{};
+
+    return .{
+        .payer = mutable.payer,
+        .signer_pubkeys = signer_pubkeys,
+        .owned_instructions = owned_instructions,
+        .address_lookup_tables = address_lookup_tables,
+        .recent_blockhash = mutable.recent_blockhash,
+        .nonce_account = mutable.nonce_account,
+        .nonce_authority = mutable.nonce_authority,
+    };
+}
+
+pub fn buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+    allocator: Allocator,
+    owned_spec: OwnedInvocationSpec,
+) !OwnedResolvedInvocation {
+    return try buildOwnedResolvedInvocationFromOwnedSpec(allocator, owned_spec);
+}
+
 pub fn buildOwnedResolvedInvocationFromInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
     invocation_spec_json: []const u8,
 ) !OwnedResolvedInvocation {
-    const owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+    return try buildOwnedResolvedInvocationFromOwnedSpec(
         allocator,
-        family,
-        invocation_spec_json,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            family,
+            invocation_spec_json,
+        ),
     );
+}
 
-    const signer_pubkeys = try allocator.alloc(sdk.Pubkey, owned_spec.signers.len);
-    errdefer allocator.free(signer_pubkeys);
-    for (owned_spec.signers, 0..) |signer, index| {
-        signer_pubkeys[index] = signer.public_key;
-    }
-
-    const owned_instructions = owned_spec.owned_instructions;
-    const address_lookup_tables = owned_spec.address_lookup_tables;
-    allocator.free(owned_spec.signers);
-
-    return .{
-        .payer = owned_spec.payer,
-        .signer_pubkeys = signer_pubkeys,
-        .owned_instructions = owned_instructions,
-        .address_lookup_tables = address_lookup_tables,
-        .recent_blockhash = owned_spec.recent_blockhash,
-        .nonce_account = owned_spec.nonce_account,
-        .nonce_authority = owned_spec.nonce_authority,
-    };
+pub fn buildOwnedInstructionsFromOwnedInvocationSpec(
+    allocator: Allocator,
+    owned_spec: OwnedInvocationSpec,
+) !sdk.OwnedInstructions {
+    var resolved = try buildOwnedResolvedInvocationFromOwnedSpec(allocator, owned_spec);
+    const owned_instructions = resolved.owned_instructions;
+    resolved.owned_instructions.instructions = &.{};
+    resolved.deinit(allocator);
+    return owned_instructions;
 }
 
 pub fn buildOwnedInstructionsFromInvocationSpecJson(
@@ -1553,6 +1584,17 @@ pub fn buildOwnedInstructionsFromInvocationSpecJson(
     resolved.owned_instructions.instructions = &.{};
     resolved.deinit(allocator);
     return owned_instructions;
+}
+
+pub fn buildInvocationSignerPubkeysFromOwnedInvocationSpec(
+    allocator: Allocator,
+    owned_spec: OwnedInvocationSpec,
+) ![]sdk.Pubkey {
+    var resolved = try buildOwnedResolvedInvocationFromOwnedSpec(allocator, owned_spec);
+    const signer_pubkeys = resolved.signer_pubkeys;
+    resolved.signer_pubkeys = &.{};
+    resolved.deinit(allocator);
+    return signer_pubkeys;
 }
 
 pub fn buildInvocationSignerPubkeysFromInvocationSpecJson(
@@ -1658,6 +1700,16 @@ pub fn buildInvocationAccountsFromInvocationSpecJson(
         family,
         invocation_spec_json,
     );
+    defer resolved.deinit(allocator);
+
+    return try buildOwnedInvocationAccountsFromResolved(allocator, &resolved);
+}
+
+pub fn buildInvocationAccountsFromOwnedInvocationSpec(
+    allocator: Allocator,
+    owned_spec: OwnedInvocationSpec,
+) !OwnedInvocationAccounts {
+    var resolved = try buildOwnedResolvedInvocationFromOwnedSpec(allocator, owned_spec);
     defer resolved.deinit(allocator);
 
     return try buildOwnedInvocationAccountsFromResolved(allocator, &resolved);
@@ -5089,6 +5141,69 @@ test "invoke.buildOwnedResolvedInvocationFromInvocationSpecJson removes secret k
     try std.testing.expectEqual(@as(usize, 0), resolved.address_lookup_tables.len);
     try std.testing.expect(resolved.recent_blockhash != null);
     try std.testing.expectEqualSlices(u8, &.{ 9, 8, 7 }, resolved.owned_instructions.instructions[0].data);
+}
+
+test "invoke.buildOwnedResolvedInvocationFromOwnedInvocationSpec reuses typed normalized spec" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 436, 437, 438, 439, 440);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), resolved.signer_pubkeys.len);
+    try std.testing.expectEqual(@as(usize, 1), resolved.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), resolved.address_lookup_tables.len);
+    try std.testing.expect(resolved.recent_blockhash != null);
+}
+
+test "invoke.buildOwnedInstructionsFromOwnedInvocationSpec reuses typed normalized spec" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 441, 442, 443);
+    defer allocator.free(spec_json);
+
+    var owned_instructions = try buildOwnedInstructionsFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .instructions,
+            spec_json,
+        ),
+    );
+    defer owned_instructions.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), owned_instructions.instructions.len);
+}
+
+test "invoke.buildInvocationAccountsFromOwnedInvocationSpec reuses typed normalized spec" {
+    const allocator = std.testing.allocator;
+    const program_id = sdk.Pubkey.fromBytes([_]u8{446} ** 32);
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 445, 446, 447, 448, 449);
+    defer allocator.free(spec_json);
+
+    var accounts = try buildInvocationAccountsFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer accounts.deinit(allocator);
+
+    try std.testing.expect(accounts.isProgram(program_id));
+    try std.testing.expect(accounts.contains(program_id));
+    try std.testing.expectEqual(@as(usize, 3), accounts.accounts.len);
 }
 
 test "invoke.buildInvocationSignerPubkeysFromInvocationSpecJson dispatches instructions family" {
