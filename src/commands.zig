@@ -3784,8 +3784,6 @@ fn loadCliInstructionSpecFromSingleInstructionWithContext(
 
 const InvokeFamily = command_invoke.InvokeFamily;
 
-const sendInvocationSpecJson = command_invoke.sendInvocationSpecJson;
-
 fn buildCliSimulationOptions(
     simulation_account_encoding_arg: ?[]const u8,
     simulation_min_context_slot_arg: ?[]const u8,
@@ -3828,8 +3826,6 @@ fn buildCliSimulationOptions(
     else
         null;
 }
-
-const simulateInvocationSpecJson = command_invoke.simulateInvocationSpecJson;
 
 const CliInvokeContextArgs = command_invoke.CliInvokeContextArgs;
 const CliInvokePayloadArgs = command_invoke.CliInvokePayloadArgs;
@@ -3988,24 +3984,17 @@ fn buildAnchorIdlInvokeInvocationSpecJsonForCommand(
     };
 }
 
-fn buildInvocationSpecJsonForCommand(
-    allocator: Allocator,
-    command: cli.Command,
-    behavior: CliInvokeCommandBehavior,
-    payload_args: CliInvokePayloadArgs,
-    context_args: CliInvokeContextArgs,
-) ![]u8 {
-    return command_invoke.buildInvocationSpecJsonForCommand(
-        allocator,
-        command,
-        behavior,
-        payload_args,
-        context_args,
-        .{
-            .buildInstructions = buildInstructionsInvocationSpecJsonForCommand,
-            .buildProgram = buildProgramInvokeInvocationSpecJsonForCommand,
-            .buildAnchorIdl = buildAnchorIdlInvokeInvocationSpecJsonForCommand,
-        },
+fn buildCliSimulationOptionsFromExecutionArgs(
+    execution_args: CliInvokeExecutionArgs,
+) !?client.SimulateTransactionOptions {
+    return buildCliSimulationOptions(
+        execution_args.simulation_account_encoding_arg,
+        execution_args.simulation_min_context_slot_arg,
+        execution_args.simulation_accounts,
+        execution_args.simulate_sig_verify,
+        execution_args.simulate_replace_recent_blockhash,
+        execution_args.simulate_inner_instructions,
+        execution_args.commitment,
     );
 }
 
@@ -4017,63 +4006,24 @@ fn runGenericInvocationCommand(
     context_args: CliInvokeContextArgs,
     execution_args: CliInvokeExecutionArgs,
 ) !void {
-    const spec = lookupInvokeCommandSpec(command) orelse unreachable;
-    const behavior = spec.behavior;
-    const invocation_spec_json = try buildInvocationSpecJsonForCommand(
-        allocator,
-        command,
-        behavior,
-        payload_args,
-        context_args,
-    );
-    defer allocator.free(invocation_spec_json);
-
-    if (behavior.simulate) {
-        const options = try buildCliSimulationOptions(
-            execution_args.simulation_account_encoding_arg,
-            execution_args.simulation_min_context_slot_arg,
-            execution_args.simulation_accounts,
-            execution_args.simulate_sig_verify,
-            execution_args.simulate_replace_recent_blockhash,
-            execution_args.simulate_inner_instructions,
-            execution_args.commitment,
-        );
-        const simulation = try simulateInvocationSpecJson(
-            allocator,
-            rpc,
-            behavior.family,
-            behavior.versioned,
-            invocation_spec_json,
-            execution_args.commitment,
-            options,
-        );
-        defer freeSimulatedTransaction(allocator, simulation);
-
-        printSimulationResult(simulation);
-        return;
-    }
-
-    const tx_signature = try sendInvocationSpecJson(
+    return command_invoke.runGenericInvocationCommand(
         allocator,
         rpc,
-        behavior.family,
-        behavior.versioned,
-        behavior.confirm,
-        invocation_spec_json,
-        execution_args.commitment orelse execution_args.send_preflight_commitment,
-        execution_args.send_transaction_options,
-        execution_args.commitment,
-        execution_args.search_transaction_history,
-        execution_args.status_timeout_ms,
-        execution_args.status_poll_ms,
+        command,
+        payload_args,
+        context_args,
+        execution_args,
+        .{
+            .builders = .{
+                .buildInstructions = buildInstructionsInvocationSpecJsonForCommand,
+                .buildProgram = buildProgramInvokeInvocationSpecJsonForCommand,
+                .buildAnchorIdl = buildAnchorIdlInvokeInvocationSpecJsonForCommand,
+            },
+            .buildSimulationOptions = buildCliSimulationOptionsFromExecutionArgs,
+            .freeSimulation = freeSimulatedTransaction,
+            .printSimulationResult = printSimulationResult,
+        },
     );
-    defer allocator.free(tx_signature);
-
-    if (behavior.confirm) {
-        std.debug.print("confirmed signature: {s}\n", .{tx_signature});
-    } else {
-        std.debug.print("signature: {s}\n", .{tx_signature});
-    }
 }
 
 fn buildProgramInvokeInvocationSpecJson(

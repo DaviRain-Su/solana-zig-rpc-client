@@ -401,3 +401,64 @@ pub fn buildInvocationSpecJsonForCommand(
         ),
     };
 }
+
+pub fn runGenericInvocationCommand(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    command: cli.Command,
+    payload_args: CliInvokePayloadArgs,
+    context_args: CliInvokeContextArgs,
+    execution_args: CliInvokeExecutionArgs,
+    callbacks: anytype,
+) !void {
+    const spec = lookupInvokeCommandSpec(command) orelse unreachable;
+    const behavior = spec.behavior;
+    const invocation_spec_json = try buildInvocationSpecJsonForCommand(
+        allocator,
+        command,
+        behavior,
+        payload_args,
+        context_args,
+        callbacks.builders,
+    );
+    defer allocator.free(invocation_spec_json);
+
+    if (behavior.simulate) {
+        const options = try callbacks.buildSimulationOptions(execution_args);
+        const simulation = try simulateInvocationSpecJson(
+            allocator,
+            rpc,
+            behavior.family,
+            behavior.versioned,
+            invocation_spec_json,
+            execution_args.commitment,
+            options,
+        );
+        defer callbacks.freeSimulation(allocator, simulation);
+
+        callbacks.printSimulationResult(simulation);
+        return;
+    }
+
+    const tx_signature = try sendInvocationSpecJson(
+        allocator,
+        rpc,
+        behavior.family,
+        behavior.versioned,
+        behavior.confirm,
+        invocation_spec_json,
+        execution_args.commitment orelse execution_args.send_preflight_commitment,
+        execution_args.send_transaction_options,
+        execution_args.commitment,
+        execution_args.search_transaction_history,
+        execution_args.status_timeout_ms,
+        execution_args.status_poll_ms,
+    );
+    defer allocator.free(tx_signature);
+
+    if (behavior.confirm) {
+        std.debug.print("confirmed signature: {s}\n", .{tx_signature});
+    } else {
+        std.debug.print("signature: {s}\n", .{tx_signature});
+    }
+}
