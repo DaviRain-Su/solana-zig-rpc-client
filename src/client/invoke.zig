@@ -49,6 +49,20 @@ pub const OwnedInvocationMessage = union(enum) {
             .versioned => |*owned| owned.deinit(allocator),
         }
     }
+
+    pub fn serialize(self: OwnedInvocationMessage, allocator: Allocator) ![]u8 {
+        return switch (self) {
+            .legacy => |owned| try owned.serialize(allocator),
+            .versioned => |owned| try owned.serialize(allocator),
+        };
+    }
+
+    pub fn toBase64(self: OwnedInvocationMessage, allocator: Allocator) ![]u8 {
+        return switch (self) {
+            .legacy => |owned| try owned.toBase64(allocator),
+            .versioned => |owned| try owned.toBase64(allocator),
+        };
+    }
 };
 
 pub const SignedInvocationTransaction = union(enum) {
@@ -74,6 +88,20 @@ pub const SignedInvocationTransaction = union(enum) {
         return switch (self) {
             .legacy => |signed| try signed.toBase64(allocator),
             .versioned => |signed| try signed.toBase64(allocator),
+        };
+    }
+
+    pub fn serializeMessage(self: SignedInvocationTransaction, allocator: Allocator) ![]u8 {
+        return switch (self) {
+            .legacy => |signed| try signed.message.serialize(allocator),
+            .versioned => |signed| try signed.message.serialize(allocator),
+        };
+    }
+
+    pub fn messageToBase64(self: SignedInvocationTransaction, allocator: Allocator) ![]u8 {
+        return switch (self) {
+            .legacy => |signed| try signed.message.toBase64(allocator),
+            .versioned => |signed| try signed.message.toBase64(allocator),
         };
     }
 
@@ -463,6 +491,14 @@ pub const PreparedInvocation = struct {
         return try self.transaction.toBase64(allocator);
     }
 
+    pub fn serializeMessage(self: PreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.transaction.serializeMessage(allocator);
+    }
+
+    pub fn messageToBase64(self: PreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.transaction.messageToBase64(allocator);
+    }
+
     pub fn firstSignature(self: PreparedInvocation) ?sdk.Signature {
         return self.transaction.firstSignature();
     }
@@ -519,6 +555,14 @@ pub const PreferredPreparedSignedTransaction = struct {
 
     pub fn toBase64(self: PreferredPreparedSignedTransaction, allocator: Allocator) ![]u8 {
         return try self.transaction.toBase64(allocator);
+    }
+
+    pub fn serializeMessage(self: PreferredPreparedSignedTransaction, allocator: Allocator) ![]u8 {
+        return try self.transaction.serializeMessage(allocator);
+    }
+
+    pub fn messageToBase64(self: PreferredPreparedSignedTransaction, allocator: Allocator) ![]u8 {
+        return try self.transaction.messageToBase64(allocator);
     }
 
     pub fn firstSignature(self: PreferredPreparedSignedTransaction) ?sdk.Signature {
@@ -6788,9 +6832,15 @@ test "invoke.PreparedInvocation transaction helpers expose generic serialization
     defer allocator.free(serialized);
     const encoded = try prepared.toBase64(allocator);
     defer allocator.free(encoded);
+    const message_bytes = try prepared.serializeMessage(allocator);
+    defer allocator.free(message_bytes);
+    const message_base64 = try prepared.messageToBase64(allocator);
+    defer allocator.free(message_base64);
 
     try std.testing.expect(serialized.len != 0);
     try std.testing.expect(encoded.len != 0);
+    try std.testing.expect(message_bytes.len != 0);
+    try std.testing.expect(message_base64.len != 0);
     try std.testing.expect(prepared.firstSignature() != null);
 }
 
@@ -6817,8 +6867,14 @@ test "invoke.PreferredPreparedSignedTransaction transaction helpers expose gener
 
     const encoded = try prepared.toBase64(allocator);
     defer allocator.free(encoded);
+    const message_bytes = try prepared.serializeMessage(allocator);
+    defer allocator.free(message_bytes);
+    const message_base64 = try prepared.messageToBase64(allocator);
+    defer allocator.free(message_base64);
 
     try std.testing.expect(encoded.len != 0);
+    try std.testing.expect(message_bytes.len != 0);
+    try std.testing.expect(message_base64.len != 0);
     try std.testing.expect(prepared.firstSignature() != null);
     try std.testing.expectEqual(@as(?InvocationMode, .versioned), prepared.execution_report.selected_mode);
 }
