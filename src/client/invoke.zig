@@ -93,15 +93,15 @@ pub const SignedInvocationTransaction = union(enum) {
 
     pub fn serializeMessage(self: SignedInvocationTransaction, allocator: Allocator) ![]u8 {
         return switch (self) {
-            .legacy => |signed| try signed.message.serialize(allocator),
-            .versioned => |signed| try signed.message.serialize(allocator),
+            .legacy => |signed| try allocator.dupe(u8, signed.message_bytes),
+            .versioned => |signed| try allocator.dupe(u8, signed.message_bytes),
         };
     }
 
     pub fn messageToBase64(self: SignedInvocationTransaction, allocator: Allocator) ![]u8 {
         return switch (self) {
-            .legacy => |signed| try signed.message.toBase64(allocator),
-            .versioned => |signed| try signed.message.toBase64(allocator),
+            .legacy => |signed| try sdk.encodeBase64(allocator, signed.message_bytes),
+            .versioned => |signed| try sdk.encodeBase64(allocator, signed.message_bytes),
         };
     }
 
@@ -741,6 +741,65 @@ pub fn allocPreferredInvocationAnalysisJson(
     var aw: std.Io.Writer.Allocating = .init(allocator);
     errdefer aw.deinit();
     try writePreferredInvocationAnalysisJson(&aw.writer, allocator, analysis);
+    return try aw.toOwnedSlice();
+}
+
+pub fn writePreferredPreparedInvocationJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    prepared: *const PreferredPreparedInvocation,
+) !void {
+    var first = true;
+    const report = &prepared.prepared.report;
+
+    try writer.writeAll("{");
+    try writeJsonStringField(writer, &first, "preferred_mode", invocationModeJsonLabel(prepared.mode_report.preferred_mode));
+    try writeJsonStringField(writer, &first, "requested_mode", invocationModeJsonLabel(prepared.requested_mode));
+    try writeJsonStringField(writer, &first, "selected_mode", @tagName(prepared.selected_mode));
+    try writeJsonBoolField(writer, &first, "used_fallback", prepared.used_fallback);
+    try writeJsonBoolField(writer, &first, "requested_mode_buildable", prepared.requested_mode_buildable);
+    try writeJsonBoolField(writer, &first, "legacy_buildable", prepared.mode_report.legacy_buildable);
+    try writeJsonBoolField(writer, &first, "versioned_buildable", prepared.mode_report.versioned_buildable);
+    try writeJsonBoolField(writer, &first, "validation_passed", report.validation.is_valid);
+    try writeJsonBoolField(writer, &first, "can_execute_selected_mode", prepared.can_execute_selected_mode);
+    try writeJsonBoolField(writer, &first, "can_execute", report.can_execute);
+
+    const payer_base58 = try report.summary.payer.toBase58(allocator);
+    defer allocator.free(payer_base58);
+    try writeJsonStringField(writer, &first, "payer", payer_base58);
+    try writeJsonStringField(writer, &first, "blockhash_mode", invocationBlockhashModeJsonLabel(report.plan.blockhash_mode));
+
+    try writeJsonUsizeField(writer, &first, "instruction_count", report.summary.instruction_count);
+    try writeJsonUsizeField(writer, &first, "account_count", report.summary.account_count);
+    try writeJsonUsizeField(writer, &first, "signer_count", report.summary.signer_count);
+    try writeJsonUsizeField(writer, &first, "lookup_table_count", report.summary.address_lookup_table_count);
+
+    const transaction_base64 = try prepared.toBase64(allocator);
+    defer allocator.free(transaction_base64);
+    try writeJsonStringField(writer, &first, "transaction_base64", transaction_base64);
+
+    const message_base64 = try prepared.messageToBase64(allocator);
+    defer allocator.free(message_base64);
+    try writeJsonStringField(writer, &first, "message_base64", message_base64);
+
+    const first_signature_base58 = if (prepared.firstSignature()) |signature|
+        try signature.toBase58(allocator)
+    else
+        null;
+    defer if (first_signature_base58) |value| allocator.free(value);
+    try writeJsonStringField(writer, &first, "first_signature", first_signature_base58);
+
+    try writeJsonPubkeyArrayField(writer, &first, "program_ids", allocator, report.summary.program_ids);
+    try writer.writeAll("}");
+}
+
+pub fn allocPreferredPreparedInvocationJson(
+    allocator: Allocator,
+    prepared: *const PreferredPreparedInvocation,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writePreferredPreparedInvocationJson(&aw.writer, allocator, prepared);
     return try aw.toOwnedSlice();
 }
 
