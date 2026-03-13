@@ -58,6 +58,8 @@ const cli_params = clap.parseParamsComptime(
     \\    --sender-keypair <string>...
     \\    --sender-secret-key <string>...
     \\    --additional-signer-secret-key <string>...
+    \\    --invoke-mode <string>...
+    \\    --no-mode-fallback
     \\    --program-id <string>...
     \\    --data-schema-json <string>...
     \\    --args-json <string>...
@@ -114,6 +116,8 @@ const cli_option_help_params = clap.parseParamsComptime(
     \\    --sender-keypair <path>             Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)
     \\    --sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer secret key (base58)
     \\    --additional-signer-secret-key <additional-signer-secret-key> Additional signer secret key (base58, repeatable)
+    \\    --invoke-mode <mode>               Preferred invocation mode: auto|legacy|versioned (preview/validate/prepare commands)
+    \\    --no-mode-fallback                 Disable automatic legacy/versioned fallback for preview/validate/prepare commands
     \\    --data-schema-json <json|@path>    Program-invoke instruction data schema JSON (used with --args-json)
     \\    --args-json <json|@path>           Program-invoke instruction args JSON (used with --data-schema-json)
     \\    --schema-encoding <encoding>       Program-invoke schema encoding (currently borsh)
@@ -1044,6 +1048,8 @@ pub const ParsedArgs = struct {
     rent_bytes_arg: ?[]const u8,
     sender_keypair_path_arg: ?[]const u8,
     sender_secret_key_arg: ?[]const u8,
+    invoke_mode_arg: ?[]const u8,
+    no_mode_fallback: bool,
     signed_tx_arg: ?[]const u8,
     simulation_account_encoding_arg: ?[]const u8,
     simulation_min_context_slot_arg: ?[]const u8,
@@ -1429,6 +1435,8 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .rent_bytes_arg = null,
         .sender_keypair_path_arg = null,
         .sender_secret_key_arg = null,
+        .invoke_mode_arg = null,
+        .no_mode_fallback = false,
         .signed_tx_arg = null,
         .simulation_account_encoding_arg = null,
         .simulation_min_context_slot_arg = null,
@@ -1518,6 +1526,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
     if (try requireZeroOrOne(@field(result.args, "recent-blockhash"))) |value| parsed.recent_blockhash_arg = value;
     if (try requireZeroOrOne(@field(result.args, "sender-keypair"))) |value| parsed.sender_keypair_path_arg = value;
     if (try requireZeroOrOne(@field(result.args, "sender-secret-key"))) |value| parsed.sender_secret_key_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "invoke-mode"))) |value| parsed.invoke_mode_arg = value;
     if (try requireZeroOrOne(@field(result.args, "program-id"))) |value| parsed.idl_program_id_arg = value;
     if (try requireZeroOrOne(@field(result.args, "data-schema-json"))) |value| parsed.program_invoke_data_schema_json_arg = value;
     if (try requireZeroOrOne(@field(result.args, "args-json"))) |value| parsed.program_invoke_args_json_arg = value;
@@ -1535,6 +1544,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
     if (try requireZeroOrOne(@field(result.args, "token-program-id"))) |value| parsed.token_program_id_arg = value;
 
     parsed.output_json = @field(result.args, "json") != 0;
+    parsed.no_mode_fallback = @field(result.args, "no-mode-fallback") != 0;
 
     if (parsed.sender_keypair_path_arg != null and parsed.sender_secret_key_arg != null) {
         return error.InvalidCli;
@@ -2565,6 +2575,22 @@ test "cli.parseCliArgs parses prepare-program-invoke with schema args and lookup
     try std.testing.expectEqualStrings("{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}", parsed.program_invoke_data_schema_json_arg orelse "");
     try std.testing.expectEqualStrings("{\"enabled\":true}", parsed.program_invoke_args_json_arg orelse "");
     try std.testing.expectEqualStrings("borsh", parsed.program_invoke_schema_encoding_arg orelse "");
+}
+
+test "cli.parseCliArgs parses prepare-program-invoke invoke mode options" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "prepare-program-invoke",
+        "--invoke-mode",
+        "versioned",
+        "--no-mode-fallback",
+        "11111111111111111111111111111111",
+        "[]",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.prepare_program_invoke, parsed.command);
+    try std.testing.expectEqualStrings("versioned", parsed.invoke_mode_arg orelse "");
+    try std.testing.expect(parsed.no_mode_fallback);
 }
 
 test "cli.parseCliArgs parses send-idl-invoke with sender-secret-key" {

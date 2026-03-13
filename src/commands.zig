@@ -47,6 +47,28 @@ fn reportInvalidCliMessage(comptime msg: []const u8, args: anytype) void {
     }
 }
 
+fn buildPreferredInvocationModeOptions(
+    invoke_mode_arg: ?[]const u8,
+    no_mode_fallback: bool,
+) !client.invoke.PreferredInvocationModeOptions {
+    var options = client.invoke.PreferredInvocationModeOptions{
+        .allow_fallback = !no_mode_fallback,
+    };
+    if (invoke_mode_arg) |mode_arg| {
+        if (std.mem.eql(u8, mode_arg, "auto")) {
+            options.preferred_mode = null;
+        } else if (std.mem.eql(u8, mode_arg, "legacy")) {
+            options.preferred_mode = .legacy;
+        } else if (std.mem.eql(u8, mode_arg, "versioned")) {
+            options.preferred_mode = .versioned;
+        } else {
+            reportInvalidCliMessage("error: --invoke-mode must be auto, legacy, or versioned\n", .{});
+            return error.InvalidCli;
+        }
+    }
+    return options;
+}
+
 fn loadSecretKeyFromKeypairFile(allocator: Allocator, path: []const u8) ![]u8 {
     const file_contents = try std.fs.cwd().readFileAlloc(allocator, path, 1 << 20);
     defer allocator.free(file_contents);
@@ -4673,6 +4695,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const rent_bytes_arg = args.rent_bytes_arg;
     const sender_keypair_path_arg = args.sender_keypair_path_arg;
     const sender_secret_key_arg = args.sender_secret_key_arg;
+    const invoke_mode_arg = args.invoke_mode_arg;
+    const no_mode_fallback = args.no_mode_fallback;
     const default_sender_keypair_path_arg = args.default_sender_keypair_path;
     const signed_tx_arg = args.signed_tx_arg;
     const simulation_account_encoding_arg = args.simulation_account_encoding_arg;
@@ -4812,6 +4836,21 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .prepare_idl_invoke)
     {
         reportInvalidCliMessage("error: --json requires preview-instructions, validate-instructions, prepare-instructions, preview-program-invoke, validate-program-invoke, prepare-program-invoke, preview-idl-invoke, validate-idl-invoke, or prepare-idl-invoke\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((invoke_mode_arg != null or no_mode_fallback) and
+        command != .preview_instructions and
+        command != .validate_instructions and
+        command != .prepare_instructions and
+        command != .preview_program_invoke and
+        command != .validate_program_invoke and
+        command != .prepare_program_invoke and
+        command != .preview_idl_invoke and
+        command != .validate_idl_invoke and
+        command != .prepare_idl_invoke)
+    {
+        reportInvalidCliMessage("error: --invoke-mode/--no-mode-fallback require preview-instructions, validate-instructions, prepare-instructions, preview-program-invoke, validate-program-invoke, prepare-program-invoke, preview-idl-invoke, validate-idl-invoke, or prepare-idl-invoke\n", .{});
         return error.InvalidCli;
     }
 
@@ -5204,6 +5243,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         simulate_replace_recent_blockhash,
         simulate_inner_instructions,
     );
+    const preferred_invocation_mode_options = try buildPreferredInvocationModeOptions(
+        invoke_mode_arg,
+        no_mode_fallback,
+    );
 
     if (lookupInvokeCommandSpec(command) != null) {
         try runGenericInvocationCommand(
@@ -5244,7 +5287,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             rpc,
             .program,
             invocation_spec_json,
-            .{},
+            .{ .mode = preferred_invocation_mode_options },
         ) catch {
             reportInvalidCliMessage("error: prepare-program-invoke arguments are invalid\n", .{});
             return error.InvalidCli;
@@ -5286,7 +5329,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             rpc,
             .program,
             invocation_spec_json,
-            .{},
+            .{ .mode = preferred_invocation_mode_options },
         ) catch {
             reportInvalidCliMessage("error: {s} arguments are invalid\n", .{if (command == .preview_program_invoke) "preview-program-invoke" else "validate-program-invoke"});
             return error.InvalidCli;
@@ -5318,7 +5361,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             rpc,
             .instructions,
             invocation_spec_json,
-            .{},
+            .{ .mode = preferred_invocation_mode_options },
         ) catch {
             reportInvalidCliMessage("error: prepare-instructions spec is invalid\n", .{});
             return error.InvalidCli;
@@ -5350,7 +5393,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             rpc,
             .instructions,
             invocation_spec_json,
-            .{},
+            .{ .mode = preferred_invocation_mode_options },
         ) catch {
             reportInvalidCliMessage("error: {s} spec is invalid\n", .{if (command == .preview_instructions) "preview-instructions" else "validate-instructions"});
             return error.InvalidCli;
@@ -5393,7 +5436,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             rpc,
             .anchor_idl,
             invocation_spec_json,
-            .{},
+            .{ .mode = preferred_invocation_mode_options },
         ) catch {
             reportInvalidCliMessage("error: prepare-idl-invoke arguments are invalid\n", .{});
             return error.InvalidCli;
@@ -5436,7 +5479,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             rpc,
             .anchor_idl,
             invocation_spec_json,
-            .{},
+            .{ .mode = preferred_invocation_mode_options },
         ) catch {
             reportInvalidCliMessage("error: {s} arguments are invalid\n", .{if (command == .preview_idl_invoke) "preview-idl-invoke" else "validate-idl-invoke"});
             return error.InvalidCli;
@@ -12264,6 +12307,9 @@ test "runCommand prepare-program-invoke emits json prepared transaction for sche
     var parsed = try cli.parseCliArgs(allocator, &.{
         "prepare-program-invoke",
         "--json",
+        "--invoke-mode",
+        "legacy",
+        "--no-mode-fallback",
         "--sender-secret-key",
         payer_secret_key_base58,
         "--recent-blockhash",
@@ -12287,7 +12333,10 @@ test "runCommand prepare-program-invoke emits json prepared transaction for sche
 
     try expectMockSenderRequestCount(&sender_context.sender, 0);
     try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"legacy\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode_buildable\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"validation_passed\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"transaction_base64\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"message_base64\":\"") != null);
