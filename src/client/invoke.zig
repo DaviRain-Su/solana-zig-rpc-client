@@ -247,6 +247,31 @@ pub const InvocationModeReport = struct {
     address_lookup_table_count: usize,
 };
 
+pub const PreferredInvocationModeOptions = struct {
+    preferred_mode: ?InvocationMode = null,
+    allow_fallback: bool = true,
+};
+
+pub const BuildPreferredInvocationSpecOptions = struct {
+    mode: PreferredInvocationModeOptions = .{},
+    build: BuildInvocationSpecOptions = .{},
+};
+
+pub const SendPreferredInvocationSpecOptions = struct {
+    mode: PreferredInvocationModeOptions = .{},
+    send: SendInvocationSpecOptions = .{},
+};
+
+pub const SimulatePreferredInvocationSpecOptions = struct {
+    mode: PreferredInvocationModeOptions = .{},
+    simulate: SimulateInvocationSpecOptions = .{},
+};
+
+pub const SendAndConfirmPreferredInvocationSpecOptions = struct {
+    mode: PreferredInvocationModeOptions = .{},
+    send_and_confirm: SendAndConfirmInvocationSpecOptions = .{},
+};
+
 pub fn buildInstructionInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
@@ -894,6 +919,186 @@ pub fn buildInvocationModeReportFromInvocationSpecJson(
         .uses_durable_nonce = report.uses_durable_nonce,
         .address_lookup_table_count = report.summary.address_lookup_table_count,
     };
+}
+
+fn resolvePreferredInvocationMode(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !InvocationMode {
+    const mode_report = try buildInvocationModeReportFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options.build,
+    );
+
+    if (options.mode.preferred_mode) |preferred_mode| {
+        if ((preferred_mode == .legacy and mode_report.legacy_buildable) or
+            (preferred_mode == .versioned and mode_report.versioned_buildable))
+        {
+            return preferred_mode;
+        }
+        if (!options.mode.allow_fallback) return error.NoBuildableInvocationMode;
+    }
+
+    return mode_report.preferred_mode orelse error.NoBuildableInvocationMode;
+}
+
+pub fn buildPreferredMessageBase64FromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    const mode = try resolvePreferredInvocationMode(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    return try buildMessageBase64FromInvocationSpecJsonWithOptions(
+        allocator,
+        rpc,
+        family,
+        mode == .versioned,
+        invocation_spec_json,
+        options.build,
+    );
+}
+
+pub fn buildPreferredTransactionBase64FromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    const mode = try resolvePreferredInvocationMode(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    return try buildTransactionBase64FromInvocationSpecJsonWithOptions(
+        allocator,
+        rpc,
+        family,
+        mode == .versioned,
+        invocation_spec_json,
+        options.build,
+    );
+}
+
+pub fn buildPreferredSignedTransactionFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !SignedInvocationTransaction {
+    const mode = try resolvePreferredInvocationMode(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    return try buildSignedTransactionFromInvocationSpecJsonWithOptions(
+        allocator,
+        rpc,
+        family,
+        mode == .versioned,
+        invocation_spec_json,
+        options.build,
+    );
+}
+
+pub fn sendPreferredTransactionFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: SendPreferredInvocationSpecOptions,
+) ![]const u8 {
+    const mode = try resolvePreferredInvocationMode(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.send.blockhash_commitment },
+        },
+    );
+    return try sendTransactionFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        mode == .versioned,
+        invocation_spec_json,
+        options.send,
+    );
+}
+
+pub fn simulatePreferredTransactionFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: SimulatePreferredInvocationSpecOptions,
+) !client.SimulatedTransaction {
+    const mode = try resolvePreferredInvocationMode(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.simulate.blockhash_commitment },
+        },
+    );
+    return try simulateTransactionFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        mode == .versioned,
+        invocation_spec_json,
+        options.simulate,
+    );
+}
+
+pub fn sendAndConfirmPreferredInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: SendAndConfirmPreferredInvocationSpecOptions,
+) ![]const u8 {
+    const mode = try resolvePreferredInvocationMode(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.send_and_confirm.blockhash_commitment },
+        },
+    );
+    return try sendAndConfirmInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        mode == .versioned,
+        invocation_spec_json,
+        options.send_and_confirm,
+    );
 }
 
 pub fn sendInvocationSpecJson(
@@ -2760,6 +2965,114 @@ test "invoke.buildInvocationModeReportFromInvocationSpecJson reports missing sig
     try std.testing.expect(!mode_report.versioned_buildable);
     try std.testing.expectEqual(@as(?InvocationMode, null), mode_report.preferred_mode);
     try std.testing.expect(!mode_report.validation_passed);
+}
+
+test "invoke.buildPreferredTransactionBase64FromInvocationSpecJson defaults to legacy mode" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 271, 272, 273);
+    defer allocator.free(spec_json);
+
+    const expected = try buildLegacyTransactionBase64FromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        spec_json,
+        .{},
+    );
+    defer allocator.free(expected);
+
+    const actual = try buildPreferredTransactionBase64FromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        spec_json,
+        .{},
+    );
+    defer allocator.free(actual);
+
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
+test "invoke.buildPreferredTransactionBase64FromInvocationSpecJson prefers versioned mode with lookup tables" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 281, 282, 283, 284, 285);
+    defer allocator.free(spec_json);
+
+    const expected = try buildVersionedTransactionBase64FromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{},
+    );
+    defer allocator.free(expected);
+
+    const actual = try buildPreferredTransactionBase64FromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{},
+    );
+    defer allocator.free(actual);
+
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
+test "invoke.buildPreferredTransactionBase64FromInvocationSpecJson honors explicit preferred mode" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 291, 292, 293);
+    defer allocator.free(spec_json);
+
+    const expected = try buildVersionedTransactionBase64FromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        spec_json,
+        .{},
+    );
+    defer allocator.free(expected);
+
+    const actual = try buildPreferredTransactionBase64FromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .versioned,
+                .allow_fallback = false,
+            },
+        },
+    );
+    defer allocator.free(actual);
+
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
+test "invoke.buildPreferredTransactionBase64FromInvocationSpecJson returns no buildable mode for invalid spec" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocInstructionsInvocationSpecJsonWithMissingSignerAndExtraSigner(allocator, 301, 302, 303, 304, 305);
+    defer allocator.free(spec_json);
+
+    try std.testing.expectError(
+        error.NoBuildableInvocationMode,
+        buildPreferredTransactionBase64FromInvocationSpecJson(
+            allocator,
+            DummyRpc{},
+            .instructions,
+            spec_json,
+            .{},
+        ),
+    );
 }
 
 test "invoke.buildLegacyMessageBytesFromInvocationSpecJsonWithOptions matches generic builder" {
