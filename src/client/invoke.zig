@@ -5488,16 +5488,19 @@ pub fn sendTransactionFromOwnedInvocationSpecWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: SendInvocationSpecOptions,
 ) ![]const u8 {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try sendTransactionFromInvocationSpecJson(
+    var prepared = try buildPreparedInvocationFromOwnedInvocationSpecRefWithOptions(
         allocator,
         rpc,
-        .instructions,
         versioned,
-        invocation_spec_json,
-        options,
+        owned_spec,
+        .{ .blockhash_commitment = options.blockhash_commitment },
+    );
+    defer prepared.deinit(allocator);
+
+    return try sendPreparedInvocation(
+        rpc,
+        &prepared,
+        options.send_transaction_options,
     );
 }
 
@@ -5524,16 +5527,19 @@ pub fn simulateTransactionFromOwnedInvocationSpecWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: SimulateInvocationSpecOptions,
 ) !client.SimulatedTransaction {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try simulateTransactionFromInvocationSpecJson(
+    var prepared = try buildPreparedInvocationFromOwnedInvocationSpecRefWithOptions(
         allocator,
         rpc,
-        .instructions,
         versioned,
-        invocation_spec_json,
-        options,
+        owned_spec,
+        .{ .blockhash_commitment = options.blockhash_commitment },
+    );
+    defer prepared.deinit(allocator);
+
+    return try simulatePreparedInvocation(
+        rpc,
+        &prepared,
+        options.simulate_options,
     );
 }
 
@@ -5560,16 +5566,24 @@ pub fn sendAndConfirmInvocationFromOwnedInvocationSpecWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: SendAndConfirmInvocationSpecOptions,
 ) ![]const u8 {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try sendAndConfirmInvocationSpecJson(
+    var prepared = try buildPreparedInvocationFromOwnedInvocationSpecRefWithOptions(
         allocator,
         rpc,
-        .instructions,
         versioned,
-        invocation_spec_json,
-        options,
+        owned_spec,
+        .{ .blockhash_commitment = options.blockhash_commitment },
+    );
+    defer prepared.deinit(allocator);
+
+    return try sendAndConfirmPreparedInvocation(
+        allocator,
+        rpc,
+        &prepared,
+        options.send_transaction_options,
+        options.commitment,
+        options.search_transaction_history,
+        options.timeout_ms orelse sdk.poll_for_signature_confirmation_timeout_ms,
+        options.poll_ms orelse sdk.signature_poll_interval_ms,
     );
 }
 
@@ -5604,16 +5618,24 @@ pub fn sendAndConfirmInvocationFromOwnedInvocationSpecWithSpinnerOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: SendAndConfirmInvocationSpecOptions,
 ) ![]const u8 {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try sendAndConfirmInvocationSpecJsonWithSpinner(
+    var prepared = try buildPreparedInvocationFromOwnedInvocationSpecRefWithOptions(
         allocator,
         rpc,
-        .instructions,
         versioned,
-        invocation_spec_json,
-        options,
+        owned_spec,
+        .{ .blockhash_commitment = options.blockhash_commitment },
+    );
+    defer prepared.deinit(allocator);
+
+    return try sendAndConfirmPreparedInvocationWithSpinner(
+        allocator,
+        rpc,
+        &prepared,
+        options.send_transaction_options,
+        options.commitment,
+        options.search_transaction_history,
+        options.timeout_ms orelse sdk.poll_for_signature_confirmation_timeout_ms,
+        options.poll_ms orelse sdk.signature_poll_interval_ms,
     );
 }
 
@@ -5624,16 +5646,19 @@ pub fn getFeeForInvocationSpecFromOwnedInvocationSpecWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: GetFeeForInvocationSpecOptions,
 ) !client.FeeForMessage {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try getFeeForInvocationSpecJson(
+    var prepared = try buildPreparedInvocationFromOwnedInvocationSpecRefWithOptions(
         allocator,
         rpc,
-        .instructions,
         versioned,
-        invocation_spec_json,
-        options,
+        owned_spec,
+        .{ .blockhash_commitment = options.blockhash_commitment },
+    );
+    defer prepared.deinit(allocator);
+
+    return try getFeeForPreparedInvocation(
+        rpc,
+        &prepared,
+        options.commitment,
     );
 }
 
@@ -12613,6 +12638,77 @@ test "invoke.getFeeForInvocationSpecFromOwnedInvocationSpecWithOptions executes 
     );
 
     try std.testing.expectEqual(@as(rpc_types.FeeForMessage, 990), fee);
+}
+
+test "invoke.sendAndConfirmInvocationFromOwnedInvocationSpecWithOptions executes explicit confirm path" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn sendTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return "typed-explicit-confirm";
+        }
+
+        pub fn getSignatureStatuses(
+            self: *@This(),
+            signatures: []const []const u8,
+            config: ?rpc_types.GetSignatureStatusesConfig,
+        ) !rpc_types.GetSignatureStatusesResult {
+            _ = self;
+            _ = signatures;
+            _ = config;
+            return .{
+                .context = .{ .slot = 777 },
+                .value = &.{.{
+                    .slot = 777,
+                    .confirmations = null,
+                    .err = null,
+                    .confirmation_status = .confirmed,
+                    .status = .{ .Ok = std.json.Value{ .null = {} } },
+                }},
+            };
+        }
+
+        pub fn sendVersionedTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return error.UnexpectedVersionedCall;
+        }
+    };
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 32, 33, 34);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    const signature = try sendAndConfirmInvocationFromOwnedInvocationSpecWithOptions(
+        allocator,
+        DummyRpc{},
+        false,
+        &owned_spec,
+        .{
+            .commitment = .confirmed,
+            .timeout_ms = 10,
+            .poll_ms = 1,
+        },
+    );
+
+    try std.testing.expectEqualStrings("typed-explicit-confirm", signature);
 }
 
 test "invoke.allocPreparedInvocationJsonFromOwnedInvocationSpec emits generic prepared fields" {
