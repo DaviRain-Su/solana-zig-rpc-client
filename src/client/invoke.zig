@@ -54,6 +54,14 @@ pub const OwnedInvocationMessage = union(enum) {
 pub const SignedInvocationTransaction = union(enum) {
     legacy: sdk.SignedLegacyTransaction,
     versioned: sdk.SignedVersionedTransaction,
+
+    pub fn deinit(self: *SignedInvocationTransaction, allocator: Allocator) void {
+        switch (self.*) {
+            .legacy => |*signed| signed.deinit(allocator),
+            .versioned => |*signed| signed.deinit(allocator),
+        }
+        self.* = undefined;
+    }
 };
 
 pub const OwnedInvocationSpec = client.instructions_invoke.OwnedInvocationSpec;
@@ -292,6 +300,11 @@ pub const PreferredOwnedMessageResult = struct {
 pub const PreferredSignedTransactionResult = struct {
     mode: InvocationMode,
     transaction: SignedInvocationTransaction,
+
+    pub fn deinit(self: *PreferredSignedTransactionResult, allocator: Allocator) void {
+        self.transaction.deinit(allocator);
+        self.* = undefined;
+    }
 };
 
 pub const PreferredBytesResult = struct {
@@ -377,6 +390,7 @@ pub const PreferredSignedTransactionExecutionResult = struct {
 
     pub fn deinit(self: *PreferredSignedTransactionExecutionResult, allocator: Allocator) void {
         self.execution_report.deinit(allocator);
+        self.transaction.deinit(allocator);
         self.* = undefined;
     }
 };
@@ -416,6 +430,7 @@ pub const PreparedInvocation = struct {
         self.report.deinit(allocator);
         self.resolved_invocation.deinit(allocator);
         self.accounts.deinit(allocator);
+        self.transaction.deinit(allocator);
         self.* = undefined;
     }
 };
@@ -430,6 +445,7 @@ pub const PreferredPreparedSignedTransaction = struct {
         self.execution_report.deinit(allocator);
         self.resolved_invocation.deinit(allocator);
         self.accounts.deinit(allocator);
+        self.transaction.deinit(allocator);
         self.* = undefined;
     }
 };
@@ -1450,6 +1466,86 @@ pub fn buildPreparedInvocationFromInvocationSpecJsonWithOptions(
             versioned,
             invocation_spec_json,
             options,
+        ),
+    };
+}
+
+pub fn sendPreparedInvocation(
+    rpc: anytype,
+    prepared: *const PreparedInvocation,
+    options: ?rpc_types.SendTransactionOptions,
+) ![]const u8 {
+    return switch (prepared.transaction) {
+        .legacy => |signed| try rpc.sendTransactionTyped(signed, options),
+        .versioned => |signed| try rpc.sendVersionedTransactionTyped(signed, options),
+    };
+}
+
+pub fn simulatePreparedInvocation(
+    rpc: anytype,
+    prepared: *const PreparedInvocation,
+    options: ?rpc_types.SimulateTransactionOptions,
+) !client.SimulatedTransaction {
+    return switch (prepared.transaction) {
+        .legacy => |signed| try rpc.simulateTransactionTyped(signed, options),
+        .versioned => |signed| try rpc.simulateVersionedTransactionTyped(signed, options),
+    };
+}
+
+pub fn sendAndConfirmPreparedInvocation(
+    rpc: anytype,
+    prepared: *const PreparedInvocation,
+    options: ?rpc_types.SendTransactionOptions,
+    commitment: ?client.Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) ![]const u8 {
+    return switch (prepared.transaction) {
+        .legacy => |signed| try rpc.sendTransactionAndConfirmTyped(
+            signed,
+            options,
+            commitment,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+        ),
+        .versioned => |signed| try rpc.sendAndConfirmVersionedTransactionTyped(
+            signed,
+            options,
+            commitment,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+        ),
+    };
+}
+
+pub fn sendAndConfirmPreparedInvocationWithSpinner(
+    rpc: anytype,
+    prepared: *const PreparedInvocation,
+    options: ?rpc_types.SendTransactionOptions,
+    commitment: ?client.Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) ![]const u8 {
+    return switch (prepared.transaction) {
+        .legacy => |signed| try rpc.sendTransactionAndConfirmTypedWithSpinner(
+            signed,
+            options,
+            commitment,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+        ),
+        .versioned => |signed| try rpc.sendAndConfirmVersionedTransactionTypedWithSpinner(
+            signed,
+            options,
+            commitment,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
         ),
     };
 }
@@ -5757,6 +5853,191 @@ test "invoke.buildPreparedInvocationFromInvocationSpecJsonWithOptions prepares e
     try std.testing.expectEqual(@as(usize, 1), prepared.report.plan.address_lookup_table_count);
     try std.testing.expectEqual(@as(usize, 1), prepared.resolved_invocation.address_lookup_tables.len);
     try std.testing.expectEqual(@as(std.meta.Tag(SignedInvocationTransaction), .versioned), std.meta.activeTag(prepared.transaction));
+}
+
+test "invoke.sendPreparedInvocation dispatches prepared legacy transaction" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        captured_skip_preflight: bool = false,
+
+        pub fn sendTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = transaction;
+            self.captured_skip_preflight = options.?.skip_preflight;
+            return "prepared-legacy-send";
+        }
+
+        pub fn sendVersionedTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return error.UnexpectedVersionedCall;
+        }
+    };
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 96, 97, 98);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        false,
+        spec_json,
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    var rpc = DummyRpc{};
+    const signature = try sendPreparedInvocation(
+        &rpc,
+        &prepared,
+        .{ .skip_preflight = true },
+    );
+
+    try std.testing.expectEqualStrings("prepared-legacy-send", signature);
+    try std.testing.expect(rpc.captured_skip_preflight);
+}
+
+test "invoke.simulatePreparedInvocation dispatches prepared versioned transaction" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        captured_sig_verify: bool = false,
+
+        pub fn simulateTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SimulateTransactionOptions,
+        ) !rpc_types.SimulatedTransaction {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return error.UnexpectedLegacyCall;
+        }
+
+        pub fn simulateVersionedTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SimulateTransactionOptions,
+        ) !rpc_types.SimulatedTransaction {
+            _ = transaction;
+            self.captured_sig_verify = options.?.sig_verify;
+            return .{
+                .context_slot = 1,
+                .logs = null,
+                .accounts = null,
+                .units_consumed = null,
+                .return_data = null,
+                .inner_instructions = null,
+                .replacement_blockhash = null,
+                .err_json = null,
+                .fee = null,
+                .loaded_accounts_data_size = null,
+            };
+        }
+    };
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 101, 102, 103, 104, 105);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .program,
+        true,
+        spec_json,
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    var rpc = DummyRpc{};
+    _ = try simulatePreparedInvocation(
+        &rpc,
+        &prepared,
+        .{ .sig_verify = true },
+    );
+
+    try std.testing.expect(rpc.captured_sig_verify);
+}
+
+test "invoke.sendAndConfirmPreparedInvocationWithSpinner dispatches prepared versioned transaction" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        captured_timeout_ms: u64 = 0,
+        captured_commitment: ?rpc_types.Commitment = null,
+
+        pub fn sendTransactionAndConfirmTypedWithSpinner(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+            commitment: ?rpc_types.Commitment,
+            search_transaction_history: bool,
+            timeout_ms: u64,
+            poll_interval_ms: u64,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            _ = commitment;
+            _ = search_transaction_history;
+            _ = timeout_ms;
+            _ = poll_interval_ms;
+            return error.UnexpectedLegacyCall;
+        }
+
+        pub fn sendAndConfirmVersionedTransactionTypedWithSpinner(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+            commitment: ?rpc_types.Commitment,
+            search_transaction_history: bool,
+            timeout_ms: u64,
+            poll_interval_ms: u64,
+        ) ![]const u8 {
+            _ = transaction;
+            _ = options;
+            _ = search_transaction_history;
+            _ = poll_interval_ms;
+            self.captured_timeout_ms = timeout_ms;
+            self.captured_commitment = commitment;
+            return "prepared-versioned-spinner";
+        }
+    };
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 111, 112, 113, 114, 115);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .program,
+        true,
+        spec_json,
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    var rpc = DummyRpc{};
+    const signature = try sendAndConfirmPreparedInvocationWithSpinner(
+        &rpc,
+        &prepared,
+        null,
+        .confirmed,
+        false,
+        777,
+        10,
+    );
+
+    try std.testing.expectEqualStrings("prepared-versioned-spinner", signature);
+    try std.testing.expectEqual(@as(u64, 777), rpc.captured_timeout_ms);
+    try std.testing.expectEqual(rpc_types.Commitment.confirmed, rpc.captured_commitment.?);
 }
 
 test "invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson preserves execution report" {
