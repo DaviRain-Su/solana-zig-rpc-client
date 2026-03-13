@@ -58,6 +58,24 @@ pub const SignedInvocationTransaction = union(enum) {
 
 pub const OwnedInvocationSpec = client.instructions_invoke.OwnedInvocationSpec;
 
+pub const OwnedResolvedInvocation = struct {
+    payer: sdk.Pubkey,
+    signer_pubkeys: []sdk.Pubkey,
+    owned_instructions: sdk.OwnedInstructions,
+    address_lookup_tables: []sdk.AddressLookupTableAccount,
+    recent_blockhash: ?sdk.Hash = null,
+    nonce_account: ?sdk.Pubkey = null,
+    nonce_authority: ?sdk.Pubkey = null,
+
+    pub fn deinit(self: *OwnedResolvedInvocation, allocator: Allocator) void {
+        allocator.free(self.signer_pubkeys);
+        self.owned_instructions.deinit(allocator);
+        for (self.address_lookup_tables) |table| allocator.free(table.addresses);
+        allocator.free(self.address_lookup_tables);
+        self.* = undefined;
+    }
+};
+
 pub fn buildInstructionInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
@@ -99,6 +117,70 @@ pub fn buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
         instruction_spec_json,
     );
+}
+
+pub fn buildOwnedResolvedInvocationFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !OwnedResolvedInvocation {
+    const owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+
+    const signer_pubkeys = try allocator.alloc(sdk.Pubkey, owned_spec.signers.len);
+    errdefer allocator.free(signer_pubkeys);
+    for (owned_spec.signers, 0..) |signer, index| {
+        signer_pubkeys[index] = signer.public_key;
+    }
+
+    const owned_instructions = owned_spec.owned_instructions;
+    const address_lookup_tables = owned_spec.address_lookup_tables;
+    allocator.free(owned_spec.signers);
+
+    return .{
+        .payer = owned_spec.payer,
+        .signer_pubkeys = signer_pubkeys,
+        .owned_instructions = owned_instructions,
+        .address_lookup_tables = address_lookup_tables,
+        .recent_blockhash = owned_spec.recent_blockhash,
+        .nonce_account = owned_spec.nonce_account,
+        .nonce_authority = owned_spec.nonce_authority,
+    };
+}
+
+pub fn buildOwnedInstructionsFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !sdk.OwnedInstructions {
+    var resolved = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    const owned_instructions = resolved.owned_instructions;
+    resolved.owned_instructions.instructions = &.{};
+    resolved.deinit(allocator);
+    return owned_instructions;
+}
+
+pub fn buildInvocationSignerPubkeysFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) ![]sdk.Pubkey {
+    var resolved = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    const signer_pubkeys = resolved.signer_pubkeys;
+    resolved.signer_pubkeys = &.{};
+    resolved.deinit(allocator);
+    return signer_pubkeys;
 }
 
 pub fn sendInvocationSpecJson(
@@ -1217,6 +1299,61 @@ test "invoke.buildOwnedInvocationSpecFromInvocationSpecJson dispatches program f
     try std.testing.expectEqual(@as(usize, 0), owned.address_lookup_tables.len);
     try std.testing.expectEqual(@as(usize, 1), owned.instructions[0].accounts.len);
     try std.testing.expectEqualSlices(u8, &.{ 9, 8, 7 }, owned.instructions[0].data);
+}
+
+test "invoke.buildOwnedResolvedInvocationFromInvocationSpecJson removes secret key material" {
+    const allocator = std.testing.allocator;
+
+    const program_spec_json = try allocMinimalProgramInvocationSpecJson(allocator, 61, 62, 63);
+    defer allocator.free(program_spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+        allocator,
+        .program,
+        program_spec_json,
+    );
+    defer resolved.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), resolved.signer_pubkeys.len);
+    try std.testing.expectEqual(resolved.payer, resolved.signer_pubkeys[0]);
+    try std.testing.expectEqual(@as(usize, 1), resolved.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 0), resolved.address_lookup_tables.len);
+    try std.testing.expect(resolved.recent_blockhash != null);
+    try std.testing.expectEqualSlices(u8, &.{ 9, 8, 7 }, resolved.owned_instructions.instructions[0].data);
+}
+
+test "invoke.buildInvocationSignerPubkeysFromInvocationSpecJson dispatches instructions family" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 71, 72, 73);
+    defer allocator.free(spec_json);
+
+    const signer_pubkeys = try buildInvocationSignerPubkeysFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer allocator.free(signer_pubkeys);
+
+    try std.testing.expectEqual(@as(usize, 1), signer_pubkeys.len);
+}
+
+test "invoke.buildOwnedInstructionsFromInvocationSpecJson dispatches program family" {
+    const allocator = std.testing.allocator;
+
+    const program_spec_json = try allocMinimalProgramInvocationSpecJson(allocator, 81, 82, 83);
+    defer allocator.free(program_spec_json);
+
+    var owned_instructions = try buildOwnedInstructionsFromInvocationSpecJson(
+        allocator,
+        .program,
+        program_spec_json,
+    );
+    defer owned_instructions.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), owned_instructions.instructions[0].accounts.len);
+    try std.testing.expectEqualSlices(u8, &.{ 9, 8, 7 }, owned_instructions.instructions[0].data);
 }
 
 test "invoke.buildLegacyMessageBytesFromInvocationSpecJsonWithOptions matches generic builder" {
