@@ -1598,6 +1598,112 @@ pub fn allocPreparedInvocationJson(
     return try aw.toOwnedSlice();
 }
 
+pub fn writeSentPreparedInvocationText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    sent: *const SentPreparedInvocation,
+    confirmed: bool,
+) !void {
+    try writePreparedInvocationText(writer, allocator, &sent.prepared);
+    try writer.print("{s}: {s}\n", .{ if (confirmed) "confirmed signature" else "signature", sent.signature });
+}
+
+pub fn writeSentPreparedInvocationJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    sent: *const SentPreparedInvocation,
+) !void {
+    const prepared_json = try allocPreparedInvocationJson(allocator, &sent.prepared);
+    defer allocator.free(prepared_json);
+
+    try writer.writeAll(prepared_json[0 .. prepared_json.len - 1]);
+    try writer.writeAll(",\"signature\":");
+    try std.json.Stringify.value(sent.signature, .{}, writer);
+    try writer.writeAll("}");
+}
+
+pub fn allocSentPreparedInvocationJson(
+    allocator: Allocator,
+    sent: *const SentPreparedInvocation,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writeSentPreparedInvocationJson(&aw.writer, allocator, sent);
+    return try aw.toOwnedSlice();
+}
+
+pub fn writeSimulatedPreparedInvocationText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    simulated: *const SimulatedPreparedInvocation,
+) !void {
+    try writePreparedInvocationText(writer, allocator, &simulated.prepared);
+    try writer.print("context slot: {}\n", .{simulated.simulation.context_slot});
+    if (simulated.simulation.fee) |value| try writer.print("fee: {}\n", .{value});
+    if (simulated.simulation.units_consumed) |value| try writer.print("units consumed: {}\n", .{value});
+}
+
+pub fn writeSimulatedPreparedInvocationJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    simulated: *const SimulatedPreparedInvocation,
+) !void {
+    const prepared_json = try allocPreparedInvocationJson(allocator, &simulated.prepared);
+    defer allocator.free(prepared_json);
+
+    try writer.writeAll(prepared_json[0 .. prepared_json.len - 1]);
+    try writer.writeAll(",\"context_slot\":");
+    try std.json.Stringify.value(simulated.simulation.context_slot, .{}, writer);
+    try writer.writeAll(",\"fee\":");
+    try std.json.Stringify.value(simulated.simulation.fee, .{}, writer);
+    try writer.writeAll(",\"units_consumed\":");
+    try std.json.Stringify.value(simulated.simulation.units_consumed, .{}, writer);
+    try writer.writeAll("}");
+}
+
+pub fn allocSimulatedPreparedInvocationJson(
+    allocator: Allocator,
+    simulated: *const SimulatedPreparedInvocation,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writeSimulatedPreparedInvocationJson(&aw.writer, allocator, simulated);
+    return try aw.toOwnedSlice();
+}
+
+pub fn writePreparedInvocationFeeText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    fee_result: *const PreparedInvocationFee,
+) !void {
+    try writePreparedInvocationText(writer, allocator, &fee_result.prepared);
+    try writer.print("fee: {}\n", .{fee_result.fee});
+}
+
+pub fn writePreparedInvocationFeeJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    fee_result: *const PreparedInvocationFee,
+) !void {
+    const prepared_json = try allocPreparedInvocationJson(allocator, &fee_result.prepared);
+    defer allocator.free(prepared_json);
+
+    try writer.writeAll(prepared_json[0 .. prepared_json.len - 1]);
+    try writer.writeAll(",\"fee\":");
+    try std.json.Stringify.value(fee_result.fee, .{}, writer);
+    try writer.writeAll("}");
+}
+
+pub fn allocPreparedInvocationFeeJson(
+    allocator: Allocator,
+    fee_result: *const PreparedInvocationFee,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writePreparedInvocationFeeJson(&aw.writer, allocator, fee_result);
+    return try aw.toOwnedSlice();
+}
+
 pub const PreparedInvocation = struct {
     mode: InvocationMode,
     report: OwnedInvocationReport,
