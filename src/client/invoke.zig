@@ -663,6 +663,77 @@ pub const PreferredPreparedInvocation = struct {
     ) !rpc_types.FeeForMessage {
         return try self.prepared.getFee(rpc, commitment);
     }
+
+    pub fn sendOwned(
+        self: PreferredPreparedInvocation,
+        allocator: Allocator,
+        rpc: anytype,
+        options: ?rpc_types.SendTransactionOptions,
+    ) !SentPreferredPreparedExecution {
+        return try sendOwnedPreferredPreparedExecution(allocator, rpc, self, options);
+    }
+
+    pub fn simulateOwned(
+        self: PreferredPreparedInvocation,
+        allocator: Allocator,
+        rpc: anytype,
+        options: ?rpc_types.SimulateTransactionOptions,
+    ) !SimulatedPreferredPreparedExecution {
+        return try simulateOwnedPreferredPreparedExecution(allocator, rpc, self, options);
+    }
+
+    pub fn sendAndConfirmOwned(
+        self: PreferredPreparedInvocation,
+        allocator: Allocator,
+        rpc: anytype,
+        options: ?rpc_types.SendTransactionOptions,
+        commitment: ?client.Commitment,
+        search_transaction_history: bool,
+        timeout_ms: u64,
+        poll_interval_ms: u64,
+    ) !SentPreferredPreparedExecution {
+        return try sendAndConfirmOwnedPreferredPreparedExecution(
+            allocator,
+            rpc,
+            self,
+            options,
+            commitment,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+        );
+    }
+
+    pub fn sendAndConfirmOwnedWithSpinner(
+        self: PreferredPreparedInvocation,
+        allocator: Allocator,
+        rpc: anytype,
+        options: ?rpc_types.SendTransactionOptions,
+        commitment: ?client.Commitment,
+        search_transaction_history: bool,
+        timeout_ms: u64,
+        poll_interval_ms: u64,
+    ) !SentPreferredPreparedExecution {
+        return try sendAndConfirmOwnedPreferredPreparedExecutionWithSpinner(
+            allocator,
+            rpc,
+            self,
+            options,
+            commitment,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+        );
+    }
+
+    pub fn getFeeOwned(
+        self: PreferredPreparedInvocation,
+        allocator: Allocator,
+        rpc: anytype,
+        commitment: ?client.Commitment,
+    ) !PreferredPreparedExecutionFee {
+        return try getFeeForOwnedPreferredPreparedExecution(allocator, rpc, self, commitment);
+    }
 };
 
 pub const SentPreparedInvocation = struct {
@@ -691,6 +762,37 @@ pub const PreparedInvocationFee = struct {
     fee: rpc_types.FeeForMessage,
 
     pub fn deinit(self: *PreparedInvocationFee, allocator: Allocator) void {
+        self.prepared.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
+pub const SentPreferredPreparedExecution = struct {
+    prepared: PreferredPreparedInvocation,
+    signature: []const u8,
+
+    pub fn deinit(self: *SentPreferredPreparedExecution, allocator: Allocator) void {
+        self.prepared.deinit(allocator);
+        allocator.free(self.signature);
+        self.* = undefined;
+    }
+};
+
+pub const SimulatedPreferredPreparedExecution = struct {
+    prepared: PreferredPreparedInvocation,
+    simulation: client.SimulatedTransaction,
+
+    pub fn deinit(self: *SimulatedPreferredPreparedExecution, allocator: Allocator) void {
+        self.prepared.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
+pub const PreferredPreparedExecutionFee = struct {
+    prepared: PreferredPreparedInvocation,
+    fee: rpc_types.FeeForMessage,
+
+    pub fn deinit(self: *PreferredPreparedExecutionFee, allocator: Allocator) void {
         self.prepared.deinit(allocator);
         self.* = undefined;
     }
@@ -2064,6 +2166,98 @@ pub fn getFeeForOwnedPreparedInvocation(
     return .{
         .prepared = owned,
         .fee = try getFeeForPreparedInvocation(rpc, &owned, commitment),
+    };
+}
+
+pub fn sendOwnedPreferredPreparedExecution(
+    allocator: Allocator,
+    rpc: anytype,
+    prepared: PreferredPreparedInvocation,
+    options: ?rpc_types.SendTransactionOptions,
+) !SentPreferredPreparedExecution {
+    var owned = prepared;
+    errdefer owned.deinit(allocator);
+    return .{
+        .prepared = owned,
+        .signature = try owned.send(rpc, options),
+    };
+}
+
+pub fn simulateOwnedPreferredPreparedExecution(
+    allocator: Allocator,
+    rpc: anytype,
+    prepared: PreferredPreparedInvocation,
+    options: ?rpc_types.SimulateTransactionOptions,
+) !SimulatedPreferredPreparedExecution {
+    var owned = prepared;
+    errdefer owned.deinit(allocator);
+    return .{
+        .prepared = owned,
+        .simulation = try owned.simulate(rpc, options),
+    };
+}
+
+pub fn sendAndConfirmOwnedPreferredPreparedExecution(
+    allocator: Allocator,
+    rpc: anytype,
+    prepared: PreferredPreparedInvocation,
+    options: ?rpc_types.SendTransactionOptions,
+    commitment: ?client.Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) !SentPreferredPreparedExecution {
+    var owned = prepared;
+    errdefer owned.deinit(allocator);
+    return .{
+        .prepared = owned,
+        .signature = try owned.sendAndConfirm(
+            rpc,
+            options,
+            commitment,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+        ),
+    };
+}
+
+pub fn sendAndConfirmOwnedPreferredPreparedExecutionWithSpinner(
+    allocator: Allocator,
+    rpc: anytype,
+    prepared: PreferredPreparedInvocation,
+    options: ?rpc_types.SendTransactionOptions,
+    commitment: ?client.Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) !SentPreferredPreparedExecution {
+    var owned = prepared;
+    errdefer owned.deinit(allocator);
+    return .{
+        .prepared = owned,
+        .signature = try owned.sendAndConfirmWithSpinner(
+            rpc,
+            options,
+            commitment,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+        ),
+    };
+}
+
+pub fn getFeeForOwnedPreferredPreparedExecution(
+    allocator: Allocator,
+    rpc: anytype,
+    prepared: PreferredPreparedInvocation,
+    commitment: ?client.Commitment,
+) !PreferredPreparedExecutionFee {
+    var owned = prepared;
+    errdefer owned.deinit(allocator);
+    return .{
+        .prepared = owned,
+        .fee = try owned.getFee(rpc, commitment),
     };
 }
 
@@ -7295,6 +7489,110 @@ test "invoke.buildPreferredPreparedInvocationFromInvocationSpecJson preserves ve
     try std.testing.expectEqual(InvocationMode.versioned, prepared.selected_mode);
     try std.testing.expect(prepared.used_fallback);
     try std.testing.expectEqual(InvocationMode.versioned, prepared.prepared.mode);
+}
+
+test "invoke.sendOwnedPreferredPreparedExecution preserves preferred prepared metadata" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn sendTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return "preferred-prepared-execution-send";
+        }
+
+        pub fn sendVersionedTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return error.UnexpectedVersionedCall;
+        }
+    };
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 393, 394, 395);
+    defer allocator.free(spec_json);
+
+    var rpc = DummyRpc{};
+    var sent = try sendOwnedPreferredPreparedExecution(
+        allocator,
+        &rpc,
+        try buildPreferredPreparedInvocationFromInvocationSpecJson(
+            allocator,
+            DummyRpc{},
+            .instructions,
+            spec_json,
+            .{},
+        ),
+        null,
+    );
+    defer sent.deinit(allocator);
+
+    try std.testing.expectEqualStrings("preferred-prepared-execution-send", sent.signature);
+    try std.testing.expectEqual(InvocationMode.legacy, sent.prepared.selected_mode);
+    try std.testing.expect(sent.prepared.can_execute_selected_mode);
+}
+
+test "invoke.getFeeForOwnedPreferredPreparedExecution preserves fallback metadata" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn getFeeForMessageTyped(
+            self: *@This(),
+            message: sdk.LegacyMessage,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = message;
+            _ = commitment;
+            return error.UnexpectedLegacyCall;
+        }
+
+        pub fn getFeeForVersionedMessageTyped(
+            self: *@This(),
+            message: sdk.VersionedMessageV0,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = message;
+            _ = commitment;
+            return @as(rpc_types.FeeForMessage, 741);
+        }
+    };
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 396, 397, 398, 399, 400);
+    defer allocator.free(spec_json);
+
+    var rpc = DummyRpc{};
+    var fee_result = try getFeeForOwnedPreferredPreparedExecution(
+        allocator,
+        &rpc,
+        try buildPreferredPreparedInvocationFromInvocationSpecJson(
+            allocator,
+            DummyRpc{},
+            .program,
+            spec_json,
+            .{
+                .mode = .{
+                    .preferred_mode = .legacy,
+                    .allow_fallback = true,
+                },
+            },
+        ),
+        .confirmed,
+    );
+    defer fee_result.deinit(allocator);
+
+    try std.testing.expectEqual(@as(rpc_types.FeeForMessage, 741), fee_result.fee);
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), fee_result.prepared.requested_mode);
+    try std.testing.expectEqual(InvocationMode.versioned, fee_result.prepared.selected_mode);
+    try std.testing.expect(fee_result.prepared.used_fallback);
 }
 
 test "invoke.PreparedInvocation transaction helpers expose generic serialization" {
