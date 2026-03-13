@@ -272,6 +272,11 @@ pub const SendAndConfirmPreferredInvocationSpecOptions = struct {
     send_and_confirm: SendAndConfirmInvocationSpecOptions = .{},
 };
 
+pub const GetFeeForPreferredInvocationSpecOptions = struct {
+    mode: PreferredInvocationModeOptions = .{},
+    fee: GetFeeForInvocationSpecOptions = .{},
+};
+
 pub fn buildInstructionInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
@@ -972,6 +977,54 @@ pub fn buildPreferredMessageBase64FromInvocationSpecJson(
     );
 }
 
+pub fn buildPreferredOwnedMessageFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !OwnedInvocationMessage {
+    const mode = try resolvePreferredInvocationMode(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    return try buildOwnedMessageFromInvocationSpecJsonWithOptions(
+        allocator,
+        rpc,
+        family,
+        mode == .versioned,
+        invocation_spec_json,
+        options.build,
+    );
+}
+
+pub fn buildPreferredMessageBytesFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    const mode = try resolvePreferredInvocationMode(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    return try buildMessageBytesFromInvocationSpecJsonWithOptions(
+        allocator,
+        rpc,
+        family,
+        mode == .versioned,
+        invocation_spec_json,
+        options.build,
+    );
+}
+
 pub fn buildPreferredTransactionBase64FromInvocationSpecJson(
     allocator: Allocator,
     rpc: anytype,
@@ -1098,6 +1151,60 @@ pub fn sendAndConfirmPreferredInvocationSpecJson(
         mode == .versioned,
         invocation_spec_json,
         options.send_and_confirm,
+    );
+}
+
+pub fn sendAndConfirmPreferredInvocationSpecJsonWithSpinner(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: SendAndConfirmPreferredInvocationSpecOptions,
+) ![]const u8 {
+    const mode = try resolvePreferredInvocationMode(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.send_and_confirm.blockhash_commitment },
+        },
+    );
+    return try sendAndConfirmInvocationSpecJsonWithSpinnerOptions(
+        allocator,
+        rpc,
+        family,
+        mode == .versioned,
+        invocation_spec_json,
+        options.send_and_confirm,
+    );
+}
+
+pub fn getFeeForPreferredInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: GetFeeForPreferredInvocationSpecOptions,
+) !client.FeeForMessage {
+    const mode = try resolvePreferredInvocationMode(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.fee.blockhash_commitment },
+        },
+    );
+    return try getFeeForInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        mode == .versioned,
+        invocation_spec_json,
+        options.fee,
     );
 }
 
@@ -2995,6 +3102,30 @@ test "invoke.buildPreferredTransactionBase64FromInvocationSpecJson defaults to l
     try std.testing.expectEqualStrings(expected, actual);
 }
 
+test "invoke.buildPreferredOwnedMessageFromInvocationSpecJson defaults to legacy union" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 266, 267, 268);
+    defer allocator.free(spec_json);
+
+    var actual = try buildPreferredOwnedMessageFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        spec_json,
+        .{},
+    );
+    defer actual.deinit(allocator);
+
+    switch (actual) {
+        .legacy => |owned| {
+            try std.testing.expectEqual(@as(usize, 1), owned.owned_instructions.len);
+        },
+        .versioned => try std.testing.expect(false),
+    }
+}
+
 test "invoke.buildPreferredTransactionBase64FromInvocationSpecJson prefers versioned mode with lookup tables" {
     const allocator = std.testing.allocator;
     const DummyRpc = struct {};
@@ -3021,6 +3152,34 @@ test "invoke.buildPreferredTransactionBase64FromInvocationSpecJson prefers versi
     defer allocator.free(actual);
 
     try std.testing.expectEqualStrings(expected, actual);
+}
+
+test "invoke.buildPreferredMessageBytesFromInvocationSpecJson prefers versioned mode with lookup tables" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 286, 287, 288, 289, 290);
+    defer allocator.free(spec_json);
+
+    const expected = try buildVersionedMessageBytesFromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{},
+    );
+    defer allocator.free(expected);
+
+    const actual = try buildPreferredMessageBytesFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{},
+    );
+    defer allocator.free(actual);
+
+    try std.testing.expectEqualSlices(u8, expected, actual);
 }
 
 test "invoke.buildPreferredTransactionBase64FromInvocationSpecJson honors explicit preferred mode" {
