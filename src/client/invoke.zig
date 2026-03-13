@@ -2646,6 +2646,124 @@ pub fn buildPreferredPreparedInvocationFromInvocationSpecJson(
     };
 }
 
+pub fn buildPreparedInvocationFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: OwnedInvocationSpec,
+    blockhash_commitment: ?client.Commitment,
+) !PreparedInvocation {
+    return try buildPreparedInvocationFromOwnedInvocationSpecWithOptions(
+        allocator,
+        rpc,
+        versioned,
+        owned_spec,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
+}
+
+pub fn buildPreparedInvocationFromOwnedInvocationSpecWithOptions(
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: OwnedInvocationSpec,
+    options: BuildInvocationSpecOptions,
+) !PreparedInvocation {
+    var mutable = owned_spec;
+    const signers = mutable.signers;
+    mutable.signers = &.{};
+    errdefer allocator.free(signers);
+    const nonce_authority = mutable.nonce_authority;
+
+    var resolved_invocation = try buildOwnedResolvedInvocationFromOwnedSpec(allocator, mutable);
+    errdefer resolved_invocation.deinit(allocator);
+
+    var report = try buildInvocationReportFromResolved(allocator, resolved_invocation);
+    errdefer report.deinit(allocator);
+
+    var accounts = try buildOwnedInvocationAccountsFromResolved(allocator, &resolved_invocation);
+    errdefer accounts.deinit(allocator);
+
+    const transaction: SignedInvocationTransaction = if (versioned) blk: {
+        if (resolved_invocation.recent_blockhash) |recent_blockhash| {
+            break :blk .{ .versioned = try client.instructions_invoke.buildSignedVersionedTransaction(allocator, .{
+                .payer = resolved_invocation.payer,
+                .recent_blockhash = recent_blockhash,
+                .instructions = resolved_invocation.owned_instructions.instructions,
+                .address_lookup_tables = resolved_invocation.address_lookup_tables,
+                .signers = signers,
+            }) };
+        }
+
+        if (resolved_invocation.nonce_account) |nonce_account| {
+            const nonce_account_base58 = try nonce_account.toBase58(allocator);
+            defer allocator.free(nonce_account_base58);
+
+            break :blk .{ .versioned = try client.instructions_invoke.buildSignedVersionedTransactionWithBlockhashQuery(rpc, .{
+                .payer = resolved_invocation.payer,
+                .instructions = resolved_invocation.owned_instructions.instructions,
+                .address_lookup_tables = resolved_invocation.address_lookup_tables,
+                .signers = signers,
+                .blockhash_query = .{ .nonce_account = .{
+                    .pubkey = nonce_account_base58,
+                    .commitment = options.blockhash_commitment,
+                } },
+                .nonce_authority = nonce_authority,
+            }) };
+        }
+
+        break :blk .{ .versioned = try client.instructions_invoke.buildSignedVersionedTransactionWithLatestBlockhash(rpc, .{
+            .payer = resolved_invocation.payer,
+            .instructions = resolved_invocation.owned_instructions.instructions,
+            .address_lookup_tables = resolved_invocation.address_lookup_tables,
+            .signers = signers,
+            .blockhash_commitment = options.blockhash_commitment,
+        }) };
+    } else blk: {
+        if (resolved_invocation.recent_blockhash) |recent_blockhash| {
+            break :blk .{ .legacy = try client.instructions_invoke.buildSignedLegacyTransaction(allocator, .{
+                .payer = resolved_invocation.payer,
+                .recent_blockhash = recent_blockhash,
+                .instructions = resolved_invocation.owned_instructions.instructions,
+                .signers = signers,
+            }) };
+        }
+
+        if (resolved_invocation.nonce_account) |nonce_account| {
+            const nonce_account_base58 = try nonce_account.toBase58(allocator);
+            defer allocator.free(nonce_account_base58);
+
+            break :blk .{ .legacy = try client.instructions_invoke.buildSignedLegacyTransactionWithBlockhashQuery(rpc, .{
+                .payer = resolved_invocation.payer,
+                .instructions = resolved_invocation.owned_instructions.instructions,
+                .signers = signers,
+                .blockhash_query = .{ .nonce_account = .{
+                    .pubkey = nonce_account_base58,
+                    .commitment = options.blockhash_commitment,
+                } },
+                .nonce_authority = nonce_authority,
+            }) };
+        }
+
+        break :blk .{ .legacy = try client.instructions_invoke.buildSignedLegacyTransactionWithLatestBlockhash(rpc, .{
+            .payer = resolved_invocation.payer,
+            .instructions = resolved_invocation.owned_instructions.instructions,
+            .signers = signers,
+            .blockhash_commitment = options.blockhash_commitment,
+        }) };
+    };
+
+    allocator.free(signers);
+
+    return .{
+        .mode = if (versioned) .versioned else .legacy,
+        .report = report,
+        .resolved_invocation = resolved_invocation,
+        .accounts = accounts,
+        .transaction = transaction,
+    };
+}
+
 pub fn buildPreparedInvocationFromInvocationSpecJsonWithOptions(
     allocator: Allocator,
     rpc: anytype,
@@ -7786,6 +7904,57 @@ test "invoke.buildPreparedInvocationFromInvocationSpecJsonWithOptions prepares e
 
     try std.testing.expectEqual(InvocationMode.versioned, prepared.mode);
     try std.testing.expect(prepared.report.can_execute);
+    try std.testing.expectEqual(@as(usize, 1), prepared.report.plan.address_lookup_table_count);
+    try std.testing.expectEqual(@as(usize, 1), prepared.resolved_invocation.address_lookup_tables.len);
+    try std.testing.expectEqual(@as(std.meta.Tag(SignedInvocationTransaction), .versioned), std.meta.activeTag(prepared.transaction));
+}
+
+test "invoke.buildPreparedInvocationFromOwnedInvocationSpecWithOptions prepares explicit legacy invocation" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 119, 120, 121);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreparedInvocationFromOwnedInvocationSpecWithOptions(
+        allocator,
+        DummyRpc{},
+        false,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .instructions,
+            spec_json,
+        ),
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    try std.testing.expectEqual(InvocationMode.legacy, prepared.mode);
+    try std.testing.expect(prepared.report.can_execute);
+    try std.testing.expectEqual(@as(std.meta.Tag(SignedInvocationTransaction), .legacy), std.meta.activeTag(prepared.transaction));
+}
+
+test "invoke.buildPreparedInvocationFromOwnedInvocationSpecWithOptions prepares explicit versioned invocation" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 122, 123, 124, 125, 126);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreparedInvocationFromOwnedInvocationSpecWithOptions(
+        allocator,
+        DummyRpc{},
+        true,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    try std.testing.expectEqual(InvocationMode.versioned, prepared.mode);
     try std.testing.expectEqual(@as(usize, 1), prepared.report.plan.address_lookup_table_count);
     try std.testing.expectEqual(@as(usize, 1), prepared.resolved_invocation.address_lookup_tables.len);
     try std.testing.expectEqual(@as(std.meta.Tag(SignedInvocationTransaction), .versioned), std.meta.activeTag(prepared.transaction));
