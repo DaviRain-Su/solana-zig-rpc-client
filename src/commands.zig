@@ -3364,12 +3364,11 @@ fn buildInvocationSpecJsonFromCliSpec(
     additional_signer_secret_keys_arg: []const []const u8,
     recent_blockhash_arg: ?[]const u8,
 ) ![]u8 {
-    const payer_secret_key = if (sender_keypair_path_arg != null or sender_secret_key_arg != null)
-        try resolveInstructionKeypairSecretKeyBase58(allocator, sender_secret_key_arg, sender_keypair_path_arg)
+    var payer_inputs = if (sender_keypair_path_arg != null or sender_secret_key_arg != null)
+        try loadRequiredCliInvokePayerInputs(allocator, sender_secret_key_arg, sender_keypair_path_arg)
     else
-        try resolveInstructionKeypairSecretKeyBase58(allocator, spec.payer_secret_key, spec.payer_keypair_path);
-    defer if (payer_secret_key) |value| allocator.free(value);
-    const effective_payer_secret_key = payer_secret_key orelse return error.InvalidCli;
+        try loadRequiredCliInvokePayerInputs(allocator, spec.payer_secret_key, spec.payer_keypair_path);
+    defer payer_inputs.deinit(allocator);
 
     const nonce_authority_secret_key = try resolveInstructionKeypairSecretKeyBase58(
         allocator,
@@ -3422,7 +3421,7 @@ fn buildInvocationSpecJsonFromCliSpec(
     } else null;
 
     return try client.invocation_spec_json.buildInvocationSpecJson(allocator, .{
-        .payer_secret_key = effective_payer_secret_key,
+        .payer_secret_key = payer_inputs.secret_key,
         .additional_signer_secret_keys_json = additional_signer_secret_keys_json,
         .address_lookup_tables_json = address_lookup_tables_json,
         .recent_blockhash = effective_recent_blockhash,
@@ -3550,6 +3549,33 @@ fn encodeResolvedSignerSecretKeysJson(
     return try allocator.dupe(u8, json_buffer.written());
 }
 
+const LoadedCliInvokePayerInputs = struct {
+    keypair: client.Keypair,
+    secret_key: []u8,
+
+    fn deinit(self: *@This(), allocator: Allocator) void {
+        allocator.free(self.secret_key);
+    }
+};
+
+fn loadRequiredCliInvokePayerInputs(
+    allocator: Allocator,
+    secret_key_arg: ?[]const u8,
+    keypair_path_arg: ?[]const u8,
+) !LoadedCliInvokePayerInputs {
+    const keypair = try resolveOptionalInstructionKeypair(
+        allocator,
+        secret_key_arg,
+        keypair_path_arg,
+    ) orelse return error.InvalidCli;
+    const secret_key = try client.encodeBase58(allocator, &keypair.secret_key);
+    errdefer allocator.free(secret_key);
+    return .{
+        .keypair = keypair,
+        .secret_key = secret_key,
+    };
+}
+
 const LoadedCliProgramInvokePayloadInputs = struct {
     accounts_source: []u8,
     instruction_data: []u8,
@@ -3649,12 +3675,12 @@ fn buildProgramInvokeInvocationSpecJson(
 ) ![]u8 {
     if (recent_blockhash_arg != null and nonce_account_arg != null) return error.InvalidCli;
 
-    const payer_secret_key = try resolveInstructionKeypairSecretKeyBase58(
+    var payer_inputs = try loadRequiredCliInvokePayerInputs(
         allocator,
         payer_secret_key_arg,
         payer_keypair_path_arg,
-    ) orelse return error.InvalidCli;
-    defer allocator.free(payer_secret_key);
+    );
+    defer payer_inputs.deinit(allocator);
 
     var payload_inputs = try loadCliProgramInvokePayloadInputs(
         allocator,
@@ -3677,7 +3703,7 @@ fn buildProgramInvokeInvocationSpecJson(
     defer invocation_context.deinit(allocator);
 
     return client.invocation_spec_json.buildProgramInvocationSpecJson(allocator, .{
-        .payer_secret_key = payer_secret_key,
+        .payer_secret_key = payer_inputs.secret_key,
         .additional_signer_secret_keys_json = invocation_context.additional_signer_secret_keys_json,
         .address_lookup_tables_json = invocation_context.lookup_tables_source,
         .recent_blockhash = recent_blockhash_arg,
@@ -3712,13 +3738,12 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) ![]u8 {
-    const payer_keypair = try resolveOptionalInstructionKeypair(
+    var payer_inputs = try loadRequiredCliInvokePayerInputs(
         allocator,
         payer_secret_key_arg,
         payer_keypair_path_arg,
-    ) orelse return error.InvalidCli;
-    const payer_secret_key = try client.encodeBase58(allocator, &payer_keypair.secret_key);
-    defer allocator.free(payer_secret_key);
+    );
+    defer payer_inputs.deinit(allocator);
 
     const idl_source = try loadInstructionSpecSource(allocator, idl_arg);
     defer allocator.free(idl_source);
@@ -3829,7 +3854,7 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
             .account_bindings = parsed_cli_account_bindings.typed_bindings,
             .account_bindings_json = if (merged_accounts_json_source) |value| value else accounts_json_source,
             .remaining_accounts = typed_remaining_accounts,
-            .default_signer = payer_keypair.public_key,
+            .default_signer = payer_inputs.keypair.public_key,
         },
     ) catch return error.InvalidCli;
     defer owned_instruction.deinit(allocator);
@@ -3843,7 +3868,7 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
     } else null;
 
     return client.invocation_spec_json.buildAnchorIdlInvocationSpecJson(allocator, .{
-        .payer_secret_key = payer_secret_key,
+        .payer_secret_key = payer_inputs.secret_key,
         .additional_signer_secret_keys_json = invocation_context.additional_signer_secret_keys_json,
         .address_lookup_tables_json = invocation_context.lookup_tables_source,
         .recent_blockhash = recent_blockhash_arg,
