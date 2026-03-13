@@ -392,6 +392,19 @@ pub const PreferredResolvedInvocationExecutionResult = struct {
     }
 };
 
+pub const PreferredInvocationAnalysis = struct {
+    execution_report: PreferredInvocationExecutionReport,
+    resolved_invocation: OwnedResolvedInvocation,
+    accounts: OwnedInvocationAccounts,
+
+    pub fn deinit(self: *PreferredInvocationAnalysis, allocator: Allocator) void {
+        self.execution_report.deinit(allocator);
+        self.resolved_invocation.deinit(allocator);
+        self.accounts.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 pub const PreferredSignatureExecutionResult = struct {
     execution_report: PreferredInvocationExecutionReport,
     signature: []const u8,
@@ -1280,6 +1293,43 @@ pub fn buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJson(
             family,
             invocation_spec_json,
         ),
+    };
+}
+
+pub fn buildPreferredInvocationAnalysisFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredInvocationAnalysis {
+    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    errdefer execution_report.deinit(allocator);
+
+    var resolved_invocation = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer resolved_invocation.deinit(allocator);
+
+    var accounts = try buildInvocationAccountsFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer accounts.deinit(allocator);
+
+    return .{
+        .execution_report = execution_report,
+        .resolved_invocation = resolved_invocation,
+        .accounts = accounts,
     };
 }
 
@@ -5428,6 +5478,65 @@ test "invoke.buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJs
     try std.testing.expectEqual(@as(?InvocationMode, .versioned), result.execution_report.selected_mode);
     try std.testing.expect(result.execution_report.used_fallback);
     try std.testing.expectEqual(@as(usize, 1), result.resolved_invocation.address_lookup_tables.len);
+}
+
+test "invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson combines execution and account introspection" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocRichInstructionsInvocationSpecJson(allocator, 66, 67, 68, 69, 70, 71);
+    defer allocator.free(spec_json);
+
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{66} ** 32);
+    const nonce_account = sdk.Pubkey.fromBytes([_]u8{70} ** 32);
+
+    var analysis = try buildPreferredInvocationAnalysisFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        spec_json,
+        .{},
+    );
+    defer analysis.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), analysis.execution_report.selected_mode);
+    try std.testing.expect(analysis.execution_report.can_execute_selected_mode);
+    try std.testing.expectEqual(@as(usize, 1), analysis.resolved_invocation.owned_instructions.instructions.len);
+
+    const payer_info = findInvocationAccountInfo(analysis.accounts.accounts, payer_raw.public_key).?;
+    try std.testing.expect(payer_info.is_payer);
+    const nonce_account_info = findInvocationAccountInfo(analysis.accounts.accounts, nonce_account).?;
+    try std.testing.expect(nonce_account_info.is_nonce_account);
+}
+
+test "invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson preserves fallback and lookup analysis" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+    const program_id = sdk.Pubkey.fromBytes([_]u8{72} ** 32);
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 71, 72, 73, 74, 75);
+    defer allocator.free(spec_json);
+
+    var analysis = try buildPreferredInvocationAnalysisFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer analysis.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .versioned), analysis.execution_report.selected_mode);
+    try std.testing.expect(analysis.execution_report.used_fallback);
+    try std.testing.expectEqual(@as(usize, 1), analysis.resolved_invocation.address_lookup_tables.len);
+
+    const program_info = findInvocationAccountInfo(analysis.accounts.accounts, program_id).?;
+    try std.testing.expect(program_info.is_program);
 }
 
 test "invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson preserves execution report" {
