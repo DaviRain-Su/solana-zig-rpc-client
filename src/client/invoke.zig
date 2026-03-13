@@ -706,6 +706,58 @@ pub const PreparedInvocation = struct {
         return try getFeeForPreparedInvocation(rpc, self, commitment);
     }
 
+    pub fn payer(self: PreparedInvocation) sdk.Pubkey {
+        return self.resolved_invocation.payer;
+    }
+
+    pub fn containsSigner(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.resolved_invocation.signer_pubkeys, pubkey);
+    }
+
+    pub fn containsProgram(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.report.summary.program_ids, pubkey);
+    }
+
+    pub fn containsLookupTable(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.report.lookup_coverage.containsLookupTable(pubkey);
+    }
+
+    pub fn isWritableAccount(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isWritable(pubkey);
+    }
+
+    pub fn isProgramAccount(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isProgram(pubkey);
+    }
+
+    pub fn usesDurableNonce(self: PreparedInvocation) bool {
+        return self.report.uses_durable_nonce;
+    }
+
+    pub fn blockhashMode(self: PreparedInvocation) InvocationBlockhashMode {
+        return self.report.plan.blockhash_mode;
+    }
+
+    pub fn canExecute(self: PreparedInvocation) bool {
+        return self.report.can_execute;
+    }
+
+    pub fn hasMissingRequiredSigner(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.report.hasMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.report.hasExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.report.hasDuplicateSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.report.hasDuplicateLookupTable(pubkey);
+    }
+
     pub fn sendOwned(
         self: PreparedInvocation,
         allocator: Allocator,
@@ -872,6 +924,58 @@ pub const PreferredPreparedInvocation = struct {
         commitment: ?client.Commitment,
     ) !rpc_types.FeeForMessage {
         return try self.prepared.getFee(rpc, commitment);
+    }
+
+    pub fn payer(self: PreferredPreparedInvocation) sdk.Pubkey {
+        return self.prepared.payer();
+    }
+
+    pub fn containsSigner(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsSigner(pubkey);
+    }
+
+    pub fn containsProgram(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsProgram(pubkey);
+    }
+
+    pub fn containsLookupTable(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsLookupTable(pubkey);
+    }
+
+    pub fn isWritableAccount(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isWritableAccount(pubkey);
+    }
+
+    pub fn isProgramAccount(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isProgramAccount(pubkey);
+    }
+
+    pub fn usesDurableNonce(self: PreferredPreparedInvocation) bool {
+        return self.prepared.usesDurableNonce();
+    }
+
+    pub fn blockhashMode(self: PreferredPreparedInvocation) InvocationBlockhashMode {
+        return self.prepared.blockhashMode();
+    }
+
+    pub fn canExecute(self: PreferredPreparedInvocation) bool {
+        return self.can_execute_selected_mode;
+    }
+
+    pub fn hasMissingRequiredSigner(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateLookupTable(pubkey);
     }
 
     pub fn sendOwned(
@@ -8361,6 +8465,83 @@ test "invoke.PreferredPreparedExecutionFee exposes transaction and message helpe
     try std.testing.expect(tx_base64.len != 0);
     try std.testing.expect(message_base64.len != 0);
     try std.testing.expect(fee_result.firstSignature() != null);
+}
+
+test "invoke.PreparedInvocation query helpers expose signer and program state" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+    const program_id = sdk.Pubkey.fromBytes([_]u8{425} ** 32);
+    const missing_pubkey = sdk.Pubkey.fromBytes([_]u8{429} ** 32);
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 423, 424, 425);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        false,
+        spec_json,
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    try std.testing.expect(std.meta.eql(prepared.payer(), prepared.report.summary.payer));
+    try std.testing.expect(prepared.containsSigner(prepared.payer()));
+    try std.testing.expect(prepared.containsProgram(program_id));
+    try std.testing.expect(prepared.isProgramAccount(program_id));
+    try std.testing.expect(prepared.canExecute());
+    try std.testing.expectEqual(InvocationBlockhashMode.latest_blockhash, prepared.blockhashMode());
+    try std.testing.expect(!prepared.usesDurableNonce());
+    try std.testing.expect(!prepared.containsSigner(missing_pubkey));
+    try std.testing.expect(!prepared.containsProgram(missing_pubkey));
+    try std.testing.expect(!prepared.hasMissingRequiredSigner(missing_pubkey));
+    try std.testing.expect(!prepared.hasExtraSigner(missing_pubkey));
+    try std.testing.expect(!prepared.hasDuplicateSigner(missing_pubkey));
+    try std.testing.expect(!prepared.hasDuplicateLookupTable(missing_pubkey));
+}
+
+test "invoke.PreferredPreparedInvocation query helpers expose fallback and lookup state" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+    const duplicate_signer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{431} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{434} ** 32);
+    const missing_pubkey = sdk.Pubkey.fromBytes([_]u8{435} ** 32);
+
+    const spec_json = try allocProgramInvocationSpecJsonWithDuplicateSignerAndLookupTable(
+        allocator,
+        430,
+        431,
+        432,
+        433,
+        434,
+        435,
+    );
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreferredPreparedInvocationFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer prepared.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), prepared.requested_mode);
+    try std.testing.expectEqual(InvocationMode.versioned, prepared.selected_mode);
+    try std.testing.expect(prepared.used_fallback);
+    try std.testing.expect(prepared.canExecute());
+    try std.testing.expect(prepared.containsLookupTable(lookup_table));
+    try std.testing.expect(prepared.hasDuplicateSigner(duplicate_signer_raw.public_key));
+    try std.testing.expect(prepared.hasDuplicateLookupTable(lookup_table));
+    try std.testing.expect(!prepared.hasMissingRequiredSigner(missing_pubkey));
+    try std.testing.expect(!prepared.hasExtraSigner(missing_pubkey));
 }
 
 test "invoke.OwnedInvocationAccounts query helpers expose payer and program roles" {
