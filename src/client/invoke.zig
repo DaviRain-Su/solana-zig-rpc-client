@@ -193,6 +193,24 @@ pub const OwnedInvocationValidation = struct {
     }
 };
 
+pub const OwnedInvocationLookupCoverage = struct {
+    lookup_table_pubkeys: []sdk.Pubkey,
+    lookup_table_address_pubkeys: []sdk.Pubkey,
+    candidate_pubkeys: []sdk.Pubkey,
+    covered_pubkeys: []sdk.Pubkey,
+    uncovered_pubkeys: []sdk.Pubkey,
+    fully_covered: bool,
+
+    pub fn deinit(self: *OwnedInvocationLookupCoverage, allocator: Allocator) void {
+        allocator.free(self.lookup_table_pubkeys);
+        allocator.free(self.lookup_table_address_pubkeys);
+        allocator.free(self.candidate_pubkeys);
+        allocator.free(self.covered_pubkeys);
+        allocator.free(self.uncovered_pubkeys);
+        self.* = undefined;
+    }
+};
+
 pub fn buildInstructionInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
@@ -681,6 +699,61 @@ pub fn buildInvocationValidationFromInvocationSpecJson(
         .lookup_table_pubkeys = lookup_table_pubkeys,
         .duplicate_lookup_table_pubkeys = duplicate_lookup_table_pubkeys,
         .is_valid = missing_required_signer_pubkeys.len == 0 and extra_signer_pubkeys.len == 0 and duplicate_provided_signers.len == 0 and duplicate_lookup_table_pubkeys.len == 0,
+    };
+}
+
+pub fn buildInvocationLookupCoverageFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !OwnedInvocationLookupCoverage {
+    var resolved = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer resolved.deinit(allocator);
+
+    var accounts = try buildOwnedInvocationAccountsFromResolved(allocator, &resolved);
+    defer accounts.deinit(allocator);
+
+    var lookup_table_address_pubkeys: std.ArrayList(sdk.Pubkey) = .empty;
+    errdefer lookup_table_address_pubkeys.deinit(allocator);
+    const lookup_table_pubkeys = try allocator.alloc(sdk.Pubkey, resolved.address_lookup_tables.len);
+    errdefer allocator.free(lookup_table_pubkeys);
+    for (resolved.address_lookup_tables, 0..) |table, index| {
+        lookup_table_pubkeys[index] = table.account_key;
+        for (table.addresses) |pubkey| {
+            try appendUniquePubkey(allocator, &lookup_table_address_pubkeys, pubkey);
+        }
+    }
+
+    var candidate_pubkeys: std.ArrayList(sdk.Pubkey) = .empty;
+    errdefer candidate_pubkeys.deinit(allocator);
+    for (accounts.accounts) |account| {
+        if (account.is_signer or account.is_payer or account.is_program) continue;
+        try appendUniquePubkey(allocator, &candidate_pubkeys, account.pubkey);
+    }
+
+    var covered_pubkeys: std.ArrayList(sdk.Pubkey) = .empty;
+    errdefer covered_pubkeys.deinit(allocator);
+    var uncovered_pubkeys: std.ArrayList(sdk.Pubkey) = .empty;
+    errdefer uncovered_pubkeys.deinit(allocator);
+    for (candidate_pubkeys.items) |pubkey| {
+        if (pubkeySliceContains(lookup_table_address_pubkeys.items, pubkey)) {
+            try appendUniquePubkey(allocator, &covered_pubkeys, pubkey);
+        } else {
+            try appendUniquePubkey(allocator, &uncovered_pubkeys, pubkey);
+        }
+    }
+
+    return .{
+        .lookup_table_pubkeys = lookup_table_pubkeys,
+        .lookup_table_address_pubkeys = try lookup_table_address_pubkeys.toOwnedSlice(allocator),
+        .candidate_pubkeys = try candidate_pubkeys.toOwnedSlice(allocator),
+        .covered_pubkeys = try covered_pubkeys.toOwnedSlice(allocator),
+        .uncovered_pubkeys = try uncovered_pubkeys.toOwnedSlice(allocator),
+        .fully_covered = covered_pubkeys.items.len == candidate_pubkeys.items.len,
     };
 }
 
@@ -2392,6 +2465,51 @@ test "invoke.buildInvocationValidationFromInvocationSpecJson detects duplicate s
     try std.testing.expectEqual(@as(usize, 1), validation.duplicate_lookup_table_pubkeys.len);
     try std.testing.expect(std.meta.eql(validation.duplicate_provided_signer_pubkeys[0], duplicate_signer_raw.public_key));
     try std.testing.expect(std.meta.eql(validation.duplicate_lookup_table_pubkeys[0], lookup_table));
+}
+
+test "invoke.buildInvocationLookupCoverageFromInvocationSpecJson detects uncovered nonce path" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocRichInstructionsInvocationSpecJson(allocator, 201, 202, 203, 204, 205, 206);
+    defer allocator.free(spec_json);
+
+    var coverage = try buildInvocationLookupCoverageFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer coverage.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), coverage.lookup_table_pubkeys.len);
+    try std.testing.expectEqual(@as(usize, 2), coverage.candidate_pubkeys.len);
+    try std.testing.expectEqual(@as(usize, 0), coverage.covered_pubkeys.len);
+    try std.testing.expectEqual(@as(usize, 2), coverage.uncovered_pubkeys.len);
+    try std.testing.expect(!coverage.fully_covered);
+}
+
+test "invoke.buildInvocationLookupCoverageFromInvocationSpecJson detects full program lookup coverage" {
+    const allocator = std.testing.allocator;
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{214} ** 32);
+    const lookup_address = sdk.Pubkey.fromBytes([_]u8{215} ** 32);
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 211, 212, 213, 214, 215);
+    defer allocator.free(spec_json);
+
+    var coverage = try buildInvocationLookupCoverageFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer coverage.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), coverage.lookup_table_pubkeys.len);
+    try std.testing.expect(std.meta.eql(coverage.lookup_table_pubkeys[0], lookup_table));
+    try std.testing.expectEqual(@as(usize, 1), coverage.lookup_table_address_pubkeys.len);
+    try std.testing.expect(std.meta.eql(coverage.lookup_table_address_pubkeys[0], lookup_address));
+    try std.testing.expectEqual(@as(usize, 1), coverage.candidate_pubkeys.len);
+    try std.testing.expectEqual(@as(usize, 1), coverage.covered_pubkeys.len);
+    try std.testing.expectEqual(@as(usize, 0), coverage.uncovered_pubkeys.len);
+    try std.testing.expect(coverage.fully_covered);
 }
 
 test "invoke.buildLegacyMessageBytesFromInvocationSpecJsonWithOptions matches generic builder" {
