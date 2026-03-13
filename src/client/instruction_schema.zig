@@ -229,10 +229,10 @@ fn lookupSchemaDefinition(
         .array => blk: {
             for (definitions_value.array.items) |item| {
                 if (item != .object) continue;
-                const item_name_value = findJsonObjectField(item.object, &.{"name"}) orelse continue;
+                const item_name_value = findJsonObjectField(item.object, &.{ "name", "typeName", "type_name" }) orelse continue;
                 if (item_name_value != .string) continue;
                 if (!std.mem.eql(u8, item_name_value.string, name)) continue;
-                break :blk findJsonObjectField(item.object, &.{"type"}) orelse item;
+                break :blk findJsonObjectField(item.object, &.{ "type", "schema", "value" }) orelse item;
             }
             break :blk null;
         },
@@ -253,6 +253,11 @@ fn resolveSchemaValue(
                 current = lookupSchemaDefinition(root_schema, current.string) orelse return error.InvalidInstructionSchema;
             },
             .object => {
+                if (findJsonObjectField(current.object, &.{ "schema", "value" })) |wrapped_schema| {
+                    current = wrapped_schema;
+                    continue;
+                }
+
                 if (findJsonObjectField(current.object, &.{ "defined", "ref" })) |definition_name_value| {
                     if (definition_name_value != .string) return error.InvalidInstructionSchema;
                     current = lookupSchemaDefinition(current, definition_name_value.string) orelse
@@ -1033,5 +1038,48 @@ test "instruction_schema encodes borsh set aliases" {
         0x00,
         0x02,
         0x00,
+    }, encoded);
+}
+
+test "instruction_schema resolves named types from registry aliases" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "types": [
+        \\    {
+        \\      "typeName": "Payload",
+        \\      "schema": {
+        \\        "type": "struct",
+        \\        "fields": [
+        \\          { "name": "value", "type": "u16" },
+        \\          { "name": "label", "type": "string" }
+        \\        ]
+        \\      }
+        \\    }
+        \\  ],
+        \\  "schema": {
+        \\    "defined": "Payload"
+        \\  }
+        \\}
+    ;
+    const args_json =
+        \\{
+        \\  "value": 258,
+        \\  "label": "ok"
+        \\}
+    ;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x02,
+        0x01,
+        0x02,
+        0x00,
+        0x00,
+        0x00,
+        'o',
+        'k',
     }, encoded);
 }
