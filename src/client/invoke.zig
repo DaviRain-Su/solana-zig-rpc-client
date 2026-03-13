@@ -468,6 +468,27 @@ pub const PreparedInvocation = struct {
     }
 };
 
+pub const SentPreparedInvocation = struct {
+    prepared: PreparedInvocation,
+    signature: []const u8,
+
+    pub fn deinit(self: *SentPreparedInvocation, allocator: Allocator) void {
+        self.prepared.deinit(allocator);
+        allocator.free(self.signature);
+        self.* = undefined;
+    }
+};
+
+pub const SimulatedPreparedInvocation = struct {
+    prepared: PreparedInvocation,
+    simulation: client.SimulatedTransaction,
+
+    pub fn deinit(self: *SimulatedPreparedInvocation, allocator: Allocator) void {
+        self.prepared.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 pub const PreferredPreparedSignedTransaction = struct {
     execution_report: PreferredInvocationExecutionReport,
     resolved_invocation: OwnedResolvedInvocation,
@@ -1586,6 +1607,86 @@ pub fn sendAndConfirmPreparedInvocationWithSpinner(
         ),
         .versioned => |signed| try rpc.sendAndConfirmVersionedTransactionTypedWithSpinner(
             signed,
+            options,
+            commitment,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+        ),
+    };
+}
+
+pub fn sendOwnedPreparedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    prepared: PreparedInvocation,
+    options: ?rpc_types.SendTransactionOptions,
+) !SentPreparedInvocation {
+    var owned = prepared;
+    errdefer owned.deinit(allocator);
+    return .{
+        .prepared = owned,
+        .signature = try sendPreparedInvocation(rpc, &owned, options),
+    };
+}
+
+pub fn simulateOwnedPreparedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    prepared: PreparedInvocation,
+    options: ?rpc_types.SimulateTransactionOptions,
+) !SimulatedPreparedInvocation {
+    var owned = prepared;
+    errdefer owned.deinit(allocator);
+    return .{
+        .prepared = owned,
+        .simulation = try simulatePreparedInvocation(rpc, &owned, options),
+    };
+}
+
+pub fn sendAndConfirmOwnedPreparedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    prepared: PreparedInvocation,
+    options: ?rpc_types.SendTransactionOptions,
+    commitment: ?client.Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) !SentPreparedInvocation {
+    var owned = prepared;
+    errdefer owned.deinit(allocator);
+    return .{
+        .prepared = owned,
+        .signature = try sendAndConfirmPreparedInvocation(
+            rpc,
+            &owned,
+            options,
+            commitment,
+            search_transaction_history,
+            timeout_ms,
+            poll_interval_ms,
+        ),
+    };
+}
+
+pub fn sendAndConfirmOwnedPreparedInvocationWithSpinner(
+    allocator: Allocator,
+    rpc: anytype,
+    prepared: PreparedInvocation,
+    options: ?rpc_types.SendTransactionOptions,
+    commitment: ?client.Commitment,
+    search_transaction_history: bool,
+    timeout_ms: u64,
+    poll_interval_ms: u64,
+) !SentPreparedInvocation {
+    var owned = prepared;
+    errdefer owned.deinit(allocator);
+    return .{
+        .prepared = owned,
+        .signature = try sendAndConfirmPreparedInvocationWithSpinner(
+            rpc,
+            &owned,
             options,
             commitment,
             search_transaction_history,
@@ -6083,6 +6184,187 @@ test "invoke.sendAndConfirmPreparedInvocationWithSpinner dispatches prepared ver
     try std.testing.expectEqualStrings("prepared-versioned-spinner", signature);
     try std.testing.expectEqual(@as(u64, 777), rpc.captured_timeout_ms);
     try std.testing.expectEqual(rpc_types.Commitment.confirmed, rpc.captured_commitment.?);
+}
+
+test "invoke.sendOwnedPreparedInvocation preserves prepared context" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn sendTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return "owned-prepared-send";
+        }
+
+        pub fn sendVersionedTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return error.UnexpectedVersionedCall;
+        }
+    };
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 126, 127, 128);
+    defer allocator.free(spec_json);
+
+    var rpc = DummyRpc{};
+    var sent = try sendOwnedPreparedInvocation(
+        allocator,
+        &rpc,
+        try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+            allocator,
+            DummyRpc{},
+            .instructions,
+            false,
+            spec_json,
+            .{},
+        ),
+        null,
+    );
+    defer sent.deinit(allocator);
+
+    try std.testing.expectEqualStrings("owned-prepared-send", sent.signature);
+    try std.testing.expectEqual(InvocationMode.legacy, sent.prepared.mode);
+    try std.testing.expect(sent.prepared.report.can_execute);
+}
+
+test "invoke.simulateOwnedPreparedInvocation preserves prepared context" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn simulateTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SimulateTransactionOptions,
+        ) !rpc_types.SimulatedTransaction {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return error.UnexpectedLegacyCall;
+        }
+
+        pub fn simulateVersionedTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SimulateTransactionOptions,
+        ) !rpc_types.SimulatedTransaction {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return .{
+                .context_slot = 9,
+                .logs = null,
+                .accounts = null,
+                .units_consumed = null,
+                .return_data = null,
+                .inner_instructions = null,
+                .replacement_blockhash = null,
+                .err_json = null,
+                .fee = null,
+                .loaded_accounts_data_size = null,
+            };
+        }
+    };
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 131, 132, 133, 134, 135);
+    defer allocator.free(spec_json);
+
+    var rpc = DummyRpc{};
+    var simulated = try simulateOwnedPreparedInvocation(
+        allocator,
+        &rpc,
+        try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+            allocator,
+            DummyRpc{},
+            .program,
+            true,
+            spec_json,
+            .{},
+        ),
+        null,
+    );
+    defer simulated.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u64, 9), simulated.simulation.context_slot);
+    try std.testing.expectEqual(InvocationMode.versioned, simulated.prepared.mode);
+    try std.testing.expectEqual(@as(usize, 1), simulated.prepared.resolved_invocation.address_lookup_tables.len);
+}
+
+test "invoke.sendAndConfirmOwnedPreparedInvocationWithSpinner preserves prepared context" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn sendTransactionAndConfirmTypedWithSpinner(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+            commitment: ?rpc_types.Commitment,
+            search_transaction_history: bool,
+            timeout_ms: u64,
+            poll_interval_ms: u64,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            _ = commitment;
+            _ = search_transaction_history;
+            _ = timeout_ms;
+            _ = poll_interval_ms;
+            return "owned-prepared-spinner";
+        }
+
+        pub fn sendAndConfirmVersionedTransactionTypedWithSpinner(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+            commitment: ?rpc_types.Commitment,
+            search_transaction_history: bool,
+            timeout_ms: u64,
+            poll_interval_ms: u64,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            _ = commitment;
+            _ = search_transaction_history;
+            _ = timeout_ms;
+            _ = poll_interval_ms;
+            return error.UnexpectedVersionedCall;
+        }
+    };
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 136, 137, 138);
+    defer allocator.free(spec_json);
+
+    var rpc = DummyRpc{};
+    var sent = try sendAndConfirmOwnedPreparedInvocationWithSpinner(
+        allocator,
+        &rpc,
+        try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+            allocator,
+            DummyRpc{},
+            .instructions,
+            false,
+            spec_json,
+            .{},
+        ),
+        null,
+        .confirmed,
+        false,
+        777,
+        10,
+    );
+    defer sent.deinit(allocator);
+
+    try std.testing.expectEqualStrings("owned-prepared-spinner", sent.signature);
+    try std.testing.expectEqual(InvocationMode.legacy, sent.prepared.mode);
+    try std.testing.expect(sent.prepared.firstSignature() != null);
 }
 
 test "invoke.PreparedInvocation transaction helpers expose generic serialization" {
