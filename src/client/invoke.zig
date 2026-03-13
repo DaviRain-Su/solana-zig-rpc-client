@@ -11,6 +11,25 @@ pub const InvokeFamily = enum {
     anchor_idl,
 };
 
+pub const SendInvocationSpecOptions = struct {
+    blockhash_commitment: ?client.Commitment = null,
+    send_transaction_options: ?client.SendTransactionOptions = null,
+};
+
+pub const SimulateInvocationSpecOptions = struct {
+    blockhash_commitment: ?client.Commitment = null,
+    simulate_options: ?client.SimulateTransactionOptions = null,
+};
+
+pub const SendAndConfirmInvocationSpecOptions = struct {
+    blockhash_commitment: ?client.Commitment = null,
+    send_transaction_options: ?client.SendTransactionOptions = null,
+    commitment: ?client.Commitment = null,
+    search_transaction_history: bool = false,
+    timeout_ms: u64 = client.poll_for_signature_confirmation_timeout_ms,
+    poll_interval_ms: u64 = client.signature_poll_interval_ms,
+};
+
 pub const OwnedInvocationMessage = union(enum) {
     legacy: sdk.OwnedLegacyMessage,
     versioned: sdk.OwnedVersionedMessageV0,
@@ -42,107 +61,20 @@ pub fn sendInvocationSpecJson(
     timeout_ms: u64,
     poll_interval_ms: u64,
 ) ![]const u8 {
-    return switch (family) {
-        .instructions => if (versioned)
-            if (confirm)
-                client.instructions_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(rpc, .{
-                    .instruction_spec_json = invocation_spec_json,
-                    .blockhash_commitment = blockhash_commitment,
-                    .send_transaction_options = send_transaction_options,
-                    .commitment = confirm_commitment,
-                    .search_transaction_history = search_transaction_history,
-                    .timeout_ms = timeout_ms,
-                    .poll_interval_ms = poll_interval_ms,
-                })
-            else
-                client.instructions_invoke.sendVersionedTransactionFromInvocationSpecJson(rpc, .{
-                    .instruction_spec_json = invocation_spec_json,
-                    .blockhash_commitment = blockhash_commitment,
-                    .send_transaction_options = send_transaction_options,
-                })
-        else if (confirm)
-            client.instructions_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(rpc, .{
-                .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .send_transaction_options = send_transaction_options,
-                .commitment = confirm_commitment,
-                .search_transaction_history = search_transaction_history,
-                .timeout_ms = timeout_ms,
-                .poll_interval_ms = poll_interval_ms,
-            })
-        else
-            client.instructions_invoke.sendLegacyTransactionFromInvocationSpecJson(rpc, .{
-                .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .send_transaction_options = send_transaction_options,
-            }),
-        .program => if (versioned)
-            if (confirm)
-                client.program_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(rpc, .{
-                    .program_invocation_spec_json = invocation_spec_json,
-                    .blockhash_commitment = blockhash_commitment,
-                    .send_transaction_options = send_transaction_options,
-                    .commitment = confirm_commitment,
-                    .search_transaction_history = search_transaction_history,
-                    .timeout_ms = timeout_ms,
-                    .poll_interval_ms = poll_interval_ms,
-                })
-            else
-                client.program_invoke.sendVersionedTransactionFromInvocationSpecJson(rpc, .{
-                    .program_invocation_spec_json = invocation_spec_json,
-                    .blockhash_commitment = blockhash_commitment,
-                    .send_transaction_options = send_transaction_options,
-                })
-        else if (confirm)
-            client.program_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(rpc, .{
-                .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .send_transaction_options = send_transaction_options,
-                .commitment = confirm_commitment,
-                .search_transaction_history = search_transaction_history,
-                .timeout_ms = timeout_ms,
-                .poll_interval_ms = poll_interval_ms,
-            })
-        else
-            client.program_invoke.sendLegacyTransactionFromInvocationSpecJson(rpc, .{
-                .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .send_transaction_options = send_transaction_options,
-            }),
-        .anchor_idl => if (versioned)
-            if (confirm)
-                client.anchor_idl_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(rpc, allocator, .{
-                    .anchor_idl_invocation_spec_json = invocation_spec_json,
-                    .blockhash_commitment = blockhash_commitment,
-                    .send_transaction_options = send_transaction_options,
-                    .commitment = confirm_commitment,
-                    .search_transaction_history = search_transaction_history,
-                    .timeout_ms = timeout_ms,
-                    .poll_interval_ms = poll_interval_ms,
-                })
-            else
-                client.anchor_idl_invoke.sendVersionedTransactionFromInvocationSpecJson(rpc, allocator, .{
-                    .anchor_idl_invocation_spec_json = invocation_spec_json,
-                    .blockhash_commitment = blockhash_commitment,
-                    .send_transaction_options = send_transaction_options,
-                })
-        else if (confirm)
-            client.anchor_idl_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(rpc, allocator, .{
-                .anchor_idl_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .send_transaction_options = send_transaction_options,
-                .commitment = confirm_commitment,
-                .search_transaction_history = search_transaction_history,
-                .timeout_ms = timeout_ms,
-                .poll_interval_ms = poll_interval_ms,
-            })
-        else
-            client.anchor_idl_invoke.sendLegacyTransactionFromInvocationSpecJson(rpc, allocator, .{
-                .anchor_idl_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .send_transaction_options = send_transaction_options,
-            }),
-    };
+    if (confirm) {
+        return sendAndConfirmInvocationSpecJson(allocator, rpc, family, versioned, invocation_spec_json, .{
+            .blockhash_commitment = blockhash_commitment,
+            .send_transaction_options = send_transaction_options,
+            .commitment = confirm_commitment,
+            .search_transaction_history = search_transaction_history,
+            .timeout_ms = timeout_ms,
+            .poll_interval_ms = poll_interval_ms,
+        });
+    }
+    return sendTransactionFromInvocationSpecJson(allocator, rpc, family, versioned, invocation_spec_json, .{
+        .blockhash_commitment = blockhash_commitment,
+        .send_transaction_options = send_transaction_options,
+    });
 }
 
 pub fn simulateInvocationSpecJson(
@@ -154,42 +86,176 @@ pub fn simulateInvocationSpecJson(
     blockhash_commitment: ?client.Commitment,
     simulate_options: ?client.SimulateTransactionOptions,
 ) !client.SimulatedTransaction {
+    return simulateTransactionFromInvocationSpecJson(allocator, rpc, family, versioned, invocation_spec_json, .{
+        .blockhash_commitment = blockhash_commitment,
+        .simulate_options = simulate_options,
+    });
+}
+
+pub fn sendTransactionFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    options: SendInvocationSpecOptions,
+) ![]const u8 {
+    return switch (family) {
+        .instructions => if (versioned)
+            client.instructions_invoke.sendVersionedTransactionFromInvocationSpecJson(rpc, .{
+                .instruction_spec_json = invocation_spec_json,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+            })
+        else
+            client.instructions_invoke.sendLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .instruction_spec_json = invocation_spec_json,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+            }),
+        .program => if (versioned)
+            client.program_invoke.sendVersionedTransactionFromInvocationSpecJson(rpc, .{
+                .program_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+            })
+        else
+            client.program_invoke.sendLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .program_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+            }),
+        .anchor_idl => if (versioned)
+            client.anchor_idl_invoke.sendVersionedTransactionFromInvocationSpecJson(rpc, allocator, .{
+                .anchor_idl_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+            })
+        else
+            client.anchor_idl_invoke.sendLegacyTransactionFromInvocationSpecJson(rpc, allocator, .{
+                .anchor_idl_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+            }),
+    };
+}
+
+pub fn sendAndConfirmInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    options: SendAndConfirmInvocationSpecOptions,
+) ![]const u8 {
+    return switch (family) {
+        .instructions => if (versioned)
+            client.instructions_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(rpc, .{
+                .instruction_spec_json = invocation_spec_json,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+                .commitment = options.commitment,
+                .search_transaction_history = options.search_transaction_history,
+                .timeout_ms = options.timeout_ms,
+                .poll_interval_ms = options.poll_interval_ms,
+            })
+        else
+            client.instructions_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .instruction_spec_json = invocation_spec_json,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+                .commitment = options.commitment,
+                .search_transaction_history = options.search_transaction_history,
+                .timeout_ms = options.timeout_ms,
+                .poll_interval_ms = options.poll_interval_ms,
+            }),
+        .program => if (versioned)
+            client.program_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(rpc, .{
+                .program_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+                .commitment = options.commitment,
+                .search_transaction_history = options.search_transaction_history,
+                .timeout_ms = options.timeout_ms,
+                .poll_interval_ms = options.poll_interval_ms,
+            })
+        else
+            client.program_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(rpc, .{
+                .program_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+                .commitment = options.commitment,
+                .search_transaction_history = options.search_transaction_history,
+                .timeout_ms = options.timeout_ms,
+                .poll_interval_ms = options.poll_interval_ms,
+            }),
+        .anchor_idl => if (versioned)
+            client.anchor_idl_invoke.sendAndConfirmVersionedTransactionFromInvocationSpecJson(rpc, allocator, .{
+                .anchor_idl_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+                .commitment = options.commitment,
+                .search_transaction_history = options.search_transaction_history,
+                .timeout_ms = options.timeout_ms,
+                .poll_interval_ms = options.poll_interval_ms,
+            })
+        else
+            client.anchor_idl_invoke.sendAndConfirmLegacyTransactionFromInvocationSpecJson(rpc, allocator, .{
+                .anchor_idl_invocation_spec_json = invocation_spec_json,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+                .commitment = options.commitment,
+                .search_transaction_history = options.search_transaction_history,
+                .timeout_ms = options.timeout_ms,
+                .poll_interval_ms = options.poll_interval_ms,
+            }),
+    };
+}
+
+pub fn simulateTransactionFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    options: SimulateInvocationSpecOptions,
+) !client.SimulatedTransaction {
     return switch (family) {
         .instructions => if (versioned)
             client.instructions_invoke.simulateVersionedTransactionFromInvocationSpecJson(rpc, .{
                 .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .simulate_options = simulate_options,
+                .blockhash_commitment = options.blockhash_commitment,
+                .simulate_options = options.simulate_options,
             })
         else
             client.instructions_invoke.simulateLegacyTransactionFromInvocationSpecJson(rpc, .{
                 .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .simulate_options = simulate_options,
+                .blockhash_commitment = options.blockhash_commitment,
+                .simulate_options = options.simulate_options,
             }),
         .program => if (versioned)
             client.program_invoke.simulateVersionedTransactionFromInvocationSpecJson(rpc, .{
                 .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .simulate_options = simulate_options,
+                .blockhash_commitment = options.blockhash_commitment,
+                .simulate_options = options.simulate_options,
             })
         else
             client.program_invoke.simulateLegacyTransactionFromInvocationSpecJson(rpc, .{
                 .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .simulate_options = simulate_options,
+                .blockhash_commitment = options.blockhash_commitment,
+                .simulate_options = options.simulate_options,
             }),
         .anchor_idl => if (versioned)
             client.anchor_idl_invoke.simulateVersionedTransactionFromInvocationSpecJson(rpc, allocator, .{
                 .anchor_idl_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .simulate_options = simulate_options,
+                .blockhash_commitment = options.blockhash_commitment,
+                .simulate_options = options.simulate_options,
             })
         else
             client.anchor_idl_invoke.simulateLegacyTransactionFromInvocationSpecJson(rpc, allocator, .{
                 .anchor_idl_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .simulate_options = simulate_options,
+                .blockhash_commitment = options.blockhash_commitment,
+                .simulate_options = options.simulate_options,
             }),
     };
 }
@@ -1274,4 +1340,216 @@ test "invoke.buildSignedTransactionFromInvocationSpecJson returns typed union" {
         .legacy => {},
         .versioned => return error.UnexpectedResult,
     }
+}
+
+test "invoke.sendTransactionFromInvocationSpecJson dispatches program family" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{206} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id = sdk.Pubkey.fromBytes(.{207} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "dataBytes":[1,2,3]
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const MockRpc = struct {
+        captured_program_id: ?sdk.Pubkey = null,
+        captured_skip_preflight: bool = false,
+
+        pub fn sendLegacyInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            options: ?rpc_types.SendLegacyInstructionsOptions,
+        ) ![]const u8 {
+            _ = payer;
+            _ = signers;
+            self.captured_program_id = instructions[0].program_id;
+            self.captured_skip_preflight = options.?.send_transaction_options.?.skip_preflight;
+            return "invoke-program-send";
+        }
+    };
+
+    var rpc = MockRpc{};
+    const signature = try sendTransactionFromInvocationSpecJson(
+        allocator,
+        &rpc,
+        .program,
+        false,
+        spec_json,
+        .{ .send_transaction_options = .{ .skip_preflight = true } },
+    );
+
+    try std.testing.expectEqualStrings("invoke-program-send", signature);
+    try std.testing.expect(rpc.captured_program_id.?.eql(program_id));
+    try std.testing.expect(rpc.captured_skip_preflight);
+}
+
+test "invoke.sendAndConfirmInvocationSpecJson dispatches anchor family" {
+    const allocator = std.testing.allocator;
+    const idl_json =
+        \\{
+        \\  "address": "11111111111111111111111111111111",
+        \\  "instructions": [
+        \\    {
+        \\      "name": "setValue",
+        \\      "discriminator": [1, 2, 3, 4, 5, 6, 7, 8],
+        \\      "accounts": [
+        \\        { "name": "authority", "writable": true, "signer": true },
+        \\        { "name": "target", "writable": true }
+        \\      ],
+        \\      "args": [
+        \\        { "name": "value", "type": "u64" }
+        \\      ]
+        \\    }
+        \\  ]
+        \\}
+    ;
+    const payer_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{208} ** 32);
+    const authority_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{209} ** 32);
+    const target_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{210} ** 32);
+    const target = client.Pubkey.fromBytes(target_raw.public_key.toBytes());
+    const payer_keypair = try client.Keypair.fromSecretKeyBytes(payer_raw.secret_key.toBytes());
+    const authority = try client.Keypair.fromSecretKeyBytes(authority_raw.secret_key.toBytes());
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_keypair.secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const authority_secret_key_base58 = try client.encodeBase58(allocator, &authority.secret_key);
+    defer allocator.free(authority_secret_key_base58);
+    const target_base58 = try target.toBase58(allocator);
+    defer allocator.free(target_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "default_signer_secret_key":"{s}",
+        \\  "idl":{s},
+        \\  "instruction_name":"setValue",
+        \\  "args":{{"value":42}},
+        \\  "account_bindings":{{"target":"{s}"}}
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            authority_secret_key_base58,
+            idl_json,
+            target_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const MockRpc = struct {
+        captured_program_id: ?sdk.Pubkey = null,
+        captured_commitment: ?rpc_types.Commitment = null,
+
+        pub fn sendAndConfirmLegacyInstructionsWithOptions(
+            self: *@This(),
+            payer_pubkey: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            options: ?rpc_types.LegacyInstructionsOptions,
+        ) ![]const u8 {
+            _ = payer_pubkey;
+            _ = signers;
+            self.captured_program_id = instructions[0].program_id;
+            self.captured_commitment = options.?.commitment.?;
+            return "invoke-anchor-confirm";
+        }
+    };
+
+    var rpc = MockRpc{};
+    const signature = try sendAndConfirmInvocationSpecJson(
+        allocator,
+        &rpc,
+        .anchor_idl,
+        false,
+        spec_json,
+        .{ .commitment = .confirmed },
+    );
+
+    try std.testing.expectEqualStrings("invoke-anchor-confirm", signature);
+    try std.testing.expect(rpc.captured_program_id != null);
+    try std.testing.expectEqual(rpc_types.Commitment.confirmed, rpc.captured_commitment.?);
+}
+
+test "invoke.simulateTransactionFromInvocationSpecJson dispatches instructions family" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{211} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id = sdk.Pubkey.fromBytes(.{212} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "instructions":[{{"program_id":"{s}","dataBytes":[1,2,3]}}]
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const MockRpc = struct {
+        captured_sig_verify: bool = false,
+
+        pub fn simulateLegacyInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            options: ?rpc_types.LegacyInstructionsSimulationOptions,
+        ) !rpc_types.SimulatedTransaction {
+            _ = payer;
+            _ = instructions;
+            _ = signers;
+            self.captured_sig_verify = options.?.simulate_transaction_options.?.sig_verify;
+            return .{
+                .context_slot = 1,
+                .logs = null,
+                .accounts = null,
+                .units_consumed = null,
+                .return_data = null,
+                .inner_instructions = null,
+                .replacement_blockhash = null,
+                .err_json = null,
+                .fee = null,
+                .loaded_accounts_data_size = null,
+            };
+        }
+    };
+
+    var rpc = MockRpc{};
+    _ = try simulateTransactionFromInvocationSpecJson(
+        allocator,
+        &rpc,
+        .instructions,
+        false,
+        spec_json,
+        .{ .simulate_options = .{ .sig_verify = true } },
+    );
+
+    try std.testing.expect(rpc.captured_sig_verify);
 }
