@@ -2776,7 +2776,7 @@ pub fn buildAddressLookupTablesJsonFromOwnedResolvedInvocation(
 fn buildInstructionsJsonFromInstructionSlice(
     allocator: Allocator,
     instructions: []const sdk.Instruction,
-) !Allocator.Error![]u8 {
+) (Allocator.Error || error{WriteFailed})![]u8 {
     var json_buffer: std.Io.Writer.Allocating = .init(allocator);
     defer json_buffer.deinit();
 
@@ -4464,7 +4464,10 @@ pub fn buildPreparedInvocationFromOwnedInvocationSpecWithOptions(
     var resolved_invocation = try buildOwnedResolvedInvocationFromOwnedSpec(allocator, mutable);
     errdefer resolved_invocation.deinit(allocator);
 
-    var report = try buildInvocationReportFromResolved(allocator, resolved_invocation);
+    var report = try buildInvocationReportFromResolved(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, &resolved_invocation),
+    );
     errdefer report.deinit(allocator);
 
     var accounts = try buildOwnedInvocationAccountsFromResolved(allocator, &resolved_invocation);

@@ -3885,6 +3885,38 @@ fn buildProvidedInvocationSpecJsonForCommand(
     return invocation_spec_json.?;
 }
 
+fn buildProvidedOwnedInvocationSpecForCommand(
+    allocator: Allocator,
+    command: cli.Command,
+    invocation_spec_arg: ?[]const u8,
+) !client.invoke.OwnedInvocationSpec {
+    const invocation_spec_json = try buildProvidedInvocationSpecJsonForCommand(
+        allocator,
+        command,
+        invocation_spec_arg,
+    );
+    defer allocator.free(invocation_spec_json);
+
+    return client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        invocation_spec_json,
+    ) catch {
+        reportInvalidCliMessage("error: {s} spec is invalid\n", .{switch (command) {
+            .invoke_spec => "invoke-spec",
+            .invoke_spec_and_confirm => "invoke-spec-and-confirm",
+            .invoke_spec_simulate => "invoke-spec-simulate",
+            .preview_spec => "preview-spec",
+            .explain_spec => "explain-spec",
+            .validate_spec => "validate-spec",
+            .prepare_spec => "prepare-spec",
+            .estimate_spec_fee => "estimate-spec-fee",
+            else => unreachable,
+        }});
+        return error.InvalidCli;
+    };
+}
+
 fn buildInstructionsInvocationSpecJsonForCommand(
     allocator: Allocator,
     command: cli.Command,
@@ -5588,19 +5620,18 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .invoke_spec or command == .invoke_spec_and_confirm) {
-        const invocation_spec_json = try buildProvidedInvocationSpecJsonForCommand(
+        var owned_spec = try buildProvidedOwnedInvocationSpecForCommand(
             allocator,
             command,
             instructions_spec_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
         var result = (if (command == .invoke_spec_and_confirm)
-            client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromInvocationSpecJson(
+            client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
                 allocator,
                 rpc,
-                .instructions,
-                invocation_spec_json,
+                &owned_spec,
                 .{
                     .mode = preferred_invocation_mode_options,
                     .send_and_confirm = .{
@@ -5614,11 +5645,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 },
             )
         else
-            client.invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson(
+            client.invoke.sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
                 allocator,
                 rpc,
-                .instructions,
-                invocation_spec_json,
+                &owned_spec,
                 .{
                     .mode = preferred_invocation_mode_options,
                     .send = .{
@@ -5626,14 +5656,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                         .send_transaction_options = send_transaction_options,
                     },
                 },
-            )) catch {
-            reportInvalidCliMessage("error: {s} spec is invalid\n", .{switch (command) {
-                .invoke_spec => "invoke-spec",
-                .invoke_spec_and_confirm => "invoke-spec-and-confirm",
-                else => unreachable,
-            }});
-            return error.InvalidCli;
-        };
+            )) catch return error.InvalidCli;
         defer result.deinit(allocator);
 
         try emitPreferredSignatureExecutionResult(
@@ -5646,19 +5669,18 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .invoke_spec_simulate) {
-        const invocation_spec_json = try buildProvidedInvocationSpecJsonForCommand(
+        var owned_spec = try buildProvidedOwnedInvocationSpecForCommand(
             allocator,
             command,
             instructions_spec_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
         const simulation_options = try buildCliSimulationOptionsFromExecutionArgs(invoke_execution_args);
-        var result = client.invoke.simulatePreferredTransactionExecutionResultFromInvocationSpecJson(
+        var result = client.invoke.simulatePreferredTransactionExecutionResultFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .instructions,
-            invocation_spec_json,
+            &owned_spec,
             .{
                 .mode = preferred_invocation_mode_options,
                 .simulate = .{
@@ -5666,10 +5688,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                     .simulate_options = simulation_options,
                 },
             },
-        ) catch {
-            reportInvalidCliMessage("error: invoke-spec-simulate spec is invalid\n", .{});
-            return error.InvalidCli;
-        };
+        ) catch return error.InvalidCli;
         defer result.deinit(allocator);
         defer freeSimulatedTransaction(allocator, result.simulation);
 
@@ -5678,23 +5697,19 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .prepare_spec) {
-        const invocation_spec_json = try buildProvidedInvocationSpecJsonForCommand(
+        var owned_spec = try buildProvidedOwnedInvocationSpecForCommand(
             allocator,
             command,
             instructions_spec_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
-        var prepared = client.invoke.buildPreferredPreparedInvocationFromInvocationSpecJson(
+        var prepared = client.invoke.buildPreferredPreparedInvocationFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .instructions,
-            invocation_spec_json,
+            &owned_spec,
             .{ .mode = preferred_invocation_mode_options },
-        ) catch {
-            reportInvalidCliMessage("error: prepare-spec spec is invalid\n", .{});
-            return error.InvalidCli;
-        };
+        ) catch return error.InvalidCli;
         defer prepared.deinit(allocator);
 
         try emitPreferredPreparedInvocation(allocator, &prepared, output_json);
@@ -5702,18 +5717,17 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .estimate_spec_fee) {
-        const invocation_spec_json = try buildProvidedInvocationSpecJsonForCommand(
+        var owned_spec = try buildProvidedOwnedInvocationSpecForCommand(
             allocator,
             command,
             instructions_spec_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
-        var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromInvocationSpecJson(
+        var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .instructions,
-            invocation_spec_json,
+            &owned_spec,
             .{
                 .mode = preferred_invocation_mode_options,
                 .fee = .{
@@ -5721,10 +5735,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                     .commitment = commitment,
                 },
             },
-        ) catch {
-            reportInvalidCliMessage("error: estimate-spec-fee spec is invalid\n", .{});
-            return error.InvalidCli;
-        };
+        ) catch return error.InvalidCli;
         defer result.deinit(allocator);
 
         try emitPreferredFeeExecutionResult(allocator, &result, output_json);
@@ -5732,28 +5743,19 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .preview_spec or command == .explain_spec or command == .validate_spec) {
-        const invocation_spec_json = try buildProvidedInvocationSpecJsonForCommand(
+        var owned_spec = try buildProvidedOwnedInvocationSpecForCommand(
             allocator,
             command,
             instructions_spec_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
-        var analysis = client.invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson(
+        var analysis = client.invoke.buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .instructions,
-            invocation_spec_json,
+            &owned_spec,
             .{ .mode = preferred_invocation_mode_options },
-        ) catch {
-            reportInvalidCliMessage("error: {s} spec is invalid\n", .{switch (command) {
-                .preview_spec => "preview-spec",
-                .explain_spec => "explain-spec",
-                .validate_spec => "validate-spec",
-                else => unreachable,
-            }});
-            return error.InvalidCli;
-        };
+        ) catch return error.InvalidCli;
         defer analysis.deinit(allocator);
 
         try emitPreferredInvocationAnalysis(
