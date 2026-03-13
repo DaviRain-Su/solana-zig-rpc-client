@@ -4047,6 +4047,21 @@ const CliInvokePayloadArgs = struct {
     idl_remaining_accounts_json_arg: ?[]const u8,
 };
 
+const CliInvokeExecutionArgs = struct {
+    commitment: ?client.Commitment,
+    send_preflight_commitment: ?client.Commitment,
+    send_transaction_options: ?client.SendTransactionOptions,
+    search_transaction_history: bool,
+    status_timeout_ms: u64,
+    status_poll_ms: u64,
+    simulation_account_encoding_arg: ?[]const u8,
+    simulation_min_context_slot_arg: ?[]const u8,
+    simulation_accounts: []const []const u8,
+    simulate_sig_verify: bool,
+    simulate_replace_recent_blockhash: bool,
+    simulate_inner_instructions: bool,
+};
+
 fn invokeFamilyForCommand(command: cli.Command) ?InvokeFamily {
     return switch (command) {
         .send_instructions,
@@ -4239,18 +4254,7 @@ fn runProgramInvocationCommand(
     nonce_account_arg: ?[]const u8,
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
-    commitment: anytype,
-    send_preflight_commitment: anytype,
-    send_transaction_options: anytype,
-    search_transaction_history: bool,
-    status_timeout_ms: u64,
-    status_poll_ms: u64,
-    simulation_account_encoding_arg: ?[]const u8,
-    simulation_min_context_slot_arg: ?[]const u8,
-    simulation_accounts: anytype,
-    simulate_sig_verify: bool,
-    simulate_replace_recent_blockhash: bool,
-    simulate_inner_instructions: bool,
+    execution_args: CliInvokeExecutionArgs,
 ) !void {
     const versioned = switch (command) {
         .send_versioned_program_invoke,
@@ -4292,13 +4296,13 @@ fn runProgramInvocationCommand(
 
     if (simulate) {
         const options = try buildCliSimulationOptions(
-            simulation_account_encoding_arg,
-            simulation_min_context_slot_arg,
-            simulation_accounts,
-            simulate_sig_verify,
-            simulate_replace_recent_blockhash,
-            simulate_inner_instructions,
-            commitment,
+            execution_args.simulation_account_encoding_arg,
+            execution_args.simulation_min_context_slot_arg,
+            execution_args.simulation_accounts,
+            execution_args.simulate_sig_verify,
+            execution_args.simulate_replace_recent_blockhash,
+            execution_args.simulate_inner_instructions,
+            execution_args.commitment,
         );
         const simulation = try simulateInvocationSpecJson(
             allocator,
@@ -4306,7 +4310,7 @@ fn runProgramInvocationCommand(
             .program,
             versioned,
             invocation_spec_json,
-            commitment,
+            execution_args.commitment,
             options,
         );
         defer freeSimulatedTransaction(allocator, simulation);
@@ -4322,12 +4326,12 @@ fn runProgramInvocationCommand(
         versioned,
         confirm,
         invocation_spec_json,
-        commitment orelse send_preflight_commitment,
-        send_transaction_options,
-        commitment,
-        search_transaction_history,
-        status_timeout_ms,
-        status_poll_ms,
+        execution_args.commitment orelse execution_args.send_preflight_commitment,
+        execution_args.send_transaction_options,
+        execution_args.commitment,
+        execution_args.search_transaction_history,
+        execution_args.status_timeout_ms,
+        execution_args.status_poll_ms,
     );
     defer allocator.free(tx_signature);
 
@@ -4347,18 +4351,7 @@ fn runInstructionsInvocationCommand(
     payer_secret_key_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
     recent_blockhash_arg: ?[]const u8,
-    commitment: anytype,
-    send_preflight_commitment: anytype,
-    send_transaction_options: anytype,
-    search_transaction_history: bool,
-    status_timeout_ms: u64,
-    status_poll_ms: u64,
-    simulation_account_encoding_arg: ?[]const u8,
-    simulation_min_context_slot_arg: ?[]const u8,
-    simulation_accounts: anytype,
-    simulate_sig_verify: bool,
-    simulate_replace_recent_blockhash: bool,
-    simulate_inner_instructions: bool,
+    execution_args: CliInvokeExecutionArgs,
 ) !void {
     const versioned = switch (command) {
         .send_versioned_instructions,
@@ -4393,13 +4386,13 @@ fn runInstructionsInvocationCommand(
 
     if (simulate) {
         const options = try buildCliSimulationOptions(
-            simulation_account_encoding_arg,
-            simulation_min_context_slot_arg,
-            simulation_accounts,
-            simulate_sig_verify,
-            simulate_replace_recent_blockhash,
-            simulate_inner_instructions,
-            commitment,
+            execution_args.simulation_account_encoding_arg,
+            execution_args.simulation_min_context_slot_arg,
+            execution_args.simulation_accounts,
+            execution_args.simulate_sig_verify,
+            execution_args.simulate_replace_recent_blockhash,
+            execution_args.simulate_inner_instructions,
+            execution_args.commitment,
         );
         const simulation = try simulateInvocationSpecJson(
             allocator,
@@ -4407,7 +4400,7 @@ fn runInstructionsInvocationCommand(
             .instructions,
             versioned,
             invocation_spec_json,
-            commitment,
+            execution_args.commitment,
             options,
         );
         defer freeSimulatedTransaction(allocator, simulation);
@@ -4423,12 +4416,12 @@ fn runInstructionsInvocationCommand(
         versioned,
         confirm,
         invocation_spec_json,
-        commitment orelse send_preflight_commitment,
-        send_transaction_options,
-        commitment,
-        search_transaction_history,
-        status_timeout_ms,
-        status_poll_ms,
+        execution_args.commitment orelse execution_args.send_preflight_commitment,
+        execution_args.send_transaction_options,
+        execution_args.commitment,
+        execution_args.search_transaction_history,
+        execution_args.status_timeout_ms,
+        execution_args.status_poll_ms,
     );
     defer allocator.free(tx_signature);
 
@@ -4459,18 +4452,7 @@ fn runAnchorIdlInvocationCommand(
     nonce_account_arg: ?[]const u8,
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
-    commitment: anytype,
-    send_preflight_commitment: anytype,
-    send_transaction_options: anytype,
-    search_transaction_history: bool,
-    status_timeout_ms: u64,
-    status_poll_ms: u64,
-    simulation_account_encoding_arg: ?[]const u8,
-    simulation_min_context_slot_arg: ?[]const u8,
-    simulation_accounts: anytype,
-    simulate_sig_verify: bool,
-    simulate_replace_recent_blockhash: bool,
-    simulate_inner_instructions: bool,
+    execution_args: CliInvokeExecutionArgs,
 ) !void {
     const versioned = switch (command) {
         .send_versioned_idl_invoke,
@@ -4516,13 +4498,13 @@ fn runAnchorIdlInvocationCommand(
 
     if (simulate) {
         const options = try buildCliSimulationOptions(
-            simulation_account_encoding_arg,
-            simulation_min_context_slot_arg,
-            simulation_accounts,
-            simulate_sig_verify,
-            simulate_replace_recent_blockhash,
-            simulate_inner_instructions,
-            commitment,
+            execution_args.simulation_account_encoding_arg,
+            execution_args.simulation_min_context_slot_arg,
+            execution_args.simulation_accounts,
+            execution_args.simulate_sig_verify,
+            execution_args.simulate_replace_recent_blockhash,
+            execution_args.simulate_inner_instructions,
+            execution_args.commitment,
         );
         const simulation = try simulateInvocationSpecJson(
             allocator,
@@ -4530,7 +4512,7 @@ fn runAnchorIdlInvocationCommand(
             .anchor_idl,
             versioned,
             invocation_spec_json,
-            commitment,
+            execution_args.commitment,
             options,
         );
         defer freeSimulatedTransaction(allocator, simulation);
@@ -4546,12 +4528,12 @@ fn runAnchorIdlInvocationCommand(
         versioned,
         confirm,
         invocation_spec_json,
-        commitment orelse send_preflight_commitment,
-        send_transaction_options,
-        commitment,
-        search_transaction_history,
-        status_timeout_ms,
-        status_poll_ms,
+        execution_args.commitment orelse execution_args.send_preflight_commitment,
+        execution_args.send_transaction_options,
+        execution_args.commitment,
+        execution_args.search_transaction_history,
+        execution_args.status_timeout_ms,
+        execution_args.status_poll_ms,
     );
     defer allocator.free(tx_signature);
 
@@ -4568,7 +4550,7 @@ fn runGenericInvocationCommand(
     command: cli.Command,
     payload_args: CliInvokePayloadArgs,
     context_args: CliInvokeContextArgs,
-    execution_args: anytype,
+    execution_args: CliInvokeExecutionArgs,
 ) !void {
     return switch (invokeFamilyForCommand(command) orelse unreachable) {
         .instructions => runInstructionsInvocationCommand(
@@ -4580,18 +4562,7 @@ fn runGenericInvocationCommand(
             context_args.payer_secret_key_arg,
             context_args.additional_signer_secret_keys_arg,
             context_args.recent_blockhash_arg,
-            execution_args.commitment,
-            execution_args.send_preflight_commitment,
-            execution_args.send_transaction_options,
-            execution_args.search_transaction_history,
-            execution_args.status_timeout_ms,
-            execution_args.status_poll_ms,
-            execution_args.simulation_account_encoding_arg,
-            execution_args.simulation_min_context_slot_arg,
-            execution_args.simulation_accounts,
-            execution_args.simulate_sig_verify,
-            execution_args.simulate_replace_recent_blockhash,
-            execution_args.simulate_inner_instructions,
+            execution_args,
         ),
         .program => runProgramInvocationCommand(
             allocator,
@@ -4609,18 +4580,7 @@ fn runGenericInvocationCommand(
             context_args.nonce_account_arg,
             context_args.nonce_authority_keypair_path_arg,
             context_args.additional_signer_secret_keys_arg,
-            execution_args.commitment,
-            execution_args.send_preflight_commitment,
-            execution_args.send_transaction_options,
-            execution_args.search_transaction_history,
-            execution_args.status_timeout_ms,
-            execution_args.status_poll_ms,
-            execution_args.simulation_account_encoding_arg,
-            execution_args.simulation_min_context_slot_arg,
-            execution_args.simulation_accounts,
-            execution_args.simulate_sig_verify,
-            execution_args.simulate_replace_recent_blockhash,
-            execution_args.simulate_inner_instructions,
+            execution_args,
         ),
         .anchor_idl => runAnchorIdlInvocationCommand(
             allocator,
@@ -4642,18 +4602,7 @@ fn runGenericInvocationCommand(
             context_args.nonce_account_arg,
             context_args.nonce_authority_keypair_path_arg,
             context_args.additional_signer_secret_keys_arg,
-            execution_args.commitment,
-            execution_args.send_preflight_commitment,
-            execution_args.send_transaction_options,
-            execution_args.search_transaction_history,
-            execution_args.status_timeout_ms,
-            execution_args.status_poll_ms,
-            execution_args.simulation_account_encoding_arg,
-            execution_args.simulation_min_context_slot_arg,
-            execution_args.simulation_accounts,
-            execution_args.simulate_sig_verify,
-            execution_args.simulate_replace_recent_blockhash,
-            execution_args.simulate_inner_instructions,
+            execution_args,
         ),
     };
 }
@@ -5492,7 +5441,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         .idl_remaining_accounts = idl_remaining_accounts.items,
         .idl_remaining_accounts_json_arg = args.idl_remaining_accounts_json_arg,
     };
-    const invoke_execution_args = .{
+    const invoke_execution_args: CliInvokeExecutionArgs = .{
         .commitment = commitment,
         .send_preflight_commitment = send_preflight_commitment,
         .send_transaction_options = send_transaction_options,
