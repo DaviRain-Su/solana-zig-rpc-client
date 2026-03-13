@@ -213,6 +213,7 @@ pub const OwnedInvocationLookupCoverage = struct {
 
 pub const OwnedInvocationReport = struct {
     summary: OwnedInvocationSummary,
+    plan: OwnedInvocationPlan,
     preflight: OwnedInvocationPreflight,
     validation: OwnedInvocationValidation,
     lookup_coverage: OwnedInvocationLookupCoverage,
@@ -226,6 +227,7 @@ pub const OwnedInvocationReport = struct {
 
     pub fn deinit(self: *OwnedInvocationReport, allocator: Allocator) void {
         self.summary.deinit(allocator);
+        self.plan.deinit(allocator);
         self.preflight.deinit(allocator);
         self.validation.deinit(allocator);
         self.lookup_coverage.deinit(allocator);
@@ -890,6 +892,13 @@ pub fn buildInvocationReportFromInvocationSpecJson(
     );
     errdefer summary.deinit(allocator);
 
+    var plan = try buildInvocationPlanFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer plan.deinit(allocator);
+
     var preflight = try buildInvocationPreflightFromInvocationSpecJson(
         allocator,
         family,
@@ -913,6 +922,7 @@ pub fn buildInvocationReportFromInvocationSpecJson(
 
     return .{
         .summary = summary,
+        .plan = plan,
         .preflight = preflight,
         .validation = validation,
         .lookup_coverage = lookup_coverage,
@@ -4716,6 +4726,8 @@ test "invoke.buildPreferredInvocationReportFromInvocationSpecJson surfaces versi
 
     try std.testing.expect(preferred_report.report.can_execute);
     try std.testing.expect(preferred_report.report.has_full_lookup_coverage);
+    try std.testing.expectEqual(@as(usize, 1), preferred_report.report.plan.address_lookup_table_count);
+    try std.testing.expectEqual(InvocationBlockhashMode.latest_blockhash, preferred_report.report.plan.blockhash_mode);
     try std.testing.expect(preferred_report.mode_report.versioned_buildable);
     try std.testing.expectEqual(
         @as(?InvocationMode, .versioned),
@@ -4745,6 +4757,8 @@ test "invoke.buildPreferredInvocationReportFromInvocationSpecJson surfaces inval
 
     try std.testing.expect(!preferred_report.report.can_execute);
     try std.testing.expect(preferred_report.report.has_missing_required_signers);
+    try std.testing.expectEqual(@as(usize, 0), preferred_report.report.plan.address_lookup_table_count);
+    try std.testing.expectEqual(InvocationBlockhashMode.latest_blockhash, preferred_report.report.plan.blockhash_mode);
     try std.testing.expect(!preferred_report.mode_report.legacy_buildable);
     try std.testing.expect(!preferred_report.mode_report.versioned_buildable);
     try std.testing.expectEqual(
