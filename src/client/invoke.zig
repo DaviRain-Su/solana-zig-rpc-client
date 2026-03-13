@@ -62,6 +62,27 @@ pub const SignedInvocationTransaction = union(enum) {
         }
         self.* = undefined;
     }
+
+    pub fn serialize(self: SignedInvocationTransaction, allocator: Allocator) ![]u8 {
+        return switch (self) {
+            .legacy => |signed| try signed.serialize(allocator),
+            .versioned => |signed| try signed.serialize(allocator),
+        };
+    }
+
+    pub fn toBase64(self: SignedInvocationTransaction, allocator: Allocator) ![]u8 {
+        return switch (self) {
+            .legacy => |signed| try signed.toBase64(allocator),
+            .versioned => |signed| try signed.toBase64(allocator),
+        };
+    }
+
+    pub fn firstSignature(self: SignedInvocationTransaction) ?sdk.Signature {
+        return switch (self) {
+            .legacy => |signed| signed.firstSignature(),
+            .versioned => |signed| signed.firstSignature(),
+        };
+    }
 };
 
 pub const OwnedInvocationSpec = client.instructions_invoke.OwnedInvocationSpec;
@@ -433,6 +454,18 @@ pub const PreparedInvocation = struct {
         self.transaction.deinit(allocator);
         self.* = undefined;
     }
+
+    pub fn serialize(self: PreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.transaction.serialize(allocator);
+    }
+
+    pub fn toBase64(self: PreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.transaction.toBase64(allocator);
+    }
+
+    pub fn firstSignature(self: PreparedInvocation) ?sdk.Signature {
+        return self.transaction.firstSignature();
+    }
 };
 
 pub const PreferredPreparedSignedTransaction = struct {
@@ -447,6 +480,18 @@ pub const PreferredPreparedSignedTransaction = struct {
         self.accounts.deinit(allocator);
         self.transaction.deinit(allocator);
         self.* = undefined;
+    }
+
+    pub fn serialize(self: PreferredPreparedSignedTransaction, allocator: Allocator) ![]u8 {
+        return try self.transaction.serialize(allocator);
+    }
+
+    pub fn toBase64(self: PreferredPreparedSignedTransaction, allocator: Allocator) ![]u8 {
+        return try self.transaction.toBase64(allocator);
+    }
+
+    pub fn firstSignature(self: PreferredPreparedSignedTransaction) ?sdk.Signature {
+        return self.transaction.firstSignature();
     }
 };
 
@@ -6038,6 +6083,62 @@ test "invoke.sendAndConfirmPreparedInvocationWithSpinner dispatches prepared ver
     try std.testing.expectEqualStrings("prepared-versioned-spinner", signature);
     try std.testing.expectEqual(@as(u64, 777), rpc.captured_timeout_ms);
     try std.testing.expectEqual(rpc_types.Commitment.confirmed, rpc.captured_commitment.?);
+}
+
+test "invoke.PreparedInvocation transaction helpers expose generic serialization" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 116, 117, 118);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        false,
+        spec_json,
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    const serialized = try prepared.serialize(allocator);
+    defer allocator.free(serialized);
+    const encoded = try prepared.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    try std.testing.expect(serialized.len != 0);
+    try std.testing.expect(encoded.len != 0);
+    try std.testing.expect(prepared.firstSignature() != null);
+}
+
+test "invoke.PreferredPreparedSignedTransaction transaction helpers expose generic serialization" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 121, 122, 123, 124, 125);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer prepared.deinit(allocator);
+
+    const encoded = try prepared.toBase64(allocator);
+    defer allocator.free(encoded);
+
+    try std.testing.expect(encoded.len != 0);
+    try std.testing.expect(prepared.firstSignature() != null);
+    try std.testing.expectEqual(@as(?InvocationMode, .versioned), prepared.execution_report.selected_mode);
 }
 
 test "invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson preserves execution report" {
