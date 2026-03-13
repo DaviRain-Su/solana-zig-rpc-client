@@ -816,6 +816,26 @@ pub const SentPreparedInvocation = struct {
         allocator.free(self.signature);
         self.* = undefined;
     }
+
+    pub fn serialize(self: SentPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.serialize(allocator);
+    }
+
+    pub fn toBase64(self: SentPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.toBase64(allocator);
+    }
+
+    pub fn serializeMessage(self: SentPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.serializeMessage(allocator);
+    }
+
+    pub fn messageToBase64(self: SentPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.messageToBase64(allocator);
+    }
+
+    pub fn firstSignature(self: SentPreparedInvocation) ?sdk.Signature {
+        return self.prepared.firstSignature();
+    }
 };
 
 pub const SimulatedPreparedInvocation = struct {
@@ -826,6 +846,26 @@ pub const SimulatedPreparedInvocation = struct {
         self.prepared.deinit(allocator);
         self.* = undefined;
     }
+
+    pub fn serialize(self: SimulatedPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.serialize(allocator);
+    }
+
+    pub fn toBase64(self: SimulatedPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.toBase64(allocator);
+    }
+
+    pub fn serializeMessage(self: SimulatedPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.serializeMessage(allocator);
+    }
+
+    pub fn messageToBase64(self: SimulatedPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.messageToBase64(allocator);
+    }
+
+    pub fn firstSignature(self: SimulatedPreparedInvocation) ?sdk.Signature {
+        return self.prepared.firstSignature();
+    }
 };
 
 pub const PreparedInvocationFee = struct {
@@ -835,6 +875,26 @@ pub const PreparedInvocationFee = struct {
     pub fn deinit(self: *PreparedInvocationFee, allocator: Allocator) void {
         self.prepared.deinit(allocator);
         self.* = undefined;
+    }
+
+    pub fn serialize(self: PreparedInvocationFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.serialize(allocator);
+    }
+
+    pub fn toBase64(self: PreparedInvocationFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.toBase64(allocator);
+    }
+
+    pub fn serializeMessage(self: PreparedInvocationFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.serializeMessage(allocator);
+    }
+
+    pub fn messageToBase64(self: PreparedInvocationFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.messageToBase64(allocator);
+    }
+
+    pub fn firstSignature(self: PreparedInvocationFee) ?sdk.Signature {
+        return self.prepared.firstSignature();
     }
 };
 
@@ -847,6 +907,26 @@ pub const SentPreferredPreparedExecution = struct {
         allocator.free(self.signature);
         self.* = undefined;
     }
+
+    pub fn serialize(self: SentPreferredPreparedExecution, allocator: Allocator) ![]u8 {
+        return try self.prepared.serialize(allocator);
+    }
+
+    pub fn toBase64(self: SentPreferredPreparedExecution, allocator: Allocator) ![]u8 {
+        return try self.prepared.toBase64(allocator);
+    }
+
+    pub fn serializeMessage(self: SentPreferredPreparedExecution, allocator: Allocator) ![]u8 {
+        return try self.prepared.serializeMessage(allocator);
+    }
+
+    pub fn messageToBase64(self: SentPreferredPreparedExecution, allocator: Allocator) ![]u8 {
+        return try self.prepared.messageToBase64(allocator);
+    }
+
+    pub fn firstSignature(self: SentPreferredPreparedExecution) ?sdk.Signature {
+        return self.prepared.firstSignature();
+    }
 };
 
 pub const SimulatedPreferredPreparedExecution = struct {
@@ -857,6 +937,26 @@ pub const SimulatedPreferredPreparedExecution = struct {
         self.prepared.deinit(allocator);
         self.* = undefined;
     }
+
+    pub fn serialize(self: SimulatedPreferredPreparedExecution, allocator: Allocator) ![]u8 {
+        return try self.prepared.serialize(allocator);
+    }
+
+    pub fn toBase64(self: SimulatedPreferredPreparedExecution, allocator: Allocator) ![]u8 {
+        return try self.prepared.toBase64(allocator);
+    }
+
+    pub fn serializeMessage(self: SimulatedPreferredPreparedExecution, allocator: Allocator) ![]u8 {
+        return try self.prepared.serializeMessage(allocator);
+    }
+
+    pub fn messageToBase64(self: SimulatedPreferredPreparedExecution, allocator: Allocator) ![]u8 {
+        return try self.prepared.messageToBase64(allocator);
+    }
+
+    pub fn firstSignature(self: SimulatedPreferredPreparedExecution) ?sdk.Signature {
+        return self.prepared.firstSignature();
+    }
 };
 
 pub const PreferredPreparedExecutionFee = struct {
@@ -866,6 +966,26 @@ pub const PreferredPreparedExecutionFee = struct {
     pub fn deinit(self: *PreferredPreparedExecutionFee, allocator: Allocator) void {
         self.prepared.deinit(allocator);
         self.* = undefined;
+    }
+
+    pub fn serialize(self: PreferredPreparedExecutionFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.serialize(allocator);
+    }
+
+    pub fn toBase64(self: PreferredPreparedExecutionFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.toBase64(allocator);
+    }
+
+    pub fn serializeMessage(self: PreferredPreparedExecutionFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.serializeMessage(allocator);
+    }
+
+    pub fn messageToBase64(self: PreferredPreparedExecutionFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.messageToBase64(allocator);
+    }
+
+    pub fn firstSignature(self: PreferredPreparedExecutionFee) ?sdk.Signature {
+        return self.prepared.firstSignature();
     }
 };
 
@@ -7832,6 +7952,122 @@ test "invoke.getFeeForOwnedPreferredPreparedExecution preserves fallback metadat
     try std.testing.expectEqual(@as(?InvocationMode, .legacy), fee_result.prepared.requested_mode);
     try std.testing.expectEqual(InvocationMode.versioned, fee_result.prepared.selected_mode);
     try std.testing.expect(fee_result.prepared.used_fallback);
+}
+
+test "invoke.SentPreparedInvocation exposes transaction and message helpers" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn sendTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return "sent-prepared-helper";
+        }
+
+        pub fn sendVersionedTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return error.UnexpectedVersionedCall;
+        }
+    };
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 409, 410, 411);
+    defer allocator.free(spec_json);
+
+    var rpc = DummyRpc{};
+    var sent = try sendOwnedPreparedInvocation(
+        allocator,
+        &rpc,
+        try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+            allocator,
+            DummyRpc{},
+            .instructions,
+            false,
+            spec_json,
+            .{},
+        ),
+        null,
+    );
+    defer sent.deinit(allocator);
+
+    const tx_base64 = try sent.toBase64(allocator);
+    defer allocator.free(tx_base64);
+    const message_base64 = try sent.messageToBase64(allocator);
+    defer allocator.free(message_base64);
+
+    try std.testing.expectEqualStrings("sent-prepared-helper", sent.signature);
+    try std.testing.expect(tx_base64.len != 0);
+    try std.testing.expect(message_base64.len != 0);
+    try std.testing.expect(sent.firstSignature() != null);
+}
+
+test "invoke.PreferredPreparedExecutionFee exposes transaction and message helpers" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn getFeeForMessageTyped(
+            self: *@This(),
+            message: sdk.LegacyMessage,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = message;
+            _ = commitment;
+            return error.UnexpectedLegacyCall;
+        }
+
+        pub fn getFeeForVersionedMessageTyped(
+            self: *@This(),
+            message: sdk.VersionedMessageV0,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = message;
+            _ = commitment;
+            return @as(rpc_types.FeeForMessage, 963);
+        }
+    };
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 412, 413, 414, 415, 416);
+    defer allocator.free(spec_json);
+
+    var rpc = DummyRpc{};
+    var fee_result = try getFeeForOwnedPreferredPreparedExecution(
+        allocator,
+        &rpc,
+        try buildPreferredPreparedInvocationFromInvocationSpecJson(
+            allocator,
+            DummyRpc{},
+            .program,
+            spec_json,
+            .{
+                .mode = .{
+                    .preferred_mode = .legacy,
+                    .allow_fallback = true,
+                },
+            },
+        ),
+        .confirmed,
+    );
+    defer fee_result.deinit(allocator);
+
+    const tx_base64 = try fee_result.toBase64(allocator);
+    defer allocator.free(tx_base64);
+    const message_base64 = try fee_result.messageToBase64(allocator);
+    defer allocator.free(message_base64);
+
+    try std.testing.expectEqual(@as(rpc_types.FeeForMessage, 963), fee_result.fee);
+    try std.testing.expect(tx_base64.len != 0);
+    try std.testing.expect(message_base64.len != 0);
+    try std.testing.expect(fee_result.firstSignature() != null);
 }
 
 test "invoke.PreparedInvocation transaction helpers expose generic serialization" {
