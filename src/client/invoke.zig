@@ -11,6 +11,23 @@ pub const InvokeFamily = enum {
     anchor_idl,
 };
 
+pub const OwnedInvocationMessage = union(enum) {
+    legacy: sdk.OwnedLegacyMessage,
+    versioned: sdk.OwnedVersionedMessageV0,
+
+    pub fn deinit(self: *OwnedInvocationMessage, allocator: Allocator) void {
+        switch (self.*) {
+            .legacy => |*owned| owned.deinit(allocator),
+            .versioned => |*owned| owned.deinit(allocator),
+        }
+    }
+};
+
+pub const SignedInvocationTransaction = union(enum) {
+    legacy: sdk.SignedLegacyTransaction,
+    versioned: sdk.SignedVersionedTransaction,
+};
+
 pub fn sendInvocationSpecJson(
     allocator: Allocator,
     rpc: anytype,
@@ -420,6 +437,88 @@ pub fn buildLegacyMessageBase64FromInvocationSpecJson(
     };
 }
 
+pub fn buildOwnedMessageFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    blockhash_commitment: ?client.Commitment,
+) !OwnedInvocationMessage {
+    return if (versioned)
+        .{
+            .versioned = try buildOwnedVersionedMessageFromInvocationSpecJson(
+                allocator,
+                rpc,
+                family,
+                invocation_spec_json,
+                blockhash_commitment,
+            ),
+        }
+    else
+        .{
+            .legacy = try buildOwnedLegacyMessageFromInvocationSpecJson(
+                allocator,
+                rpc,
+                family,
+                invocation_spec_json,
+                blockhash_commitment,
+            ),
+        };
+}
+
+pub fn buildMessageBytesFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    blockhash_commitment: ?client.Commitment,
+) ![]u8 {
+    return if (versioned)
+        try buildVersionedMessageBytesFromInvocationSpecJson(
+            allocator,
+            rpc,
+            family,
+            invocation_spec_json,
+            blockhash_commitment,
+        )
+    else
+        try buildLegacyMessageBytesFromInvocationSpecJson(
+            allocator,
+            rpc,
+            family,
+            invocation_spec_json,
+            blockhash_commitment,
+        );
+}
+
+pub fn buildMessageBase64FromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    blockhash_commitment: ?client.Commitment,
+) ![]u8 {
+    return if (versioned)
+        try buildVersionedMessageBase64FromInvocationSpecJson(
+            allocator,
+            rpc,
+            family,
+            invocation_spec_json,
+            blockhash_commitment,
+        )
+    else
+        try buildLegacyMessageBase64FromInvocationSpecJson(
+            allocator,
+            rpc,
+            family,
+            invocation_spec_json,
+            blockhash_commitment,
+        );
+}
+
 pub fn buildSignedLegacyTransactionFromInvocationSpecJson(
     allocator: Allocator,
     rpc: anytype,
@@ -441,6 +540,36 @@ pub fn buildSignedLegacyTransactionFromInvocationSpecJson(
             .blockhash_commitment = blockhash_commitment,
         }),
     };
+}
+
+pub fn buildSignedTransactionFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    blockhash_commitment: ?client.Commitment,
+) !SignedInvocationTransaction {
+    return if (versioned)
+        .{
+            .versioned = try buildSignedVersionedTransactionFromInvocationSpecJson(
+                allocator,
+                rpc,
+                family,
+                invocation_spec_json,
+                blockhash_commitment,
+            ),
+        }
+    else
+        .{
+            .legacy = try buildSignedLegacyTransactionFromInvocationSpecJson(
+                allocator,
+                rpc,
+                family,
+                invocation_spec_json,
+                blockhash_commitment,
+            ),
+        };
 }
 
 pub fn buildOwnedVersionedMessageFromInvocationSpecJson(
@@ -938,4 +1067,211 @@ test "invoke.buildVersionedMessageBase64FromInvocationSpecJson dispatches anchor
     defer allocator.free(actual);
 
     try std.testing.expectEqualStrings(expected, actual);
+}
+
+test "invoke.buildMessageBase64FromInvocationSpecJson dispatches program family generically" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{192} ** 32);
+    const program_id = sdk.Pubkey.fromBytes(.{193} ** 32);
+    const recent_blockhash = sdk.Hash.fromBytes(.{194} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const recent_blockhash_base58 = try recent_blockhash.toBase58(allocator);
+    defer allocator.free(recent_blockhash_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "dataBytes":[1,2,3],
+        \\  "recent_blockhash":"{s}"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+            recent_blockhash_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const Dummy = struct { allocator: Allocator };
+    var dummy = Dummy{ .allocator = allocator };
+    const expected = try client.program_invoke.buildLegacyMessageBase64FromInvocationSpecJson(&dummy, .{
+        .program_invocation_spec_json = spec_json,
+    });
+    defer allocator.free(expected);
+
+    const actual = try buildMessageBase64FromInvocationSpecJson(
+        allocator,
+        &dummy,
+        .program,
+        false,
+        spec_json,
+        null,
+    );
+    defer allocator.free(actual);
+
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
+test "invoke.buildMessageBytesFromInvocationSpecJson dispatches instructions family generically" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{195} ** 32);
+    const program_id = sdk.Pubkey.fromBytes(.{196} ** 32);
+    const recent_blockhash = sdk.Hash.fromBytes(.{197} ** 32);
+    const lookup_table_key = sdk.Pubkey.fromBytes(.{198} ** 32);
+    const lookup_table_address = sdk.Pubkey.fromBytes(.{199} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const recent_blockhash_base58 = try recent_blockhash.toBase58(allocator);
+    defer allocator.free(recent_blockhash_base58);
+    const lookup_table_key_base58 = try lookup_table_key.toBase58(allocator);
+    defer allocator.free(lookup_table_key_base58);
+    const lookup_table_address_base58 = try lookup_table_address.toBase58(allocator);
+    defer allocator.free(lookup_table_address_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "recent_blockhash":"{s}",
+        \\  "address_lookup_tables":[{{"account_key":"{s}","addresses":["{s}"]}}],
+        \\  "instructions":[{{"program_id":"{s}","dataBytes":[4,5,6]}}]
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            recent_blockhash_base58,
+            lookup_table_key_base58,
+            lookup_table_address_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const Dummy = struct { allocator: Allocator };
+    var dummy = Dummy{ .allocator = allocator };
+    const expected = try client.instructions_invoke.buildVersionedMessageBytesFromInvocationSpecJson(&dummy, .{
+        .instruction_spec_json = spec_json,
+    });
+    defer allocator.free(expected);
+
+    const actual = try buildMessageBytesFromInvocationSpecJson(
+        allocator,
+        &dummy,
+        .instructions,
+        true,
+        spec_json,
+        null,
+    );
+    defer allocator.free(actual);
+
+    try std.testing.expectEqualSlices(u8, expected, actual);
+}
+
+test "invoke.buildOwnedMessageFromInvocationSpecJson returns typed union" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{200} ** 32);
+    const program_id = sdk.Pubkey.fromBytes(.{201} ** 32);
+    const recent_blockhash = sdk.Hash.fromBytes(.{202} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const recent_blockhash_base58 = try recent_blockhash.toBase58(allocator);
+    defer allocator.free(recent_blockhash_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "dataBytes":[1,2,3],
+        \\  "recent_blockhash":"{s}"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+            recent_blockhash_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const Dummy = struct { allocator: Allocator };
+    var dummy = Dummy{ .allocator = allocator };
+    var owned = try buildOwnedMessageFromInvocationSpecJson(
+        allocator,
+        &dummy,
+        .program,
+        false,
+        spec_json,
+        null,
+    );
+    defer owned.deinit(allocator);
+
+    switch (owned) {
+        .legacy => {},
+        .versioned => return error.UnexpectedResult,
+    }
+}
+
+test "invoke.buildSignedTransactionFromInvocationSpecJson returns typed union" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{203} ** 32);
+    const program_id = sdk.Pubkey.fromBytes(.{204} ** 32);
+    const recent_blockhash = sdk.Hash.fromBytes(.{205} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const recent_blockhash_base58 = try recent_blockhash.toBase58(allocator);
+    defer allocator.free(recent_blockhash_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "dataBytes":[1,2,3],
+        \\  "recent_blockhash":"{s}"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+            recent_blockhash_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const Dummy = struct { allocator: Allocator };
+    var dummy = Dummy{ .allocator = allocator };
+    const signed = try buildSignedTransactionFromInvocationSpecJson(
+        allocator,
+        &dummy,
+        .program,
+        false,
+        spec_json,
+        null,
+    );
+
+    switch (signed) {
+        .legacy => {},
+        .versioned => return error.UnexpectedResult,
+    }
 }
