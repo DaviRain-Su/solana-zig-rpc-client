@@ -3470,6 +3470,53 @@ fn loadProgramInvokeDataArg(
     );
 }
 
+fn loadOptionalInstructionSpecSource(
+    allocator: Allocator,
+    arg: ?[]const u8,
+) !?[]u8 {
+    return if (arg) |value|
+        try loadInstructionSpecSource(allocator, value)
+    else
+        null;
+}
+
+fn parseCliSignerKeypairPathsJsonSource(
+    allocator: Allocator,
+    source: ?[]const u8,
+) !?std.json.Parsed([]const []const u8) {
+    return if (source) |value|
+        std.json.parseFromSlice([]const []const u8, allocator, value, .{
+            .allocate = .alloc_always,
+        }) catch return error.InvalidCli
+    else
+        null;
+}
+
+fn parseCliAddressLookupTablesJsonSource(
+    allocator: Allocator,
+    source: ?[]const u8,
+) !?std.json.Parsed([]CliAddressLookupTableSpec) {
+    return if (source) |value|
+        std.json.parseFromSlice([]CliAddressLookupTableSpec, allocator, value, .{
+            .allocate = .alloc_always,
+            .ignore_unknown_fields = true,
+        }) catch return error.InvalidCli
+    else
+        null;
+}
+
+fn parseCliRemainingAccountsJsonSource(
+    allocator: Allocator,
+    source: ?[]const u8,
+) !?std.json.Parsed([]CliInstructionAccountMeta) {
+    return if (source) |value|
+        std.json.parseFromSlice([]CliInstructionAccountMeta, allocator, value, .{
+            .ignore_unknown_fields = true,
+        }) catch return error.InvalidCli
+    else
+        null;
+}
+
 fn encodeResolvedSignerSecretKeysJson(
     allocator: Allocator,
     base_secret_keys: []const []const u8,
@@ -3503,6 +3550,38 @@ fn encodeResolvedSignerSecretKeysJson(
     return try allocator.dupe(u8, json_buffer.written());
 }
 
+const LoadedCliProgramInvokePayloadInputs = struct {
+    accounts_source: []u8,
+    instruction_data: []u8,
+
+    fn deinit(self: *@This(), allocator: Allocator) void {
+        allocator.free(self.accounts_source);
+        allocator.free(self.instruction_data);
+    }
+};
+
+fn loadCliProgramInvokePayloadInputs(
+    allocator: Allocator,
+    accounts_arg: []const u8,
+    data_arg: ?[]const u8,
+    data_encoding_arg: ?[]const u8,
+) !LoadedCliProgramInvokePayloadInputs {
+    const accounts_source = try loadInstructionSpecSource(allocator, accounts_arg);
+    errdefer allocator.free(accounts_source);
+
+    const instruction_data = try loadProgramInvokeDataArg(
+        allocator,
+        data_arg,
+        data_encoding_arg,
+    );
+    errdefer allocator.free(instruction_data);
+
+    return .{
+        .accounts_source = accounts_source,
+        .instruction_data = instruction_data,
+    };
+}
+
 const LoadedCliInvocationContextJsonInputs = struct {
     lookup_tables_source: ?[]u8 = null,
     nonce_authority_secret_key: ?[]u8 = null,
@@ -3522,21 +3601,13 @@ fn loadCliInvocationContextJsonInputs(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) !LoadedCliInvocationContextJsonInputs {
-    var parsed_signer_keypair_paths: ?std.json.Parsed([]const []const u8) = null;
+    const signer_keypair_paths_source = try loadOptionalInstructionSpecSource(allocator, signer_keypair_paths_arg);
+    defer if (signer_keypair_paths_source) |value| allocator.free(value);
+
+    var parsed_signer_keypair_paths = try parseCliSignerKeypairPathsJsonSource(allocator, signer_keypair_paths_source);
     defer if (parsed_signer_keypair_paths) |*value| value.deinit();
-    if (signer_keypair_paths_arg) |value| {
-        const signer_paths_source = try loadInstructionSpecSource(allocator, value);
-        defer allocator.free(signer_paths_source);
 
-        parsed_signer_keypair_paths = std.json.parseFromSlice([]const []const u8, allocator, signer_paths_source, .{
-            .allocate = .alloc_always,
-        }) catch return error.InvalidCli;
-    }
-
-    const lookup_tables_source = if (lookup_tables_arg) |value|
-        try loadInstructionSpecSource(allocator, value)
-    else
-        null;
+    const lookup_tables_source = try loadOptionalInstructionSpecSource(allocator, lookup_tables_arg);
     errdefer if (lookup_tables_source) |value| allocator.free(value);
 
     const nonce_authority_secret_key = try resolveInstructionKeypairSecretKeyBase58(
@@ -3585,16 +3656,15 @@ fn buildProgramInvokeInvocationSpecJson(
     ) orelse return error.InvalidCli;
     defer allocator.free(payer_secret_key);
 
-    const accounts_source = try loadInstructionSpecSource(allocator, accounts_arg);
-    defer allocator.free(accounts_source);
-
-    const instruction_data = try loadProgramInvokeDataArg(
+    var payload_inputs = try loadCliProgramInvokePayloadInputs(
         allocator,
+        accounts_arg,
         data_arg,
         data_encoding_arg,
     );
-    defer allocator.free(instruction_data);
-    const instruction_data_base64 = try client.encodeBase64(allocator, instruction_data);
+    defer payload_inputs.deinit(allocator);
+
+    const instruction_data_base64 = try client.encodeBase64(allocator, payload_inputs.instruction_data);
     defer allocator.free(instruction_data_base64);
 
     var invocation_context = try loadCliInvocationContextJsonInputs(
@@ -3614,7 +3684,7 @@ fn buildProgramInvokeInvocationSpecJson(
         .nonce_account = nonce_account_arg,
         .nonce_authority_secret_key = invocation_context.nonce_authority_secret_key,
         .program_id = program_id,
-        .accounts_json = accounts_source,
+        .accounts_json = payload_inputs.accounts_source,
         .data = instruction_data_base64,
         .data_encoding = "base64",
     }) catch |err| switch (err) {
@@ -3653,16 +3723,10 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
     const idl_source = try loadInstructionSpecSource(allocator, idl_arg);
     defer allocator.free(idl_source);
 
-    const args_json_source = if (args_json_arg) |value|
-        try loadInstructionSpecSource(allocator, value)
-    else
-        null;
+    const args_json_source = try loadOptionalInstructionSpecSource(allocator, args_json_arg);
     defer if (args_json_source) |value| allocator.free(value);
 
-    const accounts_json_source = if (accounts_json_arg) |value|
-        try loadInstructionSpecSource(allocator, value)
-    else
-        null;
+    const accounts_json_source = try loadOptionalInstructionSpecSource(allocator, accounts_json_arg);
     defer if (accounts_json_source) |value| allocator.free(value);
 
     var parsed_cli_account_bindings = try parseCliAnchorInvokeBindings(allocator, account_bindings);
@@ -3704,19 +3768,11 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
         null;
     defer if (combined_account_bindings_json_source) |value| allocator.free(value);
 
-    const remaining_accounts_json_source = if (remaining_accounts_json_arg) |value|
-        try loadInstructionSpecSource(allocator, value)
-    else
-        null;
+    const remaining_accounts_json_source = try loadOptionalInstructionSpecSource(allocator, remaining_accounts_json_arg);
     defer if (remaining_accounts_json_source) |value| allocator.free(value);
 
-    var parsed_remaining_accounts: ?std.json.Parsed([]CliInstructionAccountMeta) = null;
+    var parsed_remaining_accounts = try parseCliRemainingAccountsJsonSource(allocator, remaining_accounts_json_source);
     defer if (parsed_remaining_accounts) |*value| value.deinit();
-    if (remaining_accounts_json_source) |value| {
-        parsed_remaining_accounts = std.json.parseFromSlice([]CliInstructionAccountMeta, allocator, value, .{
-            .ignore_unknown_fields = true,
-        }) catch return error.InvalidCli;
-    }
 
     var invocation_context = try loadCliInvocationContextJsonInputs(
         allocator,
@@ -3727,14 +3783,8 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
     );
     defer invocation_context.deinit(allocator);
 
-    var parsed_lookup_tables: ?std.json.Parsed([]CliAddressLookupTableSpec) = null;
+    var parsed_lookup_tables = try parseCliAddressLookupTablesJsonSource(allocator, invocation_context.lookup_tables_source);
     defer if (parsed_lookup_tables) |*value| value.deinit();
-    if (invocation_context.lookup_tables_source) |value| {
-        parsed_lookup_tables = std.json.parseFromSlice([]CliAddressLookupTableSpec, allocator, value, .{
-            .allocate = .alloc_always,
-            .ignore_unknown_fields = true,
-        }) catch return error.InvalidCli;
-    }
 
     const remaining_account_count = remaining_accounts.len + if (parsed_remaining_accounts) |value| value.value.len else 0;
     const canonical_remaining_accounts = try allocator.alloc(CliInstructionAccountMeta, remaining_account_count);
@@ -3882,65 +3932,33 @@ fn loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) !LoadedCliInstructionSpec {
-    const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch return error.InvalidCli;
-    defer allocator.free(accounts_source);
+    var payload_inputs = loadCliProgramInvokePayloadInputs(
+        allocator,
+        accounts_arg,
+        data_arg,
+        data_encoding_arg,
+    ) catch return error.InvalidCli;
+    defer payload_inputs.deinit(allocator);
 
-    var parsed_signer_keypair_paths: ?std.json.Parsed([]const []const u8) = null;
+    const signer_keypair_paths_source = loadOptionalInstructionSpecSource(allocator, signer_keypair_paths_arg) catch return error.InvalidCli;
+    defer if (signer_keypair_paths_source) |value| allocator.free(value);
+
+    var parsed_signer_keypair_paths = parseCliSignerKeypairPathsJsonSource(allocator, signer_keypair_paths_source) catch return error.InvalidCli;
     defer if (parsed_signer_keypair_paths) |*value| value.deinit();
 
-    if (signer_keypair_paths_arg) |value| {
-        const signer_paths_source = loadInstructionSpecSource(allocator, value) catch return error.InvalidCli;
-        defer allocator.free(signer_paths_source);
+    const lookup_tables_source = loadOptionalInstructionSpecSource(allocator, lookup_tables_arg) catch return error.InvalidCli;
+    defer if (lookup_tables_source) |value| allocator.free(value);
 
-        parsed_signer_keypair_paths = std.json.parseFromSlice([]const []const u8, allocator, signer_paths_source, .{
-            .allocate = .alloc_always,
-        }) catch return error.InvalidCli;
-    }
-
-    var parsed_lookup_tables: ?std.json.Parsed([]CliAddressLookupTableSpec) = null;
+    var parsed_lookup_tables = parseCliAddressLookupTablesJsonSource(allocator, lookup_tables_source) catch return error.InvalidCli;
     defer if (parsed_lookup_tables) |*value| value.deinit();
-
-    if (lookup_tables_arg) |value| {
-        const lookup_tables_source = loadInstructionSpecSource(allocator, value) catch return error.InvalidCli;
-        defer allocator.free(lookup_tables_source);
-
-        parsed_lookup_tables = std.json.parseFromSlice([]CliAddressLookupTableSpec, allocator, lookup_tables_source, .{
-            .allocate = .alloc_always,
-            .ignore_unknown_fields = true,
-        }) catch return error.InvalidCli;
-    }
-
-    const data_encoding = try parseInstructionDataEncodingArg(data_encoding_arg);
-    const data_path = if (data_arg) |value|
-        if (std.mem.startsWith(u8, value, "@")) blk: {
-            if (value.len == 1) return error.InvalidCli;
-            break :blk value[1..];
-        } else null
-    else
-        null;
-    const instruction_data = if (data_arg) |value|
-        if (data_path == null) value else null
-    else
-        null;
-
-    const decoded_instruction_data = loadCliInstructionData(
-        allocator,
-        .{
-            .program_id = "",
-            .data = instruction_data,
-            .data_path = data_path,
-            .data_encoding = data_encoding,
-        },
-    ) catch return error.InvalidCli;
-    defer allocator.free(decoded_instruction_data);
 
     const program_id_pubkey = client.Pubkey.fromBase58(allocator, program_id) catch return error.InvalidCli;
     var owned_instruction = client.program_invoke.buildOwnedInstruction(
         allocator,
         program_id_pubkey,
         .{
-            .accounts_json = accounts_source,
-            .data_bytes = decoded_instruction_data,
+            .accounts_json = payload_inputs.accounts_source,
+            .data_bytes = payload_inputs.instruction_data,
         },
     ) catch return error.InvalidCli;
     defer owned_instruction.deinit(allocator);
