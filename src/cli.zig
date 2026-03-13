@@ -102,7 +102,7 @@ const cli_option_help_params = clap.parseParamsComptime(
     \\    --limit <count>                     Maximum results to return (signatures-for-address)
     \\    --min-context-slot <slot>           Minimum context slot (send commands, signatures-for-address, account/program queries, or token-account)
     \\    --search-transaction-history        Search transaction history for status and confirmation queries
-    \\    --json                             Print explain, preview, validate, or prepare command output as JSON
+    \\    --json                             Print invoke, explain, preview, validate, or prepare command output as JSON
     \\    --skip-preflight                    Skip tx preflight checks (send commands)
     \\    --sig-verify                        Verify signatures during simulation (simulate-transaction)
     \\    --replace-recent-blockhash          Replace recent blockhash during simulation
@@ -116,8 +116,8 @@ const cli_option_help_params = clap.parseParamsComptime(
     \\    --sender-keypair <path>             Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)
     \\    --sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer secret key (base58)
     \\    --additional-signer-secret-key <additional-signer-secret-key> Additional signer secret key (base58, repeatable)
-    \\    --invoke-mode <mode>               Preferred invocation mode: auto|legacy|versioned (explain/preview/validate/prepare commands)
-    \\    --no-mode-fallback                 Disable automatic legacy/versioned fallback for explain/preview/validate/prepare commands
+    \\    --invoke-mode <mode>               Preferred invocation mode: auto|legacy|versioned (invoke/explain/preview/validate/prepare commands)
+    \\    --no-mode-fallback                 Disable automatic legacy/versioned fallback for invoke/explain/preview/validate/prepare commands
     \\    --data-schema-json <json|@path>    Program-invoke instruction data schema JSON (used with --args-json)
     \\    --args-json <json|@path>           Program-invoke instruction args JSON (used with --data-schema-json)
     \\    --schema-encoding <encoding>       Program-invoke schema encoding (currently borsh)
@@ -726,6 +726,8 @@ const command_usage_entries = [_]CommandUsageEntry{
     .{ .command = .send_program_invoke_and_confirm, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]", .parse_style = .program_invoke_legacy },
     .{ .command = .send_versioned_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
     .{ .command = .send_versioned_program_invoke_and_confirm, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
+    .{ .command = .invoke_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
+    .{ .command = .invoke_program_invoke_and_confirm, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
     .{ .command = .preview_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
     .{ .command = .explain_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
     .{ .command = .validate_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
@@ -1622,6 +1624,8 @@ pub const Command = enum {
     send_program_invoke_and_confirm,
     send_versioned_program_invoke,
     send_versioned_program_invoke_and_confirm,
+    invoke_program_invoke,
+    invoke_program_invoke_and_confirm,
     preview_program_invoke,
     explain_program_invoke,
     validate_program_invoke,
@@ -1778,6 +1782,8 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "preview-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "explain-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "validate-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
@@ -2569,6 +2575,56 @@ test "cli.parseCliArgs parses preview-program-invoke with schema args and lookup
 
     try std.testing.expectEqual(Command.preview_program_invoke, parsed.command);
     try std.testing.expectEqualStrings("SecretPreview111111111111111111111111111111", parsed.sender_secret_key_arg orelse "");
+    try std.testing.expectEqualStrings("{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}", parsed.program_invoke_data_schema_json_arg orelse "");
+    try std.testing.expectEqualStrings("{\"enabled\":true}", parsed.program_invoke_args_json_arg orelse "");
+    try std.testing.expectEqualStrings("borsh", parsed.program_invoke_schema_encoding_arg orelse "");
+}
+
+test "cli.parseCliArgs parses invoke-program-invoke with schema args and lookup tables" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "invoke-program-invoke",
+        "--sender-secret-key",
+        "SecretInvoke11111111111111111111111111111111",
+        "--data-schema-json",
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}",
+        "--args-json",
+        "{\"enabled\":true}",
+        "--schema-encoding",
+        "borsh",
+        "11111111111111111111111111111111",
+        "[]",
+        "[]",
+        "[{\"account_key\":\"LookupInvoke1111111111111111111111111111111\",\"addresses\":[\"AddrInvoke11111111111111111111111111111111111\"]}]",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.invoke_program_invoke, parsed.command);
+    try std.testing.expectEqualStrings("SecretInvoke11111111111111111111111111111111", parsed.sender_secret_key_arg orelse "");
+    try std.testing.expectEqualStrings("{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}", parsed.program_invoke_data_schema_json_arg orelse "");
+    try std.testing.expectEqualStrings("{\"enabled\":true}", parsed.program_invoke_args_json_arg orelse "");
+    try std.testing.expectEqualStrings("borsh", parsed.program_invoke_schema_encoding_arg orelse "");
+}
+
+test "cli.parseCliArgs parses invoke-program-invoke-and-confirm with schema args and lookup tables" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "invoke-program-invoke-and-confirm",
+        "--sender-secret-key",
+        "SecretInvokeConfirm1111111111111111111111111111",
+        "--data-schema-json",
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}",
+        "--args-json",
+        "{\"enabled\":true}",
+        "--schema-encoding",
+        "borsh",
+        "11111111111111111111111111111111",
+        "[]",
+        "[]",
+        "[{\"account_key\":\"LookupInvokeConfirm11111111111111111111111111\",\"addresses\":[\"AddrInvokeConfirm1111111111111111111111111111111\"]}]",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.invoke_program_invoke_and_confirm, parsed.command);
+    try std.testing.expectEqualStrings("SecretInvokeConfirm1111111111111111111111111111", parsed.sender_secret_key_arg orelse "");
     try std.testing.expectEqualStrings("{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}", parsed.program_invoke_data_schema_json_arg orelse "");
     try std.testing.expectEqualStrings("{\"enabled\":true}", parsed.program_invoke_args_json_arg orelse "");
     try std.testing.expectEqualStrings("borsh", parsed.program_invoke_schema_encoding_arg orelse "");
