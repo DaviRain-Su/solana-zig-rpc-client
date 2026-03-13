@@ -257,6 +257,30 @@ pub const OwnedInvocationPreflight = struct {
         allocator.free(self.lookup_table_pubkeys);
         self.* = undefined;
     }
+
+    pub fn providesSigner(self: OwnedInvocationPreflight, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.provided_signer_pubkeys, pubkey);
+    }
+
+    pub fn requiresSigner(self: OwnedInvocationPreflight, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.required_signer_pubkeys, pubkey);
+    }
+
+    pub fn hasExtraSigner(self: OwnedInvocationPreflight, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.extra_signer_pubkeys, pubkey);
+    }
+
+    pub fn isWritable(self: OwnedInvocationPreflight, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.writable_pubkeys, pubkey);
+    }
+
+    pub fn isReadonly(self: OwnedInvocationPreflight, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.readonly_pubkeys, pubkey);
+    }
+
+    pub fn containsLookupTable(self: OwnedInvocationPreflight, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.lookup_table_pubkeys, pubkey);
+    }
 };
 
 pub const OwnedInvocationValidation = struct {
@@ -278,6 +302,34 @@ pub const OwnedInvocationValidation = struct {
         allocator.free(self.lookup_table_pubkeys);
         allocator.free(self.duplicate_lookup_table_pubkeys);
         self.* = undefined;
+    }
+
+    pub fn providesSigner(self: OwnedInvocationValidation, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.provided_signer_pubkeys, pubkey);
+    }
+
+    pub fn requiresSigner(self: OwnedInvocationValidation, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.required_signer_pubkeys, pubkey);
+    }
+
+    pub fn isMissingRequiredSigner(self: OwnedInvocationValidation, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.missing_required_signer_pubkeys, pubkey);
+    }
+
+    pub fn isExtraSigner(self: OwnedInvocationValidation, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.extra_signer_pubkeys, pubkey);
+    }
+
+    pub fn hasDuplicateProvidedSigner(self: OwnedInvocationValidation, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.duplicate_provided_signer_pubkeys, pubkey);
+    }
+
+    pub fn containsLookupTable(self: OwnedInvocationValidation, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.lookup_table_pubkeys, pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: OwnedInvocationValidation, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.duplicate_lookup_table_pubkeys, pubkey);
     }
 };
 
@@ -5173,6 +5225,76 @@ test "invoke.buildInvocationValidationFromInvocationSpecJson detects duplicate s
     try std.testing.expectEqual(@as(usize, 1), validation.duplicate_lookup_table_pubkeys.len);
     try std.testing.expect(std.meta.eql(validation.duplicate_provided_signer_pubkeys[0], duplicate_signer_raw.public_key));
     try std.testing.expect(std.meta.eql(validation.duplicate_lookup_table_pubkeys[0], lookup_table));
+}
+
+test "invoke.OwnedInvocationPreflight query helpers expose signer and lookup roles" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{197} ** 32);
+    const extra_signer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{198} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{200} ** 32);
+    const missing_pubkey = sdk.Pubkey.fromBytes([_]u8{201} ** 32);
+
+    const spec_json = try allocInstructionsInvocationSpecJsonWithUnusedSigner(allocator, 197, 198, 199, 200);
+    defer allocator.free(spec_json);
+
+    var preflight = try buildInvocationPreflightFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer preflight.deinit(allocator);
+
+    try std.testing.expect(preflight.providesSigner(payer_raw.public_key));
+    try std.testing.expect(preflight.requiresSigner(payer_raw.public_key));
+    try std.testing.expect(preflight.providesSigner(extra_signer_raw.public_key));
+    try std.testing.expect(preflight.hasExtraSigner(extra_signer_raw.public_key));
+    try std.testing.expect(preflight.containsLookupTable(lookup_table));
+    try std.testing.expect(!preflight.providesSigner(missing_pubkey));
+    try std.testing.expect(!preflight.requiresSigner(missing_pubkey));
+    try std.testing.expect(!preflight.hasExtraSigner(missing_pubkey));
+    try std.testing.expect(!preflight.containsLookupTable(missing_pubkey));
+}
+
+test "invoke.OwnedInvocationValidation query helpers expose signer and duplicate roles" {
+    const allocator = std.testing.allocator;
+    const extra_signer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{202} ** 32);
+    const missing_signer = sdk.Pubkey.fromBytes([_]u8{203} ** 32);
+    const duplicate_signer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{205} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{208} ** 32);
+    const missing_pubkey = sdk.Pubkey.fromBytes([_]u8{209} ** 32);
+
+    const missing_spec_json = try allocInstructionsInvocationSpecJsonWithMissingSignerAndExtraSigner(allocator, 202, 203, 204, 205, 206);
+    defer allocator.free(missing_spec_json);
+
+    var missing_validation = try buildInvocationValidationFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        missing_spec_json,
+    );
+    defer missing_validation.deinit(allocator);
+
+    try std.testing.expect(missing_validation.providesSigner(extra_signer_raw.public_key));
+    try std.testing.expect(missing_validation.isExtraSigner(extra_signer_raw.public_key));
+    try std.testing.expect(missing_validation.isMissingRequiredSigner(missing_signer));
+    try std.testing.expect(!missing_validation.hasDuplicateProvidedSigner(extra_signer_raw.public_key));
+    try std.testing.expect(!missing_validation.hasDuplicateLookupTable(missing_pubkey));
+
+    const duplicate_spec_json = try allocProgramInvocationSpecJsonWithDuplicateSignerAndLookupTable(allocator, 204, 205, 206, 207, 208, 209);
+    defer allocator.free(duplicate_spec_json);
+
+    var duplicate_validation = try buildInvocationValidationFromInvocationSpecJson(
+        allocator,
+        .program,
+        duplicate_spec_json,
+    );
+    defer duplicate_validation.deinit(allocator);
+
+    try std.testing.expect(duplicate_validation.providesSigner(duplicate_signer_raw.public_key));
+    try std.testing.expect(duplicate_validation.hasDuplicateProvidedSigner(duplicate_signer_raw.public_key));
+    try std.testing.expect(duplicate_validation.containsLookupTable(lookup_table));
+    try std.testing.expect(duplicate_validation.hasDuplicateLookupTable(lookup_table));
+    try std.testing.expect(!duplicate_validation.isMissingRequiredSigner(missing_pubkey));
+    try std.testing.expect(!duplicate_validation.isExtraSigner(missing_pubkey));
 }
 
 test "invoke.buildInvocationLookupCoverageFromInvocationSpecJson detects uncovered nonce path" {
