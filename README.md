@@ -12,6 +12,7 @@ The codebase already supports three generic invocation families:
   - invoke from an arbitrary instruction set
 - `program-invoke`
   - invoke from `program_id + accounts + raw data`
+  - or from `program_id + accounts + data_schema + args`
 - `anchor-idl-invoke`
   - invoke from Anchor IDL + instruction name + args + account bindings
 
@@ -86,6 +87,77 @@ Each family supports reusable helpers for:
 - simulate / send / send-and-confirm
 - spinner-based confirm helpers
 - fee estimation
+
+`client.program_invoke` and `client.instructions_invoke` now also support schema-driven instruction data construction instead of requiring only raw bytes.
+
+Supported top-level schema inputs include:
+
+- scalar types
+  - `bool`
+  - `u8/u16/u32/u64/u128`
+  - `i8/i16/i32/i64/i128`
+  - `f32/f64`
+  - `string`
+  - `bytes`
+  - `pubkey`
+- composites
+  - `option`
+  - `result`
+  - `array`
+  - `vec`
+  - `set`
+  - `map`
+  - `tuple`
+  - `struct`
+  - `enum`
+- named definitions
+  - `definitions`
+  - `defs`
+  - `types`
+  - `defined` / `ref`
+
+The schema layer accepts several common JSON schema shapes:
+
+- explicit object style
+  - `{"type":"struct","fields":[...]}`
+  - `{"type":"vec","item":"u8"}`
+- alias field style
+  - `kind`
+  - `itemType`
+  - `elementType`
+  - `keyType`
+  - `valueType`
+  - `length` / `size`
+- tagged shorthand style
+  - `{"struct": ...}`
+  - `{"enum": ...}`
+  - `{"map": ...}`
+  - `{"vec": ...}`
+  - `{"option": ...}`
+
+It also accepts more ergonomic argument inputs than raw Borsh-only JSON:
+
+- integer strings in decimal or hex
+- bool strings like `"true"` / `"false"`
+- byte payloads as:
+  - arrays
+  - `hex:...`
+  - `base64:...`
+  - `utf8:...`
+- pubkeys as:
+  - base58 strings
+  - byte arrays
+  - hex/base64 byte wrappers
+- optional fields omitted from named structs when the field schema is `option`
+- struct field aliases that differ only by `_` / `-` / camelCase normalization
+
+This is exposed through:
+
+- `client.instruction_schema`
+- `client.program_invoke`
+- `client.instructions_invoke`
+
+and is intended to be the foundation for generic ABI-style instruction construction for arbitrary Solana programs.
 
 ### 2. Canonical invocation-spec normalization
 
