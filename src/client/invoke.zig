@@ -2583,15 +2583,15 @@ fn buildAddressLookupTablesJsonFromOwnedInvocationSpec(
     return try allocator.dupe(u8, json_buffer.written());
 }
 
-fn buildInstructionsJsonFromOwnedInvocationSpec(
+fn buildInstructionsJsonFromInstructionSlice(
     allocator: Allocator,
-    owned_spec: *const OwnedInvocationSpec,
+    instructions: []const sdk.Instruction,
 ) !Allocator.Error![]u8 {
     var json_buffer: std.Io.Writer.Allocating = .init(allocator);
     defer json_buffer.deinit();
 
     try json_buffer.writer.writeByte('[');
-    for (owned_spec.owned_instructions.instructions, 0..) |instruction, instruction_index| {
+    for (instructions, 0..) |instruction, instruction_index| {
         if (instruction_index != 0) try json_buffer.writer.writeByte(',');
         const program_id_base58 = try instruction.program_id.toBase58(allocator);
         defer allocator.free(program_id_base58);
@@ -2628,6 +2628,26 @@ fn buildInstructionsJsonFromOwnedInvocationSpec(
     return try allocator.dupe(u8, json_buffer.written());
 }
 
+pub fn buildInstructionsJsonFromOwnedInvocationSpec(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) ![]u8 {
+    return try buildInstructionsJsonFromInstructionSlice(
+        allocator,
+        owned_spec.owned_instructions.instructions,
+    );
+}
+
+pub fn buildInstructionsJsonFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) ![]u8 {
+    return try buildInstructionsJsonFromInstructionSlice(
+        allocator,
+        resolved.owned_instructions.instructions,
+    );
+}
+
 pub fn buildInvocationSpecJsonFromOwnedInvocationSpec(
     allocator: Allocator,
     owned_spec: *const OwnedInvocationSpec,
@@ -2651,9 +2671,9 @@ pub fn buildInvocationSpecJsonFromOwnedInvocationSpec(
     );
     defer if (address_lookup_tables_json) |value| allocator.free(value);
 
-    const instructions_json = try buildInstructionsJsonFromOwnedInvocationSpec(
+    const instructions_json = try buildInstructionsJsonFromInstructionSlice(
         allocator,
-        owned_spec,
+        owned_spec.owned_instructions.instructions,
     );
     defer allocator.free(instructions_json);
 
@@ -6832,6 +6852,87 @@ test "invoke.buildInvocationSpecJsonFromOwnedInvocationSpec round-trips canonica
     try std.testing.expectEqualDeep(
         owned_spec.address_lookup_tables[0].addresses[0],
         roundtrip.address_lookup_tables[0].addresses[0],
+    );
+}
+
+test "invoke.buildInstructionsJsonFromOwnedInvocationSpec exports canonical instruction array" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 171, 172, 173, 174, 175);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    const instructions_json = try buildInstructionsJsonFromOwnedInvocationSpec(allocator, &owned_spec);
+    defer allocator.free(instructions_json);
+
+    var roundtrip = try client.instructions_invoke.buildOwnedInstructionsFromJson(
+        allocator,
+        instructions_json,
+    );
+    defer roundtrip.deinit(allocator);
+
+    try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"program_id\":\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), roundtrip.instructions.len);
+    try std.testing.expectEqualDeep(
+        owned_spec.owned_instructions.instructions[0].program_id,
+        roundtrip.instructions[0].program_id,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        owned_spec.owned_instructions.instructions[0].data,
+        roundtrip.instructions[0].data,
+    );
+    try std.testing.expectEqualDeep(
+        owned_spec.owned_instructions.instructions[0].accounts[0],
+        roundtrip.instructions[0].accounts[0],
+    );
+}
+
+test "invoke.buildInstructionsJsonFromOwnedResolvedInvocation exports canonical instruction array" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocRichInstructionsInvocationSpecJson(allocator, 176, 177, 178, 179, 180, 181);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .instructions,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    const instructions_json = try buildInstructionsJsonFromOwnedResolvedInvocation(allocator, &resolved);
+    defer allocator.free(instructions_json);
+
+    var roundtrip = try client.instructions_invoke.buildOwnedInstructionsFromJson(
+        allocator,
+        instructions_json,
+    );
+    defer roundtrip.deinit(allocator);
+
+    try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"accounts\":[") != null);
+    try std.testing.expectEqual(@as(usize, 1), roundtrip.instructions.len);
+    try std.testing.expectEqualDeep(
+        resolved.owned_instructions.instructions[0].program_id,
+        roundtrip.instructions[0].program_id,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        resolved.owned_instructions.instructions[0].data,
+        roundtrip.instructions[0].data,
+    );
+    try std.testing.expectEqualDeep(
+        resolved.owned_instructions.instructions[0].accounts[0],
+        roundtrip.instructions[0].accounts[0],
     );
 }
 
