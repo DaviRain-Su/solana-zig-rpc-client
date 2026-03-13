@@ -21,6 +21,15 @@ pub const SimulateInvocationSpecOptions = struct {
     simulate_options: ?client.SimulateTransactionOptions = null,
 };
 
+pub const BuildInvocationSpecOptions = struct {
+    blockhash_commitment: ?client.Commitment = null,
+};
+
+pub const GetFeeForInvocationSpecOptions = struct {
+    blockhash_commitment: ?client.Commitment = null,
+    commitment: ?client.Commitment = null,
+};
+
 pub const SendAndConfirmInvocationSpecOptions = struct {
     blockhash_commitment: ?client.Commitment = null,
     send_transaction_options: ?client.SendTransactionOptions = null,
@@ -273,66 +282,91 @@ pub fn sendAndConfirmInvocationSpecJsonWithSpinner(
     timeout_ms: u64,
     poll_interval_ms: u64,
 ) ![]const u8 {
+    return sendAndConfirmInvocationSpecJsonWithSpinnerOptions(
+        allocator,
+        rpc,
+        family,
+        versioned,
+        invocation_spec_json,
+        .{
+            .blockhash_commitment = blockhash_commitment,
+            .send_transaction_options = send_transaction_options,
+            .commitment = confirm_commitment,
+            .search_transaction_history = search_transaction_history,
+            .timeout_ms = timeout_ms,
+            .poll_interval_ms = poll_interval_ms,
+        },
+    );
+}
+
+pub fn sendAndConfirmInvocationSpecJsonWithSpinnerOptions(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    options: SendAndConfirmInvocationSpecOptions,
+) ![]const u8 {
     return switch (family) {
         .instructions => if (versioned)
             client.instructions_invoke.sendAndConfirmVersionedTransactionWithSpinnerFromInvocationSpecJson(rpc, .{
                 .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .send_transaction_options = send_transaction_options,
-                .commitment = confirm_commitment,
-                .search_transaction_history = search_transaction_history,
-                .timeout_ms = timeout_ms,
-                .poll_interval_ms = poll_interval_ms,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+                .commitment = options.commitment,
+                .search_transaction_history = options.search_transaction_history,
+                .timeout_ms = options.timeout_ms,
+                .poll_interval_ms = options.poll_interval_ms,
             })
         else
             client.instructions_invoke.sendAndConfirmLegacyTransactionWithSpinnerFromInvocationSpecJson(rpc, .{
                 .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .send_transaction_options = send_transaction_options,
-                .commitment = confirm_commitment,
-                .search_transaction_history = search_transaction_history,
-                .timeout_ms = timeout_ms,
-                .poll_interval_ms = poll_interval_ms,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+                .commitment = options.commitment,
+                .search_transaction_history = options.search_transaction_history,
+                .timeout_ms = options.timeout_ms,
+                .poll_interval_ms = options.poll_interval_ms,
             }),
         .program => if (versioned)
             client.program_invoke.sendAndConfirmVersionedTransactionWithSpinnerFromInvocationSpecJson(rpc, .{
                 .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .send_transaction_options = send_transaction_options,
-                .commitment = confirm_commitment,
-                .search_transaction_history = search_transaction_history,
-                .timeout_ms = timeout_ms,
-                .poll_interval_ms = poll_interval_ms,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+                .commitment = options.commitment,
+                .search_transaction_history = options.search_transaction_history,
+                .timeout_ms = options.timeout_ms,
+                .poll_interval_ms = options.poll_interval_ms,
             })
         else
             client.program_invoke.sendAndConfirmLegacyTransactionWithSpinnerFromInvocationSpecJson(rpc, .{
                 .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .send_transaction_options = send_transaction_options,
-                .commitment = confirm_commitment,
-                .search_transaction_history = search_transaction_history,
-                .timeout_ms = timeout_ms,
-                .poll_interval_ms = poll_interval_ms,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+                .commitment = options.commitment,
+                .search_transaction_history = options.search_transaction_history,
+                .timeout_ms = options.timeout_ms,
+                .poll_interval_ms = options.poll_interval_ms,
             }),
         .anchor_idl => if (versioned)
             client.anchor_idl_invoke.sendAndConfirmVersionedTransactionWithSpinnerFromInvocationSpecJson(rpc, allocator, .{
                 .anchor_idl_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .send_transaction_options = send_transaction_options,
-                .commitment = confirm_commitment,
-                .search_transaction_history = search_transaction_history,
-                .timeout_ms = timeout_ms,
-                .poll_interval_ms = poll_interval_ms,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+                .commitment = options.commitment,
+                .search_transaction_history = options.search_transaction_history,
+                .timeout_ms = options.timeout_ms,
+                .poll_interval_ms = options.poll_interval_ms,
             })
         else
             client.anchor_idl_invoke.sendAndConfirmLegacyTransactionWithSpinnerFromInvocationSpecJson(rpc, allocator, .{
                 .anchor_idl_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
-                .send_transaction_options = send_transaction_options,
-                .commitment = confirm_commitment,
-                .search_transaction_history = search_transaction_history,
-                .timeout_ms = timeout_ms,
-                .poll_interval_ms = poll_interval_ms,
+                .blockhash_commitment = options.blockhash_commitment,
+                .send_transaction_options = options.send_transaction_options,
+                .commitment = options.commitment,
+                .search_transaction_history = options.search_transaction_history,
+                .timeout_ms = options.timeout_ms,
+                .poll_interval_ms = options.poll_interval_ms,
             }),
     };
 }
@@ -346,48 +380,69 @@ pub fn getFeeForMessageFromInvocationSpecJson(
     blockhash_commitment: ?client.Commitment,
     commitment: ?client.Commitment,
 ) !client.FeeForMessage {
+    return getFeeForInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        versioned,
+        invocation_spec_json,
+        .{
+            .blockhash_commitment = blockhash_commitment,
+            .commitment = commitment,
+        },
+    );
+}
+
+pub fn getFeeForInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    options: GetFeeForInvocationSpecOptions,
+) !client.FeeForMessage {
     return switch (family) {
         .instructions => if (versioned)
             client.instructions_invoke.getFeeForVersionedMessageFromInvocationSpecJson(rpc, .{
                 .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
+                .blockhash_commitment = options.blockhash_commitment,
             }, .{
-                .commitment = commitment,
+                .commitment = options.commitment,
             })
         else
             client.instructions_invoke.getFeeForLegacyMessageFromInvocationSpecJson(rpc, .{
                 .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
+                .blockhash_commitment = options.blockhash_commitment,
             }, .{
-                .commitment = commitment,
+                .commitment = options.commitment,
             }),
         .program => if (versioned)
             client.program_invoke.getFeeForVersionedMessageFromInvocationSpecJson(rpc, .{
                 .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
+                .blockhash_commitment = options.blockhash_commitment,
             }, .{
-                .commitment = commitment,
+                .commitment = options.commitment,
             })
         else
             client.program_invoke.getFeeForLegacyMessageFromInvocationSpecJson(rpc, .{
                 .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
+                .blockhash_commitment = options.blockhash_commitment,
             }, .{
-                .commitment = commitment,
+                .commitment = options.commitment,
             }),
         .anchor_idl => if (versioned)
             client.anchor_idl_invoke.getFeeForVersionedMessageFromInvocationSpecJson(rpc, allocator, .{
                 .anchor_idl_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
+                .blockhash_commitment = options.blockhash_commitment,
             }, .{
-                .commitment = commitment,
+                .commitment = options.commitment,
             })
         else
             client.anchor_idl_invoke.getFeeForLegacyMessageFromInvocationSpecJson(rpc, allocator, .{
                 .anchor_idl_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
+                .blockhash_commitment = options.blockhash_commitment,
             }, .{
-                .commitment = commitment,
+                .commitment = options.commitment,
             }),
     };
 }
@@ -400,36 +455,54 @@ pub fn buildTransactionBase64FromInvocationSpecJson(
     invocation_spec_json: []const u8,
     blockhash_commitment: ?client.Commitment,
 ) ![]u8 {
+    return buildTransactionBase64FromInvocationSpecJsonWithOptions(
+        allocator,
+        rpc,
+        family,
+        versioned,
+        invocation_spec_json,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
+}
+
+pub fn buildTransactionBase64FromInvocationSpecJsonWithOptions(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    options: BuildInvocationSpecOptions,
+) ![]u8 {
     return switch (family) {
         .instructions => if (versioned)
             client.instructions_invoke.buildVersionedTransactionBase64FromInvocationSpecJson(rpc, .{
                 .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
+                .blockhash_commitment = options.blockhash_commitment,
             })
         else
             client.instructions_invoke.buildLegacyTransactionBase64FromInvocationSpecJson(rpc, .{
                 .instruction_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
+                .blockhash_commitment = options.blockhash_commitment,
             }),
         .program => if (versioned)
             client.program_invoke.buildVersionedTransactionBase64FromInvocationSpecJson(rpc, .{
                 .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
+                .blockhash_commitment = options.blockhash_commitment,
             })
         else
             client.program_invoke.buildLegacyTransactionBase64FromInvocationSpecJson(rpc, .{
                 .program_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
+                .blockhash_commitment = options.blockhash_commitment,
             }),
         .anchor_idl => if (versioned)
             client.anchor_idl_invoke.buildVersionedTransactionBase64FromInvocationSpecJson(rpc, allocator, .{
                 .anchor_idl_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
+                .blockhash_commitment = options.blockhash_commitment,
             })
         else
             client.anchor_idl_invoke.buildLegacyTransactionBase64FromInvocationSpecJson(rpc, allocator, .{
                 .anchor_idl_invocation_spec_json = invocation_spec_json,
-                .blockhash_commitment = blockhash_commitment,
+                .blockhash_commitment = options.blockhash_commitment,
             }),
     };
 }
@@ -511,6 +584,24 @@ pub fn buildOwnedMessageFromInvocationSpecJson(
     invocation_spec_json: []const u8,
     blockhash_commitment: ?client.Commitment,
 ) !OwnedInvocationMessage {
+    return buildOwnedMessageFromInvocationSpecJsonWithOptions(
+        allocator,
+        rpc,
+        family,
+        versioned,
+        invocation_spec_json,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
+}
+
+pub fn buildOwnedMessageFromInvocationSpecJsonWithOptions(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    options: BuildInvocationSpecOptions,
+) !OwnedInvocationMessage {
     return if (versioned)
         .{
             .versioned = try buildOwnedVersionedMessageFromInvocationSpecJson(
@@ -518,7 +609,7 @@ pub fn buildOwnedMessageFromInvocationSpecJson(
                 rpc,
                 family,
                 invocation_spec_json,
-                blockhash_commitment,
+                options.blockhash_commitment,
             ),
         }
     else
@@ -528,7 +619,7 @@ pub fn buildOwnedMessageFromInvocationSpecJson(
                 rpc,
                 family,
                 invocation_spec_json,
-                blockhash_commitment,
+                options.blockhash_commitment,
             ),
         };
 }
@@ -541,13 +632,31 @@ pub fn buildMessageBytesFromInvocationSpecJson(
     invocation_spec_json: []const u8,
     blockhash_commitment: ?client.Commitment,
 ) ![]u8 {
+    return buildMessageBytesFromInvocationSpecJsonWithOptions(
+        allocator,
+        rpc,
+        family,
+        versioned,
+        invocation_spec_json,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
+}
+
+pub fn buildMessageBytesFromInvocationSpecJsonWithOptions(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    options: BuildInvocationSpecOptions,
+) ![]u8 {
     return if (versioned)
         try buildVersionedMessageBytesFromInvocationSpecJson(
             allocator,
             rpc,
             family,
             invocation_spec_json,
-            blockhash_commitment,
+            options.blockhash_commitment,
         )
     else
         try buildLegacyMessageBytesFromInvocationSpecJson(
@@ -555,7 +664,7 @@ pub fn buildMessageBytesFromInvocationSpecJson(
             rpc,
             family,
             invocation_spec_json,
-            blockhash_commitment,
+            options.blockhash_commitment,
         );
 }
 
@@ -567,13 +676,31 @@ pub fn buildMessageBase64FromInvocationSpecJson(
     invocation_spec_json: []const u8,
     blockhash_commitment: ?client.Commitment,
 ) ![]u8 {
+    return buildMessageBase64FromInvocationSpecJsonWithOptions(
+        allocator,
+        rpc,
+        family,
+        versioned,
+        invocation_spec_json,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
+}
+
+pub fn buildMessageBase64FromInvocationSpecJsonWithOptions(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    options: BuildInvocationSpecOptions,
+) ![]u8 {
     return if (versioned)
         try buildVersionedMessageBase64FromInvocationSpecJson(
             allocator,
             rpc,
             family,
             invocation_spec_json,
-            blockhash_commitment,
+            options.blockhash_commitment,
         )
     else
         try buildLegacyMessageBase64FromInvocationSpecJson(
@@ -581,7 +708,7 @@ pub fn buildMessageBase64FromInvocationSpecJson(
             rpc,
             family,
             invocation_spec_json,
-            blockhash_commitment,
+            options.blockhash_commitment,
         );
 }
 
@@ -616,6 +743,24 @@ pub fn buildSignedTransactionFromInvocationSpecJson(
     invocation_spec_json: []const u8,
     blockhash_commitment: ?client.Commitment,
 ) !SignedInvocationTransaction {
+    return buildSignedTransactionFromInvocationSpecJsonWithOptions(
+        allocator,
+        rpc,
+        family,
+        versioned,
+        invocation_spec_json,
+        .{ .blockhash_commitment = blockhash_commitment },
+    );
+}
+
+pub fn buildSignedTransactionFromInvocationSpecJsonWithOptions(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    options: BuildInvocationSpecOptions,
+) !SignedInvocationTransaction {
     return if (versioned)
         .{
             .versioned = try buildSignedVersionedTransactionFromInvocationSpecJson(
@@ -623,7 +768,7 @@ pub fn buildSignedTransactionFromInvocationSpecJson(
                 rpc,
                 family,
                 invocation_spec_json,
-                blockhash_commitment,
+                options.blockhash_commitment,
             ),
         }
     else
@@ -633,7 +778,7 @@ pub fn buildSignedTransactionFromInvocationSpecJson(
                 rpc,
                 family,
                 invocation_spec_json,
-                blockhash_commitment,
+                options.blockhash_commitment,
             ),
         };
 }
@@ -1552,4 +1697,183 @@ test "invoke.simulateTransactionFromInvocationSpecJson dispatches instructions f
     );
 
     try std.testing.expect(rpc.captured_sig_verify);
+}
+
+test "invoke.sendAndConfirmInvocationSpecJsonWithSpinnerOptions dispatches instructions family" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{213} ** 32);
+    const nonce_authority_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{214} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{215} ** 32);
+    const nonce_account = sdk.Pubkey.fromBytes([_]u8{216} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const nonce_authority_secret_key_base58 = try sdk.encodeBase58(allocator, &nonce_authority_secret_key);
+    defer allocator.free(nonce_authority_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const nonce_account_base58 = try nonce_account.toBase58(allocator);
+    defer allocator.free(nonce_account_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "nonce_account":"{s}",
+        \\  "nonce_authority_secret_key":"{s}",
+        \\  "instructions":[{{"program_id":"{s}","dataBytes":[7]}}]
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            nonce_account_base58,
+            nonce_authority_secret_key_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const MockRpc = struct {
+        allocator: Allocator,
+        captured_timeout_ms: u64 = 0,
+
+        fn sendAndConfirmLegacyInstructionsWithSpinnerAndOptions(
+            self: *@This(),
+            payer_arg: sdk.Pubkey,
+            instructions_arg: []const sdk.Instruction,
+            signers_arg: []const sdk.Keypair,
+            options_arg: ?rpc_types.LegacyInstructionsOptions,
+        ) ![]const u8 {
+            _ = payer_arg;
+            _ = instructions_arg;
+            _ = signers_arg;
+            self.captured_timeout_ms = options_arg.?.timeout_ms;
+            return try self.allocator.dupe(u8, "sig-spinner-options");
+        }
+    };
+
+    var rpc = MockRpc{ .allocator = allocator };
+    const signature = try sendAndConfirmInvocationSpecJsonWithSpinnerOptions(
+        allocator,
+        &rpc,
+        .instructions,
+        false,
+        spec_json,
+        .{ .timeout_ms = 321 },
+    );
+    defer allocator.free(signature);
+
+    try std.testing.expectEqualStrings("sig-spinner-options", signature);
+    try std.testing.expectEqual(@as(u64, 321), rpc.captured_timeout_ms);
+}
+
+test "invoke.getFeeForInvocationSpecJson dispatches options form" {
+    const allocator = std.testing.allocator;
+
+    const MockLegacyInvocationFeeClient = struct {
+        captured_commitment: ?rpc_types.Commitment = null,
+
+        pub fn getFeeForLegacyInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            options: ?rpc_types.LegacyInstructionsBuildOptions,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = payer;
+            _ = instructions;
+            _ = options;
+            self.captured_commitment = commitment;
+            return .{ .value = 1357 };
+        }
+    };
+
+    var mock = MockLegacyInvocationFeeClient{};
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{217} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id = sdk.Pubkey.fromBytes(.{218} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "dataBytes":[9,8,7]
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const fee = try getFeeForInvocationSpecJson(
+        allocator,
+        &mock,
+        .program,
+        false,
+        spec_json,
+        .{ .commitment = .confirmed },
+    );
+
+    try std.testing.expectEqual(@as(?u64, 1357), fee.value);
+    try std.testing.expectEqual(rpc_types.Commitment.confirmed, mock.captured_commitment.?);
+}
+
+test "invoke.buildMessageBase64FromInvocationSpecJsonWithOptions dispatches options form" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{219} ** 32);
+    const program_id = sdk.Pubkey.fromBytes(.{220} ** 32);
+    const recent_blockhash = sdk.Hash.fromBytes(.{221} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const recent_blockhash_base58 = try recent_blockhash.toBase58(allocator);
+    defer allocator.free(recent_blockhash_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "dataBytes":[1,2,3],
+        \\  "recent_blockhash":"{s}"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+            recent_blockhash_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const Dummy = struct { allocator: Allocator };
+    var dummy = Dummy{ .allocator = allocator };
+    const expected = try client.program_invoke.buildLegacyMessageBase64FromInvocationSpecJson(&dummy, .{
+        .program_invocation_spec_json = spec_json,
+    });
+    defer allocator.free(expected);
+
+    const actual = try buildMessageBase64FromInvocationSpecJsonWithOptions(
+        allocator,
+        &dummy,
+        .program,
+        false,
+        spec_json,
+        .{},
+    );
+    defer allocator.free(actual);
+
+    try std.testing.expectEqualStrings(expected, actual);
 }
