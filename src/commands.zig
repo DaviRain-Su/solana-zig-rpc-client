@@ -4166,6 +4166,121 @@ fn buildAnchorIdlInvokeInvocationSpecJsonForCommand(
     };
 }
 
+fn runProgramInvocationCommand(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    command: cli.Command,
+    program_id_arg: ?[]const u8,
+    accounts_arg: ?[]const u8,
+    data_arg: ?[]const u8,
+    data_encoding_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+    commitment: anytype,
+    send_preflight_commitment: anytype,
+    send_transaction_options: anytype,
+    search_transaction_history: bool,
+    status_timeout_ms: u64,
+    status_poll_ms: u64,
+    simulation_account_encoding_arg: ?[]const u8,
+    simulation_min_context_slot_arg: ?[]const u8,
+    simulation_accounts: anytype,
+    simulate_sig_verify: bool,
+    simulate_replace_recent_blockhash: bool,
+    simulate_inner_instructions: bool,
+) !void {
+    const versioned = switch (command) {
+        .send_versioned_program_invoke,
+        .send_versioned_program_invoke_and_confirm,
+        .simulate_versioned_program_invoke,
+        => true,
+        else => false,
+    };
+    const simulate = switch (command) {
+        .simulate_program_invoke,
+        .simulate_versioned_program_invoke,
+        => true,
+        else => false,
+    };
+    const confirm = switch (command) {
+        .send_program_invoke_and_confirm,
+        .send_versioned_program_invoke_and_confirm,
+        => true,
+        else => false,
+    };
+
+    const invocation_spec_json = buildProgramInvokeInvocationSpecJsonForCommand(
+        allocator,
+        command,
+        program_id_arg,
+        accounts_arg,
+        data_arg,
+        data_encoding_arg,
+        payer_keypair_path_arg,
+        payer_secret_key_arg,
+        signer_keypair_paths_arg,
+        if (versioned) lookup_tables_arg else null,
+        recent_blockhash_arg,
+        nonce_account_arg,
+        nonce_authority_keypair_path_arg,
+        additional_signer_secret_keys_arg,
+    ) catch return error.InvalidCli;
+    defer allocator.free(invocation_spec_json);
+
+    if (simulate) {
+        const options = try buildCliSimulationOptions(
+            simulation_account_encoding_arg,
+            simulation_min_context_slot_arg,
+            simulation_accounts,
+            simulate_sig_verify,
+            simulate_replace_recent_blockhash,
+            simulate_inner_instructions,
+            commitment,
+        );
+        const simulation = try simulateInvocationSpecJson(
+            allocator,
+            rpc,
+            .program,
+            versioned,
+            invocation_spec_json,
+            commitment,
+            options,
+        );
+        defer freeSimulatedTransaction(allocator, simulation);
+
+        printSimulationResult(simulation);
+        return;
+    }
+
+    const tx_signature = try sendInvocationSpecJson(
+        allocator,
+        rpc,
+        .program,
+        versioned,
+        confirm,
+        invocation_spec_json,
+        commitment orelse send_preflight_commitment,
+        send_transaction_options,
+        commitment,
+        search_transaction_history,
+        status_timeout_ms,
+        status_poll_ms,
+    );
+    defer allocator.free(tx_signature);
+
+    if (confirm) {
+        std.debug.print("confirmed signature: {s}\n", .{tx_signature});
+    } else {
+        std.debug.print("signature: {s}\n", .{tx_signature});
+    }
+}
+
 fn runAnchorIdlInvocationCommand(
     allocator: Allocator,
     rpc: *client.RpcClient,
@@ -5418,85 +5533,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             std.debug.print("confirmed signature: {s}\n", .{tx_signature});
         },
 
-        .send_program_invoke => {
-            const invocation_spec_json = buildProgramInvokeInvocationSpecJsonForCommand(
-                allocator,
-                command,
-                program_invoke_program_id_arg,
-                program_invoke_accounts_arg,
-                program_invoke_data_arg,
-                program_invoke_data_encoding_arg,
-                effective_sender_keypair_path,
-                sender_secret_key_arg,
-                program_invoke_signer_keypair_paths_arg,
-                null,
-                recent_blockhash_arg,
-                program_invoke_nonce_account_arg,
-                program_invoke_nonce_authority_keypair_path_arg,
-                program_invoke_additional_signer_secret_keys_arg,
-            ) catch return error.InvalidCli;
-            defer allocator.free(invocation_spec_json);
-
-            const tx_signature = try sendInvocationSpecJson(
+        .send_program_invoke,
+        .send_program_invoke_and_confirm,
+        .send_versioned_program_invoke,
+        .send_versioned_program_invoke_and_confirm,
+        .simulate_program_invoke,
+        .simulate_versioned_program_invoke,
+        => {
+            try runProgramInvocationCommand(
                 allocator,
                 rpc,
-                .program,
-                false,
-                false,
-                invocation_spec_json,
-                commitment orelse send_preflight_commitment,
-                send_transaction_options,
-                commitment,
-                search_transaction_history,
-                status_timeout_ms,
-                status_poll_ms,
-            );
-            defer allocator.free(tx_signature);
-
-            std.debug.print("signature: {s}\n", .{tx_signature});
-        },
-
-        .send_program_invoke_and_confirm => {
-            const invocation_spec_json = buildProgramInvokeInvocationSpecJsonForCommand(
-                allocator,
-                command,
-                program_invoke_program_id_arg,
-                program_invoke_accounts_arg,
-                program_invoke_data_arg,
-                program_invoke_data_encoding_arg,
-                effective_sender_keypair_path,
-                sender_secret_key_arg,
-                program_invoke_signer_keypair_paths_arg,
-                null,
-                recent_blockhash_arg,
-                program_invoke_nonce_account_arg,
-                program_invoke_nonce_authority_keypair_path_arg,
-                program_invoke_additional_signer_secret_keys_arg,
-            ) catch return error.InvalidCli;
-            defer allocator.free(invocation_spec_json);
-
-            const tx_signature = try sendInvocationSpecJson(
-                allocator,
-                rpc,
-                .program,
-                false,
-                true,
-                invocation_spec_json,
-                commitment orelse send_preflight_commitment,
-                send_transaction_options,
-                commitment,
-                search_transaction_history,
-                status_timeout_ms,
-                status_poll_ms,
-            );
-            defer allocator.free(tx_signature);
-
-            std.debug.print("confirmed signature: {s}\n", .{tx_signature});
-        },
-
-        .send_versioned_program_invoke => {
-            const invocation_spec_json = buildProgramInvokeInvocationSpecJsonForCommand(
-                allocator,
                 command,
                 program_invoke_program_id_arg,
                 program_invoke_accounts_arg,
@@ -5510,64 +5556,19 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 program_invoke_nonce_account_arg,
                 program_invoke_nonce_authority_keypair_path_arg,
                 program_invoke_additional_signer_secret_keys_arg,
-            ) catch return error.InvalidCli;
-            defer allocator.free(invocation_spec_json);
-
-            const tx_signature = try sendInvocationSpecJson(
-                allocator,
-                rpc,
-                .program,
-                true,
-                false,
-                invocation_spec_json,
-                commitment orelse send_preflight_commitment,
-                send_transaction_options,
                 commitment,
+                send_preflight_commitment,
+                send_transaction_options,
                 search_transaction_history,
                 status_timeout_ms,
                 status_poll_ms,
+                simulation_account_encoding_arg,
+                simulation_min_context_slot_arg,
+                simulation_accounts.items,
+                simulate_sig_verify,
+                simulate_replace_recent_blockhash,
+                simulate_inner_instructions,
             );
-            defer allocator.free(tx_signature);
-
-            std.debug.print("signature: {s}\n", .{tx_signature});
-        },
-
-        .send_versioned_program_invoke_and_confirm => {
-            const invocation_spec_json = buildProgramInvokeInvocationSpecJsonForCommand(
-                allocator,
-                command,
-                program_invoke_program_id_arg,
-                program_invoke_accounts_arg,
-                program_invoke_data_arg,
-                program_invoke_data_encoding_arg,
-                effective_sender_keypair_path,
-                sender_secret_key_arg,
-                program_invoke_signer_keypair_paths_arg,
-                program_invoke_lookup_tables_arg,
-                recent_blockhash_arg,
-                program_invoke_nonce_account_arg,
-                program_invoke_nonce_authority_keypair_path_arg,
-                program_invoke_additional_signer_secret_keys_arg,
-            ) catch return error.InvalidCli;
-            defer allocator.free(invocation_spec_json);
-
-            const tx_signature = try sendInvocationSpecJson(
-                allocator,
-                rpc,
-                .program,
-                true,
-                true,
-                invocation_spec_json,
-                commitment orelse send_preflight_commitment,
-                send_transaction_options,
-                commitment,
-                search_transaction_history,
-                status_timeout_ms,
-                status_poll_ms,
-            );
-            defer allocator.free(tx_signature);
-
-            std.debug.print("confirmed signature: {s}\n", .{tx_signature});
         },
 
         .send_idl_invoke,
@@ -5804,92 +5805,6 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 allocator,
                 rpc,
                 .instructions,
-                true,
-                invocation_spec_json,
-                commitment,
-                options,
-            );
-            defer freeSimulatedTransaction(allocator, simulation);
-
-            printSimulationResult(simulation);
-        },
-
-        .simulate_program_invoke => {
-            const invocation_spec_json = buildProgramInvokeInvocationSpecJsonForCommand(
-                allocator,
-                command,
-                program_invoke_program_id_arg,
-                program_invoke_accounts_arg,
-                program_invoke_data_arg,
-                program_invoke_data_encoding_arg,
-                effective_sender_keypair_path,
-                sender_secret_key_arg,
-                program_invoke_signer_keypair_paths_arg,
-                null,
-                recent_blockhash_arg,
-                program_invoke_nonce_account_arg,
-                program_invoke_nonce_authority_keypair_path_arg,
-                program_invoke_additional_signer_secret_keys_arg,
-            ) catch return error.InvalidCli;
-            defer allocator.free(invocation_spec_json);
-
-            const options = try buildCliSimulationOptions(
-                simulation_account_encoding_arg,
-                simulation_min_context_slot_arg,
-                simulation_accounts.items,
-                simulate_sig_verify,
-                simulate_replace_recent_blockhash,
-                simulate_inner_instructions,
-                commitment,
-            );
-
-            const simulation = try simulateInvocationSpecJson(
-                allocator,
-                rpc,
-                .program,
-                false,
-                invocation_spec_json,
-                commitment,
-                options,
-            );
-            defer freeSimulatedTransaction(allocator, simulation);
-
-            printSimulationResult(simulation);
-        },
-
-        .simulate_versioned_program_invoke => {
-            const invocation_spec_json = buildProgramInvokeInvocationSpecJsonForCommand(
-                allocator,
-                command,
-                program_invoke_program_id_arg,
-                program_invoke_accounts_arg,
-                program_invoke_data_arg,
-                program_invoke_data_encoding_arg,
-                effective_sender_keypair_path,
-                sender_secret_key_arg,
-                program_invoke_signer_keypair_paths_arg,
-                program_invoke_lookup_tables_arg,
-                recent_blockhash_arg,
-                program_invoke_nonce_account_arg,
-                program_invoke_nonce_authority_keypair_path_arg,
-                program_invoke_additional_signer_secret_keys_arg,
-            ) catch return error.InvalidCli;
-            defer allocator.free(invocation_spec_json);
-
-            const options = try buildCliSimulationOptions(
-                simulation_account_encoding_arg,
-                simulation_min_context_slot_arg,
-                simulation_accounts.items,
-                simulate_sig_verify,
-                simulate_replace_recent_blockhash,
-                simulate_inner_instructions,
-                commitment,
-            );
-
-            const simulation = try simulateInvocationSpecJson(
-                allocator,
-                rpc,
-                .program,
                 true,
                 invocation_spec_json,
                 commitment,
