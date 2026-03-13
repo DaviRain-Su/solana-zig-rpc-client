@@ -322,6 +322,16 @@ pub const PreferredFeeResult = struct {
     fee: client.FeeForMessage,
 };
 
+pub const OwnedPreferredInvocationReport = struct {
+    mode_report: InvocationModeReport,
+    report: OwnedInvocationReport,
+
+    pub fn deinit(self: *OwnedPreferredInvocationReport, allocator: Allocator) void {
+        self.report.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 pub fn buildInstructionInvocationSpecJson(
     allocator: Allocator,
     family: InvokeFamily,
@@ -1484,6 +1494,25 @@ pub fn getFeeForPreferredInvocationSpecResultFromInvocationSpecJson(
             mode == .versioned,
             invocation_spec_json,
             options.fee,
+        ),
+    };
+}
+
+pub fn buildPreferredInvocationReportFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !OwnedPreferredInvocationReport {
+    return .{
+        .mode_report = try buildInvocationModeReportFromInvocationSpecJson(
+            allocator,
+            family,
+            invocation_spec_json,
+        ),
+        .report = try buildInvocationReportFromInvocationSpecJson(
+            allocator,
+            family,
+            invocation_spec_json,
         ),
     };
 }
@@ -4663,4 +4692,63 @@ test "invoke.buildMessageBase64FromInvocationSpecJsonWithOptions dispatches opti
     defer allocator.free(actual);
 
     try std.testing.expectEqualStrings(expected, actual);
+}
+
+test "invoke.buildPreferredInvocationReportFromInvocationSpecJson surfaces versioned preference" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(
+        allocator,
+        311,
+        312,
+        313,
+        314,
+        315,
+    );
+    defer allocator.free(spec_json);
+
+    var preferred_report = try buildPreferredInvocationReportFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer preferred_report.deinit(allocator);
+
+    try std.testing.expect(preferred_report.report.can_execute);
+    try std.testing.expect(preferred_report.report.has_full_lookup_coverage);
+    try std.testing.expect(preferred_report.mode_report.versioned_buildable);
+    try std.testing.expectEqual(
+        @as(?InvocationMode, .versioned),
+        preferred_report.mode_report.preferred_mode,
+    );
+}
+
+test "invoke.buildPreferredInvocationReportFromInvocationSpecJson surfaces invalid preferred mode state" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocInstructionsInvocationSpecJsonWithMissingSignerAndExtraSigner(
+        allocator,
+        321,
+        322,
+        323,
+        324,
+        325,
+    );
+    defer allocator.free(spec_json);
+
+    var preferred_report = try buildPreferredInvocationReportFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer preferred_report.deinit(allocator);
+
+    try std.testing.expect(!preferred_report.report.can_execute);
+    try std.testing.expect(preferred_report.report.has_missing_required_signers);
+    try std.testing.expect(!preferred_report.mode_report.legacy_buildable);
+    try std.testing.expect(!preferred_report.mode_report.versioned_buildable);
+    try std.testing.expectEqual(
+        @as(?InvocationMode, null),
+        preferred_report.mode_report.preferred_mode,
+    );
 }
