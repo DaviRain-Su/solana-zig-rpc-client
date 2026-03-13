@@ -344,3 +344,60 @@ pub fn simulateInvocationSpecJson(
             }),
     };
 }
+
+pub fn buildInvocationSpecJsonForCommand(
+    allocator: Allocator,
+    command: cli.Command,
+    behavior: CliInvokeCommandBehavior,
+    payload_args: CliInvokePayloadArgs,
+    context_args: CliInvokeContextArgs,
+    builders: anytype,
+) ![]u8 {
+    return switch (behavior.family) {
+        .instructions => builders.buildInstructions(
+            allocator,
+            command,
+            payload_args.instructions_spec_arg,
+            context_args.payer_keypair_path_arg,
+            context_args.payer_secret_key_arg,
+            context_args.additional_signer_secret_keys_arg,
+            context_args.recent_blockhash_arg,
+        ),
+        .program => builders.buildProgram(
+            allocator,
+            command,
+            payload_args.program_id_arg,
+            payload_args.program_accounts_arg,
+            payload_args.program_data_arg,
+            payload_args.program_data_encoding_arg,
+            context_args.payer_keypair_path_arg,
+            context_args.payer_secret_key_arg,
+            context_args.signer_keypair_paths_arg,
+            if (behavior.versioned) context_args.lookup_tables_arg else null,
+            context_args.recent_blockhash_arg,
+            context_args.nonce_account_arg,
+            context_args.nonce_authority_keypair_path_arg,
+            context_args.additional_signer_secret_keys_arg,
+        ),
+        .anchor_idl => builders.buildAnchorIdl(
+            allocator,
+            command,
+            payload_args.idl_arg,
+            payload_args.idl_instruction_arg,
+            payload_args.idl_program_id_arg,
+            payload_args.idl_args_json_arg,
+            payload_args.idl_accounts_json_arg,
+            payload_args.idl_account_bindings,
+            payload_args.idl_remaining_accounts,
+            payload_args.idl_remaining_accounts_json_arg,
+            context_args.payer_keypair_path_arg,
+            context_args.payer_secret_key_arg,
+            context_args.signer_keypair_paths_arg,
+            if (behavior.versioned) context_args.lookup_tables_arg else null,
+            context_args.recent_blockhash_arg,
+            context_args.nonce_account_arg,
+            context_args.nonce_authority_keypair_path_arg,
+            context_args.additional_signer_secret_keys_arg,
+        ),
+    };
+}
