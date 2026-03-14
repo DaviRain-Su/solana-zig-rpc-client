@@ -4537,6 +4537,7 @@ const InspectSection = enum {
     mode_report,
     mode_resolution,
     analysis,
+    prepared,
     instructions,
     resolved,
 };
@@ -4557,9 +4558,10 @@ fn parseInspectSectionArg(section_arg: ?[]const u8) !InspectSection {
     if (std.mem.eql(u8, raw, "mode-report")) return .mode_report;
     if (std.mem.eql(u8, raw, "mode-resolution")) return .mode_resolution;
     if (std.mem.eql(u8, raw, "analysis")) return .analysis;
+    if (std.mem.eql(u8, raw, "prepared")) return .prepared;
     if (std.mem.eql(u8, raw, "instructions")) return .instructions;
     if (std.mem.eql(u8, raw, "resolved")) return .resolved;
-    reportInvalidCliMessage("error: --inspect-section must be inspection, report, accounts, signers, summary, plan, preflight, validation, lookup-coverage, lookup-tables, diagnostics, mode-report, mode-resolution, analysis, instructions, or resolved\n", .{});
+    reportInvalidCliMessage("error: --inspect-section must be inspection, report, accounts, signers, summary, plan, preflight, validation, lookup-coverage, lookup-tables, diagnostics, mode-report, mode-resolution, analysis, prepared, instructions, or resolved\n", .{});
     return error.InvalidCli;
 }
 
@@ -4568,7 +4570,7 @@ fn inspectSectionUsesPreferred(
     prefer_preferred_path: bool,
 ) bool {
     return prefer_preferred_path or switch (section) {
-        .mode_report, .mode_resolution, .analysis => true,
+        .mode_report, .mode_resolution, .analysis, .prepared => true,
         else => false,
     };
 }
@@ -4826,6 +4828,24 @@ fn emitInvocationInspectSection(
             try stdout_writer.interface.print("{s}\n", .{json});
         } else {
             try client.invoke.writePreferredInvocationAnalysisTextFromOwnedInvocationSpecRef(
+                &stdout_writer.interface,
+                allocator,
+                rpc,
+                owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            );
+        },
+        .prepared => if (output_json) {
+            const json = try client.invoke.allocPreferredPreparedInvocationJsonFromOwnedInvocationSpecRef(
+                allocator,
+                rpc,
+                owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        } else {
+            try client.invoke.writePreferredPreparedInvocationTextFromOwnedInvocationSpecRef(
                 &stdout_writer.interface,
                 allocator,
                 rpc,
@@ -14935,6 +14955,94 @@ test "runCommand inspect-program-invoke emits lookup tables section json" {
     try expectMockSenderRequestCount(&sender_context.sender, 0);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"account_key\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"addresses\":[") != null);
+}
+
+test "runCommand inspect-program-invoke emits prepared section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-program-invoke-prepared-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{105} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 91);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{41} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_pubkey = client.Pubkey.fromBytes(.{42} ** 32);
+    const account_pubkey_base58 = try account_pubkey.toBase58(allocator);
+    defer allocator.free(account_pubkey_base58);
+    const lookup_table_key = client.Pubkey.fromBytes(.{43} ** 32);
+    const lookup_table_key_base58 = try lookup_table_key.toBase58(allocator);
+    defer allocator.free(lookup_table_key_base58);
+    const lookup_address = client.Pubkey.fromBytes(.{44} ** 32);
+    const lookup_address_base58 = try lookup_address.toBase58(allocator);
+    defer allocator.free(lookup_address_base58);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"is_writable\":true}}]",
+        .{account_pubkey_base58},
+    );
+    defer allocator.free(accounts_json);
+    const lookup_tables_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"account_key\":\"{s}\",\"addresses\":[\"{s}\"]}}]",
+        .{ lookup_table_key_base58, lookup_address_base58 },
+    );
+    defer allocator.free(lookup_tables_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-program-invoke",
+        "--json",
+        "--inspect-section",
+        "prepared",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--data-schema-json",
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}",
+        "--args-json",
+        "{\"enabled\":true}",
+        "--schema-encoding",
+        "borsh",
+        program_id_base58,
+        accounts_json,
+        "[]",
+        lookup_tables_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"transaction_base64\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"message_base64\":\"") != null);
 }
 
 test "runCommand validate-spec fails on missing required signer" {
