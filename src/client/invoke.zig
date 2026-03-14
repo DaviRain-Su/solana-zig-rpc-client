@@ -4125,15 +4125,13 @@ pub fn buildOwnedInstructionsFromInvocationSpecJson(
     family: InvokeFamily,
     invocation_spec_json: []const u8,
 ) !sdk.OwnedInstructions {
-    var resolved = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
         family,
         invocation_spec_json,
     );
-    const owned_instructions = resolved.owned_instructions;
-    resolved.owned_instructions.instructions = &.{};
-    resolved.deinit(allocator);
-    return owned_instructions;
+    defer owned_spec.deinit(allocator);
+    return try buildOwnedInstructionsFromOwnedInvocationSpecRef(allocator, &owned_spec);
 }
 
 pub fn buildInvocationSignerPubkeysFromOwnedInvocationSpec(
@@ -4152,15 +4150,13 @@ pub fn buildInvocationSignerPubkeysFromInvocationSpecJson(
     family: InvokeFamily,
     invocation_spec_json: []const u8,
 ) ![]sdk.Pubkey {
-    var resolved = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
         family,
         invocation_spec_json,
     );
-    const signer_pubkeys = resolved.signer_pubkeys;
-    resolved.signer_pubkeys = &.{};
-    resolved.deinit(allocator);
-    return signer_pubkeys;
+    defer owned_spec.deinit(allocator);
+    return try buildInvocationSignerPubkeysFromOwnedInvocationSpecRef(allocator, &owned_spec);
 }
 
 fn mergeInvocationAccountInfo(
@@ -4245,14 +4241,13 @@ pub fn buildInvocationAccountsFromInvocationSpecJson(
     family: InvokeFamily,
     invocation_spec_json: []const u8,
 ) !OwnedInvocationAccounts {
-    var resolved = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
         family,
         invocation_spec_json,
     );
-    defer resolved.deinit(allocator);
-
-    return try buildOwnedInvocationAccountsFromResolved(allocator, &resolved);
+    defer owned_spec.deinit(allocator);
+    return try buildInvocationAccountsFromOwnedInvocationSpecRef(allocator, &owned_spec);
 }
 
 pub fn buildInvocationAccountsFromOwnedInvocationSpec(
@@ -4397,14 +4392,13 @@ pub fn buildInvocationSummaryFromInvocationSpecJson(
     family: InvokeFamily,
     invocation_spec_json: []const u8,
 ) !OwnedInvocationSummary {
-    return try buildInvocationSummaryFromResolved(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
-        try buildOwnedResolvedInvocationFromInvocationSpecJson(
-            allocator,
-            family,
-            invocation_spec_json,
-        ),
+        family,
+        invocation_spec_json,
     );
+    defer owned_spec.deinit(allocator);
+    return try buildInvocationSummaryFromOwnedInvocationSpecRef(allocator, &owned_spec);
 }
 
 pub fn buildInvocationLookupTablePubkeysFromInvocationSpecJson(
@@ -4512,14 +4506,13 @@ pub fn buildInvocationPlanFromInvocationSpecJson(
     family: InvokeFamily,
     invocation_spec_json: []const u8,
 ) !OwnedInvocationPlan {
-    return try buildInvocationPlanFromResolved(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
-        try buildOwnedResolvedInvocationFromInvocationSpecJson(
-            allocator,
-            family,
-            invocation_spec_json,
-        ),
+        family,
+        invocation_spec_json,
     );
+    defer owned_spec.deinit(allocator);
+    return try buildInvocationPlanFromOwnedInvocationSpecRef(allocator, &owned_spec);
 }
 
 fn buildInvocationPreflightFromResolved(
@@ -4626,14 +4619,13 @@ pub fn buildInvocationPreflightFromInvocationSpecJson(
     family: InvokeFamily,
     invocation_spec_json: []const u8,
 ) !OwnedInvocationPreflight {
-    return try buildInvocationPreflightFromResolved(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
-        try buildOwnedResolvedInvocationFromInvocationSpecJson(
-            allocator,
-            family,
-            invocation_spec_json,
-        ),
+        family,
+        invocation_spec_json,
     );
+    defer owned_spec.deinit(allocator);
+    return try buildInvocationPreflightFromOwnedInvocationSpecRef(allocator, &owned_spec);
 }
 
 fn buildInvocationValidationFromResolved(
@@ -4718,14 +4710,13 @@ pub fn buildInvocationValidationFromInvocationSpecJson(
     family: InvokeFamily,
     invocation_spec_json: []const u8,
 ) !OwnedInvocationValidation {
-    return try buildInvocationValidationFromResolved(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
-        try buildOwnedResolvedInvocationFromInvocationSpecJson(
-            allocator,
-            family,
-            invocation_spec_json,
-        ),
+        family,
+        invocation_spec_json,
     );
+    defer owned_spec.deinit(allocator);
+    return try buildInvocationValidationFromOwnedInvocationSpecRef(allocator, &owned_spec);
 }
 
 fn buildInvocationLookupCoverageFromResolved(
@@ -4811,14 +4802,13 @@ pub fn buildInvocationLookupCoverageFromInvocationSpecJson(
     family: InvokeFamily,
     invocation_spec_json: []const u8,
 ) !OwnedInvocationLookupCoverage {
-    return try buildInvocationLookupCoverageFromResolved(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
-        try buildOwnedResolvedInvocationFromInvocationSpecJson(
-            allocator,
-            family,
-            invocation_spec_json,
-        ),
+        family,
+        invocation_spec_json,
     );
+    defer owned_spec.deinit(allocator);
+    return try buildInvocationLookupCoverageFromOwnedInvocationSpecRef(allocator, &owned_spec);
 }
 
 fn buildInvocationReportFromResolved(
@@ -4906,14 +4896,13 @@ pub fn buildInvocationReportFromInvocationSpecJson(
     family: InvokeFamily,
     invocation_spec_json: []const u8,
 ) !OwnedInvocationReport {
-    return try buildInvocationReportFromResolved(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
-        try buildOwnedResolvedInvocationFromInvocationSpecJson(
-            allocator,
-            family,
-            invocation_spec_json,
-        ),
+        family,
+        invocation_spec_json,
     );
+    defer owned_spec.deinit(allocator);
+    return try buildInvocationReportFromOwnedInvocationSpecRef(allocator, &owned_spec);
 }
 
 pub fn buildInvocationDiagnosticsFromReport(
