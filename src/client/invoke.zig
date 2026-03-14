@@ -4406,11 +4406,21 @@ pub fn buildInvocationLookupTablePubkeysFromInvocationSpecJson(
     family: InvokeFamily,
     invocation_spec_json: []const u8,
 ) ![]sdk.Pubkey {
-    var resolved = try buildOwnedResolvedInvocationFromInvocationSpecJson(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
         family,
         invocation_spec_json,
     );
+    defer owned_spec.deinit(allocator);
+
+    return try buildInvocationLookupTablePubkeysFromOwnedInvocationSpecRef(allocator, &owned_spec);
+}
+
+pub fn buildInvocationLookupTablePubkeysFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) ![]sdk.Pubkey {
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpecRef(allocator, owned_spec);
     defer resolved.deinit(allocator);
 
     const lookup_table_pubkeys = try allocator.alloc(sdk.Pubkey, resolved.address_lookup_tables.len);
@@ -5294,52 +5304,19 @@ pub fn buildInvocationModeReportFromInvocationSpecJson(
     invocation_spec_json: []const u8,
     options: BuildInvocationSpecOptions,
 ) !InvocationModeReport {
-    var report = try buildInvocationReportFromInvocationSpecJson(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
         family,
         invocation_spec_json,
     );
-    defer report.deinit(allocator);
+    defer owned_spec.deinit(allocator);
 
-    const legacy_buildable = blk: {
-        const encoded = buildLegacyTransactionBase64FromInvocationSpecJsonWithOptions(
-            allocator,
-            rpc,
-            family,
-            invocation_spec_json,
-            options,
-        ) catch break :blk false;
-        allocator.free(encoded);
-        break :blk true;
-    };
-
-    const versioned_buildable = blk: {
-        const encoded = buildVersionedTransactionBase64FromInvocationSpecJsonWithOptions(
-            allocator,
-            rpc,
-            family,
-            invocation_spec_json,
-            options,
-        ) catch break :blk false;
-        allocator.free(encoded);
-        break :blk true;
-    };
-
-    return .{
-        .legacy_buildable = legacy_buildable,
-        .versioned_buildable = versioned_buildable,
-        .preferred_mode = if (versioned_buildable and report.summary.address_lookup_table_count != 0)
-            .versioned
-        else if (legacy_buildable)
-            .legacy
-        else if (versioned_buildable)
-            .versioned
-        else
-            null,
-        .validation_passed = report.validation.is_valid,
-        .uses_durable_nonce = report.uses_durable_nonce,
-        .address_lookup_table_count = report.summary.address_lookup_table_count,
-    };
+    return try buildInvocationModeReportFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        &owned_spec,
+        options,
+    );
 }
 
 fn resolvePreferredInvocationMode(
