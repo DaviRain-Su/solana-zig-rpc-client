@@ -887,6 +887,27 @@ fn writeJsonAccountsField(writer: *std.Io.Writer, first: *bool, allocator: Alloc
     try writer.writeAll("]");
 }
 
+pub fn writeInvocationAccountsJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    accounts: OwnedInvocationAccounts,
+) !void {
+    var first = true;
+    try writer.writeAll("{");
+    try writeJsonAccountsField(writer, &first, allocator, accounts);
+    try writer.writeAll("}");
+}
+
+pub fn allocInvocationAccountsJson(
+    allocator: Allocator,
+    accounts: OwnedInvocationAccounts,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writeInvocationAccountsJson(&aw.writer, allocator, accounts);
+    return try aw.toOwnedSlice();
+}
+
 fn writeJsonDiagnosticsField(
     writer: *std.Io.Writer,
     first: *bool,
@@ -1556,6 +1577,85 @@ pub fn writeInvocationAccountsText(
             },
         );
     }
+}
+
+pub fn writeInvocationAccountsTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !void {
+    var accounts = try buildInvocationAccountsFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer accounts.deinit(allocator);
+    try writeInvocationAccountsText(writer, allocator, accounts);
+}
+
+pub fn allocInvocationAccountsJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) ![]u8 {
+    var accounts = try buildInvocationAccountsFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer accounts.deinit(allocator);
+    return try allocInvocationAccountsJson(allocator, accounts);
+}
+
+pub fn writeInvocationAccountsTextFromOwnedInvocationSpecRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !void {
+    var accounts = try buildInvocationAccountsFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer accounts.deinit(allocator);
+    try writeInvocationAccountsText(writer, allocator, accounts);
+}
+
+pub fn allocInvocationAccountsJsonFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) ![]u8 {
+    var accounts = try buildInvocationAccountsFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer accounts.deinit(allocator);
+    return try allocInvocationAccountsJson(allocator, accounts);
+}
+
+pub fn writeInvocationAccountsTextFromOwnedResolvedInvocationRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !void {
+    var accounts = try buildInvocationAccountsFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    defer accounts.deinit(allocator);
+    try writeInvocationAccountsText(writer, allocator, accounts);
+}
+
+pub fn allocInvocationAccountsJsonFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) ![]u8 {
+    var accounts = try buildInvocationAccountsFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    defer accounts.deinit(allocator);
+    return try allocInvocationAccountsJson(allocator, accounts);
 }
 
 pub fn writePreferredInvocationExecutionReportText(
@@ -12975,6 +13075,57 @@ test "invoke.buildInvocationAccountsFromInvocationSpecJson dispatches program fa
     try std.testing.expect(accounts.accounts.len >= 3);
     const program_info = findInvocationAccountInfo(accounts.accounts, program_id).?;
     try std.testing.expect(program_info.is_program);
+}
+
+test "invoke.allocInvocationAccountsJsonFromInvocationSpecJson emits account roles" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocRichInstructionsInvocationSpecJson(allocator, 449, 450, 451, 452, 453, 454);
+    defer allocator.free(spec_json);
+
+    const json = try allocInvocationAccountsJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"accounts\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"is_payer\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"is_nonce_account\":true") != null);
+}
+
+test "invoke.writeInvocationAccountsTextFromOwnedResolvedInvocationRef emits readable roles" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocRichInstructionsInvocationSpecJson(allocator, 455, 456, 457, 458, 459, 460);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .instructions,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+
+    try writeInvocationAccountsTextFromOwnedResolvedInvocationRef(
+        &aw.writer,
+        allocator,
+        &resolved,
+    );
+
+    const text = try aw.toOwnedSlice();
+    defer allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "accounts (") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "payer ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "nonce ") != null);
 }
 
 test "invoke.buildInvocationSummaryFromInvocationSpecJson summarizes instructions family" {
