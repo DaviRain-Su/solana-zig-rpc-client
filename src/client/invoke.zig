@@ -6999,6 +6999,166 @@ pub fn buildPreferredInvocationModeResolution(
     };
 }
 
+pub fn writeInvocationModeReportText(
+    writer: *std.Io.Writer,
+    report: InvocationModeReport,
+) !void {
+    try writer.print(
+        "legacy buildable: {}\nversioned buildable: {}\npreferred mode: {s}\nvalidation passed: {}\nuses durable nonce: {}\naddress lookup table count: {}\n",
+        .{
+            report.legacy_buildable,
+            report.versioned_buildable,
+            preferredInvocationSelectedModeLabel(report.preferred_mode),
+            report.validation_passed,
+            report.uses_durable_nonce,
+            report.address_lookup_table_count,
+        },
+    );
+}
+
+pub fn writeInvocationModeReportJson(
+    writer: *std.Io.Writer,
+    report: InvocationModeReport,
+) !void {
+    try writer.print(
+        "{{\"legacy_buildable\":{},\"versioned_buildable\":{},\"preferred_mode\":\"{s}\",\"validation_passed\":{},\"uses_durable_nonce\":{},\"address_lookup_table_count\":{}}}",
+        .{
+            report.legacy_buildable,
+            report.versioned_buildable,
+            preferredInvocationSelectedModeLabel(report.preferred_mode),
+            report.validation_passed,
+            report.uses_durable_nonce,
+            report.address_lookup_table_count,
+        },
+    );
+}
+
+pub fn allocInvocationModeReportJson(
+    allocator: Allocator,
+    report: InvocationModeReport,
+) ![]u8 {
+    return try std.fmt.allocPrint(
+        allocator,
+        "{{\"legacy_buildable\":{},\"versioned_buildable\":{},\"preferred_mode\":\"{s}\",\"validation_passed\":{},\"uses_durable_nonce\":{},\"address_lookup_table_count\":{}}}",
+        .{
+            report.legacy_buildable,
+            report.versioned_buildable,
+            preferredInvocationSelectedModeLabel(report.preferred_mode),
+            report.validation_passed,
+            report.uses_durable_nonce,
+            report.address_lookup_table_count,
+        },
+    );
+}
+
+pub fn writeInvocationModeReportTextFromOwnedInvocationSpec(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    build_options: BuildInvocationSpecOptions,
+) !void {
+    const report = try buildInvocationModeReportFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        build_options,
+    );
+    try writeInvocationModeReportText(writer, report);
+}
+
+pub fn allocInvocationModeReportJsonFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    build_options: BuildInvocationSpecOptions,
+) ![]u8 {
+    const report = try buildInvocationModeReportFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        build_options,
+    );
+    return try allocInvocationModeReportJson(allocator, report);
+}
+
+pub fn writeInvocationModeReportTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    build_options: BuildInvocationSpecOptions,
+) !void {
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    try writeInvocationModeReportTextFromOwnedInvocationSpec(
+        writer,
+        allocator,
+        rpc,
+        &owned_spec,
+        build_options,
+    );
+}
+
+pub fn allocInvocationModeReportJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    build_options: BuildInvocationSpecOptions,
+) ![]u8 {
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    return try allocInvocationModeReportJsonFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        &owned_spec,
+        build_options,
+    );
+}
+
+pub fn writeInvocationModeReportTextFromOwnedResolvedInvocation(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    build_options: BuildInvocationSpecOptions,
+) !void {
+    const report = try buildInvocationModeReportFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        build_options,
+    );
+    try writeInvocationModeReportText(writer, report);
+}
+
+pub fn allocInvocationModeReportJsonFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    build_options: BuildInvocationSpecOptions,
+) ![]u8 {
+    const report = try buildInvocationModeReportFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        build_options,
+    );
+    return try allocInvocationModeReportJson(allocator, report);
+}
+
 fn preferredInvocationRequestedModeLabel(mode: ?InvocationMode) []const u8 {
     return if (mode) |value|
         switch (value) {
@@ -19442,6 +19602,28 @@ test "invoke.buildInvocationModeReportFromOwnedInvocationSpec prefers versioned 
     try std.testing.expectEqual(@as(?InvocationMode, .versioned), mode_report.preferred_mode);
 }
 
+test "invoke.allocInvocationModeReportJsonFromInvocationSpecJson emits mode report fields" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 626, 627, 628, 629, 630);
+    defer allocator.free(spec_json);
+
+    const json = try allocInvocationModeReportJsonFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{},
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"legacy_buildable\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"versioned_buildable\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"preferred_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"address_lookup_table_count\":1") != null);
+}
+
 test "invoke.buildPreferredInvocationModeResolutionFromOwnedInvocationSpec tracks fallback selection" {
     const allocator = std.testing.allocator;
     const DummyRpc = struct {};
@@ -19649,6 +19831,41 @@ test "invoke.buildInvocationModeReportFromOwnedResolvedInvocationRef prefers ver
     try std.testing.expect(!mode_report.legacy_buildable);
     try std.testing.expect(mode_report.versioned_buildable);
     try std.testing.expectEqual(@as(?InvocationMode, .versioned), mode_report.preferred_mode);
+}
+
+test "invoke.writeInvocationModeReportTextFromOwnedResolvedInvocation emits readable mode report fields" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 631, 632, 633, 634, 635);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var out = std.Io.Writer.Allocating.init(allocator);
+    defer out.deinit();
+
+    try writeInvocationModeReportTextFromOwnedResolvedInvocation(
+        &out.writer,
+        allocator,
+        DummyRpc{},
+        &resolved,
+        .{},
+    );
+
+    const written = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, written, "legacy buildable: false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "versioned buildable: true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "preferred mode: versioned") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "address lookup table count: 1") != null);
 }
 
 test "invoke.buildPreferredInvocationModeResolutionFromOwnedResolvedInvocationRef blocks fallback when disabled" {
