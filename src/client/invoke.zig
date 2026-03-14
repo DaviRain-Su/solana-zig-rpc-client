@@ -4298,15 +4298,11 @@ pub fn buildPreparedInvocationFromOwnedInvocationSpecRefWithOptions(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildInvocationSpecOptions,
 ) !PreparedInvocation {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+    return try buildPreparedInvocationFromOwnedInvocationSpecWithOptions(
         allocator,
         rpc,
-        .instructions,
         versioned,
-        invocation_spec_json,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
         options,
     );
 }
