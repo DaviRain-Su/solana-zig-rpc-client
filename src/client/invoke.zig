@@ -3703,6 +3703,16 @@ pub fn buildInvocationSummaryFromOwnedResolvedInvocation(
     return try buildInvocationSummaryFromResolved(allocator, resolved);
 }
 
+pub fn buildInvocationSummaryFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !OwnedInvocationSummary {
+    return try buildInvocationSummaryFromOwnedResolvedInvocation(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, resolved),
+    );
+}
+
 pub fn buildInvocationSummaryFromOwnedInvocationSpec(
     allocator: Allocator,
     owned_spec: OwnedInvocationSpec,
@@ -3806,6 +3816,16 @@ pub fn buildInvocationPlanFromOwnedResolvedInvocation(
     resolved: OwnedResolvedInvocation,
 ) !OwnedInvocationPlan {
     return try buildInvocationPlanFromResolved(allocator, resolved);
+}
+
+pub fn buildInvocationPlanFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !OwnedInvocationPlan {
+    return try buildInvocationPlanFromOwnedResolvedInvocation(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, resolved),
+    );
 }
 
 pub fn buildInvocationPlanFromOwnedInvocationSpec(
@@ -3912,6 +3932,16 @@ pub fn buildInvocationPreflightFromOwnedResolvedInvocation(
     return try buildInvocationPreflightFromResolved(allocator, resolved);
 }
 
+pub fn buildInvocationPreflightFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !OwnedInvocationPreflight {
+    return try buildInvocationPreflightFromOwnedResolvedInvocation(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, resolved),
+    );
+}
+
 pub fn buildInvocationPreflightFromOwnedInvocationSpec(
     allocator: Allocator,
     owned_spec: OwnedInvocationSpec,
@@ -3992,6 +4022,16 @@ pub fn buildInvocationValidationFromOwnedResolvedInvocation(
     resolved: OwnedResolvedInvocation,
 ) !OwnedInvocationValidation {
     return try buildInvocationValidationFromResolved(allocator, resolved);
+}
+
+pub fn buildInvocationValidationFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !OwnedInvocationValidation {
+    return try buildInvocationValidationFromOwnedResolvedInvocation(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, resolved),
+    );
 }
 
 pub fn buildInvocationValidationFromOwnedInvocationSpec(
@@ -4077,6 +4117,16 @@ pub fn buildInvocationLookupCoverageFromOwnedResolvedInvocation(
     return try buildInvocationLookupCoverageFromResolved(allocator, resolved);
 }
 
+pub fn buildInvocationLookupCoverageFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !OwnedInvocationLookupCoverage {
+    return try buildInvocationLookupCoverageFromOwnedResolvedInvocation(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, resolved),
+    );
+}
+
 pub fn buildInvocationLookupCoverageFromOwnedInvocationSpec(
     allocator: Allocator,
     owned_spec: OwnedInvocationSpec,
@@ -4160,6 +4210,16 @@ pub fn buildInvocationReportFromOwnedResolvedInvocation(
     resolved: OwnedResolvedInvocation,
 ) !OwnedInvocationReport {
     return try buildInvocationReportFromResolved(allocator, resolved);
+}
+
+pub fn buildInvocationReportFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !OwnedInvocationReport {
+    return try buildInvocationReportFromOwnedResolvedInvocation(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, resolved),
+    );
 }
 
 pub fn buildInvocationReportFromOwnedInvocationSpec(
@@ -9658,6 +9718,33 @@ test "invoke.buildInvocationLookupCoverageFromOwnedResolvedInvocation reuses typ
     try std.testing.expect(coverage.coversPubkey(covered_pubkey));
 }
 
+test "invoke.buildInvocationSummaryFromOwnedResolvedInvocationRef reuses borrowed resolved invocation" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 561, 562, 563, 564, 565);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var summary = try buildInvocationSummaryFromOwnedResolvedInvocationRef(
+        allocator,
+        &resolved,
+    );
+    defer summary.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), summary.program_ids.len);
+    try std.testing.expectEqual(@as(usize, 1), summary.address_lookup_table_count);
+    try std.testing.expect(summary.recent_blockhash != null);
+}
+
 test "invoke.buildInvocationReportFromOwnedInvocationSpec reuses typed normalized spec" {
     const allocator = std.testing.allocator;
     const duplicate_signer = try sdk.Keypair.fromSecretKeyBytes([_]u8{467} ** 32);
@@ -9697,6 +9784,33 @@ test "invoke.buildInvocationReportFromOwnedResolvedInvocation reuses typed norma
                 spec_json,
             ),
         ),
+    );
+    defer report.deinit(allocator);
+
+    try std.testing.expect(report.can_execute);
+    try std.testing.expect(report.uses_durable_nonce);
+    try std.testing.expectEqual(InvocationBlockhashMode.durable_nonce, report.plan.blockhash_mode);
+}
+
+test "invoke.buildInvocationReportFromOwnedResolvedInvocationRef reuses borrowed resolved invocation" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocRichInstructionsInvocationSpecJson(allocator, 566, 567, 568, 569, 570, 571);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .instructions,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var report = try buildInvocationReportFromOwnedResolvedInvocationRef(
+        allocator,
+        &resolved,
     );
     defer report.deinit(allocator);
 
