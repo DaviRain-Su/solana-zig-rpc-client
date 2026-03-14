@@ -6999,6 +6999,185 @@ pub fn buildPreferredInvocationModeResolution(
     };
 }
 
+fn preferredInvocationRequestedModeLabel(mode: ?InvocationMode) []const u8 {
+    return if (mode) |value|
+        switch (value) {
+            .legacy => "legacy",
+            .versioned => "versioned",
+        }
+    else
+        "auto";
+}
+
+fn preferredInvocationSelectedModeLabel(mode: ?InvocationMode) []const u8 {
+    return if (mode) |value|
+        switch (value) {
+            .legacy => "legacy",
+            .versioned => "versioned",
+        }
+    else
+        "none";
+}
+
+pub fn writePreferredInvocationModeResolutionText(
+    writer: *std.Io.Writer,
+    resolution: PreferredInvocationModeResolution,
+) !void {
+    try writer.print(
+        "requested mode: {s}\nselected mode: {s}\nrequested mode buildable: {}\nused fallback: {}\n",
+        .{
+            preferredInvocationRequestedModeLabel(resolution.requested_mode),
+            preferredInvocationSelectedModeLabel(resolution.selected_mode),
+            resolution.requested_mode_buildable,
+            resolution.used_fallback,
+        },
+    );
+}
+
+pub fn writePreferredInvocationModeResolutionJson(
+    writer: *std.Io.Writer,
+    resolution: PreferredInvocationModeResolution,
+) !void {
+    try writer.print(
+        "{{\"requested_mode\":\"{s}\",\"selected_mode\":\"{s}\",\"requested_mode_buildable\":{},\"used_fallback\":{}}}",
+        .{
+            preferredInvocationRequestedModeLabel(resolution.requested_mode),
+            preferredInvocationSelectedModeLabel(resolution.selected_mode),
+            resolution.requested_mode_buildable,
+            resolution.used_fallback,
+        },
+    );
+}
+
+pub fn allocPreferredInvocationModeResolutionJson(
+    allocator: Allocator,
+    resolution: PreferredInvocationModeResolution,
+) ![]u8 {
+    return try std.fmt.allocPrint(
+        allocator,
+        "{{\"requested_mode\":\"{s}\",\"selected_mode\":\"{s}\",\"requested_mode_buildable\":{},\"used_fallback\":{}}}",
+        .{
+            preferredInvocationRequestedModeLabel(resolution.requested_mode),
+            preferredInvocationSelectedModeLabel(resolution.selected_mode),
+            resolution.requested_mode_buildable,
+            resolution.used_fallback,
+        },
+    );
+}
+
+pub fn writePreferredInvocationModeResolutionTextFromOwnedInvocationSpec(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    build_options: BuildInvocationSpecOptions,
+    mode_options: PreferredInvocationModeOptions,
+) !void {
+    const resolution = try buildPreferredInvocationModeResolutionFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        build_options,
+        mode_options,
+    );
+    try writePreferredInvocationModeResolutionText(writer, resolution);
+}
+
+pub fn allocPreferredInvocationModeResolutionJsonFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    build_options: BuildInvocationSpecOptions,
+    mode_options: PreferredInvocationModeOptions,
+) ![]u8 {
+    const resolution = try buildPreferredInvocationModeResolutionFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        build_options,
+        mode_options,
+    );
+    return try allocPreferredInvocationModeResolutionJson(allocator, resolution);
+}
+
+pub fn writePreferredInvocationModeResolutionTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    build_options: BuildInvocationSpecOptions,
+    mode_options: PreferredInvocationModeOptions,
+) !void {
+    const resolution = try buildPreferredInvocationModeResolutionFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        .{
+            .build = build_options,
+            .mode = mode_options,
+        },
+    );
+    try writePreferredInvocationModeResolutionText(writer, resolution);
+}
+
+pub fn allocPreferredInvocationModeResolutionJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    build_options: BuildInvocationSpecOptions,
+    mode_options: PreferredInvocationModeOptions,
+) ![]u8 {
+    const resolution = try buildPreferredInvocationModeResolutionFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        .{
+            .build = build_options,
+            .mode = mode_options,
+        },
+    );
+    return try allocPreferredInvocationModeResolutionJson(allocator, resolution);
+}
+
+pub fn writePreferredInvocationModeResolutionTextFromOwnedResolvedInvocation(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    build_options: BuildInvocationSpecOptions,
+    mode_options: PreferredInvocationModeOptions,
+) !void {
+    const resolution = try buildPreferredInvocationModeResolutionFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        build_options,
+        mode_options,
+    );
+    try writePreferredInvocationModeResolutionText(writer, resolution);
+}
+
+pub fn allocPreferredInvocationModeResolutionJsonFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    build_options: BuildInvocationSpecOptions,
+    mode_options: PreferredInvocationModeOptions,
+) ![]u8 {
+    const resolution = try buildPreferredInvocationModeResolutionFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        build_options,
+        mode_options,
+    );
+    return try allocPreferredInvocationModeResolutionJson(allocator, resolution);
+}
+
 pub fn buildPreferredOwnedMessageExecutionResultFromInvocationSpecJson(
     allocator: Allocator,
     rpc: anytype,
@@ -19318,6 +19497,68 @@ test "invoke.buildPreferredInvocationModeResolutionFromInvocationSpecJson blocks
     try std.testing.expectEqual(@as(?InvocationMode, null), resolution.selected_mode);
     try std.testing.expect(!resolution.requested_mode_buildable);
     try std.testing.expect(!resolution.used_fallback);
+}
+
+test "invoke.allocPreferredInvocationModeResolutionJsonFromInvocationSpecJson emits mode fields" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 616, 617, 618, 619, 620);
+    defer allocator.free(spec_json);
+
+    const json = try allocPreferredInvocationModeResolutionJsonFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{},
+        .{
+            .preferred_mode = .legacy,
+            .allow_fallback = true,
+        },
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"requested_mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"requested_mode_buildable\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"used_fallback\":true") != null);
+}
+
+test "invoke.writePreferredInvocationModeResolutionTextFromOwnedInvocationSpec emits readable mode fields" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 621, 622, 623, 624, 625);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    var out = std.Io.Writer.Allocating.init(allocator);
+    defer out.deinit();
+
+    try writePreferredInvocationModeResolutionTextFromOwnedInvocationSpec(
+        &out.writer,
+        allocator,
+        DummyRpc{},
+        &owned_spec,
+        .{},
+        .{
+            .preferred_mode = .legacy,
+            .allow_fallback = false,
+        },
+    );
+
+    const written = out.written();
+    try std.testing.expect(std.mem.indexOf(u8, written, "requested mode: legacy") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "selected mode: none") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "requested mode buildable: false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "used fallback: false") != null);
 }
 
 test "invoke.buildPreferredInvocationExecutionReportFromOwnedInvocationSpec tracks fallback selection" {
