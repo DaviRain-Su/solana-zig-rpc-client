@@ -3593,6 +3593,33 @@ fn buildAddressLookupTablesJsonFromOwnedInvocationSpec(
     );
 }
 
+pub fn buildAddressLookupTablesJsonFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !?[]u8 {
+    return try buildAddressLookupTablesJsonFromOwnedInvocationSpec(
+        allocator,
+        owned_spec,
+    );
+}
+
+pub fn buildAddressLookupTablesJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !?[]u8 {
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+    return try buildAddressLookupTablesJsonFromOwnedInvocationSpecRef(
+        allocator,
+        &owned_spec,
+    );
+}
+
 pub fn buildAddressLookupTablesJsonFromOwnedResolvedInvocation(
     allocator: Allocator,
     resolved: *const OwnedResolvedInvocation,
@@ -4468,6 +4495,27 @@ pub fn buildInvocationLookupTablePubkeysFromOwnedInvocationSpecRef(
     var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpecRef(allocator, owned_spec);
     defer resolved.deinit(allocator);
 
+    return try buildInvocationLookupTablePubkeysFromOwnedResolvedInvocationRef(
+        allocator,
+        &resolved,
+    );
+}
+
+pub fn buildInvocationLookupTablePubkeysFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    resolved: OwnedResolvedInvocation,
+) ![]sdk.Pubkey {
+    defer resolved.deinit(allocator);
+    return try buildInvocationLookupTablePubkeysFromOwnedResolvedInvocationRef(
+        allocator,
+        &resolved,
+    );
+}
+
+pub fn buildInvocationLookupTablePubkeysFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) ![]sdk.Pubkey {
     const lookup_table_pubkeys = try allocator.alloc(sdk.Pubkey, resolved.address_lookup_tables.len);
     for (resolved.address_lookup_tables, 0..) |table, index| {
         lookup_table_pubkeys[index] = table.account_key;
@@ -12357,6 +12405,24 @@ test "invoke.buildInvocationLookupCoverageFromOwnedResolvedInvocation reuses typ
     try std.testing.expect(coverage.coversPubkey(covered_pubkey));
 }
 
+test "invoke.buildAddressLookupTablesJsonFromInvocationSpecJson exports lookup tables" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 432, 433, 434, 435, 436);
+    defer allocator.free(spec_json);
+
+    const json = try buildAddressLookupTablesJsonFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer if (json) |value| allocator.free(value);
+
+    try std.testing.expect(json != null);
+    try std.testing.expect(std.mem.indexOf(u8, json.?, "\"accountKey\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json.?, "\"addresses\":[") != null);
+}
+
 test "invoke.buildInvocationAccountsFromOwnedResolvedInvocationRef reuses borrowed resolved invocation" {
     const allocator = std.testing.allocator;
     const nonce_account = sdk.Pubkey.fromBytes([_]u8{581} ** 32);
@@ -12383,6 +12449,33 @@ test "invoke.buildInvocationAccountsFromOwnedResolvedInvocationRef reuses borrow
     try std.testing.expectEqual(@as(usize, 6), accounts.accounts.len);
     try std.testing.expect(accounts.contains(nonce_account));
     try std.testing.expect(accounts.isNonceAccount(nonce_account));
+}
+
+test "invoke.buildInvocationLookupTablePubkeysFromOwnedResolvedInvocationRef reuses borrowed resolved invocation" {
+    const allocator = std.testing.allocator;
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{586} ** 32);
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 583, 584, 585, 586, 587);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    const pubkeys = try buildInvocationLookupTablePubkeysFromOwnedResolvedInvocationRef(
+        allocator,
+        &resolved,
+    );
+    defer allocator.free(pubkeys);
+
+    try std.testing.expectEqual(@as(usize, 1), pubkeys.len);
+    try std.testing.expect(std.meta.eql(lookup_table, pubkeys[0]));
 }
 
 test "invoke.buildInvocationSummaryFromOwnedResolvedInvocationRef reuses borrowed resolved invocation" {
