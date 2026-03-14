@@ -3201,6 +3201,16 @@ pub fn buildInvocationSignerPubkeysFromOwnedInvocationSpecRef(
     return signer_pubkeys;
 }
 
+pub fn buildOwnedInstructionsFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !sdk.OwnedInstructions {
+    return try buildOwnedInstructionsFromOwnedInvocationSpec(
+        allocator,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
+    );
+}
+
 pub fn cloneOwnedResolvedInvocation(
     allocator: Allocator,
     source: *const OwnedResolvedInvocation,
@@ -3261,6 +3271,76 @@ pub fn buildOwnedResolvedInvocationFromOwnedInvocationSpecRef(
         .nonce_account = owned_spec.nonce_account,
         .nonce_authority = owned_spec.nonce_authority,
     });
+}
+
+pub fn buildInvocationAccountsFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !OwnedInvocationAccounts {
+    return try buildInvocationAccountsFromOwnedInvocationSpec(
+        allocator,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
+    );
+}
+
+pub fn buildInvocationSummaryFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !OwnedInvocationSummary {
+    return try buildInvocationSummaryFromOwnedInvocationSpec(
+        allocator,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
+    );
+}
+
+pub fn buildInvocationPlanFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !OwnedInvocationPlan {
+    return try buildInvocationPlanFromOwnedInvocationSpec(
+        allocator,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
+    );
+}
+
+pub fn buildInvocationPreflightFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !OwnedInvocationPreflight {
+    return try buildInvocationPreflightFromOwnedInvocationSpec(
+        allocator,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
+    );
+}
+
+pub fn buildInvocationValidationFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !OwnedInvocationValidation {
+    return try buildInvocationValidationFromOwnedInvocationSpec(
+        allocator,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
+    );
+}
+
+pub fn buildInvocationLookupCoverageFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !OwnedInvocationLookupCoverage {
+    return try buildInvocationLookupCoverageFromOwnedInvocationSpec(
+        allocator,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
+    );
+}
+
+pub fn buildInvocationReportFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !OwnedInvocationReport {
+    return try buildInvocationReportFromOwnedInvocationSpec(
+        allocator,
+        try cloneOwnedInvocationSpec(allocator, owned_spec),
+    );
 }
 
 fn buildOwnedMessageFromOwnedSpecWithOptions(
