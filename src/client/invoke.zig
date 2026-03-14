@@ -4355,6 +4355,22 @@ pub fn buildInvocationDiagnosticsFromPreferredExecutionReport(
     };
 }
 
+pub fn buildPreferredInvocationDiagnosticsFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: BuildPreferredInvocationSpecOptions,
+) !OwnedInvocationDiagnostics {
+    var report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        options,
+    );
+    defer report.deinit(allocator);
+    return try buildInvocationDiagnosticsFromPreferredExecutionReport(allocator, &report);
+}
+
 pub fn buildInvocationDiagnosticsFromOwnedResolvedInvocation(
     allocator: Allocator,
     resolved: OwnedResolvedInvocation,
@@ -10001,6 +10017,41 @@ test "invoke.buildInvocationDiagnosticsFromOwnedResolvedInvocationRef reuses bor
 
     try std.testing.expect(saw_duplicate_signers);
     try std.testing.expect(saw_duplicate_lookup_tables);
+}
+
+test "invoke.buildPreferredInvocationDiagnosticsFromOwnedInvocationSpec preserves preferred diagnostics" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 595, 596, 597, 598, 599);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    var diagnostics = try buildPreferredInvocationDiagnosticsFromOwnedInvocationSpec(
+        allocator,
+        DummyRpc{},
+        &owned_spec,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .fallback = false,
+            },
+        },
+    );
+    defer diagnostics.deinit(allocator);
+
+    var saw_no_buildable_mode = false;
+    for (diagnostics.items) |diagnostic| {
+        if (diagnostic.code == .no_buildable_mode) saw_no_buildable_mode = true;
+    }
+
+    try std.testing.expect(saw_no_buildable_mode);
 }
 
 test "invoke.buildInvocationSignerPubkeysFromInvocationSpecJson dispatches instructions family" {
