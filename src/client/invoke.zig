@@ -510,6 +510,19 @@ pub const OwnedInvocationInspection = struct {
     }
 };
 
+pub const OwnedPreferredInvocationInspection = struct {
+    mode_report: InvocationModeReport,
+    mode_resolution: PreferredInvocationModeResolution,
+    analysis: PreferredInvocationAnalysis,
+    diagnostics: OwnedInvocationDiagnostics,
+
+    pub fn deinit(self: *OwnedPreferredInvocationInspection, allocator: Allocator) void {
+        self.analysis.deinit(allocator);
+        self.diagnostics.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 pub const InvocationDiagnosticSeverity = enum {
     info,
     warning,
@@ -2776,6 +2789,83 @@ pub fn buildInvocationInspectionFromOwnedResolvedInvocationRef(
     };
 }
 
+fn buildPreferredInvocationInspectionFromAnalysis(
+    allocator: Allocator,
+    analysis: PreferredInvocationAnalysis,
+) !OwnedPreferredInvocationInspection {
+    errdefer {
+        var owned_analysis = analysis;
+        owned_analysis.deinit(allocator);
+    }
+
+    const mode_report = analysis.execution_report.mode_report;
+    const mode_resolution: PreferredInvocationModeResolution = .{
+        .requested_mode = analysis.execution_report.requested_mode,
+        .selected_mode = analysis.execution_report.selected_mode,
+        .requested_mode_buildable = analysis.execution_report.requested_mode_buildable,
+        .used_fallback = analysis.execution_report.used_fallback,
+    };
+    var diagnostics = try buildInvocationDiagnosticsFromPreferredExecutionReport(
+        allocator,
+        &analysis.execution_report,
+    );
+    errdefer diagnostics.deinit(allocator);
+
+    return .{
+        .mode_report = mode_report,
+        .mode_resolution = mode_resolution,
+        .analysis = analysis,
+        .diagnostics = diagnostics,
+    };
+}
+
+pub fn buildPreferredInvocationInspectionFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !OwnedPreferredInvocationInspection {
+    const analysis = try buildPreferredInvocationAnalysisFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    return try buildPreferredInvocationInspectionFromAnalysis(allocator, analysis);
+}
+
+pub fn buildPreferredInvocationInspectionFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: BuildPreferredInvocationSpecOptions,
+) !OwnedPreferredInvocationInspection {
+    const analysis = try buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        options,
+    );
+    return try buildPreferredInvocationInspectionFromAnalysis(allocator, analysis);
+}
+
+pub fn buildPreferredInvocationInspectionFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !OwnedPreferredInvocationInspection {
+    const analysis = try buildPreferredInvocationAnalysisFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    return try buildPreferredInvocationInspectionFromAnalysis(allocator, analysis);
+}
+
 pub fn writeInvocationInspectionText(
     writer: *std.Io.Writer,
     allocator: Allocator,
@@ -2828,6 +2918,66 @@ pub fn allocInvocationInspectionJson(
     var aw: std.Io.Writer.Allocating = .init(allocator);
     errdefer aw.deinit();
     try writeInvocationInspectionJson(&aw.writer, allocator, inspection);
+    return try aw.toOwnedSlice();
+}
+
+pub fn writePreferredInvocationInspectionText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    inspection: *const OwnedPreferredInvocationInspection,
+) !void {
+    try writer.writeAll("mode report:\n");
+    try writeInvocationModeReportText(writer, inspection.mode_report);
+    try writer.writeAll("\nmode resolution:\n");
+    try writePreferredInvocationModeResolutionText(writer, inspection.mode_resolution);
+    try writer.writeAll("\nanalysis:\n");
+    try writePreferredInvocationAnalysisText(writer, allocator, &inspection.analysis);
+    try writer.writeAll("\ndiagnostics:\n");
+    try writeInvocationDiagnosticsText(writer, inspection.diagnostics);
+}
+
+pub fn writePreferredInvocationInspectionJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    inspection: *const OwnedPreferredInvocationInspection,
+) !void {
+    try writer.writeAll("{");
+
+    try std.json.Stringify.value("mode_report", .{}, writer);
+    try writer.writeAll(":");
+    try writeInvocationModeReportJson(writer, inspection.mode_report);
+
+    try writer.writeAll(",");
+    try std.json.Stringify.value("mode_resolution", .{}, writer);
+    try writer.writeAll(":");
+    try writePreferredInvocationModeResolutionJson(writer, inspection.mode_resolution);
+
+    try writer.writeAll(",");
+    try std.json.Stringify.value("analysis", .{}, writer);
+    try writer.writeAll(":");
+    try writePreferredInvocationAnalysisJson(writer, allocator, &inspection.analysis);
+
+    try writer.writeAll(",");
+    try std.json.Stringify.value("diagnostics", .{}, writer);
+    try writer.writeAll(":");
+    try writer.writeAll("{");
+    var diagnostics_first = true;
+    try writeJsonUsizeField(writer, &diagnostics_first, "diagnostic_error_count", inspection.diagnostics.errorCount());
+    try writeJsonUsizeField(writer, &diagnostics_first, "diagnostic_warning_count", inspection.diagnostics.warningCount());
+    try writeJsonUsizeField(writer, &diagnostics_first, "diagnostic_info_count", inspection.diagnostics.infoCount());
+    try writeJsonDiagnosticsField(writer, &diagnostics_first, inspection.diagnostics);
+    try writer.writeAll("}");
+
+    try writer.writeAll("}");
+}
+
+pub fn allocPreferredInvocationInspectionJson(
+    allocator: Allocator,
+    inspection: *const OwnedPreferredInvocationInspection,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writePreferredInvocationInspectionJson(&aw.writer, allocator, inspection);
     return try aw.toOwnedSlice();
 }
 
@@ -2908,6 +3058,109 @@ pub fn allocInvocationInspectionJsonFromOwnedResolvedInvocationRef(
     );
     defer inspection.deinit(allocator);
     return try allocInvocationInspectionJson(allocator, inspection);
+}
+
+pub fn writePreferredInvocationInspectionTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var inspection = try buildPreferredInvocationInspectionFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    defer inspection.deinit(allocator);
+    try writePreferredInvocationInspectionText(writer, allocator, &inspection);
+}
+
+pub fn allocPreferredInvocationInspectionJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var inspection = try buildPreferredInvocationInspectionFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    defer inspection.deinit(allocator);
+    return try allocPreferredInvocationInspectionJson(allocator, &inspection);
+}
+
+pub fn writePreferredInvocationInspectionTextFromOwnedInvocationSpecRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var inspection = try buildPreferredInvocationInspectionFromOwnedInvocationSpecRef(
+        allocator,
+        rpc,
+        owned_spec,
+        options,
+    );
+    defer inspection.deinit(allocator);
+    try writePreferredInvocationInspectionText(writer, allocator, &inspection);
+}
+
+pub fn allocPreferredInvocationInspectionJsonFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var inspection = try buildPreferredInvocationInspectionFromOwnedInvocationSpecRef(
+        allocator,
+        rpc,
+        owned_spec,
+        options,
+    );
+    defer inspection.deinit(allocator);
+    return try allocPreferredInvocationInspectionJson(allocator, &inspection);
+}
+
+pub fn writePreferredInvocationInspectionTextFromOwnedResolvedInvocationRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var inspection = try buildPreferredInvocationInspectionFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    defer inspection.deinit(allocator);
+    try writePreferredInvocationInspectionText(writer, allocator, &inspection);
+}
+
+pub fn allocPreferredInvocationInspectionJsonFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var inspection = try buildPreferredInvocationInspectionFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    defer inspection.deinit(allocator);
+    return try allocPreferredInvocationInspectionJson(allocator, &inspection);
 }
 
 pub fn writeInvocationAccountsTextFromInvocationSpecJson(
@@ -14891,6 +15144,77 @@ test "invoke.writeInvocationInspectionTextFromOwnedResolvedInvocationRef emits i
     try std.testing.expect(std.mem.indexOf(u8, text, "report:") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "accounts:") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "diagnostics:") != null);
+}
+
+test "invoke.allocPreferredInvocationInspectionJsonFromInvocationSpecJson emits nested preferred inspection sections" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 690, 691, 692, 693, 694);
+    defer allocator.free(spec_json);
+
+    const json = try allocPreferredInvocationInspectionJsonFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"mode_report\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"mode_resolution\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"analysis\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"diagnostics\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"selected_mode\":\"versioned\"") != null);
+}
+
+test "invoke.writePreferredInvocationInspectionTextFromOwnedResolvedInvocationRef emits preferred inspection sections" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 695, 696, 697, 698, 699);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+
+    try writePreferredInvocationInspectionTextFromOwnedResolvedInvocationRef(
+        &aw.writer,
+        allocator,
+        DummyRpc{},
+        &resolved,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+
+    const text = try aw.toOwnedSlice();
+    defer allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "mode report:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "mode resolution:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "analysis:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "diagnostics:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "selected mode: versioned") != null);
 }
 
 test "invoke.buildInvocationSignerPubkeysFromInvocationSpecJson dispatches instructions family" {
