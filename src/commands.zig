@@ -4540,6 +4540,8 @@ const InspectSection = enum {
     prepared,
     message,
     transaction,
+    simulation,
+    fee,
     instructions,
     resolved,
 };
@@ -4563,9 +4565,11 @@ fn parseInspectSectionArg(section_arg: ?[]const u8) !InspectSection {
     if (std.mem.eql(u8, raw, "prepared")) return .prepared;
     if (std.mem.eql(u8, raw, "message")) return .message;
     if (std.mem.eql(u8, raw, "transaction")) return .transaction;
+    if (std.mem.eql(u8, raw, "simulation")) return .simulation;
+    if (std.mem.eql(u8, raw, "fee")) return .fee;
     if (std.mem.eql(u8, raw, "instructions")) return .instructions;
     if (std.mem.eql(u8, raw, "resolved")) return .resolved;
-    reportInvalidCliMessage("error: --inspect-section must be inspection, report, accounts, signers, summary, plan, preflight, validation, lookup-coverage, lookup-tables, diagnostics, mode-report, mode-resolution, analysis, prepared, message, transaction, instructions, or resolved\n", .{});
+    reportInvalidCliMessage("error: --inspect-section must be inspection, report, accounts, signers, summary, plan, preflight, validation, lookup-coverage, lookup-tables, diagnostics, mode-report, mode-resolution, analysis, prepared, message, transaction, simulation, fee, instructions, or resolved\n", .{});
     return error.InvalidCli;
 }
 
@@ -4574,7 +4578,7 @@ fn inspectSectionUsesPreferred(
     prefer_preferred_path: bool,
 ) bool {
     return prefer_preferred_path or switch (section) {
-        .mode_report, .mode_resolution, .analysis, .prepared, .message, .transaction => true,
+        .mode_report, .mode_resolution, .analysis, .prepared, .message, .transaction, .simulation, .fee => true,
         else => false,
     };
 }
@@ -4886,6 +4890,42 @@ fn emitInvocationInspectSection(
             try stdout_writer.interface.print("{s}\n", .{json});
         } else {
             try client.invoke.writePreferredSignedTransactionExecutionResultTextFromOwnedInvocationSpec(
+                &stdout_writer.interface,
+                allocator,
+                rpc,
+                owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            );
+        },
+        .simulation => if (output_json) {
+            const json = try client.invoke.allocPreferredSimulationExecutionResultJsonFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        } else {
+            try client.invoke.writePreferredSimulationExecutionResultTextFromOwnedInvocationSpec(
+                &stdout_writer.interface,
+                allocator,
+                rpc,
+                owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            );
+        },
+        .fee => if (output_json) {
+            const json = try client.invoke.allocPreferredFeeExecutionResultJsonFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        } else {
+            try client.invoke.writePreferredFeeExecutionResultTextFromOwnedInvocationSpec(
                 &stdout_writer.interface,
                 allocator,
                 rpc,
@@ -15259,6 +15299,199 @@ test "runCommand inspect-program-invoke emits transaction section json" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"transaction_mode\":\"versioned\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"transaction_base64\":\"") != null);
+}
+
+test "runCommand inspect-program-invoke emits simulation section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":221},"value":{"accounts":[],"err":null,"fee":222,"unitsConsumed":44,"logs":null}}
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-program-invoke-simulation-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{108} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 121);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{52} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_pubkey = client.Pubkey.fromBytes(.{53} ** 32);
+    const account_pubkey_base58 = try account_pubkey.toBase58(allocator);
+    defer allocator.free(account_pubkey_base58);
+    const lookup_table_key = client.Pubkey.fromBytes(.{54} ** 32);
+    const lookup_table_key_base58 = try lookup_table_key.toBase58(allocator);
+    defer allocator.free(lookup_table_key_base58);
+    const lookup_address = client.Pubkey.fromBytes(.{55} ** 32);
+    const lookup_address_base58 = try lookup_address.toBase58(allocator);
+    defer allocator.free(lookup_address_base58);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"is_writable\":true}}]",
+        .{account_pubkey_base58},
+    );
+    defer allocator.free(accounts_json);
+    const lookup_tables_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"account_key\":\"{s}\",\"addresses\":[\"{s}\"]}}]",
+        .{ lookup_table_key_base58, lookup_address_base58 },
+    );
+    defer allocator.free(lookup_tables_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-program-invoke",
+        "--json",
+        "--inspect-section",
+        "simulation",
+        "--invoke-mode",
+        "versioned",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--data-schema-json",
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}",
+        "--args-json",
+        "{\"enabled\":true}",
+        "--schema-encoding",
+        "borsh",
+        program_id_base58,
+        accounts_json,
+        "[]",
+        lookup_tables_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"context_slot\":221") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"fee\":222") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"units_consumed\":44") != null);
+}
+
+test "runCommand inspect-program-invoke emits fee section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushFeeForMessageResponse(223, 3333);
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-program-invoke-fee-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{109} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 132);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{56} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const lookup_table_key = client.Pubkey.fromBytes(.{57} ** 32);
+    const lookup_table_key_base58 = try lookup_table_key.toBase58(allocator);
+    defer allocator.free(lookup_table_key_base58);
+    const account_pubkey = client.Pubkey.fromBytes(.{59} ** 32);
+    const account_pubkey_base58 = try account_pubkey.toBase58(allocator);
+    defer allocator.free(account_pubkey_base58);
+    const lookup_address = client.Pubkey.fromBytes(.{58} ** 32);
+    const lookup_address_base58 = try lookup_address.toBase58(allocator);
+    defer allocator.free(lookup_address_base58);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"is_writable\":true}}]",
+        .{account_pubkey_base58},
+    );
+    defer allocator.free(accounts_json);
+    const lookup_tables_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"account_key\":\"{s}\",\"addresses\":[\"{s}\"]}}]",
+        .{ lookup_table_key_base58, lookup_address_base58 },
+    );
+    defer allocator.free(lookup_tables_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-program-invoke",
+        "--json",
+        "--inspect-section",
+        "fee",
+        "--invoke-mode",
+        "versioned",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--data-schema-json",
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}",
+        "--args-json",
+        "{\"enabled\":true}",
+        "--schema-encoding",
+        "borsh",
+        program_id_base58,
+        accounts_json,
+        "[]",
+        lookup_tables_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "getFeeForMessage");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"fee\":3333") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostic_error_count\":0") != null);
 }
 
 test "runCommand validate-spec fails on missing required signer" {
