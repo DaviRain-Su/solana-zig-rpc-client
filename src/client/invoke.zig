@@ -6998,6 +6998,107 @@ pub fn buildPreferredResolvedInvocationExecutionResultFromOwnedInvocationSpec(
     };
 }
 
+pub fn buildPreferredOwnedMessageExecutionResultFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredOwnedMessageExecutionResult {
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .message = try buildOwnedMessageFromOwnedResolvedInvocationWithOptions(
+            allocator,
+            rpc,
+            mode == .versioned,
+            resolved,
+            options.build,
+        ),
+    };
+}
+
+pub fn buildPreferredMessageBytesExecutionResultFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredBytesExecutionResult {
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .bytes = try buildMessageBytesFromOwnedResolvedInvocationWithOptions(
+            allocator,
+            rpc,
+            mode == .versioned,
+            resolved,
+            options.build,
+        ),
+    };
+}
+
+pub fn buildPreferredMessageBase64ExecutionResultFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredBytesExecutionResult {
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .bytes = try buildMessageBase64FromOwnedResolvedInvocationWithOptions(
+            allocator,
+            rpc,
+            mode == .versioned,
+            resolved,
+            options.build,
+        ),
+    };
+}
+
+pub fn buildPreferredResolvedInvocationExecutionResultFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredResolvedInvocationExecutionResult {
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    errdefer execution_report.deinit(allocator);
+
+    return .{
+        .execution_report = execution_report,
+        .resolved_invocation = try cloneOwnedResolvedInvocation(allocator, resolved),
+    };
+}
+
 pub fn buildPreferredOwnedMessageFromOwnedInvocationSpec(
     allocator: Allocator,
     rpc: anytype,
@@ -7008,6 +7109,26 @@ pub fn buildPreferredOwnedMessageFromOwnedInvocationSpec(
         allocator,
         rpc,
         owned_spec,
+        options,
+    );
+    const mode = result.execution_report.selected_mode orelse {
+        result.deinit(allocator);
+        return error.NoBuildableInvocationMode;
+    };
+    result.execution_report.deinit(allocator);
+    return .{ .mode = mode, .message = result.message };
+}
+
+pub fn buildPreferredOwnedMessageFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredOwnedMessageResult {
+    var result = try buildPreferredOwnedMessageExecutionResultFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        resolved,
         options,
     );
     const mode = result.execution_report.selected_mode orelse {
@@ -7038,6 +7159,26 @@ pub fn buildPreferredMessageBytesFromOwnedInvocationSpec(
     return .{ .mode = mode, .bytes = result.bytes };
 }
 
+pub fn buildPreferredMessageBytesFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredBytesResult {
+    var result = try buildPreferredMessageBytesExecutionResultFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    const mode = result.execution_report.selected_mode orelse {
+        result.deinit(allocator);
+        return error.NoBuildableInvocationMode;
+    };
+    result.execution_report.deinit(allocator);
+    return .{ .mode = mode, .bytes = result.bytes };
+}
+
 pub fn buildPreferredMessageBase64FromOwnedInvocationSpec(
     allocator: Allocator,
     rpc: anytype,
@@ -7048,6 +7189,26 @@ pub fn buildPreferredMessageBase64FromOwnedInvocationSpec(
         allocator,
         rpc,
         owned_spec,
+        options,
+    );
+    const mode = result.execution_report.selected_mode orelse {
+        result.deinit(allocator);
+        return error.NoBuildableInvocationMode;
+    };
+    result.execution_report.deinit(allocator);
+    return .{ .mode = mode, .bytes = result.bytes };
+}
+
+pub fn buildPreferredMessageBase64FromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredBytesResult {
+    var result = try buildPreferredMessageBase64ExecutionResultFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        resolved,
         options,
     );
     const mode = result.execution_report.selected_mode orelse {
@@ -15218,6 +15379,108 @@ test "invoke.buildPreferredResolvedInvocationExecutionResultFromOwnedInvocationS
         allocator,
         DummyRpc{},
         &owned_spec,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer result.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), result.execution_report.requested_mode);
+    try std.testing.expectEqual(@as(?InvocationMode, .versioned), result.execution_report.selected_mode);
+    try std.testing.expect(result.execution_report.used_fallback);
+    try std.testing.expectEqual(@as(usize, 1), result.resolved_invocation.address_lookup_tables.len);
+}
+
+test "invoke.buildPreferredOwnedMessageExecutionResultFromOwnedResolvedInvocation preserves legacy selection" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 661, 662, 663);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .instructions,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var result = try buildPreferredOwnedMessageExecutionResultFromOwnedResolvedInvocation(
+        allocator,
+        DummyRpc{},
+        &resolved,
+        .{},
+    );
+    defer result.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), result.execution_report.selected_mode);
+    try std.testing.expect(result.execution_report.can_execute_selected_mode);
+    try std.testing.expectEqual(@as(std.meta.Tag(OwnedInvocationMessage), .legacy), std.meta.activeTag(result.message));
+}
+
+test "invoke.buildPreferredMessageBase64ExecutionResultFromOwnedResolvedInvocation preserves versioned fallback selection" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 664, 665, 666, 667, 668);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var result = try buildPreferredMessageBase64ExecutionResultFromOwnedResolvedInvocation(
+        allocator,
+        DummyRpc{},
+        &resolved,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer result.deinit(allocator);
+
+    try std.testing.expect(result.bytes.len != 0);
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), result.execution_report.requested_mode);
+    try std.testing.expectEqual(@as(?InvocationMode, .versioned), result.execution_report.selected_mode);
+    try std.testing.expect(result.execution_report.used_fallback);
+}
+
+test "invoke.buildPreferredResolvedInvocationExecutionResultFromOwnedResolvedInvocation preserves fallback metadata" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 669, 670, 671, 672, 673);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var result = try buildPreferredResolvedInvocationExecutionResultFromOwnedResolvedInvocation(
+        allocator,
+        DummyRpc{},
+        &resolved,
         .{
             .mode = .{
                 .preferred_mode = .legacy,
