@@ -5812,16 +5812,18 @@ pub fn buildPreferredOwnedMessageFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredOwnedMessageResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredOwnedMessageFromInvocationSpecJson(
+    var result = try buildPreferredOwnedMessageExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    const mode = result.execution_report.selected_mode orelse {
+        result.deinit(allocator);
+        return error.NoBuildableInvocationMode;
+    };
+    result.execution_report.deinit(allocator);
+    return .{ .mode = mode, .message = result.message };
 }
 
 pub fn buildPreferredMessageBytesFromOwnedInvocationSpec(
@@ -5830,16 +5832,18 @@ pub fn buildPreferredMessageBytesFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredBytesResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredMessageBytesFromInvocationSpecJson(
+    var result = try buildPreferredMessageBytesExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    const mode = result.execution_report.selected_mode orelse {
+        result.deinit(allocator);
+        return error.NoBuildableInvocationMode;
+    };
+    result.execution_report.deinit(allocator);
+    return .{ .mode = mode, .bytes = result.bytes };
 }
 
 pub fn buildPreferredMessageBase64FromOwnedInvocationSpec(
@@ -5848,16 +5852,18 @@ pub fn buildPreferredMessageBase64FromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredBytesResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredMessageBase64FromInvocationSpecJson(
+    var result = try buildPreferredMessageBase64ExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    const mode = result.execution_report.selected_mode orelse {
+        result.deinit(allocator);
+        return error.NoBuildableInvocationMode;
+    };
+    result.execution_report.deinit(allocator);
+    return .{ .mode = mode, .bytes = result.bytes };
 }
 
 pub fn buildPreferredSignedTransactionFromOwnedInvocationSpec(
@@ -5866,16 +5872,18 @@ pub fn buildPreferredSignedTransactionFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredSignedTransactionResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredSignedTransactionFromInvocationSpecJson(
+    var result = try buildPreferredSignedTransactionExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    const mode = result.execution_report.selected_mode orelse {
+        result.deinit(allocator);
+        return error.NoBuildableInvocationMode;
+    };
+    result.execution_report.deinit(allocator);
+    return .{ .mode = mode, .transaction = result.transaction };
 }
 
 pub fn buildPreferredTransactionBase64FromOwnedInvocationSpec(
@@ -5884,16 +5892,18 @@ pub fn buildPreferredTransactionBase64FromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredBytesResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredTransactionBase64FromInvocationSpecJson(
+    var result = try buildPreferredTransactionBase64ExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    const mode = result.execution_report.selected_mode orelse {
+        result.deinit(allocator);
+        return error.NoBuildableInvocationMode;
+    };
+    result.execution_report.deinit(allocator);
+    return .{ .mode = mode, .bytes = result.bytes };
 }
 
 pub fn sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
@@ -5902,16 +5912,31 @@ pub fn sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: SendPreferredInvocationSpecOptions,
 ) !PreferredSignatureExecutionResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
+    var report_spec = try cloneOwnedInvocationSpec(allocator, owned_spec);
+    defer report_spec.deinit(allocator);
 
-    return try sendPreferredTransactionExecutionResultFromInvocationSpecJson(
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
-        options,
+        &report_spec,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.send.blockhash_commitment },
+        },
     );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .signature = try sendTransactionFromOwnedInvocationSpecWithOptions(
+            allocator,
+            rpc,
+            mode == .versioned,
+            owned_spec,
+            options.send,
+        ),
+    };
 }
 
 pub fn simulatePreferredTransactionExecutionResultFromOwnedInvocationSpec(
@@ -5920,16 +5945,31 @@ pub fn simulatePreferredTransactionExecutionResultFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: SimulatePreferredInvocationSpecOptions,
 ) !PreferredSimulationExecutionResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
+    var report_spec = try cloneOwnedInvocationSpec(allocator, owned_spec);
+    defer report_spec.deinit(allocator);
 
-    return try simulatePreferredTransactionExecutionResultFromInvocationSpecJson(
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
-        options,
+        &report_spec,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.simulate.blockhash_commitment },
+        },
     );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .simulation = try simulateTransactionFromOwnedInvocationSpecWithOptions(
+            allocator,
+            rpc,
+            mode == .versioned,
+            owned_spec,
+            options.simulate,
+        ),
+    };
 }
 
 pub fn sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
@@ -5938,16 +5978,31 @@ pub fn sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: SendAndConfirmPreferredInvocationSpecOptions,
 ) !PreferredSignatureExecutionResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
+    var report_spec = try cloneOwnedInvocationSpec(allocator, owned_spec);
+    defer report_spec.deinit(allocator);
 
-    return try sendAndConfirmPreferredTransactionExecutionResultFromInvocationSpecJson(
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
-        options,
+        &report_spec,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.send_and_confirm.blockhash_commitment },
+        },
     );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .signature = try sendAndConfirmInvocationFromOwnedInvocationSpecWithOptions(
+            allocator,
+            rpc,
+            mode == .versioned,
+            owned_spec,
+            options.send_and_confirm,
+        ),
+    };
 }
 
 pub fn sendAndConfirmPreferredTransactionExecutionResultWithSpinnerFromOwnedInvocationSpec(
@@ -5956,16 +6011,31 @@ pub fn sendAndConfirmPreferredTransactionExecutionResultWithSpinnerFromOwnedInvo
     owned_spec: *const OwnedInvocationSpec,
     options: SendAndConfirmPreferredInvocationSpecOptions,
 ) !PreferredSignatureExecutionResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
+    var report_spec = try cloneOwnedInvocationSpec(allocator, owned_spec);
+    defer report_spec.deinit(allocator);
 
-    return try sendAndConfirmPreferredTransactionExecutionResultWithSpinnerFromInvocationSpecJson(
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
-        options,
+        &report_spec,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.send_and_confirm.blockhash_commitment },
+        },
     );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .signature = try sendAndConfirmInvocationFromOwnedInvocationSpecWithSpinnerOptions(
+            allocator,
+            rpc,
+            mode == .versioned,
+            owned_spec,
+            options.send_and_confirm,
+        ),
+    };
 }
 
 pub fn getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
@@ -5974,16 +6044,31 @@ pub fn getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: GetFeeForPreferredInvocationSpecOptions,
 ) !PreferredFeeExecutionResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
+    var report_spec = try cloneOwnedInvocationSpec(allocator, owned_spec);
+    defer report_spec.deinit(allocator);
 
-    return try getFeeForPreferredInvocationExecutionResultFromInvocationSpecJson(
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
-        options,
+        &report_spec,
+        .{
+            .mode = options.mode,
+            .build = .{ .blockhash_commitment = options.fee.blockhash_commitment },
+        },
     );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .fee = try getFeeForInvocationSpecFromOwnedInvocationSpecWithOptions(
+            allocator,
+            rpc,
+            mode == .versioned,
+            owned_spec,
+            options.fee,
+        ),
+    };
 }
 
 pub fn sendPreferredTransactionFromOwnedInvocationSpec(
@@ -5992,16 +6077,18 @@ pub fn sendPreferredTransactionFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: SendPreferredInvocationSpecOptions,
 ) !PreferredSignatureResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try sendPreferredTransactionFromInvocationSpecJson(
+    var result = try sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    const mode = result.execution_report.selected_mode orelse {
+        result.deinit(allocator);
+        return error.NoBuildableInvocationMode;
+    };
+    result.execution_report.deinit(allocator);
+    return .{ .mode = mode, .signature = result.signature };
 }
 
 pub fn simulatePreferredTransactionFromOwnedInvocationSpec(
@@ -6010,16 +6097,18 @@ pub fn simulatePreferredTransactionFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: SimulatePreferredInvocationSpecOptions,
 ) !PreferredSimulationResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try simulatePreferredTransactionFromInvocationSpecJson(
+    var result = try simulatePreferredTransactionExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    const mode = result.execution_report.selected_mode orelse {
+        result.deinit(allocator);
+        return error.NoBuildableInvocationMode;
+    };
+    result.execution_report.deinit(allocator);
+    return .{ .mode = mode, .simulation = result.simulation };
 }
 
 pub fn sendAndConfirmPreferredInvocationFromOwnedInvocationSpec(
@@ -6028,16 +6117,18 @@ pub fn sendAndConfirmPreferredInvocationFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: SendAndConfirmPreferredInvocationSpecOptions,
 ) !PreferredSignatureResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try sendAndConfirmPreferredInvocationSpecJson(
+    var result = try sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    const mode = result.execution_report.selected_mode orelse {
+        result.deinit(allocator);
+        return error.NoBuildableInvocationMode;
+    };
+    result.execution_report.deinit(allocator);
+    return .{ .mode = mode, .signature = result.signature };
 }
 
 pub fn sendAndConfirmPreferredInvocationWithSpinnerFromOwnedInvocationSpec(
@@ -6046,16 +6137,18 @@ pub fn sendAndConfirmPreferredInvocationWithSpinnerFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: SendAndConfirmPreferredInvocationSpecOptions,
 ) !PreferredSignatureResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try sendAndConfirmPreferredInvocationSpecJsonWithSpinner(
+    var result = try sendAndConfirmPreferredTransactionExecutionResultWithSpinnerFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    const mode = result.execution_report.selected_mode orelse {
+        result.deinit(allocator);
+        return error.NoBuildableInvocationMode;
+    };
+    result.execution_report.deinit(allocator);
+    return .{ .mode = mode, .signature = result.signature };
 }
 
 pub fn getFeeForPreferredInvocationSpecFromOwnedInvocationSpec(
@@ -6064,16 +6157,18 @@ pub fn getFeeForPreferredInvocationSpecFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: GetFeeForPreferredInvocationSpecOptions,
 ) !PreferredFeeResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try getFeeForPreferredInvocationSpecJson(
+    var result = try getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    const mode = result.execution_report.selected_mode orelse {
+        result.deinit(allocator);
+        return error.NoBuildableInvocationMode;
+    };
+    result.execution_report.deinit(allocator);
+    return .{ .mode = mode, .fee = result.fee };
 }
 
 pub fn sendOwnedPreparedInvocationFromOwnedInvocationSpec(
