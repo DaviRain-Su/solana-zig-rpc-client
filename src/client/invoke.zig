@@ -1089,6 +1089,46 @@ pub fn allocPreferredFeeExecutionResultJson(
     return try aw.toOwnedSlice();
 }
 
+pub fn writePreferredSignedTransactionExecutionResultJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    result: *const PreferredSignedTransactionExecutionResult,
+) !void {
+    var first = true;
+    var diagnostics = try buildInvocationDiagnosticsFromPreferredExecutionReport(
+        allocator,
+        &result.execution_report,
+    );
+    defer diagnostics.deinit(allocator);
+
+    const transaction_base64 = try result.transaction.toBase64(allocator);
+    defer allocator.free(transaction_base64);
+
+    try writer.writeAll("{");
+    try writeJsonStringField(writer, &first, "requested_mode", invocationModeJsonLabel(result.execution_report.requested_mode));
+    try writeJsonStringField(writer, &first, "selected_mode", invocationModeJsonLabel(result.execution_report.selected_mode));
+    try writeJsonBoolField(writer, &first, "requested_mode_buildable", result.execution_report.requested_mode_buildable);
+    try writeJsonBoolField(writer, &first, "used_fallback", result.execution_report.used_fallback);
+    try writeJsonBoolField(writer, &first, "can_execute_selected_mode", result.execution_report.can_execute_selected_mode);
+    try writeJsonStringField(writer, &first, "transaction_mode", @tagName(std.meta.activeTag(result.transaction)));
+    try writeJsonStringField(writer, &first, "transaction_base64", transaction_base64);
+    try writeJsonUsizeField(writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+    try writeJsonDiagnosticsField(writer, &first, diagnostics);
+    try writer.writeAll("}");
+}
+
+pub fn allocPreferredSignedTransactionExecutionResultJson(
+    allocator: Allocator,
+    result: *const PreferredSignedTransactionExecutionResult,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writePreferredSignedTransactionExecutionResultJson(&aw.writer, allocator, result);
+    return try aw.toOwnedSlice();
+}
+
 pub fn writePreferredOwnedMessageExecutionResultJson(
     writer: *std.Io.Writer,
     allocator: Allocator,
@@ -1236,6 +1276,22 @@ pub fn writePreferredFeeExecutionResultText(
     } else {
         try writer.writeAll("fee: unavailable\n");
     }
+}
+
+pub fn writePreferredSignedTransactionExecutionResultText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    result: *const PreferredSignedTransactionExecutionResult,
+) !void {
+    const transaction_base64 = try result.transaction.toBase64(allocator);
+    defer allocator.free(transaction_base64);
+
+    try writer.print("requested mode: {s}\n", .{requestedModeText(result.execution_report.requested_mode)});
+    try writer.print("selected mode: {s}\n", .{selectedModeText(result.execution_report.selected_mode)});
+    try writer.print("used fallback: {}\n", .{result.execution_report.used_fallback});
+    try writer.print("can execute selected mode: {}\n", .{result.execution_report.can_execute_selected_mode});
+    try writer.print("transaction mode: {s}\n", .{@tagName(std.meta.activeTag(result.transaction))});
+    try writer.print("transaction base64: {s}\n", .{transaction_base64});
 }
 
 pub fn writePreferredOwnedMessageExecutionResultText(
@@ -7059,6 +7115,39 @@ pub fn allocPreferredFeeExecutionResultJsonFromOwnedInvocationSpec(
     );
     defer result.deinit(allocator);
     return try allocPreferredFeeExecutionResultJson(allocator, &result);
+}
+
+pub fn writePreferredSignedTransactionExecutionResultTextFromOwnedInvocationSpec(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var result = try buildPreferredSignedTransactionExecutionResultFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        options,
+    );
+    defer result.deinit(allocator);
+    try writePreferredSignedTransactionExecutionResultText(writer, allocator, &result);
+}
+
+pub fn allocPreferredSignedTransactionExecutionResultJsonFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var result = try buildPreferredSignedTransactionExecutionResultFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        options,
+    );
+    defer result.deinit(allocator);
+    return try allocPreferredSignedTransactionExecutionResultJson(allocator, &result);
 }
 
 pub fn writePreferredOwnedMessageExecutionResultTextFromOwnedInvocationSpec(
@@ -13930,6 +14019,72 @@ test "invoke.writePreferredFeeExecutionResultTextFromOwnedInvocationSpec emits f
 
     try std.testing.expect(std.mem.indexOf(u8, text, "selected mode: legacy") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "fee: 777") != null);
+}
+
+test "invoke.allocPreferredSignedTransactionExecutionResultJsonFromOwnedInvocationSpec emits transaction fields" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 698, 699, 700, 701, 702);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    const json = try allocPreferredSignedTransactionExecutionResultJsonFromOwnedInvocationSpec(
+        allocator,
+        DummyRpc{},
+        &owned_spec,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"requested_mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"transaction_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"transaction_base64\":\"") != null);
+}
+
+test "invoke.writePreferredSignedTransactionExecutionResultTextFromOwnedInvocationSpec emits text" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 703, 704, 705);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+
+    try writePreferredSignedTransactionExecutionResultTextFromOwnedInvocationSpec(
+        &aw.writer,
+        allocator,
+        DummyRpc{},
+        &owned_spec,
+        .{},
+    );
+
+    const text = try aw.toOwnedSlice();
+    defer allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "selected mode: legacy") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "transaction mode: legacy") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "transaction base64: ") != null);
 }
 
 test "invoke.allocPreferredResolvedInvocationExecutionResultJsonFromOwnedResolvedInvocation emits resolved fields" {
