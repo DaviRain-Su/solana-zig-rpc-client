@@ -4371,6 +4371,51 @@ pub fn buildPreferredInvocationDiagnosticsFromOwnedInvocationSpec(
     return try buildInvocationDiagnosticsFromPreferredExecutionReport(allocator, &report);
 }
 
+pub fn writePreferredInvocationDiagnosticsTextFromOwnedInvocationSpec(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var diagnostics = try buildPreferredInvocationDiagnosticsFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        options,
+    );
+    defer diagnostics.deinit(allocator);
+    try writeInvocationDiagnosticsText(writer, diagnostics);
+}
+
+pub fn allocPreferredInvocationDiagnosticsJsonFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var diagnostics = try buildPreferredInvocationDiagnosticsFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        options,
+    );
+    defer diagnostics.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+
+    var first = true;
+    try aw.writer.writeAll("{");
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+    try writeJsonDiagnosticsField(&aw.writer, &first, diagnostics);
+    try aw.writer.writeAll("}");
+
+    return try aw.toOwnedSlice();
+}
+
 pub fn buildInvocationDiagnosticsFromOwnedResolvedInvocation(
     allocator: Allocator,
     resolved: OwnedResolvedInvocation,
@@ -10052,6 +10097,74 @@ test "invoke.buildPreferredInvocationDiagnosticsFromOwnedInvocationSpec preserve
     }
 
     try std.testing.expect(saw_no_buildable_mode);
+}
+
+test "invoke.allocPreferredInvocationDiagnosticsJsonFromOwnedInvocationSpec emits diagnostic json" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 601, 602, 603, 604, 605);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    const json = try allocPreferredInvocationDiagnosticsJsonFromOwnedInvocationSpec(
+        allocator,
+        DummyRpc{},
+        &owned_spec,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .fallback = false,
+            },
+        },
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"diagnostic_error_count\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"code\":\"no_buildable_mode\"") != null);
+}
+
+test "invoke.writePreferredInvocationDiagnosticsTextFromOwnedInvocationSpec emits diagnostic text" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 606, 607, 608, 609, 610);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+
+    try writePreferredInvocationDiagnosticsTextFromOwnedInvocationSpec(
+        &aw.writer,
+        allocator,
+        DummyRpc{},
+        &owned_spec,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .fallback = false,
+            },
+        },
+    );
+
+    const text = try aw.toOwnedSlice();
+    defer allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "diagnostics: 1 error(s), 0 warning(s), 0 info item(s)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "no_buildable_mode") != null);
 }
 
 test "invoke.buildInvocationSignerPubkeysFromInvocationSpecJson dispatches instructions family" {
