@@ -5608,6 +5608,43 @@ pub fn buildPreferredInvocationAnalysisFromInvocationSpecJson(
     );
 }
 
+pub fn writePreferredInvocationAnalysisTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var analysis = try buildPreferredInvocationAnalysisFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    defer analysis.deinit(allocator);
+    try writePreferredInvocationAnalysisText(writer, allocator, &analysis);
+}
+
+pub fn allocPreferredInvocationAnalysisJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var analysis = try buildPreferredInvocationAnalysisFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    defer analysis.deinit(allocator);
+    return try allocPreferredInvocationAnalysisJson(allocator, &analysis);
+}
+
 pub fn buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
     allocator: Allocator,
     rpc: anytype,
@@ -5615,10 +5652,17 @@ pub fn buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
     invocation_spec_json: []const u8,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredPreparedSignedTransaction {
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
     return buildPreferredPreparedSignedTransactionFromOwnedInvocationSpec(
         allocator,
         rpc,
-        try buildOwnedInvocationSpecFromInvocationSpecJson(allocator, family, invocation_spec_json),
+        &owned_spec,
         options,
     );
 }
@@ -5639,6 +5683,80 @@ pub fn buildPreferredPreparedInvocationFromInvocationSpecJson(
         &owned_spec,
         options,
     );
+}
+
+pub fn writePreferredPreparedSignedTransactionTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var prepared = try buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    defer prepared.deinit(allocator);
+    try writePreferredPreparedSignedTransactionText(writer, allocator, &prepared);
+}
+
+pub fn allocPreferredPreparedSignedTransactionJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var prepared = try buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    defer prepared.deinit(allocator);
+    return try allocPreferredPreparedSignedTransactionJson(allocator, &prepared);
+}
+
+pub fn writePreferredPreparedInvocationTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var prepared = try buildPreferredPreparedInvocationFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    defer prepared.deinit(allocator);
+    try writePreferredPreparedInvocationText(writer, allocator, &prepared);
+}
+
+pub fn allocPreferredPreparedInvocationJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var prepared = try buildPreferredPreparedInvocationFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
+        options,
+    );
+    defer prepared.deinit(allocator);
+    return try allocPreferredPreparedInvocationJson(allocator, &prepared);
 }
 
 pub fn buildPreparedInvocationFromOwnedInvocationSpec(
@@ -14368,6 +14486,32 @@ test "invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson preserves fa
     try std.testing.expect(program_info.is_program);
 }
 
+test "invoke.allocPreferredInvocationAnalysisJsonFromInvocationSpecJson emits reusable analysis fields" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 71, 72, 73, 74, 75);
+    defer allocator.free(spec_json);
+
+    const json = try allocPreferredInvocationAnalysisJsonFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"used_fallback\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"accounts\":[") != null);
+}
+
 test "invoke.allocPreferredInvocationAnalysisJson emits reusable analysis fields" {
     const allocator = std.testing.allocator;
     const DummyRpc = struct {};
@@ -18461,6 +18605,33 @@ test "invoke.buildPreferredPreparedInvocationFromInvocationSpecJson preserves ve
     try std.testing.expectEqual(InvocationMode.versioned, prepared.selected_mode);
     try std.testing.expect(prepared.used_fallback);
     try std.testing.expectEqual(InvocationMode.versioned, prepared.prepared.mode);
+}
+
+test "invoke.allocPreferredPreparedInvocationJsonFromInvocationSpecJson preserves fallback fields" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 388, 389, 390, 391, 392);
+    defer allocator.free(spec_json);
+
+    const json = try allocPreferredPreparedInvocationJsonFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"requested_mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"used_fallback\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"transaction_base64\":\"") != null);
 }
 
 test "invoke.sendOwnedPreferredPreparedExecution preserves preferred prepared metadata" {
