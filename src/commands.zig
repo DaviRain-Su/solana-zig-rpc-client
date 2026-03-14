@@ -4501,6 +4501,27 @@ fn emitInvocationInspection(
     try stdout_writer.interface.flush();
 }
 
+fn emitPreferredInvocationInspection(
+    allocator: Allocator,
+    inspection: *const client.invoke.OwnedPreferredInvocationInspection,
+    output_json: bool,
+) !void {
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+
+    if (output_json) {
+        const inspection_json = try client.invoke.allocPreferredInvocationInspectionJson(
+            allocator,
+            inspection,
+        );
+        defer allocator.free(inspection_json);
+        try stdout_writer.interface.print("{s}\n", .{inspection_json});
+    } else {
+        try client.invoke.writePreferredInvocationInspectionText(&stdout_writer.interface, allocator, inspection);
+    }
+    try stdout_writer.interface.flush();
+}
+
 fn printPreferredSignatureExecutionResult(
     result: *const client.invoke.PreferredSignatureExecutionResult,
     confirmed: bool,
@@ -5382,6 +5403,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .preview_instructions and
         command != .explain_instructions and
         command != .validate_instructions and
+        command != .inspect_instructions and
         command != .prepare_instructions and
         command != .estimate_instructions_fee and
         command != .invoke_spec and
@@ -5390,6 +5412,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .preview_spec and
         command != .explain_spec and
         command != .validate_spec and
+        command != .inspect_spec and
         command != .prepare_spec and
         command != .estimate_spec_fee and
         command != .invoke_program_invoke and
@@ -5398,6 +5421,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .preview_program_invoke and
         command != .explain_program_invoke and
         command != .validate_program_invoke and
+        command != .inspect_program_invoke and
         command != .prepare_program_invoke and
         command != .estimate_program_invoke_fee and
         command != .invoke_idl_invoke and
@@ -5406,10 +5430,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .preview_idl_invoke and
         command != .explain_idl_invoke and
         command != .validate_idl_invoke and
+        command != .inspect_idl_invoke and
         command != .prepare_idl_invoke and
         command != .estimate_idl_invoke_fee)
     {
-        reportInvalidCliMessage("error: --invoke-mode/--no-mode-fallback require invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, prepare-instructions, estimate-instructions-fee, invoke-spec, invoke-spec-and-confirm, invoke-spec-simulate, preview-spec, explain-spec, validate-spec, prepare-spec, estimate-spec-fee, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, prepare-idl-invoke, or estimate-idl-invoke-fee\n", .{});
+        reportInvalidCliMessage("error: --invoke-mode/--no-mode-fallback require invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, inspect-instructions, prepare-instructions, estimate-instructions-fee, invoke-spec, invoke-spec-and-confirm, invoke-spec-simulate, preview-spec, explain-spec, validate-spec, inspect-spec, prepare-spec, estimate-spec-fee, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, inspect-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, inspect-idl-invoke, prepare-idl-invoke, or estimate-idl-invoke-fee\n", .{});
         return error.InvalidCli;
     }
 
@@ -6096,13 +6121,25 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         );
         defer owned_spec.deinit(allocator);
 
-        var inspection = client.invoke.buildInvocationInspectionFromOwnedInvocationSpecRef(
-            allocator,
-            &owned_spec,
-        ) catch return error.InvalidCli;
-        defer inspection.deinit(allocator);
+        if (invoke_mode_arg != null or no_mode_fallback) {
+            var inspection = client.invoke.buildPreferredInvocationInspectionFromOwnedInvocationSpecRef(
+                allocator,
+                rpc,
+                &owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            ) catch return error.InvalidCli;
+            defer inspection.deinit(allocator);
 
-        try emitInvocationInspection(allocator, &inspection, output_json);
+            try emitPreferredInvocationInspection(allocator, &inspection, output_json);
+        } else {
+            var inspection = client.invoke.buildInvocationInspectionFromOwnedInvocationSpecRef(
+                allocator,
+                &owned_spec,
+            ) catch return error.InvalidCli;
+            defer inspection.deinit(allocator);
+
+            try emitInvocationInspection(allocator, &inspection, output_json);
+        }
         return;
     }
 
@@ -6140,13 +6177,25 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         );
         defer owned_spec.deinit(allocator);
 
-        var inspection = client.invoke.buildInvocationInspectionFromOwnedInvocationSpecRef(
-            allocator,
-            &owned_spec,
-        ) catch return error.InvalidCli;
-        defer inspection.deinit(allocator);
+        if (invoke_mode_arg != null or no_mode_fallback) {
+            var inspection = client.invoke.buildPreferredInvocationInspectionFromOwnedInvocationSpecRef(
+                allocator,
+                rpc,
+                &owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            ) catch return error.InvalidCli;
+            defer inspection.deinit(allocator);
 
-        try emitInvocationInspection(allocator, &inspection, output_json);
+            try emitPreferredInvocationInspection(allocator, &inspection, output_json);
+        } else {
+            var inspection = client.invoke.buildInvocationInspectionFromOwnedInvocationSpecRef(
+                allocator,
+                &owned_spec,
+            ) catch return error.InvalidCli;
+            defer inspection.deinit(allocator);
+
+            try emitInvocationInspection(allocator, &inspection, output_json);
+        }
         return;
     }
 
@@ -6549,16 +6598,31 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         );
         defer owned_spec.deinit(allocator);
 
-        var inspection = client.invoke.buildInvocationInspectionFromOwnedInvocationSpecRef(
-            allocator,
-            &owned_spec,
-        ) catch {
-            reportInvalidCliMessage("error: inspect-program-invoke arguments are invalid\n", .{});
-            return error.InvalidCli;
-        };
-        defer inspection.deinit(allocator);
+        if (invoke_mode_arg != null or no_mode_fallback) {
+            var inspection = client.invoke.buildPreferredInvocationInspectionFromOwnedInvocationSpecRef(
+                allocator,
+                rpc,
+                &owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            ) catch {
+                reportInvalidCliMessage("error: inspect-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer inspection.deinit(allocator);
 
-        try emitInvocationInspection(allocator, &inspection, output_json);
+            try emitPreferredInvocationInspection(allocator, &inspection, output_json);
+        } else {
+            var inspection = client.invoke.buildInvocationInspectionFromOwnedInvocationSpecRef(
+                allocator,
+                &owned_spec,
+            ) catch {
+                reportInvalidCliMessage("error: inspect-program-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer inspection.deinit(allocator);
+
+            try emitInvocationInspection(allocator, &inspection, output_json);
+        }
         return;
     }
 
@@ -6944,16 +7008,31 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         );
         defer owned_spec.deinit(allocator);
 
-        var inspection = client.invoke.buildInvocationInspectionFromOwnedInvocationSpecRef(
-            allocator,
-            &owned_spec,
-        ) catch {
-            reportInvalidCliMessage("error: inspect-idl-invoke arguments are invalid\n", .{});
-            return error.InvalidCli;
-        };
-        defer inspection.deinit(allocator);
+        if (invoke_mode_arg != null or no_mode_fallback) {
+            var inspection = client.invoke.buildPreferredInvocationInspectionFromOwnedInvocationSpecRef(
+                allocator,
+                rpc,
+                &owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            ) catch {
+                reportInvalidCliMessage("error: inspect-idl-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer inspection.deinit(allocator);
 
-        try emitInvocationInspection(allocator, &inspection, output_json);
+            try emitPreferredInvocationInspection(allocator, &inspection, output_json);
+        } else {
+            var inspection = client.invoke.buildInvocationInspectionFromOwnedInvocationSpecRef(
+                allocator,
+                &owned_spec,
+            ) catch {
+                reportInvalidCliMessage("error: inspect-idl-invoke arguments are invalid\n", .{});
+                return error.InvalidCli;
+            };
+            defer inspection.deinit(allocator);
+
+            try emitInvocationInspection(allocator, &inspection, output_json);
+        }
         return;
     }
 
@@ -14086,6 +14165,95 @@ test "runCommand inspect-program-invoke emits json inspection for schema args" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"accounts\":{") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostics\":{") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"can_execute\":true") != null);
+}
+
+test "runCommand inspect-program-invoke emits preferred json inspection when mode requested" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-program-invoke-preferred-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{99} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 141);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{23} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_pubkey = client.Pubkey.fromBytes(.{24} ** 32);
+    const account_pubkey_base58 = try account_pubkey.toBase58(allocator);
+    defer allocator.free(account_pubkey_base58);
+    const lookup_table_key = client.Pubkey.fromBytes(.{25} ** 32);
+    const lookup_table_key_base58 = try lookup_table_key.toBase58(allocator);
+    defer allocator.free(lookup_table_key_base58);
+    const lookup_address = client.Pubkey.fromBytes(.{26} ** 32);
+    const lookup_address_base58 = try lookup_address.toBase58(allocator);
+    defer allocator.free(lookup_address_base58);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"is_writable\":true}}]",
+        .{account_pubkey_base58},
+    );
+    defer allocator.free(accounts_json);
+    const lookup_tables_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"account_key\":\"{s}\",\"addresses\":[\"{s}\"]}}]",
+        .{ lookup_table_key_base58, lookup_address_base58 },
+    );
+    defer allocator.free(lookup_tables_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-program-invoke",
+        "--json",
+        "--invoke-mode",
+        "versioned",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--data-schema-json",
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}",
+        "--args-json",
+        "{\"enabled\":true}",
+        "--schema-encoding",
+        "borsh",
+        program_id_base58,
+        accounts_json,
+        "[]",
+        lookup_tables_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"mode_report\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"mode_resolution\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"analysis\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
 }
 
 test "runCommand validate-spec fails on missing required signer" {
