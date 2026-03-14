@@ -4416,6 +4416,154 @@ pub fn allocPreferredInvocationDiagnosticsJsonFromOwnedInvocationSpec(
     return try aw.toOwnedSlice();
 }
 
+pub fn writeInvocationDiagnosticsTextFromOwnedInvocationSpec(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    owned_spec: OwnedInvocationSpec,
+) !void {
+    var diagnostics = try buildInvocationDiagnosticsFromOwnedInvocationSpec(
+        allocator,
+        owned_spec,
+    );
+    defer diagnostics.deinit(allocator);
+    try writeInvocationDiagnosticsText(writer, diagnostics);
+}
+
+pub fn writeInvocationDiagnosticsTextFromOwnedInvocationSpecRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !void {
+    var diagnostics = try buildInvocationDiagnosticsFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer diagnostics.deinit(allocator);
+    try writeInvocationDiagnosticsText(writer, diagnostics);
+}
+
+pub fn allocInvocationDiagnosticsJsonFromOwnedInvocationSpec(
+    allocator: Allocator,
+    owned_spec: OwnedInvocationSpec,
+) ![]u8 {
+    var diagnostics = try buildInvocationDiagnosticsFromOwnedInvocationSpec(
+        allocator,
+        owned_spec,
+    );
+    defer diagnostics.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+
+    var first = true;
+    try aw.writer.writeAll("{");
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+    try writeJsonDiagnosticsField(&aw.writer, &first, diagnostics);
+    try aw.writer.writeAll("}");
+
+    return try aw.toOwnedSlice();
+}
+
+pub fn allocInvocationDiagnosticsJsonFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) ![]u8 {
+    var diagnostics = try buildInvocationDiagnosticsFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer diagnostics.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+
+    var first = true;
+    try aw.writer.writeAll("{");
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+    try writeJsonDiagnosticsField(&aw.writer, &first, diagnostics);
+    try aw.writer.writeAll("}");
+
+    return try aw.toOwnedSlice();
+}
+
+pub fn writeInvocationDiagnosticsTextFromOwnedResolvedInvocation(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    resolved: OwnedResolvedInvocation,
+) !void {
+    var diagnostics = try buildInvocationDiagnosticsFromOwnedResolvedInvocation(
+        allocator,
+        resolved,
+    );
+    defer diagnostics.deinit(allocator);
+    try writeInvocationDiagnosticsText(writer, diagnostics);
+}
+
+pub fn writeInvocationDiagnosticsTextFromOwnedResolvedInvocationRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !void {
+    var diagnostics = try buildInvocationDiagnosticsFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    defer diagnostics.deinit(allocator);
+    try writeInvocationDiagnosticsText(writer, diagnostics);
+}
+
+pub fn allocInvocationDiagnosticsJsonFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    resolved: OwnedResolvedInvocation,
+) ![]u8 {
+    var diagnostics = try buildInvocationDiagnosticsFromOwnedResolvedInvocation(
+        allocator,
+        resolved,
+    );
+    defer diagnostics.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+
+    var first = true;
+    try aw.writer.writeAll("{");
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+    try writeJsonDiagnosticsField(&aw.writer, &first, diagnostics);
+    try aw.writer.writeAll("}");
+
+    return try aw.toOwnedSlice();
+}
+
+pub fn allocInvocationDiagnosticsJsonFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) ![]u8 {
+    var diagnostics = try buildInvocationDiagnosticsFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    defer diagnostics.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+
+    var first = true;
+    try aw.writer.writeAll("{");
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+    try writeJsonDiagnosticsField(&aw.writer, &first, diagnostics);
+    try aw.writer.writeAll("}");
+
+    return try aw.toOwnedSlice();
+}
+
 pub fn buildInvocationDiagnosticsFromOwnedResolvedInvocation(
     allocator: Allocator,
     resolved: OwnedResolvedInvocation,
@@ -10165,6 +10313,63 @@ test "invoke.writePreferredInvocationDiagnosticsTextFromOwnedInvocationSpec emit
 
     try std.testing.expect(std.mem.indexOf(u8, text, "diagnostics: 1 error(s), 0 warning(s), 0 info item(s)") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "no_buildable_mode") != null);
+}
+
+test "invoke.allocInvocationDiagnosticsJsonFromOwnedInvocationSpecRef emits diagnostic json" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithDuplicateSignerAndLookupTable(allocator, 611, 612, 613, 614, 615, 616);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    const json = try allocInvocationDiagnosticsJsonFromOwnedInvocationSpecRef(
+        allocator,
+        &owned_spec,
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"diagnostic_error_count\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"code\":\"duplicate_signers\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"code\":\"duplicate_lookup_tables\"") != null);
+}
+
+test "invoke.writeInvocationDiagnosticsTextFromOwnedResolvedInvocationRef emits diagnostic text" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithDuplicateSignerAndLookupTable(allocator, 617, 618, 619, 620, 621, 622);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+
+    try writeInvocationDiagnosticsTextFromOwnedResolvedInvocationRef(
+        &aw.writer,
+        allocator,
+        &resolved,
+    );
+
+    const text = try aw.toOwnedSlice();
+    defer allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "diagnostics: 2 error(s), 0 warning(s), 0 info item(s)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "duplicate_signers") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "duplicate_lookup_tables") != null);
 }
 
 test "invoke.buildInvocationSignerPubkeysFromInvocationSpecJson dispatches instructions family" {
