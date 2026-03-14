@@ -1579,6 +1579,136 @@ pub fn writeInvocationAccountsText(
     }
 }
 
+pub fn writeInvocationSignerPubkeysText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    signer_pubkeys: []const sdk.Pubkey,
+) !void {
+    try writer.print("signer count: {d}\n", .{signer_pubkeys.len});
+    if (signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "signer pubkeys", signer_pubkeys);
+    }
+}
+
+pub fn writeInvocationSignerPubkeysJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    signer_pubkeys: []const sdk.Pubkey,
+) !void {
+    var first = true;
+    try writer.writeAll("{");
+    try writeJsonUsizeField(writer, &first, "signer_count", signer_pubkeys.len);
+    try writeJsonPubkeyArrayField(writer, &first, "signer_pubkeys", allocator, signer_pubkeys);
+    try writer.writeAll("}");
+}
+
+pub fn allocInvocationSignerPubkeysJson(
+    allocator: Allocator,
+    signer_pubkeys: []const sdk.Pubkey,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writeInvocationSignerPubkeysJson(&aw.writer, allocator, signer_pubkeys);
+    return try aw.toOwnedSlice();
+}
+
+pub fn buildInvocationSignerPubkeysFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    resolved: OwnedResolvedInvocation,
+) ![]sdk.Pubkey {
+    defer resolved.deinit(allocator);
+    return try buildInvocationSignerPubkeysFromOwnedResolvedInvocationRef(
+        allocator,
+        &resolved,
+    );
+}
+
+pub fn buildInvocationSignerPubkeysFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) ![]sdk.Pubkey {
+    return try allocator.dupe(sdk.Pubkey, resolved.signer_pubkeys);
+}
+
+pub fn writeInvocationSignerPubkeysTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !void {
+    const signer_pubkeys = try buildInvocationSignerPubkeysFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer allocator.free(signer_pubkeys);
+    try writeInvocationSignerPubkeysText(writer, allocator, signer_pubkeys);
+}
+
+pub fn allocInvocationSignerPubkeysJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) ![]u8 {
+    const signer_pubkeys = try buildInvocationSignerPubkeysFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer allocator.free(signer_pubkeys);
+    return try allocInvocationSignerPubkeysJson(allocator, signer_pubkeys);
+}
+
+pub fn writeInvocationSignerPubkeysTextFromOwnedInvocationSpecRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !void {
+    const signer_pubkeys = try buildInvocationSignerPubkeysFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer allocator.free(signer_pubkeys);
+    try writeInvocationSignerPubkeysText(writer, allocator, signer_pubkeys);
+}
+
+pub fn allocInvocationSignerPubkeysJsonFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) ![]u8 {
+    const signer_pubkeys = try buildInvocationSignerPubkeysFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer allocator.free(signer_pubkeys);
+    return try allocInvocationSignerPubkeysJson(allocator, signer_pubkeys);
+}
+
+pub fn writeInvocationSignerPubkeysTextFromOwnedResolvedInvocationRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !void {
+    const signer_pubkeys = try buildInvocationSignerPubkeysFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    defer allocator.free(signer_pubkeys);
+    try writeInvocationSignerPubkeysText(writer, allocator, signer_pubkeys);
+}
+
+pub fn allocInvocationSignerPubkeysJsonFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) ![]u8 {
+    const signer_pubkeys = try buildInvocationSignerPubkeysFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    defer allocator.free(signer_pubkeys);
+    return try allocInvocationSignerPubkeysJson(allocator, signer_pubkeys);
+}
+
 pub fn writeInvocationPreflightText(
     writer: *std.Io.Writer,
     allocator: Allocator,
@@ -13956,6 +14086,55 @@ test "invoke.buildInvocationSignerPubkeysFromInvocationSpecJson dispatches instr
     defer allocator.free(signer_pubkeys);
 
     try std.testing.expectEqual(@as(usize, 1), signer_pubkeys.len);
+}
+
+test "invoke.allocInvocationSignerPubkeysJsonFromInvocationSpecJson emits signer fields" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 504, 505, 506);
+    defer allocator.free(spec_json);
+
+    const json = try allocInvocationSignerPubkeysJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"signer_count\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"signer_pubkeys\":[") != null);
+}
+
+test "invoke.writeInvocationSignerPubkeysTextFromOwnedResolvedInvocationRef emits readable signers" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 507, 508, 509);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .instructions,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+
+    try writeInvocationSignerPubkeysTextFromOwnedResolvedInvocationRef(
+        &aw.writer,
+        allocator,
+        &resolved,
+    );
+
+    const text = try aw.toOwnedSlice();
+    defer allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "signer count: 1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "signer pubkeys") != null);
 }
 
 test "invoke.buildOwnedInstructionsFromInvocationSpecJson dispatches program family" {
