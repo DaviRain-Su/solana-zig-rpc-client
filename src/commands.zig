@@ -4108,6 +4108,153 @@ fn buildAnchorIdlInvokeInvocationSpecJsonForCommand(
     };
 }
 
+fn buildInstructionsOwnedInvocationSpecForCommand(
+    allocator: Allocator,
+    command: cli.Command,
+    instructions_spec_arg: ?[]const u8,
+    effective_sender_keypair_path: ?[]const u8,
+    sender_secret_key_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+    recent_blockhash_arg: ?[]const u8,
+) !client.invoke.OwnedInvocationSpec {
+    const invocation_spec_json = try buildInstructionsInvocationSpecJsonForCommand(
+        allocator,
+        command,
+        instructions_spec_arg,
+        effective_sender_keypair_path,
+        sender_secret_key_arg,
+        additional_signer_secret_keys_arg,
+        recent_blockhash_arg,
+    );
+    defer allocator.free(invocation_spec_json);
+
+    return client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        invocation_spec_json,
+    ) catch {
+        reportInvalidCliMessage("error: {s} spec is invalid\n", .{if (lookupInvokeCommandSpec(command)) |spec|
+            spec.label
+        else switch (command) {
+            .spec_instructions => "spec-instructions",
+            else => unreachable,
+        }});
+        return error.InvalidCli;
+    };
+}
+
+fn buildProgramOwnedInvocationSpecForCommand(
+    allocator: Allocator,
+    command: cli.Command,
+    program_id_arg: ?[]const u8,
+    accounts_arg: ?[]const u8,
+    data_arg: ?[]const u8,
+    data_encoding_arg: ?[]const u8,
+    data_schema_json_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    schema_encoding_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+) !client.invoke.OwnedInvocationSpec {
+    const invocation_spec_json = try buildProgramInvokeInvocationSpecJsonForCommand(
+        allocator,
+        command,
+        program_id_arg,
+        accounts_arg,
+        data_arg,
+        data_encoding_arg,
+        data_schema_json_arg,
+        args_json_arg,
+        schema_encoding_arg,
+        payer_keypair_path_arg,
+        payer_secret_key_arg,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+        recent_blockhash_arg,
+        nonce_account_arg,
+        nonce_authority_keypair_path_arg,
+        additional_signer_secret_keys_arg,
+    );
+    defer allocator.free(invocation_spec_json);
+
+    return client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        invocation_spec_json,
+    ) catch {
+        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{if (lookupInvokeCommandSpec(command)) |spec|
+            spec.label
+        else switch (command) {
+            .spec_program_invoke => "spec-program-invoke",
+            else => unreachable,
+        }});
+        return error.InvalidCli;
+    };
+}
+
+fn buildAnchorIdlOwnedInvocationSpecForCommand(
+    allocator: Allocator,
+    command: cli.Command,
+    idl_arg: ?[]const u8,
+    instruction_name_arg: ?[]const u8,
+    program_id_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    accounts_json_arg: ?[]const u8,
+    account_bindings: []const []const u8,
+    remaining_accounts: []const []const u8,
+    remaining_accounts_json_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+) !client.invoke.OwnedInvocationSpec {
+    const invocation_spec_json = try buildAnchorIdlInvokeInvocationSpecJsonForCommand(
+        allocator,
+        command,
+        idl_arg,
+        instruction_name_arg,
+        program_id_arg,
+        args_json_arg,
+        accounts_json_arg,
+        account_bindings,
+        remaining_accounts,
+        remaining_accounts_json_arg,
+        payer_keypair_path_arg,
+        payer_secret_key_arg,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+        recent_blockhash_arg,
+        nonce_account_arg,
+        nonce_authority_keypair_path_arg,
+        additional_signer_secret_keys_arg,
+    );
+    defer allocator.free(invocation_spec_json);
+
+    return client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .anchor_idl,
+        invocation_spec_json,
+    ) catch {
+        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{if (lookupInvokeCommandSpec(command)) |spec|
+            spec.label
+        else switch (command) {
+            .spec_idl_invoke => "spec-idl-invoke",
+            else => unreachable,
+        }});
+        return error.InvalidCli;
+    };
+}
+
 fn buildCliSimulationOptionsFromExecutionArgs(
     execution_args: CliInvokeExecutionArgs,
 ) !?client.SimulateTransactionOptions {
@@ -5768,7 +5915,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .invoke_program_invoke or command == .invoke_program_invoke_and_confirm) {
-        const invocation_spec_json = try buildProgramInvokeInvocationSpecJsonForCommand(
+        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
             allocator,
             command,
             invoke_payload_args.program_id_arg,
@@ -5787,14 +5934,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
         var result = (if (command == .invoke_program_invoke_and_confirm)
-            client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromInvocationSpecJson(
+            client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
                 allocator,
                 rpc,
-                .program,
-                invocation_spec_json,
+                &owned_spec,
                 .{
                     .mode = preferred_invocation_mode_options,
                     .send_and_confirm = .{
@@ -5811,11 +5957,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 },
             )
         else
-            client.invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson(
+            client.invoke.sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
                 allocator,
                 rpc,
-                .program,
-                invocation_spec_json,
+                &owned_spec,
                 .{
                     .mode = preferred_invocation_mode_options,
                     .send = .{
@@ -5846,7 +5991,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .invoke_program_invoke_simulate) {
-        const invocation_spec_json = try buildProgramInvokeInvocationSpecJsonForCommand(
+        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
             allocator,
             command,
             invoke_payload_args.program_id_arg,
@@ -5865,14 +6010,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
         const simulation_options = try buildCliSimulationOptionsFromExecutionArgs(invoke_execution_args);
-        var result = client.invoke.simulatePreferredTransactionExecutionResultFromInvocationSpecJson(
+        var result = client.invoke.simulatePreferredTransactionExecutionResultFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .program,
-            invocation_spec_json,
+            &owned_spec,
             .{
                 .mode = preferred_invocation_mode_options,
                 .simulate = .{
@@ -5895,7 +6039,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .estimate_program_invoke_fee) {
-        const invocation_spec_json = try buildProgramInvokeInvocationSpecJsonForCommand(
+        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
             allocator,
             command,
             invoke_payload_args.program_id_arg,
@@ -5914,13 +6058,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
-        var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromInvocationSpecJson(
+        var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .program,
-            invocation_spec_json,
+            &owned_spec,
             .{
                 .mode = preferred_invocation_mode_options,
                 .fee = .{
@@ -5942,7 +6085,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .invoke_instructions or command == .invoke_instructions_and_confirm) {
-        const invocation_spec_json = try buildInstructionsInvocationSpecJsonForCommand(
+        var owned_spec = try buildInstructionsOwnedInvocationSpecForCommand(
             allocator,
             command,
             invoke_payload_args.instructions_spec_arg,
@@ -5951,14 +6094,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             program_invoke_additional_signer_secret_keys_arg,
             recent_blockhash_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
         var result = (if (command == .invoke_instructions_and_confirm)
-            client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromInvocationSpecJson(
+            client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
                 allocator,
                 rpc,
-                .instructions,
-                invocation_spec_json,
+                &owned_spec,
                 .{
                     .mode = preferred_invocation_mode_options,
                     .send_and_confirm = .{
@@ -5972,11 +6114,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 },
             )
         else
-            client.invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson(
+            client.invoke.sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
                 allocator,
                 rpc,
-                .instructions,
-                invocation_spec_json,
+                &owned_spec,
                 .{
                     .mode = preferred_invocation_mode_options,
                     .send = .{
@@ -6004,7 +6145,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .invoke_instructions_simulate) {
-        const invocation_spec_json = try buildInstructionsInvocationSpecJsonForCommand(
+        var owned_spec = try buildInstructionsOwnedInvocationSpecForCommand(
             allocator,
             command,
             invoke_payload_args.instructions_spec_arg,
@@ -6013,14 +6154,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             program_invoke_additional_signer_secret_keys_arg,
             recent_blockhash_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
         const simulation_options = try buildCliSimulationOptionsFromExecutionArgs(invoke_execution_args);
-        var result = client.invoke.simulatePreferredTransactionExecutionResultFromInvocationSpecJson(
+        var result = client.invoke.simulatePreferredTransactionExecutionResultFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .instructions,
-            invocation_spec_json,
+            &owned_spec,
             .{
                 .mode = preferred_invocation_mode_options,
                 .simulate = .{
@@ -6043,7 +6183,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .prepare_program_invoke) {
-        const invocation_spec_json = try buildProgramInvokeInvocationSpecJsonForCommand(
+        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
             allocator,
             command,
             invoke_payload_args.program_id_arg,
@@ -6062,13 +6202,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
-        var prepared = client.invoke.buildPreferredPreparedInvocationFromInvocationSpecJson(
+        var prepared = client.invoke.buildPreferredPreparedInvocationFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .program,
-            invocation_spec_json,
+            &owned_spec,
             .{ .mode = preferred_invocation_mode_options },
         ) catch {
             reportInvalidCliMessage("error: prepare-program-invoke arguments are invalid\n", .{});
@@ -6081,7 +6220,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .preview_program_invoke or command == .explain_program_invoke or command == .validate_program_invoke) {
-        const invocation_spec_json = try buildProgramInvokeInvocationSpecJsonForCommand(
+        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
             allocator,
             command,
             invoke_payload_args.program_id_arg,
@@ -6100,13 +6239,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
-        var analysis = client.invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson(
+        var analysis = client.invoke.buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .program,
-            invocation_spec_json,
+            &owned_spec,
             .{ .mode = preferred_invocation_mode_options },
         ) catch {
             reportInvalidCliMessage("error: {s} arguments are invalid\n", .{switch (command) {
@@ -6129,7 +6267,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .prepare_instructions) {
-        const invocation_spec_json = try buildInstructionsInvocationSpecJsonForCommand(
+        var owned_spec = try buildInstructionsOwnedInvocationSpecForCommand(
             allocator,
             command,
             instructions_spec_arg,
@@ -6138,13 +6276,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             program_invoke_additional_signer_secret_keys_arg,
             recent_blockhash_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
-        var prepared = client.invoke.buildPreferredPreparedInvocationFromInvocationSpecJson(
+        var prepared = client.invoke.buildPreferredPreparedInvocationFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .instructions,
-            invocation_spec_json,
+            &owned_spec,
             .{ .mode = preferred_invocation_mode_options },
         ) catch {
             reportInvalidCliMessage("error: prepare-instructions spec is invalid\n", .{});
@@ -6157,7 +6294,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .estimate_instructions_fee) {
-        const invocation_spec_json = try buildInstructionsInvocationSpecJsonForCommand(
+        var owned_spec = try buildInstructionsOwnedInvocationSpecForCommand(
             allocator,
             command,
             instructions_spec_arg,
@@ -6166,13 +6303,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             program_invoke_additional_signer_secret_keys_arg,
             recent_blockhash_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
-        var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromInvocationSpecJson(
+        var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .instructions,
-            invocation_spec_json,
+            &owned_spec,
             .{
                 .mode = preferred_invocation_mode_options,
                 .fee = .{
@@ -6194,7 +6330,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .preview_instructions or command == .explain_instructions or command == .validate_instructions) {
-        const invocation_spec_json = try buildInstructionsInvocationSpecJsonForCommand(
+        var owned_spec = try buildInstructionsOwnedInvocationSpecForCommand(
             allocator,
             command,
             instructions_spec_arg,
@@ -6203,13 +6339,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             program_invoke_additional_signer_secret_keys_arg,
             recent_blockhash_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
-        var analysis = client.invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson(
+        var analysis = client.invoke.buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .instructions,
-            invocation_spec_json,
+            &owned_spec,
             .{ .mode = preferred_invocation_mode_options },
         ) catch {
             reportInvalidCliMessage("error: {s} spec is invalid\n", .{switch (command) {
@@ -6232,7 +6367,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .invoke_idl_invoke or command == .invoke_idl_invoke_and_confirm) {
-        const invocation_spec_json = try buildAnchorIdlInvokeInvocationSpecJsonForCommand(
+        var owned_spec = try buildAnchorIdlOwnedInvocationSpecForCommand(
             allocator,
             command,
             invoke_payload_args.idl_arg,
@@ -6252,14 +6387,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
         var result = (if (command == .invoke_idl_invoke_and_confirm)
-            client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromInvocationSpecJson(
+            client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
                 allocator,
                 rpc,
-                .anchor_idl,
-                invocation_spec_json,
+                &owned_spec,
                 .{
                     .mode = preferred_invocation_mode_options,
                     .send_and_confirm = .{
@@ -6276,11 +6410,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 },
             )
         else
-            client.invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson(
+            client.invoke.sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
                 allocator,
                 rpc,
-                .anchor_idl,
-                invocation_spec_json,
+                &owned_spec,
                 .{
                     .mode = preferred_invocation_mode_options,
                     .send = .{
@@ -6311,7 +6444,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .invoke_idl_invoke_simulate) {
-        const invocation_spec_json = try buildAnchorIdlInvokeInvocationSpecJsonForCommand(
+        var owned_spec = try buildAnchorIdlOwnedInvocationSpecForCommand(
             allocator,
             command,
             invoke_payload_args.idl_arg,
@@ -6331,14 +6464,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
         const simulation_options = try buildCliSimulationOptionsFromExecutionArgs(invoke_execution_args);
-        var result = client.invoke.simulatePreferredTransactionExecutionResultFromInvocationSpecJson(
+        var result = client.invoke.simulatePreferredTransactionExecutionResultFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .anchor_idl,
-            invocation_spec_json,
+            &owned_spec,
             .{
                 .mode = preferred_invocation_mode_options,
                 .simulate = .{
@@ -6361,7 +6493,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .prepare_idl_invoke) {
-        const invocation_spec_json = try buildAnchorIdlInvokeInvocationSpecJsonForCommand(
+        var owned_spec = try buildAnchorIdlOwnedInvocationSpecForCommand(
             allocator,
             command,
             idl_spec_arg,
@@ -6381,13 +6513,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
-        var prepared = client.invoke.buildPreferredPreparedInvocationFromInvocationSpecJson(
+        var prepared = client.invoke.buildPreferredPreparedInvocationFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .anchor_idl,
-            invocation_spec_json,
+            &owned_spec,
             .{ .mode = preferred_invocation_mode_options },
         ) catch {
             reportInvalidCliMessage("error: prepare-idl-invoke arguments are invalid\n", .{});
@@ -6400,7 +6531,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .estimate_idl_invoke_fee) {
-        const invocation_spec_json = try buildAnchorIdlInvokeInvocationSpecJsonForCommand(
+        var owned_spec = try buildAnchorIdlOwnedInvocationSpecForCommand(
             allocator,
             command,
             idl_spec_arg,
@@ -6420,13 +6551,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
-        var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromInvocationSpecJson(
+        var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .anchor_idl,
-            invocation_spec_json,
+            &owned_spec,
             .{
                 .mode = preferred_invocation_mode_options,
                 .fee = .{
@@ -6448,7 +6578,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .preview_idl_invoke or command == .explain_idl_invoke or command == .validate_idl_invoke) {
-        const invocation_spec_json = try buildAnchorIdlInvokeInvocationSpecJsonForCommand(
+        var owned_spec = try buildAnchorIdlOwnedInvocationSpecForCommand(
             allocator,
             command,
             idl_spec_arg,
@@ -6468,13 +6598,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
-        defer allocator.free(invocation_spec_json);
+        defer owned_spec.deinit(allocator);
 
-        var analysis = client.invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson(
+        var analysis = client.invoke.buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
             allocator,
             rpc,
-            .anchor_idl,
-            invocation_spec_json,
+            &owned_spec,
             .{ .mode = preferred_invocation_mode_options },
         ) catch {
             reportInvalidCliMessage("error: {s} arguments are invalid\n", .{switch (command) {
