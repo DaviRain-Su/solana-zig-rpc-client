@@ -2668,6 +2668,34 @@ pub fn buildOwnedInvocationSpecFromInvocationSpecJson(
     );
 }
 
+pub const OwnedInvocationSpecParts = struct {
+    payer: sdk.Pubkey,
+    signers: []sdk.Keypair,
+    owned_instructions: sdk.OwnedInstructions,
+    address_lookup_tables: []sdk.AddressLookupTableAccount = &.{},
+    recent_blockhash: ?sdk.Hash = null,
+    nonce_account: ?sdk.Pubkey = null,
+    nonce_authority: ?sdk.Pubkey = null,
+};
+
+pub fn buildOwnedInvocationSpecFromOwnedParts(
+    parts: OwnedInvocationSpecParts,
+) !OwnedInvocationSpec {
+    if (parts.recent_blockhash != null and parts.nonce_account != null) {
+        return error.ConflictingRecentBlockhashAndNonce;
+    }
+
+    return .{
+        .payer = parts.payer,
+        .signers = parts.signers,
+        .owned_instructions = parts.owned_instructions,
+        .address_lookup_tables = parts.address_lookup_tables,
+        .recent_blockhash = parts.recent_blockhash,
+        .nonce_account = parts.nonce_account,
+        .nonce_authority = parts.nonce_authority,
+    };
+}
+
 pub const BuildInvocationSpecJsonFromOwnedInvocationSpecError =
     client.invocation_spec_json.BuildError ||
     Allocator.Error ||

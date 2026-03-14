@@ -3324,7 +3324,7 @@ fn buildOwnedInvocationSpecFromLoadedCliInstructionSpec(
     mutable.address_lookup_tables = &.{};
     mutable.address_lookup_table_count = 0;
 
-    return .{
+    return try client.invoke.buildOwnedInvocationSpecFromOwnedParts(.{
         .payer = mutable.payer,
         .signers = signers,
         .owned_instructions = owned_instructions,
@@ -3332,7 +3332,7 @@ fn buildOwnedInvocationSpecFromLoadedCliInstructionSpec(
         .recent_blockhash = recent_blockhash,
         .nonce_account = nonce_account,
         .nonce_authority = mutable.nonce_authority,
-    };
+    });
 }
 
 fn resolveInstructionKeypairSecretKeyBase58(
