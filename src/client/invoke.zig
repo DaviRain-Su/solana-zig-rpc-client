@@ -3189,6 +3189,18 @@ pub fn cloneOwnedInvocationSpec(
     });
 }
 
+pub fn buildInvocationSignerPubkeysFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) ![]sdk.Pubkey {
+    const signer_pubkeys = try allocator.alloc(sdk.Pubkey, owned_spec.signers.len);
+    errdefer allocator.free(signer_pubkeys);
+    for (owned_spec.signers, 0..) |signer, index| {
+        signer_pubkeys[index] = signer.public_key;
+    }
+    return signer_pubkeys;
+}
+
 pub fn cloneOwnedResolvedInvocation(
     allocator: Allocator,
     source: *const OwnedResolvedInvocation,
@@ -3201,6 +3213,53 @@ pub fn cloneOwnedResolvedInvocation(
         .recent_blockhash = source.recent_blockhash,
         .nonce_account = source.nonce_account,
         .nonce_authority = source.nonce_authority,
+    });
+}
+
+pub fn buildOwnedResolvedInvocationFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !OwnedResolvedInvocation {
+    const signer_pubkeys = try buildInvocationSignerPubkeysFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    errdefer allocator.free(signer_pubkeys);
+
+    var owned_instructions = try sdk.cloneInstructions(
+        allocator,
+        owned_spec.owned_instructions.instructions,
+    );
+    errdefer owned_instructions.deinit(allocator);
+
+    const address_lookup_tables = try allocator.alloc(
+        sdk.AddressLookupTableAccount,
+        owned_spec.address_lookup_tables.len,
+    );
+    errdefer allocator.free(address_lookup_tables);
+    var initialized_tables_len: usize = 0;
+    errdefer {
+        for (address_lookup_tables[0..initialized_tables_len]) |table| {
+            allocator.free(table.addresses);
+        }
+        allocator.free(address_lookup_tables);
+    }
+    for (owned_spec.address_lookup_tables, 0..) |table, index| {
+        address_lookup_tables[index] = .{
+            .account_key = table.account_key,
+            .addresses = try allocator.dupe(sdk.Pubkey, table.addresses),
+        };
+        initialized_tables_len += 1;
+    }
+
+    return buildOwnedResolvedInvocationFromOwnedParts(.{
+        .payer = owned_spec.payer,
+        .signer_pubkeys = signer_pubkeys,
+        .owned_instructions = owned_instructions,
+        .address_lookup_tables = address_lookup_tables,
+        .recent_blockhash = owned_spec.recent_blockhash,
+        .nonce_account = owned_spec.nonce_account,
+        .nonce_authority = owned_spec.nonce_authority,
     });
 }
 
