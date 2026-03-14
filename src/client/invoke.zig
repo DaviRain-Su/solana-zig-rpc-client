@@ -5043,6 +5043,7 @@ pub const PreferredSimulationExecutionResult = struct {
 
     pub fn deinit(self: *PreferredSimulationExecutionResult, allocator: Allocator) void {
         self.execution_report.deinit(allocator);
+        deinitSimulatedTransaction(allocator, self.simulation);
         self.* = undefined;
     }
 };
@@ -5056,6 +5057,31 @@ pub const PreferredFeeExecutionResult = struct {
         self.* = undefined;
     }
 };
+
+fn deinitSimulatedTransaction(allocator: Allocator, simulation: client.SimulatedTransaction) void {
+    if (simulation.accounts) |accounts| {
+        for (accounts) |maybe_account| {
+            if (maybe_account) |account| {
+                allocator.free(account.owner);
+                if (account.data) |entry| allocator.free(entry);
+                if (account.data_encoding) |entry| allocator.free(entry);
+            }
+        }
+        allocator.free(accounts);
+    }
+    if (simulation.err_json) |entry| allocator.free(entry);
+    if (simulation.inner_instructions_json) |entry| allocator.free(entry);
+    if (simulation.logs) |logs| {
+        for (logs) |entry| allocator.free(entry);
+        allocator.free(logs);
+    }
+    if (simulation.replacement_blockhash) |replacement| allocator.free(replacement.blockhash);
+    if (simulation.return_data) |return_data| {
+        if (return_data.program_id.len > 0) allocator.free(return_data.program_id);
+        if (return_data.data) |entry| allocator.free(entry);
+        if (return_data.data_encoding) |entry| allocator.free(entry);
+    }
+}
 
 pub fn buildInstructionInvocationSpecJson(
     allocator: Allocator,
