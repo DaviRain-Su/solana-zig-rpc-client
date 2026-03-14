@@ -60,6 +60,7 @@ const cli_params = clap.parseParamsComptime(
     \\    --additional-signer-secret-key <string>...
     \\    --invoke-mode <string>...
     \\    --no-mode-fallback
+    \\    --inspect-section <string>...
     \\    --program-id <string>...
     \\    --data-schema-json <string>...
     \\    --args-json <string>...
@@ -118,6 +119,7 @@ const cli_option_help_params = clap.parseParamsComptime(
     \\    --additional-signer-secret-key <additional-signer-secret-key> Additional signer secret key (base58, repeatable)
     \\    --invoke-mode <mode>               Preferred invocation mode: auto|legacy|versioned (invoke/explain/preview/validate/prepare/estimate/spec commands)
     \\    --no-mode-fallback                 Disable automatic legacy/versioned fallback for invoke/explain/preview/validate/prepare/estimate/spec commands
+    \\    --inspect-section <section>        Inspect output section: inspection|report|accounts|signers|summary|plan|preflight|validation|lookup-coverage|diagnostics|mode-report|mode-resolution|analysis (inspect commands)
     \\    --data-schema-json <json|@path>    Program-invoke instruction data schema JSON (used with --args-json)
     \\    --args-json <json|@path>           Program-invoke instruction args JSON (used with --data-schema-json)
     \\    --schema-encoding <encoding>       Program-invoke schema encoding (currently borsh)
@@ -1046,6 +1048,7 @@ pub const ParsedArgs = struct {
     program_sort_results: bool,
     program_with_context: bool,
     output_json: bool,
+    inspect_section_arg: ?[]const u8,
     signatures_for_address_arg: ?[]const u8,
     signatures_for_address_before_arg: ?[]const u8,
     signatures_for_address_until_arg: ?[]const u8,
@@ -1433,6 +1436,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .program_sort_results = false,
         .program_with_context = false,
         .output_json = false,
+        .inspect_section_arg = null,
         .signatures_for_address_arg = null,
         .signatures_for_address_before_arg = null,
         .signatures_for_address_until_arg = null,
@@ -1565,6 +1569,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
     if (try requireZeroOrOne(@field(result.args, "sender-keypair"))) |value| parsed.sender_keypair_path_arg = value;
     if (try requireZeroOrOne(@field(result.args, "sender-secret-key"))) |value| parsed.sender_secret_key_arg = value;
     if (try requireZeroOrOne(@field(result.args, "invoke-mode"))) |value| parsed.invoke_mode_arg = value;
+    if (try requireZeroOrOne(@field(result.args, "inspect-section"))) |value| parsed.inspect_section_arg = value;
     if (try requireZeroOrOne(@field(result.args, "program-id"))) |value| parsed.idl_program_id_arg = value;
     if (try requireZeroOrOne(@field(result.args, "data-schema-json"))) |value| parsed.program_invoke_data_schema_json_arg = value;
     if (try requireZeroOrOne(@field(result.args, "args-json"))) |value| parsed.program_invoke_args_json_arg = value;
@@ -1903,6 +1908,7 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--sender-secret-key <sender-secret-key>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "payer secret key (base58)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "--inspect-section <section>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--transfer-recent-blockhash <blockhash>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--epoch <epoch>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "--encoding <mode>") != null);
@@ -2300,6 +2306,19 @@ test "cli.parseCliArgs parses inspect-spec spec" {
         "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
         parsed.instructions_spec_arg orelse "",
     );
+}
+
+test "cli.parseCliArgs parses inspect-spec section" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "inspect-spec",
+        "--inspect-section",
+        "mode-resolution",
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.inspect_spec, parsed.command);
+    try std.testing.expectEqualStrings("mode-resolution", parsed.inspect_section_arg orelse "");
 }
 
 test "cli.parseCliArgs parses invoke-spec args" {

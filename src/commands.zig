@@ -4522,6 +4522,309 @@ fn emitPreferredInvocationInspection(
     try stdout_writer.interface.flush();
 }
 
+const InspectSection = enum {
+    inspection,
+    report,
+    accounts,
+    signers,
+    summary,
+    plan,
+    preflight,
+    validation,
+    lookup_coverage,
+    diagnostics,
+    mode_report,
+    mode_resolution,
+    analysis,
+};
+
+fn parseInspectSectionArg(section_arg: ?[]const u8) !InspectSection {
+    const raw = section_arg orelse return .inspection;
+    if (std.mem.eql(u8, raw, "inspection")) return .inspection;
+    if (std.mem.eql(u8, raw, "report")) return .report;
+    if (std.mem.eql(u8, raw, "accounts")) return .accounts;
+    if (std.mem.eql(u8, raw, "signers")) return .signers;
+    if (std.mem.eql(u8, raw, "summary")) return .summary;
+    if (std.mem.eql(u8, raw, "plan")) return .plan;
+    if (std.mem.eql(u8, raw, "preflight")) return .preflight;
+    if (std.mem.eql(u8, raw, "validation")) return .validation;
+    if (std.mem.eql(u8, raw, "lookup-coverage")) return .lookup_coverage;
+    if (std.mem.eql(u8, raw, "diagnostics")) return .diagnostics;
+    if (std.mem.eql(u8, raw, "mode-report")) return .mode_report;
+    if (std.mem.eql(u8, raw, "mode-resolution")) return .mode_resolution;
+    if (std.mem.eql(u8, raw, "analysis")) return .analysis;
+    reportInvalidCliMessage("error: --inspect-section must be inspection, report, accounts, signers, summary, plan, preflight, validation, lookup-coverage, diagnostics, mode-report, mode-resolution, or analysis\n", .{});
+    return error.InvalidCli;
+}
+
+fn inspectSectionUsesPreferred(
+    section: InspectSection,
+    prefer_preferred_path: bool,
+) bool {
+    return prefer_preferred_path or switch (section) {
+        .mode_report, .mode_resolution, .analysis => true,
+        else => false,
+    };
+}
+
+fn emitInvocationInspectSection(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const client.invoke.OwnedInvocationSpec,
+    output_json: bool,
+    section: InspectSection,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+    prefer_preferred_path: bool,
+) !void {
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const use_preferred = inspectSectionUsesPreferred(section, prefer_preferred_path);
+
+    switch (section) {
+        .inspection => if (use_preferred) {
+            if (output_json) {
+                const json = try client.invoke.allocPreferredInvocationInspectionJsonFromOwnedInvocationSpecRef(
+                    allocator,
+                    rpc,
+                    owned_spec,
+                    .{ .mode = preferred_invocation_mode_options },
+                );
+                defer allocator.free(json);
+                try stdout_writer.interface.print("{s}\n", .{json});
+            } else {
+                try client.invoke.writePreferredInvocationInspectionTextFromOwnedInvocationSpecRef(
+                    &stdout_writer.interface,
+                    allocator,
+                    rpc,
+                    owned_spec,
+                    .{ .mode = preferred_invocation_mode_options },
+                );
+            }
+        } else {
+            if (output_json) {
+                const json = try client.invoke.allocInvocationInspectionJsonFromOwnedInvocationSpecRef(
+                    allocator,
+                    owned_spec,
+                );
+                defer allocator.free(json);
+                try stdout_writer.interface.print("{s}\n", .{json});
+            } else {
+                try client.invoke.writeInvocationInspectionTextFromOwnedInvocationSpecRef(
+                    &stdout_writer.interface,
+                    allocator,
+                    owned_spec,
+                );
+            }
+        },
+        .report => if (output_json) {
+            const json = try client.invoke.allocInvocationReportJsonFromOwnedInvocationSpecRef(
+                allocator,
+                owned_spec,
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        } else {
+            try client.invoke.writeInvocationReportTextFromOwnedInvocationSpecRef(
+                &stdout_writer.interface,
+                allocator,
+                owned_spec,
+            );
+        },
+        .accounts => if (output_json) {
+            const json = try client.invoke.allocInvocationAccountsJsonFromOwnedInvocationSpecRef(
+                allocator,
+                owned_spec,
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        } else {
+            try client.invoke.writeInvocationAccountsTextFromOwnedInvocationSpecRef(
+                &stdout_writer.interface,
+                allocator,
+                owned_spec,
+            );
+        },
+        .signers => if (output_json) {
+            const json = try client.invoke.allocInvocationSignerPubkeysJsonFromOwnedInvocationSpecRef(
+                allocator,
+                owned_spec,
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        } else {
+            try client.invoke.writeInvocationSignerPubkeysTextFromOwnedInvocationSpecRef(
+                &stdout_writer.interface,
+                allocator,
+                owned_spec,
+            );
+        },
+        .summary => if (output_json) {
+            const json = try client.invoke.allocInvocationSummaryJsonFromOwnedInvocationSpecRef(
+                allocator,
+                owned_spec,
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        } else {
+            try client.invoke.writeInvocationSummaryTextFromOwnedInvocationSpecRef(
+                &stdout_writer.interface,
+                allocator,
+                owned_spec,
+            );
+        },
+        .plan => if (output_json) {
+            const json = try client.invoke.allocInvocationPlanJsonFromOwnedInvocationSpecRef(
+                allocator,
+                owned_spec,
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        } else {
+            try client.invoke.writeInvocationPlanTextFromOwnedInvocationSpecRef(
+                &stdout_writer.interface,
+                allocator,
+                owned_spec,
+            );
+        },
+        .preflight => if (output_json) {
+            const json = try client.invoke.allocInvocationPreflightJsonFromOwnedInvocationSpecRef(
+                allocator,
+                owned_spec,
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        } else {
+            try client.invoke.writeInvocationPreflightTextFromOwnedInvocationSpecRef(
+                &stdout_writer.interface,
+                allocator,
+                owned_spec,
+            );
+        },
+        .validation => if (output_json) {
+            const json = try client.invoke.allocInvocationValidationJsonFromOwnedInvocationSpecRef(
+                allocator,
+                owned_spec,
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        } else {
+            try client.invoke.writeInvocationValidationTextFromOwnedInvocationSpecRef(
+                &stdout_writer.interface,
+                allocator,
+                owned_spec,
+            );
+        },
+        .lookup_coverage => if (output_json) {
+            const json = try client.invoke.allocInvocationLookupCoverageJsonFromOwnedInvocationSpecRef(
+                allocator,
+                owned_spec,
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        } else {
+            try client.invoke.writeInvocationLookupCoverageTextFromOwnedInvocationSpecRef(
+                &stdout_writer.interface,
+                allocator,
+                owned_spec,
+            );
+        },
+        .diagnostics => if (use_preferred) {
+            if (output_json) {
+                const json = try client.invoke.allocPreferredInvocationDiagnosticsJsonFromOwnedInvocationSpec(
+                    allocator,
+                    rpc,
+                    owned_spec,
+                    .{ .mode = preferred_invocation_mode_options },
+                );
+                defer allocator.free(json);
+                try stdout_writer.interface.print("{s}\n", .{json});
+            } else {
+                try client.invoke.writePreferredInvocationDiagnosticsTextFromOwnedInvocationSpec(
+                    &stdout_writer.interface,
+                    allocator,
+                    rpc,
+                    owned_spec,
+                    .{ .mode = preferred_invocation_mode_options },
+                );
+            }
+        } else {
+            if (output_json) {
+                const json = try client.invoke.allocInvocationDiagnosticsJsonFromOwnedInvocationSpecRef(
+                    allocator,
+                    owned_spec,
+                );
+                defer allocator.free(json);
+                try stdout_writer.interface.print("{s}\n", .{json});
+            } else {
+                try client.invoke.writeInvocationDiagnosticsTextFromOwnedInvocationSpecRef(
+                    &stdout_writer.interface,
+                    allocator,
+                    owned_spec,
+                );
+            }
+        },
+        .mode_report => if (output_json) {
+            const json = try client.invoke.allocInvocationModeReportJsonFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                owned_spec,
+                .{},
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        } else {
+            try client.invoke.writeInvocationModeReportTextFromOwnedInvocationSpec(
+                &stdout_writer.interface,
+                allocator,
+                rpc,
+                owned_spec,
+                .{},
+            );
+        },
+        .mode_resolution => if (output_json) {
+            const json = try client.invoke.allocPreferredInvocationModeResolutionJsonFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                owned_spec,
+                .{},
+                preferred_invocation_mode_options,
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        } else {
+            try client.invoke.writePreferredInvocationModeResolutionTextFromOwnedInvocationSpec(
+                &stdout_writer.interface,
+                allocator,
+                rpc,
+                owned_spec,
+                .{},
+                preferred_invocation_mode_options,
+            );
+        },
+        .analysis => if (output_json) {
+            const json = try client.invoke.allocPreferredInvocationAnalysisJsonFromOwnedInvocationSpecRef(
+                allocator,
+                rpc,
+                owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        } else {
+            try client.invoke.writePreferredInvocationAnalysisTextFromOwnedInvocationSpecRef(
+                &stdout_writer.interface,
+                allocator,
+                rpc,
+                owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            );
+        },
+    }
+
+    if (!output_json) try stdout_writer.interface.writeAll("\n");
+    try stdout_writer.interface.flush();
+}
+
 fn printPreferredSignatureExecutionResult(
     result: *const client.invoke.PreferredSignatureExecutionResult,
     confirmed: bool,
@@ -5191,6 +5494,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const sender_secret_key_arg = args.sender_secret_key_arg;
     const invoke_mode_arg = args.invoke_mode_arg;
     const no_mode_fallback = args.no_mode_fallback;
+    const inspect_section_arg = args.inspect_section_arg;
     const default_sender_keypair_path_arg = args.default_sender_keypair_path;
     const signed_tx_arg = args.signed_tx_arg;
     const simulation_account_encoding_arg = args.simulation_account_encoding_arg;
@@ -5437,6 +5741,18 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         reportInvalidCliMessage("error: --invoke-mode/--no-mode-fallback require invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, inspect-instructions, prepare-instructions, estimate-instructions-fee, invoke-spec, invoke-spec-and-confirm, invoke-spec-simulate, preview-spec, explain-spec, validate-spec, inspect-spec, prepare-spec, estimate-spec-fee, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, inspect-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, inspect-idl-invoke, prepare-idl-invoke, or estimate-idl-invoke-fee\n", .{});
         return error.InvalidCli;
     }
+
+    if (inspect_section_arg != null and
+        command != .inspect_instructions and
+        command != .inspect_spec and
+        command != .inspect_program_invoke and
+        command != .inspect_idl_invoke)
+    {
+        reportInvalidCliMessage("error: --inspect-section requires inspect-instructions, inspect-spec, inspect-program-invoke, or inspect-idl-invoke\n", .{});
+        return error.InvalidCli;
+    }
+
+    const inspect_section = try parseInspectSectionArg(inspect_section_arg);
 
     if ((sender_keypair_path_arg != null or sender_secret_key_arg != null) and
         command != .transfer and
@@ -6121,25 +6437,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         );
         defer owned_spec.deinit(allocator);
 
-        if (invoke_mode_arg != null or no_mode_fallback) {
-            var inspection = client.invoke.buildPreferredInvocationInspectionFromOwnedInvocationSpecRef(
-                allocator,
-                rpc,
-                &owned_spec,
-                .{ .mode = preferred_invocation_mode_options },
-            ) catch return error.InvalidCli;
-            defer inspection.deinit(allocator);
-
-            try emitPreferredInvocationInspection(allocator, &inspection, output_json);
-        } else {
-            var inspection = client.invoke.buildInvocationInspectionFromOwnedInvocationSpecRef(
-                allocator,
-                &owned_spec,
-            ) catch return error.InvalidCli;
-            defer inspection.deinit(allocator);
-
-            try emitInvocationInspection(allocator, &inspection, output_json);
-        }
+        try emitInvocationInspectSection(
+            allocator,
+            rpc,
+            &owned_spec,
+            output_json,
+            inspect_section,
+            preferred_invocation_mode_options,
+            invoke_mode_arg != null or no_mode_fallback,
+        );
         return;
     }
 
@@ -6177,25 +6483,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         );
         defer owned_spec.deinit(allocator);
 
-        if (invoke_mode_arg != null or no_mode_fallback) {
-            var inspection = client.invoke.buildPreferredInvocationInspectionFromOwnedInvocationSpecRef(
-                allocator,
-                rpc,
-                &owned_spec,
-                .{ .mode = preferred_invocation_mode_options },
-            ) catch return error.InvalidCli;
-            defer inspection.deinit(allocator);
-
-            try emitPreferredInvocationInspection(allocator, &inspection, output_json);
-        } else {
-            var inspection = client.invoke.buildInvocationInspectionFromOwnedInvocationSpecRef(
-                allocator,
-                &owned_spec,
-            ) catch return error.InvalidCli;
-            defer inspection.deinit(allocator);
-
-            try emitInvocationInspection(allocator, &inspection, output_json);
-        }
+        try emitInvocationInspectSection(
+            allocator,
+            rpc,
+            &owned_spec,
+            output_json,
+            inspect_section,
+            preferred_invocation_mode_options,
+            invoke_mode_arg != null or no_mode_fallback,
+        );
         return;
     }
 
@@ -6598,31 +6894,18 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         );
         defer owned_spec.deinit(allocator);
 
-        if (invoke_mode_arg != null or no_mode_fallback) {
-            var inspection = client.invoke.buildPreferredInvocationInspectionFromOwnedInvocationSpecRef(
-                allocator,
-                rpc,
-                &owned_spec,
-                .{ .mode = preferred_invocation_mode_options },
-            ) catch {
-                reportInvalidCliMessage("error: inspect-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer inspection.deinit(allocator);
-
-            try emitPreferredInvocationInspection(allocator, &inspection, output_json);
-        } else {
-            var inspection = client.invoke.buildInvocationInspectionFromOwnedInvocationSpecRef(
-                allocator,
-                &owned_spec,
-            ) catch {
-                reportInvalidCliMessage("error: inspect-program-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer inspection.deinit(allocator);
-
-            try emitInvocationInspection(allocator, &inspection, output_json);
-        }
+        emitInvocationInspectSection(
+            allocator,
+            rpc,
+            &owned_spec,
+            output_json,
+            inspect_section,
+            preferred_invocation_mode_options,
+            invoke_mode_arg != null or no_mode_fallback,
+        ) catch {
+            reportInvalidCliMessage("error: inspect-program-invoke arguments are invalid\n", .{});
+            return error.InvalidCli;
+        };
         return;
     }
 
@@ -7008,31 +7291,18 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         );
         defer owned_spec.deinit(allocator);
 
-        if (invoke_mode_arg != null or no_mode_fallback) {
-            var inspection = client.invoke.buildPreferredInvocationInspectionFromOwnedInvocationSpecRef(
-                allocator,
-                rpc,
-                &owned_spec,
-                .{ .mode = preferred_invocation_mode_options },
-            ) catch {
-                reportInvalidCliMessage("error: inspect-idl-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer inspection.deinit(allocator);
-
-            try emitPreferredInvocationInspection(allocator, &inspection, output_json);
-        } else {
-            var inspection = client.invoke.buildInvocationInspectionFromOwnedInvocationSpecRef(
-                allocator,
-                &owned_spec,
-            ) catch {
-                reportInvalidCliMessage("error: inspect-idl-invoke arguments are invalid\n", .{});
-                return error.InvalidCli;
-            };
-            defer inspection.deinit(allocator);
-
-            try emitInvocationInspection(allocator, &inspection, output_json);
-        }
+        emitInvocationInspectSection(
+            allocator,
+            rpc,
+            &owned_spec,
+            output_json,
+            inspect_section,
+            preferred_invocation_mode_options,
+            invoke_mode_arg != null or no_mode_fallback,
+        ) catch {
+            reportInvalidCliMessage("error: inspect-idl-invoke arguments are invalid\n", .{});
+            return error.InvalidCli;
+        };
         return;
     }
 
@@ -14254,6 +14524,162 @@ test "runCommand inspect-program-invoke emits preferred json inspection when mod
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"mode_resolution\":{") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"analysis\":{") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
+}
+
+test "runCommand inspect-program-invoke emits signer section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-program-invoke-signers-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{100} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 161);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{27} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_pubkey = client.Pubkey.fromBytes(.{28} ** 32);
+    const account_pubkey_base58 = try account_pubkey.toBase58(allocator);
+    defer allocator.free(account_pubkey_base58);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"is_writable\":true}}]",
+        .{account_pubkey_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-program-invoke",
+        "--json",
+        "--inspect-section",
+        "signers",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        program_id_base58,
+        accounts_json,
+        "[]",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"signer_count\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"signer_pubkeys\":[") != null);
+}
+
+test "runCommand inspect-program-invoke emits mode resolution section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-program-invoke-mode-resolution-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{101} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 181);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{29} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_pubkey = client.Pubkey.fromBytes(.{30} ** 32);
+    const account_pubkey_base58 = try account_pubkey.toBase58(allocator);
+    defer allocator.free(account_pubkey_base58);
+    const lookup_table_key = client.Pubkey.fromBytes(.{31} ** 32);
+    const lookup_table_key_base58 = try lookup_table_key.toBase58(allocator);
+    defer allocator.free(lookup_table_key_base58);
+    const lookup_address = client.Pubkey.fromBytes(.{32} ** 32);
+    const lookup_address_base58 = try lookup_address.toBase58(allocator);
+    defer allocator.free(lookup_address_base58);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"is_writable\":true}}]",
+        .{account_pubkey_base58},
+    );
+    defer allocator.free(accounts_json);
+    const lookup_tables_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"account_key\":\"{s}\",\"addresses\":[\"{s}\"]}}]",
+        .{ lookup_table_key_base58, lookup_address_base58 },
+    );
+    defer allocator.free(lookup_tables_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-program-invoke",
+        "--json",
+        "--inspect-section",
+        "mode-resolution",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--data-schema-json",
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}",
+        "--args-json",
+        "{\"enabled\":true}",
+        "--schema-encoding",
+        "borsh",
+        program_id_base58,
+        accounts_json,
+        "[]",
+        lookup_tables_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"auto\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
 }
 
 test "runCommand validate-spec fails on missing required signer" {
