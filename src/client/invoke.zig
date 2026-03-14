@@ -3174,7 +3174,7 @@ fn buildOwnedResolvedInvocationFromOwnedSpec(
     });
 }
 
-fn cloneOwnedInvocationSpec(
+pub fn cloneOwnedInvocationSpec(
     allocator: Allocator,
     source: *const OwnedInvocationSpec,
 ) !OwnedInvocationSpec {
@@ -3189,48 +3189,19 @@ fn cloneOwnedInvocationSpec(
     });
 }
 
-fn cloneOwnedResolvedInvocation(
+pub fn cloneOwnedResolvedInvocation(
     allocator: Allocator,
     source: *const OwnedResolvedInvocation,
 ) !OwnedResolvedInvocation {
-    const signer_pubkeys = try allocator.dupe(sdk.Pubkey, source.signer_pubkeys);
-    errdefer allocator.free(signer_pubkeys);
-
-    var owned_instructions = try sdk.cloneInstructions(
-        allocator,
-        source.owned_instructions.instructions,
-    );
-    errdefer owned_instructions.deinit(allocator);
-
-    const address_lookup_tables = try allocator.alloc(
-        sdk.AddressLookupTableAccount,
-        source.address_lookup_tables.len,
-    );
-    errdefer allocator.free(address_lookup_tables);
-    var initialized_tables_len: usize = 0;
-    errdefer {
-        for (address_lookup_tables[0..initialized_tables_len]) |table| {
-            allocator.free(table.addresses);
-        }
-        allocator.free(address_lookup_tables);
-    }
-    for (source.address_lookup_tables, 0..) |table, index| {
-        address_lookup_tables[index] = .{
-            .account_key = table.account_key,
-            .addresses = try allocator.dupe(sdk.Pubkey, table.addresses),
-        };
-        initialized_tables_len += 1;
-    }
-
-    return .{
+    return buildOwnedResolvedInvocationFromBorrowedParts(allocator, .{
         .payer = source.payer,
-        .signer_pubkeys = signer_pubkeys,
-        .owned_instructions = owned_instructions,
-        .address_lookup_tables = address_lookup_tables,
+        .signer_pubkeys = source.signer_pubkeys,
+        .instructions = source.owned_instructions.instructions,
+        .address_lookup_tables = source.address_lookup_tables,
         .recent_blockhash = source.recent_blockhash,
         .nonce_account = source.nonce_account,
         .nonce_authority = source.nonce_authority,
-    };
+    });
 }
 
 fn buildOwnedMessageFromOwnedSpecWithOptions(
