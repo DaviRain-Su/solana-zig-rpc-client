@@ -1579,6 +1579,351 @@ pub fn writeInvocationAccountsText(
     }
 }
 
+pub fn writeInvocationPreflightText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    preflight: OwnedInvocationPreflight,
+) !void {
+    const payer_base58 = try preflight.payer.toBase58(allocator);
+    defer allocator.free(payer_base58);
+
+    try writer.print("payer: {s}\n", .{payer_base58});
+    try writer.print("blockhash mode: {s}\n", .{invocationBlockhashModeJsonLabel(preflight.blockhash_mode)});
+
+    if (preflight.recent_blockhash) |value| {
+        const recent_blockhash_base58 = try value.toBase58(allocator);
+        defer allocator.free(recent_blockhash_base58);
+        try writer.print("recent blockhash: {s}\n", .{recent_blockhash_base58});
+    }
+    if (preflight.nonce_account) |value| {
+        const nonce_account_base58 = try value.toBase58(allocator);
+        defer allocator.free(nonce_account_base58);
+        try writer.print("nonce account: {s}\n", .{nonce_account_base58});
+    }
+    if (preflight.nonce_authority) |value| {
+        const nonce_authority_base58 = try value.toBase58(allocator);
+        defer allocator.free(nonce_authority_base58);
+        try writer.print("nonce authority: {s}\n", .{nonce_authority_base58});
+    }
+
+    try writer.print("provided signers: {d}\n", .{preflight.provided_signer_pubkeys.len});
+    try writer.print("required signers: {d}\n", .{preflight.required_signer_pubkeys.len});
+    try writer.print("extra signers: {d}\n", .{preflight.extra_signer_pubkeys.len});
+    try writer.print("writable pubkeys: {d}\n", .{preflight.writable_pubkeys.len});
+    try writer.print("readonly pubkeys: {d}\n", .{preflight.readonly_pubkeys.len});
+    try writer.print("program ids: {d}\n", .{preflight.program_ids.len});
+    try writer.print("lookup tables: {d}\n", .{preflight.lookup_table_pubkeys.len});
+
+    if (preflight.program_ids.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "program ids", preflight.program_ids);
+    }
+    if (preflight.provided_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "provided signer pubkeys", preflight.provided_signer_pubkeys);
+    }
+    if (preflight.required_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "required signer pubkeys", preflight.required_signer_pubkeys);
+    }
+    if (preflight.extra_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "extra signer pubkeys", preflight.extra_signer_pubkeys);
+    }
+    if (preflight.writable_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "writable pubkeys", preflight.writable_pubkeys);
+    }
+    if (preflight.readonly_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "readonly pubkeys", preflight.readonly_pubkeys);
+    }
+    if (preflight.lookup_table_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup table pubkeys", preflight.lookup_table_pubkeys);
+    }
+}
+
+pub fn writeInvocationPreflightJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    preflight: OwnedInvocationPreflight,
+) !void {
+    var first = true;
+    const payer_base58 = try preflight.payer.toBase58(allocator);
+    defer allocator.free(payer_base58);
+    const recent_blockhash_base58 = if (preflight.recent_blockhash) |value|
+        try value.toBase58(allocator)
+    else
+        null;
+    defer if (recent_blockhash_base58) |value| allocator.free(value);
+    const nonce_account_base58 = if (preflight.nonce_account) |value|
+        try value.toBase58(allocator)
+    else
+        null;
+    defer if (nonce_account_base58) |value| allocator.free(value);
+    const nonce_authority_base58 = if (preflight.nonce_authority) |value|
+        try value.toBase58(allocator)
+    else
+        null;
+    defer if (nonce_authority_base58) |value| allocator.free(value);
+
+    try writer.writeAll("{");
+    try writeJsonStringField(writer, &first, "payer", payer_base58);
+    try writeJsonStringField(writer, &first, "blockhash_mode", invocationBlockhashModeJsonLabel(preflight.blockhash_mode));
+    try writeJsonStringField(writer, &first, "recent_blockhash", recent_blockhash_base58);
+    try writeJsonStringField(writer, &first, "nonce_account", nonce_account_base58);
+    try writeJsonStringField(writer, &first, "nonce_authority", nonce_authority_base58);
+    try writeJsonUsizeField(writer, &first, "provided_signer_count", preflight.provided_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "required_signer_count", preflight.required_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "extra_signer_count", preflight.extra_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "writable_count", preflight.writable_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "readonly_count", preflight.readonly_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "program_count", preflight.program_ids.len);
+    try writeJsonUsizeField(writer, &first, "lookup_table_count", preflight.lookup_table_pubkeys.len);
+    try writeJsonPubkeyArrayField(writer, &first, "program_ids", allocator, preflight.program_ids);
+    try writeJsonPubkeyArrayField(writer, &first, "provided_signer_pubkeys", allocator, preflight.provided_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "required_signer_pubkeys", allocator, preflight.required_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "extra_signer_pubkeys", allocator, preflight.extra_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "writable_pubkeys", allocator, preflight.writable_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "readonly_pubkeys", allocator, preflight.readonly_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_table_pubkeys", allocator, preflight.lookup_table_pubkeys);
+    try writer.writeAll("}");
+}
+
+pub fn allocInvocationPreflightJson(
+    allocator: Allocator,
+    preflight: OwnedInvocationPreflight,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writeInvocationPreflightJson(&aw.writer, allocator, preflight);
+    return try aw.toOwnedSlice();
+}
+
+pub fn writeInvocationValidationText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    validation: OwnedInvocationValidation,
+) !void {
+    try writer.print("is valid: {}\n", .{validation.is_valid});
+    try writer.print("provided signers: {d}\n", .{validation.provided_signer_pubkeys.len});
+    try writer.print("required signers: {d}\n", .{validation.required_signer_pubkeys.len});
+    try writer.print("missing required signers: {d}\n", .{validation.missing_required_signer_pubkeys.len});
+    try writer.print("extra signers: {d}\n", .{validation.extra_signer_pubkeys.len});
+    try writer.print("duplicate signers: {d}\n", .{validation.duplicate_provided_signer_pubkeys.len});
+    try writer.print("lookup tables: {d}\n", .{validation.lookup_table_pubkeys.len});
+    try writer.print("duplicate lookup tables: {d}\n", .{validation.duplicate_lookup_table_pubkeys.len});
+
+    if (validation.provided_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "provided signer pubkeys", validation.provided_signer_pubkeys);
+    }
+    if (validation.required_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "required signer pubkeys", validation.required_signer_pubkeys);
+    }
+    if (validation.missing_required_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "missing required signer pubkeys", validation.missing_required_signer_pubkeys);
+    }
+    if (validation.extra_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "extra signer pubkeys", validation.extra_signer_pubkeys);
+    }
+    if (validation.duplicate_provided_signer_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "duplicate signer pubkeys", validation.duplicate_provided_signer_pubkeys);
+    }
+    if (validation.lookup_table_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "lookup table pubkeys", validation.lookup_table_pubkeys);
+    }
+    if (validation.duplicate_lookup_table_pubkeys.len != 0) {
+        try writeInvocationPubkeysText(writer, allocator, "duplicate lookup table pubkeys", validation.duplicate_lookup_table_pubkeys);
+    }
+}
+
+pub fn writeInvocationValidationJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    validation: OwnedInvocationValidation,
+) !void {
+    var first = true;
+    try writer.writeAll("{");
+    try writeJsonBoolField(writer, &first, "is_valid", validation.is_valid);
+    try writeJsonUsizeField(writer, &first, "provided_signer_count", validation.provided_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "required_signer_count", validation.required_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "missing_required_signer_count", validation.missing_required_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "extra_signer_count", validation.extra_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "duplicate_signer_count", validation.duplicate_provided_signer_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "lookup_table_count", validation.lookup_table_pubkeys.len);
+    try writeJsonUsizeField(writer, &first, "duplicate_lookup_table_count", validation.duplicate_lookup_table_pubkeys.len);
+    try writeJsonPubkeyArrayField(writer, &first, "provided_signer_pubkeys", allocator, validation.provided_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "required_signer_pubkeys", allocator, validation.required_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "missing_required_signer_pubkeys", allocator, validation.missing_required_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "extra_signer_pubkeys", allocator, validation.extra_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "duplicate_signer_pubkeys", allocator, validation.duplicate_provided_signer_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "lookup_table_pubkeys", allocator, validation.lookup_table_pubkeys);
+    try writeJsonPubkeyArrayField(writer, &first, "duplicate_lookup_table_pubkeys", allocator, validation.duplicate_lookup_table_pubkeys);
+    try writer.writeAll("}");
+}
+
+pub fn allocInvocationValidationJson(
+    allocator: Allocator,
+    validation: OwnedInvocationValidation,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writeInvocationValidationJson(&aw.writer, allocator, validation);
+    return try aw.toOwnedSlice();
+}
+
+pub fn writeInvocationPreflightTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !void {
+    var preflight = try buildInvocationPreflightFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer preflight.deinit(allocator);
+    try writeInvocationPreflightText(writer, allocator, preflight);
+}
+
+pub fn allocInvocationPreflightJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) ![]u8 {
+    var preflight = try buildInvocationPreflightFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer preflight.deinit(allocator);
+    return try allocInvocationPreflightJson(allocator, preflight);
+}
+
+pub fn writeInvocationValidationTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !void {
+    var validation = try buildInvocationValidationFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer validation.deinit(allocator);
+    try writeInvocationValidationText(writer, allocator, validation);
+}
+
+pub fn allocInvocationValidationJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) ![]u8 {
+    var validation = try buildInvocationValidationFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer validation.deinit(allocator);
+    return try allocInvocationValidationJson(allocator, validation);
+}
+
+pub fn writeInvocationPreflightTextFromOwnedInvocationSpecRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !void {
+    var preflight = try buildInvocationPreflightFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer preflight.deinit(allocator);
+    try writeInvocationPreflightText(writer, allocator, preflight);
+}
+
+pub fn allocInvocationPreflightJsonFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) ![]u8 {
+    var preflight = try buildInvocationPreflightFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer preflight.deinit(allocator);
+    return try allocInvocationPreflightJson(allocator, preflight);
+}
+
+pub fn writeInvocationValidationTextFromOwnedInvocationSpecRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !void {
+    var validation = try buildInvocationValidationFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer validation.deinit(allocator);
+    try writeInvocationValidationText(writer, allocator, validation);
+}
+
+pub fn allocInvocationValidationJsonFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) ![]u8 {
+    var validation = try buildInvocationValidationFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer validation.deinit(allocator);
+    return try allocInvocationValidationJson(allocator, validation);
+}
+
+pub fn writeInvocationPreflightTextFromOwnedResolvedInvocationRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !void {
+    var preflight = try buildInvocationPreflightFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    defer preflight.deinit(allocator);
+    try writeInvocationPreflightText(writer, allocator, preflight);
+}
+
+pub fn allocInvocationPreflightJsonFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) ![]u8 {
+    var preflight = try buildInvocationPreflightFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    defer preflight.deinit(allocator);
+    return try allocInvocationPreflightJson(allocator, preflight);
+}
+
+pub fn writeInvocationValidationTextFromOwnedResolvedInvocationRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !void {
+    var validation = try buildInvocationValidationFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    defer validation.deinit(allocator);
+    try writeInvocationValidationText(writer, allocator, validation);
+}
+
+pub fn allocInvocationValidationJsonFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) ![]u8 {
+    var validation = try buildInvocationValidationFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    defer validation.deinit(allocator);
+    return try allocInvocationValidationJson(allocator, validation);
+}
+
 pub fn writeInvocationAccountsTextFromInvocationSpecJson(
     writer: *std.Io.Writer,
     allocator: Allocator,
@@ -12977,6 +13322,75 @@ test "invoke.writeInvocationDiagnosticsTextFromOwnedResolvedInvocationRef emits 
     try std.testing.expect(std.mem.indexOf(u8, text, "diagnostics: 2 error(s), 0 warning(s), 0 info item(s)") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "duplicate_signers") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "duplicate_lookup_tables") != null);
+}
+
+test "invoke.allocInvocationPreflightJsonFromInvocationSpecJson emits planning fields" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 461, 462, 463, 464, 465);
+    defer allocator.free(spec_json);
+
+    const json = try allocInvocationPreflightJsonFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"blockhash_mode\":\"explicit_recent_blockhash\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"lookup_table_count\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"lookup_table_pubkeys\":[") != null);
+}
+
+test "invoke.allocInvocationValidationJsonFromInvocationSpecJson emits signer and lookup issues" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithDuplicateSignerAndLookupTable(allocator, 466, 467, 468, 469, 470, 471);
+    defer allocator.free(spec_json);
+
+    const json = try allocInvocationValidationJsonFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"is_valid\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"duplicate_signer_count\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"duplicate_lookup_table_count\":1") != null);
+}
+
+test "invoke.writeInvocationValidationTextFromOwnedResolvedInvocationRef emits readable issues" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithDuplicateSignerAndLookupTable(allocator, 472, 473, 474, 475, 476, 477);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+
+    try writeInvocationValidationTextFromOwnedResolvedInvocationRef(
+        &aw.writer,
+        allocator,
+        &resolved,
+    );
+
+    const text = try aw.toOwnedSlice();
+    defer allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "is valid: false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "duplicate signer pubkeys") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "duplicate lookup table pubkeys") != null);
 }
 
 test "invoke.buildInvocationSignerPubkeysFromInvocationSpecJson dispatches instructions family" {
