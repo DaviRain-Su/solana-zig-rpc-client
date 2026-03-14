@@ -4233,38 +4233,57 @@ fn buildProgramOwnedInvocationSpecForCommand(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) !client.invoke.OwnedInvocationSpec {
-    const invocation_spec_json = try buildProgramInvokeInvocationSpecJsonForCommand(
+    const command_label = if (lookupInvokeCommandSpec(command)) |spec|
+        spec.label
+    else switch (command) {
+        .invoke_program_invoke => "invoke-program-invoke",
+        .invoke_program_invoke_and_confirm => "invoke-program-invoke-and-confirm",
+        .invoke_program_invoke_simulate => "invoke-program-invoke-simulate",
+        .preview_program_invoke => "preview-program-invoke",
+        .explain_program_invoke => "explain-program-invoke",
+        .validate_program_invoke => "validate-program-invoke",
+        .prepare_program_invoke => "prepare-program-invoke",
+        .estimate_program_invoke_fee => "estimate-program-invoke-fee",
+        .spec_program_invoke => "spec-program-invoke",
+        else => unreachable,
+    };
+    const program_id = program_id_arg orelse {
+        reportInvalidCliMessage("error: {s} requires <program-id> <accounts-json|@path>\n", .{command_label});
+        return error.InvalidCli;
+    };
+    const accounts = accounts_arg orelse {
+        reportInvalidCliMessage("error: {s} requires <program-id> <accounts-json|@path>\n", .{command_label});
+        return error.InvalidCli;
+    };
+
+    var loaded = loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
         allocator,
-        command,
-        program_id_arg,
-        accounts_arg,
+        program_id,
+        accounts,
         data_arg,
         data_encoding_arg,
         data_schema_json_arg,
         args_json_arg,
         schema_encoding_arg,
-        payer_keypair_path_arg,
-        payer_secret_key_arg,
         signer_keypair_paths_arg,
         lookup_tables_arg,
-        recent_blockhash_arg,
+        payer_keypair_path_arg,
+        payer_secret_key_arg,
         nonce_account_arg,
         nonce_authority_keypair_path_arg,
         additional_signer_secret_keys_arg,
-    );
-    defer allocator.free(invocation_spec_json);
-
-    return client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
-        allocator,
-        .program,
-        invocation_spec_json,
     ) catch {
-        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{if (lookupInvokeCommandSpec(command)) |spec|
-            spec.label
-        else switch (command) {
-            .spec_program_invoke => "spec-program-invoke",
-            else => unreachable,
-        }});
+        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+        return error.InvalidCli;
+    };
+
+    return buildOwnedInvocationSpecFromLoadedCliInstructionSpec(
+        allocator,
+        loaded,
+        recent_blockhash_arg,
+    ) catch {
+        loaded.deinit(allocator);
+        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
         return error.InvalidCli;
     };
 }
@@ -4848,6 +4867,9 @@ fn loadProgramInvokeInstructionSpec(
     accounts_arg: []const u8,
     data_arg: ?[]const u8,
     data_encoding_arg: ?[]const u8,
+    data_schema_json_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    schema_encoding_arg: ?[]const u8,
     signer_keypair_paths_arg: ?[]const u8,
     lookup_tables_arg: ?[]const u8,
     payer_keypair_path_arg: ?[]const u8,
@@ -4860,6 +4882,9 @@ fn loadProgramInvokeInstructionSpec(
         accounts_arg,
         data_arg,
         data_encoding_arg,
+        data_schema_json_arg,
+        args_json_arg,
+        schema_encoding_arg,
         signer_keypair_paths_arg,
         lookup_tables_arg,
         payer_keypair_path_arg,
@@ -4876,6 +4901,9 @@ fn loadProgramInvokeInstructionSpecWithPayerSecret(
     accounts_arg: []const u8,
     data_arg: ?[]const u8,
     data_encoding_arg: ?[]const u8,
+    data_schema_json_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    schema_encoding_arg: ?[]const u8,
     signer_keypair_paths_arg: ?[]const u8,
     lookup_tables_arg: ?[]const u8,
     payer_keypair_path_arg: ?[]const u8,
@@ -4889,6 +4917,9 @@ fn loadProgramInvokeInstructionSpecWithPayerSecret(
         accounts_arg,
         data_arg,
         data_encoding_arg,
+        data_schema_json_arg,
+        args_json_arg,
+        schema_encoding_arg,
         signer_keypair_paths_arg,
         lookup_tables_arg,
         payer_keypair_path_arg,
@@ -4905,6 +4936,9 @@ fn loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
     accounts_arg: []const u8,
     data_arg: ?[]const u8,
     data_encoding_arg: ?[]const u8,
+    data_schema_json_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    schema_encoding_arg: ?[]const u8,
     signer_keypair_paths_arg: ?[]const u8,
     lookup_tables_arg: ?[]const u8,
     payer_keypair_path_arg: ?[]const u8,
@@ -4913,6 +4947,12 @@ fn loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) !LoadedCliInstructionSpec {
+    if ((data_arg != null or data_encoding_arg != null) and
+        (data_schema_json_arg != null or args_json_arg != null or schema_encoding_arg != null))
+    {
+        return error.InvalidCli;
+    }
+
     const context_args: CliInvocationContextArgs = .{
         .payer_keypair_path_arg = payer_keypair_path_arg,
         .payer_secret_key_arg = payer_secret_key_arg,
@@ -4923,24 +4963,39 @@ fn loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
         .additional_signer_secret_keys_arg = additional_signer_secret_keys_arg,
     };
 
-    var payload_inputs = loadCliProgramInvokePayloadInputs(
-        allocator,
-        accounts_arg,
-        data_arg,
-        data_encoding_arg,
-    ) catch return error.InvalidCli;
-    defer payload_inputs.deinit(allocator);
+    const accounts_source = loadInstructionSpecSource(allocator, accounts_arg) catch return error.InvalidCli;
+    defer allocator.free(accounts_source);
+
+    const data_schema_json_source = loadOptionalInstructionSpecSource(allocator, data_schema_json_arg) catch return error.InvalidCli;
+    defer if (data_schema_json_source) |value| allocator.free(value);
+
+    const args_json_source = loadOptionalInstructionSpecSource(allocator, args_json_arg) catch return error.InvalidCli;
+    defer if (args_json_source) |value| allocator.free(value);
+
+    const instruction_data = if (data_schema_json_source == null and args_json_source == null)
+        loadProgramInvokeDataArg(
+            allocator,
+            data_arg,
+            data_encoding_arg,
+        ) catch return error.InvalidCli
+    else
+        null;
+    defer if (instruction_data) |value| allocator.free(value);
 
     var context_spec_inputs = loadCliInvocationContextSpecInputs(allocator, context_args) catch return error.InvalidCli;
     defer context_spec_inputs.deinit();
 
     const program_id_pubkey = client.Pubkey.fromBase58(allocator, program_id) catch return error.InvalidCli;
+    const schema_encoding = client.instruction_schema.parseSchemaEncoding(schema_encoding_arg orelse "borsh") catch return error.InvalidCli;
     var owned_instruction = client.program_invoke.buildOwnedInstruction(
         allocator,
         program_id_pubkey,
         .{
-            .accounts_json = payload_inputs.accounts_source,
-            .data_bytes = payload_inputs.instruction_data,
+            .accounts_json = accounts_source,
+            .data_bytes = instruction_data,
+            .data_schema_json = data_schema_json_source,
+            .args_json = args_json_source,
+            .schema_encoding = schema_encoding,
         },
     ) catch return error.InvalidCli;
     defer owned_instruction.deinit(allocator);
