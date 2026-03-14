@@ -1089,6 +1089,46 @@ pub fn allocPreferredFeeExecutionResultJson(
     return try aw.toOwnedSlice();
 }
 
+pub fn writePreferredOwnedMessageExecutionResultJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    result: *const PreferredOwnedMessageExecutionResult,
+) !void {
+    var first = true;
+    var diagnostics = try buildInvocationDiagnosticsFromPreferredExecutionReport(
+        allocator,
+        &result.execution_report,
+    );
+    defer diagnostics.deinit(allocator);
+
+    const message_base64 = try result.message.toBase64(allocator);
+    defer allocator.free(message_base64);
+
+    try writer.writeAll("{");
+    try writeJsonStringField(writer, &first, "requested_mode", invocationModeJsonLabel(result.execution_report.requested_mode));
+    try writeJsonStringField(writer, &first, "selected_mode", invocationModeJsonLabel(result.execution_report.selected_mode));
+    try writeJsonBoolField(writer, &first, "requested_mode_buildable", result.execution_report.requested_mode_buildable);
+    try writeJsonBoolField(writer, &first, "used_fallback", result.execution_report.used_fallback);
+    try writeJsonBoolField(writer, &first, "can_execute_selected_mode", result.execution_report.can_execute_selected_mode);
+    try writeJsonStringField(writer, &first, "message_mode", @tagName(std.meta.activeTag(result.message)));
+    try writeJsonStringField(writer, &first, "message_base64", message_base64);
+    try writeJsonUsizeField(writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+    try writeJsonDiagnosticsField(writer, &first, diagnostics);
+    try writer.writeAll("}");
+}
+
+pub fn allocPreferredOwnedMessageExecutionResultJson(
+    allocator: Allocator,
+    result: *const PreferredOwnedMessageExecutionResult,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writePreferredOwnedMessageExecutionResultJson(&aw.writer, allocator, result);
+    return try aw.toOwnedSlice();
+}
+
 pub fn writePreferredResolvedInvocationExecutionResultJson(
     writer: *std.Io.Writer,
     allocator: Allocator,
@@ -1196,6 +1236,22 @@ pub fn writePreferredFeeExecutionResultText(
     } else {
         try writer.writeAll("fee: unavailable\n");
     }
+}
+
+pub fn writePreferredOwnedMessageExecutionResultText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    result: *const PreferredOwnedMessageExecutionResult,
+) !void {
+    const message_base64 = try result.message.toBase64(allocator);
+    defer allocator.free(message_base64);
+
+    try writer.print("requested mode: {s}\n", .{requestedModeText(result.execution_report.requested_mode)});
+    try writer.print("selected mode: {s}\n", .{selectedModeText(result.execution_report.selected_mode)});
+    try writer.print("used fallback: {}\n", .{result.execution_report.used_fallback});
+    try writer.print("can execute selected mode: {}\n", .{result.execution_report.can_execute_selected_mode});
+    try writer.print("message mode: {s}\n", .{@tagName(std.meta.activeTag(result.message))});
+    try writer.print("message base64: {s}\n", .{message_base64});
 }
 
 pub fn writePreferredResolvedInvocationExecutionResultText(
@@ -7005,6 +7061,39 @@ pub fn allocPreferredFeeExecutionResultJsonFromOwnedInvocationSpec(
     return try allocPreferredFeeExecutionResultJson(allocator, &result);
 }
 
+pub fn writePreferredOwnedMessageExecutionResultTextFromOwnedInvocationSpec(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var result = try buildPreferredOwnedMessageExecutionResultFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        options,
+    );
+    defer result.deinit(allocator);
+    try writePreferredOwnedMessageExecutionResultText(writer, allocator, &result);
+}
+
+pub fn allocPreferredOwnedMessageExecutionResultJsonFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var result = try buildPreferredOwnedMessageExecutionResultFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        options,
+    );
+    defer result.deinit(allocator);
+    return try allocPreferredOwnedMessageExecutionResultJson(allocator, &result);
+}
+
 pub fn writePreferredResolvedInvocationExecutionResultTextFromOwnedInvocationSpec(
     writer: *std.Io.Writer,
     allocator: Allocator,
@@ -7036,6 +7125,39 @@ pub fn allocPreferredResolvedInvocationExecutionResultJsonFromOwnedInvocationSpe
     );
     defer result.deinit(allocator);
     return try allocPreferredResolvedInvocationExecutionResultJson(allocator, &result);
+}
+
+pub fn writePreferredOwnedMessageExecutionResultTextFromOwnedResolvedInvocation(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var result = try buildPreferredOwnedMessageExecutionResultFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    defer result.deinit(allocator);
+    try writePreferredOwnedMessageExecutionResultText(writer, allocator, &result);
+}
+
+pub fn allocPreferredOwnedMessageExecutionResultJsonFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var result = try buildPreferredOwnedMessageExecutionResultFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    defer result.deinit(allocator);
+    return try allocPreferredOwnedMessageExecutionResultJson(allocator, &result);
 }
 
 pub fn writePreferredResolvedInvocationExecutionResultTextFromOwnedResolvedInvocation(
@@ -13845,6 +13967,75 @@ test "invoke.allocPreferredResolvedInvocationExecutionResultJsonFromOwnedResolve
     try std.testing.expect(std.mem.indexOf(u8, json, "\"used_fallback\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"resolved_invocation\":{") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"address_lookup_tables\":[") != null);
+}
+
+test "invoke.allocPreferredOwnedMessageExecutionResultJsonFromOwnedResolvedInvocation emits message fields" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 690, 691, 692, 693, 694);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    const json = try allocPreferredOwnedMessageExecutionResultJsonFromOwnedResolvedInvocation(
+        allocator,
+        DummyRpc{},
+        &resolved,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"requested_mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"message_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"message_base64\":\"") != null);
+}
+
+test "invoke.writePreferredOwnedMessageExecutionResultTextFromOwnedInvocationSpec emits text" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 695, 696, 697);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+
+    try writePreferredOwnedMessageExecutionResultTextFromOwnedInvocationSpec(
+        &aw.writer,
+        allocator,
+        DummyRpc{},
+        &owned_spec,
+        .{},
+    );
+
+    const text = try aw.toOwnedSlice();
+    defer allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "selected mode: legacy") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "message mode: legacy") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "message base64: ") != null);
 }
 
 test "invoke.writePreferredResolvedInvocationExecutionResultTextFromOwnedInvocationSpec emits text" {
