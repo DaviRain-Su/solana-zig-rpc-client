@@ -3300,6 +3300,8 @@ fn buildOwnedInvocationSpecFromLoadedCliInstructionSpec(
     var mutable = loaded;
     errdefer mutable.deinit(allocator);
 
+    if (recent_blockhash_arg != null and mutable.nonce_account != null) return error.InvalidCli;
+
     const recent_blockhash = if (recent_blockhash_arg) |value|
         try client.Hash.fromBase58(allocator, value)
     else
@@ -4287,11 +4289,33 @@ fn buildAnchorIdlOwnedInvocationSpecForCommand(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) !client.invoke.OwnedInvocationSpec {
-    const invocation_spec_json = try buildAnchorIdlInvokeInvocationSpecJsonForCommand(
+    const command_label = if (lookupInvokeCommandSpec(command)) |spec|
+        spec.label
+    else switch (command) {
+        .invoke_idl_invoke => "invoke-idl-invoke",
+        .invoke_idl_invoke_and_confirm => "invoke-idl-invoke-and-confirm",
+        .invoke_idl_invoke_simulate => "invoke-idl-invoke-simulate",
+        .preview_idl_invoke => "preview-idl-invoke",
+        .explain_idl_invoke => "explain-idl-invoke",
+        .validate_idl_invoke => "validate-idl-invoke",
+        .prepare_idl_invoke => "prepare-idl-invoke",
+        .estimate_idl_invoke_fee => "estimate-idl-invoke-fee",
+        .spec_idl_invoke => "spec-idl-invoke",
+        else => unreachable,
+    };
+    const idl = idl_arg orelse {
+        reportInvalidCliMessage("error: {s} requires <idl-json|@path> <instruction-name>\n", .{command_label});
+        return error.InvalidCli;
+    };
+    const instruction_name = instruction_name_arg orelse {
+        reportInvalidCliMessage("error: {s} requires <idl-json|@path> <instruction-name>\n", .{command_label});
+        return error.InvalidCli;
+    };
+
+    var loaded = loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
         allocator,
-        command,
-        idl_arg,
-        instruction_name_arg,
+        idl,
+        instruction_name,
         program_id_arg,
         args_json_arg,
         accounts_json_arg,
@@ -4302,24 +4326,24 @@ fn buildAnchorIdlOwnedInvocationSpecForCommand(
         payer_secret_key_arg,
         signer_keypair_paths_arg,
         lookup_tables_arg,
-        recent_blockhash_arg,
         nonce_account_arg,
         nonce_authority_keypair_path_arg,
         additional_signer_secret_keys_arg,
-    );
-    defer allocator.free(invocation_spec_json);
-
-    return client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
-        allocator,
-        .anchor_idl,
-        invocation_spec_json,
     ) catch {
-        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{if (lookupInvokeCommandSpec(command)) |spec|
-            spec.label
-        else switch (command) {
-            .spec_idl_invoke => "spec-idl-invoke",
-            else => unreachable,
-        }});
+        reportInvalidCliMessage(
+            "error: {s} currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n",
+            .{command_label},
+        );
+        return error.InvalidCli;
+    };
+
+    return buildOwnedInvocationSpecFromLoadedCliInstructionSpec(
+        allocator,
+        loaded,
+        recent_blockhash_arg,
+    ) catch {
+        loaded.deinit(allocator);
+        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
         return error.InvalidCli;
     };
 }
