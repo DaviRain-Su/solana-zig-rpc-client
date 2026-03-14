@@ -5163,6 +5163,221 @@ pub fn buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
     };
 }
 
+pub fn buildInvocationModeReportFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: OwnedResolvedInvocation,
+    options: BuildInvocationSpecOptions,
+) !InvocationModeReport {
+    var owned_resolved = resolved;
+    defer owned_resolved.deinit(allocator);
+
+    var report = try buildInvocationReportFromOwnedResolvedInvocation(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, &owned_resolved),
+    );
+    defer report.deinit(allocator);
+
+    const legacy_buildable = blk: {
+        const encoded = buildLegacyMessageBase64FromOwnedResolvedInvocationWithOptions(
+            allocator,
+            rpc,
+            &owned_resolved,
+            options,
+        ) catch break :blk false;
+        allocator.free(encoded);
+        break :blk true;
+    };
+
+    const versioned_buildable = blk: {
+        const encoded = buildVersionedMessageBase64FromOwnedResolvedInvocationWithOptions(
+            allocator,
+            rpc,
+            &owned_resolved,
+            options,
+        ) catch break :blk false;
+        allocator.free(encoded);
+        break :blk true;
+    };
+
+    return .{
+        .legacy_buildable = legacy_buildable,
+        .versioned_buildable = versioned_buildable,
+        .preferred_mode = if (versioned_buildable and report.summary.address_lookup_table_count != 0)
+            .versioned
+        else if (legacy_buildable)
+            .legacy
+        else if (versioned_buildable)
+            .versioned
+        else
+            null,
+        .validation_passed = report.validation.is_valid,
+        .uses_durable_nonce = report.uses_durable_nonce,
+        .address_lookup_table_count = report.summary.address_lookup_table_count,
+    };
+}
+
+pub fn buildInvocationModeReportFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildInvocationSpecOptions,
+) !InvocationModeReport {
+    return try buildInvocationModeReportFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        try cloneOwnedResolvedInvocation(allocator, resolved),
+        options,
+    );
+}
+
+pub fn buildPreferredInvocationReportFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: OwnedResolvedInvocation,
+    options: BuildInvocationSpecOptions,
+) !OwnedPreferredInvocationReport {
+    var owned_resolved = resolved;
+    defer owned_resolved.deinit(allocator);
+
+    return .{
+        .mode_report = try buildInvocationModeReportFromOwnedResolvedInvocationRef(
+            allocator,
+            rpc,
+            &owned_resolved,
+            options,
+        ),
+        .report = try buildInvocationReportFromOwnedResolvedInvocation(
+            allocator,
+            try cloneOwnedResolvedInvocation(allocator, &owned_resolved),
+        ),
+    };
+}
+
+pub fn buildPreferredInvocationReportFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildInvocationSpecOptions,
+) !OwnedPreferredInvocationReport {
+    return try buildPreferredInvocationReportFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        try cloneOwnedResolvedInvocation(allocator, resolved),
+        options,
+    );
+}
+
+pub fn buildPreferredInvocationExecutionReportFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredInvocationExecutionReport {
+    var owned_resolved = resolved;
+    defer owned_resolved.deinit(allocator);
+
+    const mode_report = try buildInvocationModeReportFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        &owned_resolved,
+        options.build,
+    );
+
+    var report = try buildInvocationReportFromOwnedResolvedInvocation(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, &owned_resolved),
+    );
+    errdefer report.deinit(allocator);
+
+    const requested_mode_buildable = if (options.mode.preferred_mode) |requested_mode|
+        switch (requested_mode) {
+            .legacy => mode_report.legacy_buildable,
+            .versioned => mode_report.versioned_buildable,
+        }
+    else
+        false;
+
+    const selected_mode = blk: {
+        if (options.mode.preferred_mode) |requested_mode| {
+            if (requested_mode_buildable) break :blk requested_mode;
+            if (!options.mode.allow_fallback) break :blk null;
+        }
+        break :blk mode_report.preferred_mode;
+    };
+
+    return .{
+        .mode_report = mode_report,
+        .report = report,
+        .requested_mode = options.mode.preferred_mode,
+        .selected_mode = selected_mode,
+        .requested_mode_buildable = requested_mode_buildable,
+        .used_fallback = if (options.mode.preferred_mode) |requested_mode|
+            selected_mode != null and selected_mode.? != requested_mode
+        else
+            false,
+        .can_execute_selected_mode = selected_mode != null and report.can_execute,
+    };
+}
+
+pub fn buildPreferredInvocationExecutionReportFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredInvocationExecutionReport {
+    return try buildPreferredInvocationExecutionReportFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        try cloneOwnedResolvedInvocation(allocator, resolved),
+        options,
+    );
+}
+
+pub fn buildPreferredInvocationAnalysisFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredInvocationAnalysis {
+    var resolved_invocation = resolved;
+    errdefer resolved_invocation.deinit(allocator);
+
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        &resolved_invocation,
+        options,
+    );
+    errdefer execution_report.deinit(allocator);
+
+    var accounts = try buildInvocationAccountsFromOwnedResolvedInvocationRef(
+        allocator,
+        &resolved_invocation,
+    );
+    errdefer accounts.deinit(allocator);
+
+    return .{
+        .execution_report = execution_report,
+        .resolved_invocation = resolved_invocation,
+        .accounts = accounts,
+    };
+}
+
+pub fn buildPreferredInvocationAnalysisFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !PreferredInvocationAnalysis {
+    return try buildPreferredInvocationAnalysisFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        try cloneOwnedResolvedInvocation(allocator, resolved),
+        options,
+    );
+}
+
 pub fn buildPreferredPreparedSignedTransactionFromOwnedInvocationSpec(
     allocator: Allocator,
     rpc: anytype,
@@ -14584,6 +14799,102 @@ test "invoke.buildPreferredInvocationAnalysisFromOwnedInvocationSpec combines ex
     try std.testing.expectEqual(owned_spec.payer, analysis.resolved_invocation.payer);
     try std.testing.expect(analysis.accounts.contains(owned_spec.payer));
     try std.testing.expect(analysis.accounts.isPayer(owned_spec.payer));
+}
+
+test "invoke.buildInvocationModeReportFromOwnedResolvedInvocationRef prefers versioned with lookup tables" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 648, 649, 650, 651, 652);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    const mode_report = try buildInvocationModeReportFromOwnedResolvedInvocationRef(
+        allocator,
+        DummyRpc{},
+        &resolved,
+        .{},
+    );
+
+    try std.testing.expect(!mode_report.legacy_buildable);
+    try std.testing.expect(mode_report.versioned_buildable);
+    try std.testing.expectEqual(@as(?InvocationMode, .versioned), mode_report.preferred_mode);
+}
+
+test "invoke.buildPreferredInvocationExecutionReportFromOwnedResolvedInvocationRef tracks fallback selection" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 653, 654, 655, 656, 657);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedResolvedInvocationRef(
+        allocator,
+        DummyRpc{},
+        &resolved,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer execution_report.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), execution_report.requested_mode);
+    try std.testing.expectEqual(@as(?InvocationMode, .versioned), execution_report.selected_mode);
+    try std.testing.expect(execution_report.used_fallback);
+    try std.testing.expect(execution_report.can_execute_selected_mode);
+}
+
+test "invoke.buildPreferredInvocationAnalysisFromOwnedResolvedInvocationRef combines execution and account introspection" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 658, 659, 660);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .instructions,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var analysis = try buildPreferredInvocationAnalysisFromOwnedResolvedInvocationRef(
+        allocator,
+        DummyRpc{},
+        &resolved,
+        .{},
+    );
+    defer analysis.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), analysis.execution_report.selected_mode);
+    try std.testing.expectEqual(resolved.payer, analysis.resolved_invocation.payer);
+    try std.testing.expect(analysis.accounts.contains(resolved.payer));
+    try std.testing.expect(analysis.accounts.isPayer(resolved.payer));
 }
 
 test "invoke.buildPreferredPreparedInvocationFromOwnedInvocationSpec preserves versioned fallback metadata" {
