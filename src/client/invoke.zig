@@ -1089,6 +1089,50 @@ pub fn allocPreferredFeeExecutionResultJson(
     return try aw.toOwnedSlice();
 }
 
+pub fn writePreferredResolvedInvocationExecutionResultJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    result: *const PreferredResolvedInvocationExecutionResult,
+) !void {
+    var first = true;
+    var diagnostics = try buildInvocationDiagnosticsFromPreferredExecutionReport(
+        allocator,
+        &result.execution_report,
+    );
+    defer diagnostics.deinit(allocator);
+
+    try writer.writeAll("{");
+    try writeJsonStringField(writer, &first, "requested_mode", invocationModeJsonLabel(result.execution_report.requested_mode));
+    try writeJsonStringField(writer, &first, "selected_mode", invocationModeJsonLabel(result.execution_report.selected_mode));
+    try writeJsonBoolField(writer, &first, "requested_mode_buildable", result.execution_report.requested_mode_buildable);
+    try writeJsonBoolField(writer, &first, "used_fallback", result.execution_report.used_fallback);
+    try writeJsonBoolField(writer, &first, "can_execute_selected_mode", result.execution_report.can_execute_selected_mode);
+    try writeJsonUsizeField(writer, &first, "instruction_count", result.execution_report.report.summary.instruction_count);
+    try writeJsonUsizeField(writer, &first, "account_count", result.execution_report.report.summary.account_count);
+    try writeJsonUsizeField(writer, &first, "signer_count", result.execution_report.report.summary.signer_count);
+    try writeJsonUsizeField(writer, &first, "lookup_table_count", result.execution_report.report.summary.address_lookup_table_count);
+    try writeJsonUsizeField(writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+    try writeJsonDiagnosticsField(writer, &first, diagnostics);
+    if (!first) try writer.writeAll(",");
+    first = false;
+    try std.json.Stringify.value("resolved_invocation", .{}, writer);
+    try writer.writeAll(":");
+    try writeOwnedResolvedInvocationJson(writer, allocator, &result.resolved_invocation);
+    try writer.writeAll("}");
+}
+
+pub fn allocPreferredResolvedInvocationExecutionResultJson(
+    allocator: Allocator,
+    result: *const PreferredResolvedInvocationExecutionResult,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writePreferredResolvedInvocationExecutionResultJson(&aw.writer, allocator, result);
+    return try aw.toOwnedSlice();
+}
+
 fn requestedModeText(mode: ?InvocationMode) []const u8 {
     return if (mode) |value| @tagName(value) else "auto";
 }
@@ -1152,6 +1196,33 @@ pub fn writePreferredFeeExecutionResultText(
     } else {
         try writer.writeAll("fee: unavailable\n");
     }
+}
+
+pub fn writePreferredResolvedInvocationExecutionResultText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    result: *const PreferredResolvedInvocationExecutionResult,
+) !void {
+    const payer_base58 = try result.resolved_invocation.payer.toBase58(allocator);
+    defer allocator.free(payer_base58);
+
+    var diagnostics = try buildInvocationDiagnosticsFromPreferredExecutionReport(
+        allocator,
+        &result.execution_report,
+    );
+    defer diagnostics.deinit(allocator);
+
+    try writer.print("requested mode: {s}\n", .{requestedModeText(result.execution_report.requested_mode)});
+    try writer.print("selected mode: {s}\n", .{selectedModeText(result.execution_report.selected_mode)});
+    try writer.print("used fallback: {}\n", .{result.execution_report.used_fallback});
+    try writer.print("can execute selected mode: {}\n", .{result.execution_report.can_execute_selected_mode});
+    try writer.print("payer: {s}\n", .{payer_base58});
+    try writer.print("blockhash mode: {s}\n", .{invocationBlockhashModeJsonLabel(result.execution_report.report.plan.blockhash_mode)});
+    try writer.print("instruction count: {}\n", .{result.execution_report.report.summary.instruction_count});
+    try writer.print("account count: {}\n", .{result.execution_report.report.summary.account_count});
+    try writer.print("signer count: {}\n", .{result.execution_report.report.summary.signer_count});
+    try writer.print("lookup table count: {}\n", .{result.execution_report.report.summary.address_lookup_table_count});
+    try writeInvocationDiagnosticsText(writer, diagnostics);
 }
 
 pub fn writeInvocationPubkeysText(
@@ -6932,6 +7003,72 @@ pub fn allocPreferredFeeExecutionResultJsonFromOwnedInvocationSpec(
     );
     defer result.deinit(allocator);
     return try allocPreferredFeeExecutionResultJson(allocator, &result);
+}
+
+pub fn writePreferredResolvedInvocationExecutionResultTextFromOwnedInvocationSpec(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var result = try buildPreferredResolvedInvocationExecutionResultFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        options,
+    );
+    defer result.deinit(allocator);
+    try writePreferredResolvedInvocationExecutionResultText(writer, allocator, &result);
+}
+
+pub fn allocPreferredResolvedInvocationExecutionResultJsonFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var result = try buildPreferredResolvedInvocationExecutionResultFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        options,
+    );
+    defer result.deinit(allocator);
+    return try allocPreferredResolvedInvocationExecutionResultJson(allocator, &result);
+}
+
+pub fn writePreferredResolvedInvocationExecutionResultTextFromOwnedResolvedInvocation(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var result = try buildPreferredResolvedInvocationExecutionResultFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    defer result.deinit(allocator);
+    try writePreferredResolvedInvocationExecutionResultText(writer, allocator, &result);
+}
+
+pub fn allocPreferredResolvedInvocationExecutionResultJsonFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var result = try buildPreferredResolvedInvocationExecutionResultFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    defer result.deinit(allocator);
+    return try allocPreferredResolvedInvocationExecutionResultJson(allocator, &result);
 }
 
 pub fn buildPreferredOwnedMessageExecutionResultFromOwnedInvocationSpec(
@@ -13671,6 +13808,77 @@ test "invoke.writePreferredFeeExecutionResultTextFromOwnedInvocationSpec emits f
 
     try std.testing.expect(std.mem.indexOf(u8, text, "selected mode: legacy") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "fee: 777") != null);
+}
+
+test "invoke.allocPreferredResolvedInvocationExecutionResultJsonFromOwnedResolvedInvocation emits resolved fields" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 682, 683, 684, 685, 686);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    const json = try allocPreferredResolvedInvocationExecutionResultJsonFromOwnedResolvedInvocation(
+        allocator,
+        DummyRpc{},
+        &resolved,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"requested_mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"used_fallback\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"resolved_invocation\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"address_lookup_tables\":[") != null);
+}
+
+test "invoke.writePreferredResolvedInvocationExecutionResultTextFromOwnedInvocationSpec emits text" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 687, 688, 689);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+
+    try writePreferredResolvedInvocationExecutionResultTextFromOwnedInvocationSpec(
+        &aw.writer,
+        allocator,
+        DummyRpc{},
+        &owned_spec,
+        .{},
+    );
+
+    const text = try aw.toOwnedSlice();
+    defer allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "selected mode: legacy") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "can execute selected mode: true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "instruction count: 1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "diagnostics: 0 error(s), 0 warning(s), 0 info item(s)") != null);
 }
 
 test "invoke.allocSentPreparedInvocationJsonFromOwnedInvocationSpec emits signature fields" {
