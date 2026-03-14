@@ -4387,6 +4387,22 @@ pub fn buildPreferredInvocationDiagnosticsFromOwnedInvocationSpec(
     return try buildInvocationDiagnosticsFromPreferredExecutionReport(allocator, &report);
 }
 
+pub fn buildPreferredInvocationDiagnosticsFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !OwnedInvocationDiagnostics {
+    var report = try buildPreferredInvocationExecutionReportFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    defer report.deinit(allocator);
+    return try buildInvocationDiagnosticsFromPreferredExecutionReport(allocator, &report);
+}
+
 pub fn writePreferredInvocationDiagnosticsTextFromOwnedInvocationSpec(
     writer: *std.Io.Writer,
     allocator: Allocator,
@@ -4404,6 +4420,23 @@ pub fn writePreferredInvocationDiagnosticsTextFromOwnedInvocationSpec(
     try writeInvocationDiagnosticsText(writer, diagnostics);
 }
 
+pub fn writePreferredInvocationDiagnosticsTextFromOwnedResolvedInvocation(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var diagnostics = try buildPreferredInvocationDiagnosticsFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    defer diagnostics.deinit(allocator);
+    try writeInvocationDiagnosticsText(writer, diagnostics);
+}
+
 pub fn allocPreferredInvocationDiagnosticsJsonFromOwnedInvocationSpec(
     allocator: Allocator,
     rpc: anytype,
@@ -4414,6 +4447,34 @@ pub fn allocPreferredInvocationDiagnosticsJsonFromOwnedInvocationSpec(
         allocator,
         rpc,
         owned_spec,
+        options,
+    );
+    defer diagnostics.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+
+    var first = true;
+    try aw.writer.writeAll("{");
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+    try writeJsonDiagnosticsField(&aw.writer, &first, diagnostics);
+    try aw.writer.writeAll("}");
+
+    return try aw.toOwnedSlice();
+}
+
+pub fn allocPreferredInvocationDiagnosticsJsonFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var diagnostics = try buildPreferredInvocationDiagnosticsFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        resolved,
         options,
     );
     defer diagnostics.deinit(allocator);
@@ -5376,6 +5437,39 @@ pub fn buildPreferredInvocationAnalysisFromOwnedResolvedInvocationRef(
         try cloneOwnedResolvedInvocation(allocator, resolved),
         options,
     );
+}
+
+pub fn writePreferredInvocationAnalysisTextFromOwnedResolvedInvocation(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var analysis = try buildPreferredInvocationAnalysisFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    defer analysis.deinit(allocator);
+    try writePreferredInvocationAnalysisText(writer, allocator, &analysis);
+}
+
+pub fn allocPreferredInvocationAnalysisJsonFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var analysis = try buildPreferredInvocationAnalysisFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        options,
+    );
+    defer analysis.deinit(allocator);
+    return try allocPreferredInvocationAnalysisJson(allocator, &analysis);
 }
 
 pub fn buildPreferredPreparedSignedTransactionFromOwnedInvocationSpec(
@@ -10978,6 +11072,40 @@ test "invoke.writePreferredInvocationDiagnosticsTextFromOwnedInvocationSpec emit
     try std.testing.expect(std.mem.indexOf(u8, text, "no_buildable_mode") != null);
 }
 
+test "invoke.allocPreferredInvocationDiagnosticsJsonFromOwnedResolvedInvocation emits diagnostic json" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 674, 675, 676, 677, 678);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    const json = try allocPreferredInvocationDiagnosticsJsonFromOwnedResolvedInvocation(
+        allocator,
+        DummyRpc{},
+        &resolved,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = false,
+            },
+        },
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"diagnostic_error_count\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"code\":\"no_buildable_mode\"") != null);
+}
+
 test "invoke.allocInvocationDiagnosticsJsonFromOwnedInvocationSpecRef emits diagnostic json" {
     const allocator = std.testing.allocator;
 
@@ -15056,6 +15184,36 @@ test "invoke.buildPreferredInvocationAnalysisFromOwnedResolvedInvocationRef comb
     try std.testing.expectEqual(resolved.payer, analysis.resolved_invocation.payer);
     try std.testing.expect(analysis.accounts.contains(resolved.payer));
     try std.testing.expect(analysis.accounts.isPayer(resolved.payer));
+}
+
+test "invoke.allocPreferredInvocationAnalysisJsonFromOwnedResolvedInvocation emits analysis json" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 679, 680, 681);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .instructions,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    const json = try allocPreferredInvocationAnalysisJsonFromOwnedResolvedInvocation(
+        allocator,
+        DummyRpc{},
+        &resolved,
+        .{},
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"selected_mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"accounts\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"can_execute_selected_mode\":true") != null);
 }
 
 test "invoke.buildPreferredPreparedInvocationFromOwnedInvocationSpec preserves versioned fallback metadata" {
