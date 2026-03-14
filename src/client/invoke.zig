@@ -5800,6 +5800,35 @@ pub fn allocPreparedInvocationJsonFromInvocationSpecJson(
     return try allocPreparedInvocationJson(allocator, &prepared);
 }
 
+pub fn buildInstructionsJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) ![]u8 {
+    return try buildInstructionsJsonFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            family,
+            invocation_spec_json,
+        ),
+    );
+}
+
+pub fn buildResolvedInvocationJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) ![]u8 {
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+    return try buildResolvedInvocationJsonFromOwnedInvocationSpecRef(allocator, &owned_spec);
+}
+
 pub fn buildPreparedInvocationFromOwnedInvocationSpec(
     allocator: Allocator,
     rpc: anytype,
@@ -16878,6 +16907,40 @@ test "invoke.allocPreparedInvocationJsonFromInvocationSpecJson emits generic pre
 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"mode\":\"legacy\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"transaction_base64\":\"") != null);
+}
+
+test "invoke.buildInstructionsJsonFromInvocationSpecJson exports canonical instructions" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 407, 408, 409);
+    defer allocator.free(spec_json);
+
+    const json = try buildInstructionsJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"program_id\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"accounts\":[") != null);
+}
+
+test "invoke.buildResolvedInvocationJsonFromInvocationSpecJson exports canonical resolved json" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 410, 411, 412);
+    defer allocator.free(spec_json);
+
+    const json = try buildResolvedInvocationJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"payer\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"instructions\":[") != null);
 }
 
 test "invoke.buildInvocationModeReportFromOwnedInvocationSpec prefers versioned with lookup tables" {
