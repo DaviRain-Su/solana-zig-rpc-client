@@ -4107,27 +4107,15 @@ pub fn buildPreferredOwnedMessageExecutionResultFromInvocationSpecJson(
     invocation_spec_json: []const u8,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredOwnedMessageExecutionResult {
-    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(allocator, family, invocation_spec_json);
+    defer owned_spec.deinit(allocator);
+
+    return buildPreferredOwnedMessageExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        family,
-        invocation_spec_json,
+        &owned_spec,
         options,
     );
-    errdefer execution_report.deinit(allocator);
-
-    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
-    return .{
-        .execution_report = execution_report,
-        .message = try buildOwnedMessageFromInvocationSpecJsonWithOptions(
-            allocator,
-            rpc,
-            family,
-            mode == .versioned,
-            invocation_spec_json,
-            options.build,
-        ),
-    };
 }
 
 pub fn buildPreferredMessageBytesExecutionResultFromInvocationSpecJson(
@@ -4137,27 +4125,15 @@ pub fn buildPreferredMessageBytesExecutionResultFromInvocationSpecJson(
     invocation_spec_json: []const u8,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredBytesExecutionResult {
-    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(allocator, family, invocation_spec_json);
+    defer owned_spec.deinit(allocator);
+
+    return buildPreferredMessageBytesExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        family,
-        invocation_spec_json,
+        &owned_spec,
         options,
     );
-    errdefer execution_report.deinit(allocator);
-
-    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
-    return .{
-        .execution_report = execution_report,
-        .bytes = try buildMessageBytesFromInvocationSpecJsonWithOptions(
-            allocator,
-            rpc,
-            family,
-            mode == .versioned,
-            invocation_spec_json,
-            options.build,
-        ),
-    };
 }
 
 pub fn buildPreferredMessageBase64ExecutionResultFromInvocationSpecJson(
@@ -4167,27 +4143,15 @@ pub fn buildPreferredMessageBase64ExecutionResultFromInvocationSpecJson(
     invocation_spec_json: []const u8,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredBytesExecutionResult {
-    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(allocator, family, invocation_spec_json);
+    defer owned_spec.deinit(allocator);
+
+    return buildPreferredMessageBase64ExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        family,
-        invocation_spec_json,
+        &owned_spec,
         options,
     );
-    errdefer execution_report.deinit(allocator);
-
-    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
-    return .{
-        .execution_report = execution_report,
-        .bytes = try buildMessageBase64FromInvocationSpecJsonWithOptions(
-            allocator,
-            rpc,
-            family,
-            mode == .versioned,
-            invocation_spec_json,
-            options.build,
-        ),
-    };
 }
 
 pub fn buildPreferredSignedTransactionExecutionResultFromInvocationSpecJson(
@@ -4197,27 +4161,15 @@ pub fn buildPreferredSignedTransactionExecutionResultFromInvocationSpecJson(
     invocation_spec_json: []const u8,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredSignedTransactionExecutionResult {
-    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(allocator, family, invocation_spec_json);
+    defer owned_spec.deinit(allocator);
+
+    return buildPreferredSignedTransactionExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        family,
-        invocation_spec_json,
+        &owned_spec,
         options,
     );
-    errdefer execution_report.deinit(allocator);
-
-    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
-    return .{
-        .execution_report = execution_report,
-        .transaction = try buildSignedTransactionFromInvocationSpecJsonWithOptions(
-            allocator,
-            rpc,
-            family,
-            mode == .versioned,
-            invocation_spec_json,
-            options.build,
-        ),
-    };
 }
 
 pub fn buildPreferredTransactionBase64ExecutionResultFromInvocationSpecJson(
@@ -4227,27 +4179,15 @@ pub fn buildPreferredTransactionBase64ExecutionResultFromInvocationSpecJson(
     invocation_spec_json: []const u8,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredBytesExecutionResult {
-    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(allocator, family, invocation_spec_json);
+    defer owned_spec.deinit(allocator);
+
+    return buildPreferredTransactionBase64ExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        family,
-        invocation_spec_json,
+        &owned_spec,
         options,
     );
-    errdefer execution_report.deinit(allocator);
-
-    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
-    return .{
-        .execution_report = execution_report,
-        .bytes = try buildTransactionBase64FromInvocationSpecJsonWithOptions(
-            allocator,
-            rpc,
-            family,
-            mode == .versioned,
-            invocation_spec_json,
-            options.build,
-        ),
-    };
 }
 
 pub fn buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJson(
@@ -4257,23 +4197,15 @@ pub fn buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJson(
     invocation_spec_json: []const u8,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredResolvedInvocationExecutionResult {
-    var execution_report = try buildPreferredInvocationExecutionReportFromInvocationSpecJson(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(allocator, family, invocation_spec_json);
+    defer owned_spec.deinit(allocator);
+
+    return buildPreferredResolvedInvocationExecutionResultFromOwnedInvocationSpec(
         allocator,
         rpc,
-        family,
-        invocation_spec_json,
+        &owned_spec,
         options,
     );
-    errdefer execution_report.deinit(allocator);
-
-    return .{
-        .execution_report = execution_report,
-        .resolved_invocation = try buildOwnedResolvedInvocationFromInvocationSpecJson(
-            allocator,
-            family,
-            invocation_spec_json,
-        ),
-    };
 }
 
 pub fn buildPreferredInvocationAnalysisFromInvocationSpecJson(
@@ -5722,16 +5654,25 @@ pub fn buildPreferredOwnedMessageExecutionResultFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredOwnedMessageExecutionResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredOwnedMessageExecutionResultFromInvocationSpecJson(
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .message = try buildOwnedMessageFromOwnedInvocationSpecWithOptions(
+            allocator,
+            rpc,
+            mode == .versioned,
+            owned_spec,
+            options.build,
+        ),
+    };
 }
 
 pub fn buildPreferredMessageBytesExecutionResultFromOwnedInvocationSpec(
@@ -5740,16 +5681,25 @@ pub fn buildPreferredMessageBytesExecutionResultFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredBytesExecutionResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredMessageBytesExecutionResultFromInvocationSpecJson(
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .bytes = try buildMessageBytesFromOwnedInvocationSpecWithOptions(
+            allocator,
+            rpc,
+            mode == .versioned,
+            owned_spec,
+            options.build,
+        ),
+    };
 }
 
 pub fn buildPreferredMessageBase64ExecutionResultFromOwnedInvocationSpec(
@@ -5758,16 +5708,25 @@ pub fn buildPreferredMessageBase64ExecutionResultFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredBytesExecutionResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredMessageBase64ExecutionResultFromInvocationSpecJson(
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .bytes = try buildMessageBase64FromOwnedInvocationSpecWithOptions(
+            allocator,
+            rpc,
+            mode == .versioned,
+            owned_spec,
+            options.build,
+        ),
+    };
 }
 
 pub fn buildPreferredSignedTransactionExecutionResultFromOwnedInvocationSpec(
@@ -5776,16 +5735,25 @@ pub fn buildPreferredSignedTransactionExecutionResultFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredSignedTransactionExecutionResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredSignedTransactionExecutionResultFromInvocationSpecJson(
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .transaction = try buildSignedTransactionFromOwnedInvocationSpecWithOptions(
+            allocator,
+            rpc,
+            mode == .versioned,
+            owned_spec,
+            options.build,
+        ),
+    };
 }
 
 pub fn buildPreferredTransactionBase64ExecutionResultFromOwnedInvocationSpec(
@@ -5794,16 +5762,25 @@ pub fn buildPreferredTransactionBase64ExecutionResultFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredBytesExecutionResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredTransactionBase64ExecutionResultFromInvocationSpecJson(
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    errdefer execution_report.deinit(allocator);
+
+    const mode = execution_report.selected_mode orelse return error.NoBuildableInvocationMode;
+    return .{
+        .execution_report = execution_report,
+        .bytes = try buildTransactionBase64FromOwnedInvocationSpecWithOptions(
+            allocator,
+            rpc,
+            mode == .versioned,
+            owned_spec,
+            options.build,
+        ),
+    };
 }
 
 pub fn buildPreferredResolvedInvocationExecutionResultFromOwnedInvocationSpec(
@@ -5812,16 +5789,21 @@ pub fn buildPreferredResolvedInvocationExecutionResultFromOwnedInvocationSpec(
     owned_spec: *const OwnedInvocationSpec,
     options: BuildPreferredInvocationSpecOptions,
 ) !PreferredResolvedInvocationExecutionResult {
-    const invocation_spec_json = try buildInvocationSpecJsonFromOwnedInvocationSpec(allocator, owned_spec);
-    defer allocator.free(invocation_spec_json);
-
-    return try buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJson(
+    var execution_report = try buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         allocator,
         rpc,
-        .instructions,
-        invocation_spec_json,
+        owned_spec,
         options,
     );
+    errdefer execution_report.deinit(allocator);
+
+    return .{
+        .execution_report = execution_report,
+        .resolved_invocation = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+            allocator,
+            try cloneOwnedInvocationSpec(allocator, owned_spec),
+        ),
+    };
 }
 
 pub fn buildPreferredOwnedMessageFromOwnedInvocationSpec(
