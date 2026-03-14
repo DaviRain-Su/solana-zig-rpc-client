@@ -497,6 +497,19 @@ pub const OwnedInvocationReport = struct {
     }
 };
 
+pub const OwnedInvocationInspection = struct {
+    report: OwnedInvocationReport,
+    accounts: OwnedInvocationAccounts,
+    diagnostics: OwnedInvocationDiagnostics,
+
+    pub fn deinit(self: *OwnedInvocationInspection, allocator: Allocator) void {
+        self.report.deinit(allocator);
+        self.accounts.deinit(allocator);
+        self.diagnostics.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 pub const InvocationDiagnosticSeverity = enum {
     info,
     warning,
@@ -2689,6 +2702,212 @@ pub fn allocInvocationReportJsonFromOwnedResolvedInvocationRef(
     );
     defer report.deinit(allocator);
     return try allocInvocationReportJson(allocator, report);
+}
+
+pub fn buildInvocationInspectionFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !OwnedInvocationInspection {
+    var report = try buildInvocationReportFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    errdefer report.deinit(allocator);
+
+    var diagnostics = try buildInvocationDiagnosticsFromReport(allocator, &report);
+    errdefer diagnostics.deinit(allocator);
+
+    return .{
+        .report = report,
+        .accounts = try buildInvocationAccountsFromInvocationSpecJson(
+            allocator,
+            family,
+            invocation_spec_json,
+        ),
+        .diagnostics = diagnostics,
+    };
+}
+
+pub fn buildInvocationInspectionFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !OwnedInvocationInspection {
+    var report = try buildInvocationReportFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    errdefer report.deinit(allocator);
+
+    var diagnostics = try buildInvocationDiagnosticsFromReport(allocator, &report);
+    errdefer diagnostics.deinit(allocator);
+
+    return .{
+        .report = report,
+        .accounts = try buildInvocationAccountsFromOwnedInvocationSpecRef(
+            allocator,
+            owned_spec,
+        ),
+        .diagnostics = diagnostics,
+    };
+}
+
+pub fn buildInvocationInspectionFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !OwnedInvocationInspection {
+    var report = try buildInvocationReportFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    errdefer report.deinit(allocator);
+
+    var diagnostics = try buildInvocationDiagnosticsFromReport(allocator, &report);
+    errdefer diagnostics.deinit(allocator);
+
+    return .{
+        .report = report,
+        .accounts = try buildInvocationAccountsFromOwnedResolvedInvocationRef(
+            allocator,
+            resolved,
+        ),
+        .diagnostics = diagnostics,
+    };
+}
+
+pub fn writeInvocationInspectionText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    inspection: OwnedInvocationInspection,
+) !void {
+    try writer.writeAll("report:\n");
+    try writeInvocationReportText(writer, allocator, inspection.report);
+    try writer.writeAll("\naccounts:\n");
+    try writeInvocationAccountsText(writer, allocator, inspection.accounts);
+    try writer.writeAll("\ndiagnostics:\n");
+    try writeInvocationDiagnosticsText(writer, inspection.diagnostics);
+}
+
+pub fn writeInvocationInspectionJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    inspection: OwnedInvocationInspection,
+) !void {
+    var first = true;
+    try writer.writeAll("{");
+
+    try std.json.Stringify.value("report", .{}, writer);
+    try writer.writeAll(":");
+    try writeInvocationReportJson(writer, allocator, inspection.report);
+    first = false;
+
+    if (!first) try writer.writeAll(",");
+    try std.json.Stringify.value("accounts", .{}, writer);
+    try writer.writeAll(":");
+    try writeInvocationAccountsJson(writer, allocator, inspection.accounts);
+
+    try writer.writeAll(",");
+    try std.json.Stringify.value("diagnostics", .{}, writer);
+    try writer.writeAll(":");
+    try writer.writeAll("{");
+    var diagnostics_first = true;
+    try writeJsonUsizeField(writer, &diagnostics_first, "diagnostic_error_count", inspection.diagnostics.errorCount());
+    try writeJsonUsizeField(writer, &diagnostics_first, "diagnostic_warning_count", inspection.diagnostics.warningCount());
+    try writeJsonUsizeField(writer, &diagnostics_first, "diagnostic_info_count", inspection.diagnostics.infoCount());
+    try writeJsonDiagnosticsField(writer, &diagnostics_first, inspection.diagnostics);
+    try writer.writeAll("}");
+
+    try writer.writeAll("}");
+}
+
+pub fn allocInvocationInspectionJson(
+    allocator: Allocator,
+    inspection: OwnedInvocationInspection,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writeInvocationInspectionJson(&aw.writer, allocator, inspection);
+    return try aw.toOwnedSlice();
+}
+
+pub fn writeInvocationInspectionTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !void {
+    var inspection = try buildInvocationInspectionFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer inspection.deinit(allocator);
+    try writeInvocationInspectionText(writer, allocator, inspection);
+}
+
+pub fn allocInvocationInspectionJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) ![]u8 {
+    var inspection = try buildInvocationInspectionFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer inspection.deinit(allocator);
+    return try allocInvocationInspectionJson(allocator, inspection);
+}
+
+pub fn writeInvocationInspectionTextFromOwnedInvocationSpecRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !void {
+    var inspection = try buildInvocationInspectionFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer inspection.deinit(allocator);
+    try writeInvocationInspectionText(writer, allocator, inspection);
+}
+
+pub fn allocInvocationInspectionJsonFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) ![]u8 {
+    var inspection = try buildInvocationInspectionFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer inspection.deinit(allocator);
+    return try allocInvocationInspectionJson(allocator, inspection);
+}
+
+pub fn writeInvocationInspectionTextFromOwnedResolvedInvocationRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !void {
+    var inspection = try buildInvocationInspectionFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    defer inspection.deinit(allocator);
+    try writeInvocationInspectionText(writer, allocator, inspection);
+}
+
+pub fn allocInvocationInspectionJsonFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) ![]u8 {
+    var inspection = try buildInvocationInspectionFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    defer inspection.deinit(allocator);
+    return try allocInvocationInspectionJson(allocator, inspection);
 }
 
 pub fn writeInvocationAccountsTextFromInvocationSpecJson(
@@ -14281,6 +14500,58 @@ test "invoke.writeInvocationReportTextFromOwnedResolvedInvocationRef emits secti
     try std.testing.expect(std.mem.indexOf(u8, text, "summary:") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "preflight:") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "lookup coverage:") != null);
+}
+
+test "invoke.allocInvocationInspectionJsonFromInvocationSpecJson emits nested inspection sections" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 520, 521, 522, 523, 524);
+    defer allocator.free(spec_json);
+
+    const json = try allocInvocationInspectionJsonFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"report\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"accounts\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"diagnostics\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"diagnostic_error_count\":0") != null);
+}
+
+test "invoke.writeInvocationInspectionTextFromOwnedResolvedInvocationRef emits inspection sections" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 525, 526, 527, 528, 529);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+
+    try writeInvocationInspectionTextFromOwnedResolvedInvocationRef(
+        &aw.writer,
+        allocator,
+        &resolved,
+    );
+
+    const text = try aw.toOwnedSlice();
+    defer allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "report:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "accounts:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "diagnostics:") != null);
 }
 
 test "invoke.buildInvocationSignerPubkeysFromInvocationSpecJson dispatches instructions family" {
