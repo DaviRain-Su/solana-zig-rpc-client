@@ -3081,6 +3081,18 @@ pub fn buildResolvedInvocationJsonFromOwnedInvocationSpec(
     return try allocOwnedResolvedInvocationJson(allocator, &resolved);
 }
 
+pub fn buildResolvedInvocationJsonFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) ![]u8 {
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer resolved.deinit(allocator);
+    return try allocOwnedResolvedInvocationJson(allocator, &resolved);
+}
+
 pub fn buildInvocationSpecJsonFromOwnedInvocationSpec(
     allocator: Allocator,
     owned_spec: *const OwnedInvocationSpec,
@@ -3614,6 +3626,26 @@ pub fn buildInvocationAccountsFromOwnedInvocationSpec(
     defer resolved.deinit(allocator);
 
     return try buildOwnedInvocationAccountsFromResolved(allocator, &resolved);
+}
+
+pub fn buildInvocationAccountsFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    resolved: OwnedResolvedInvocation,
+) !OwnedInvocationAccounts {
+    var mutable = resolved;
+    defer mutable.deinit(allocator);
+
+    return try buildOwnedInvocationAccountsFromResolved(allocator, &mutable);
+}
+
+pub fn buildInvocationAccountsFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !OwnedInvocationAccounts {
+    return try buildInvocationAccountsFromOwnedResolvedInvocation(
+        allocator,
+        try cloneOwnedResolvedInvocation(allocator, resolved),
+    );
 }
 
 fn appendUniquePubkey(
@@ -9608,6 +9640,31 @@ test "invoke.allocResolvedInvocationJson emits canonical resolved fields" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"recent_blockhash\":\"") != null);
 }
 
+test "invoke.buildResolvedInvocationJsonFromOwnedInvocationSpecRef exports canonical resolved json" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 572, 573, 574, 575, 576);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    const json = try buildResolvedInvocationJsonFromOwnedInvocationSpecRef(
+        allocator,
+        &owned_spec,
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"payer\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"address_lookup_tables\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"instructions\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"recent_blockhash\":\"") != null);
+}
+
 test "invoke.buildOwnedInstructionsFromOwnedInvocationSpec reuses typed normalized spec" {
     const allocator = std.testing.allocator;
 
@@ -9716,6 +9773,34 @@ test "invoke.buildInvocationLookupCoverageFromOwnedResolvedInvocation reuses typ
 
     try std.testing.expect(coverage.containsLookupTable(lookup_table));
     try std.testing.expect(coverage.coversPubkey(covered_pubkey));
+}
+
+test "invoke.buildInvocationAccountsFromOwnedResolvedInvocationRef reuses borrowed resolved invocation" {
+    const allocator = std.testing.allocator;
+    const nonce_account = sdk.Pubkey.fromBytes([_]u8{581} ** 32);
+
+    const spec_json = try allocRichInstructionsInvocationSpecJson(allocator, 577, 578, 579, 580, 581, 582);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .instructions,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var accounts = try buildInvocationAccountsFromOwnedResolvedInvocationRef(
+        allocator,
+        &resolved,
+    );
+    defer accounts.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 6), accounts.accounts.len);
+    try std.testing.expect(accounts.contains(nonce_account));
+    try std.testing.expect(accounts.isNonceAccount(nonce_account));
 }
 
 test "invoke.buildInvocationSummaryFromOwnedResolvedInvocationRef reuses borrowed resolved invocation" {
