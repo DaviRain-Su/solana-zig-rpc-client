@@ -3038,6 +3038,14 @@ pub const PreferredPreparedSignedTransaction = struct {
         return self.transaction.firstSignature();
     }
 
+    pub fn allocResolvedInvocationJson(self: *const PreferredPreparedSignedTransaction, allocator: Allocator) ![]u8 {
+        return try allocOwnedResolvedInvocationJson(allocator, &self.resolved_invocation);
+    }
+
+    pub fn allocInstructionsJson(self: *const PreferredPreparedSignedTransaction, allocator: Allocator) ![]u8 {
+        return try buildInstructionsJsonFromOwnedResolvedInvocation(allocator, &self.resolved_invocation);
+    }
+
     pub fn send(
         self: *const PreferredPreparedSignedTransaction,
         rpc: anytype,
@@ -3183,6 +3191,34 @@ pub const SentPreferredPreparedInvocation = struct {
         allocator.free(self.signature);
         self.* = undefined;
     }
+
+    pub fn serialize(self: SentPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.serialize(allocator);
+    }
+
+    pub fn toBase64(self: SentPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.toBase64(allocator);
+    }
+
+    pub fn serializeMessage(self: SentPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.serializeMessage(allocator);
+    }
+
+    pub fn messageToBase64(self: SentPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.messageToBase64(allocator);
+    }
+
+    pub fn firstSignature(self: SentPreferredPreparedInvocation) ?sdk.Signature {
+        return self.prepared.firstSignature();
+    }
+
+    pub fn allocResolvedInvocationJson(self: *const SentPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocResolvedInvocationJson(allocator);
+    }
+
+    pub fn allocInstructionsJson(self: *const SentPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocInstructionsJson(allocator);
+    }
 };
 
 pub const SimulatedPreferredPreparedInvocation = struct {
@@ -3193,6 +3229,34 @@ pub const SimulatedPreferredPreparedInvocation = struct {
         self.prepared.deinit(allocator);
         self.* = undefined;
     }
+
+    pub fn serialize(self: SimulatedPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.serialize(allocator);
+    }
+
+    pub fn toBase64(self: SimulatedPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.toBase64(allocator);
+    }
+
+    pub fn serializeMessage(self: SimulatedPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.serializeMessage(allocator);
+    }
+
+    pub fn messageToBase64(self: SimulatedPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.messageToBase64(allocator);
+    }
+
+    pub fn firstSignature(self: SimulatedPreferredPreparedInvocation) ?sdk.Signature {
+        return self.prepared.firstSignature();
+    }
+
+    pub fn allocResolvedInvocationJson(self: *const SimulatedPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocResolvedInvocationJson(allocator);
+    }
+
+    pub fn allocInstructionsJson(self: *const SimulatedPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocInstructionsJson(allocator);
+    }
 };
 
 pub const PreferredPreparedInvocationFee = struct {
@@ -3202,6 +3266,34 @@ pub const PreferredPreparedInvocationFee = struct {
     pub fn deinit(self: *PreferredPreparedInvocationFee, allocator: Allocator) void {
         self.prepared.deinit(allocator);
         self.* = undefined;
+    }
+
+    pub fn serialize(self: PreferredPreparedInvocationFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.serialize(allocator);
+    }
+
+    pub fn toBase64(self: PreferredPreparedInvocationFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.toBase64(allocator);
+    }
+
+    pub fn serializeMessage(self: PreferredPreparedInvocationFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.serializeMessage(allocator);
+    }
+
+    pub fn messageToBase64(self: PreferredPreparedInvocationFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.messageToBase64(allocator);
+    }
+
+    pub fn firstSignature(self: PreferredPreparedInvocationFee) ?sdk.Signature {
+        return self.prepared.firstSignature();
+    }
+
+    pub fn allocResolvedInvocationJson(self: *const PreferredPreparedInvocationFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocResolvedInvocationJson(allocator);
+    }
+
+    pub fn allocInstructionsJson(self: *const PreferredPreparedInvocationFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocInstructionsJson(allocator);
     }
 };
 
@@ -18523,6 +18615,96 @@ test "invoke.PreferredPreparedExecutionFee exposes transaction and message helpe
     try std.testing.expect(tx_base64.len != 0);
     try std.testing.expect(message_base64.len != 0);
     try std.testing.expect(fee_result.firstSignature() != null);
+}
+
+test "invoke.PreferredPreparedSignedTransaction exports canonical json helpers" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 722, 723, 724, 725, 726);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer prepared.deinit(allocator);
+
+    const resolved_json = try prepared.allocResolvedInvocationJson(allocator);
+    defer allocator.free(resolved_json);
+    const instructions_json = try prepared.allocInstructionsJson(allocator);
+    defer allocator.free(instructions_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, resolved_json, "\"address_lookup_tables\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resolved_json, "\"instructions\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"program_id\":\"") != null);
+}
+
+test "invoke.SentPreferredPreparedInvocation exports canonical json helpers" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn sendTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return error.UnexpectedLegacyCall;
+        }
+
+        pub fn sendVersionedTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return "sent-preferred-export";
+        }
+    };
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 727, 728, 729, 730, 731);
+    defer allocator.free(spec_json);
+
+    var rpc = DummyRpc{};
+    var sent = try sendOwnedPreferredPreparedInvocation(
+        allocator,
+        &rpc,
+        try buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
+            allocator,
+            DummyRpc{},
+            .program,
+            spec_json,
+            .{
+                .mode = .{
+                    .preferred_mode = .legacy,
+                    .allow_fallback = true,
+                },
+            },
+        ),
+        null,
+    );
+    defer sent.deinit(allocator);
+
+    const resolved_json = try sent.allocResolvedInvocationJson(allocator);
+    defer allocator.free(resolved_json);
+    const instructions_json = try sent.allocInstructionsJson(allocator);
+    defer allocator.free(instructions_json);
+
+    try std.testing.expectEqualStrings("sent-preferred-export", sent.signature);
+    try std.testing.expect(std.mem.indexOf(u8, resolved_json, "\"payer\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"accounts\":[") != null);
 }
 
 test "invoke.PreparedInvocation query helpers expose signer and program state" {
