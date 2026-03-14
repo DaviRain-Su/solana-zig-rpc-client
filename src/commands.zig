@@ -5701,7 +5701,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .spec_program_invoke) {
-        const invocation_spec_json = try buildProgramInvokeInvocationSpecJsonForCommand(
+        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
             allocator,
             command,
             invoke_payload_args.program_id_arg,
@@ -5720,13 +5720,22 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
+        defer owned_spec.deinit(allocator);
+
+        const invocation_spec_json = client.invoke.buildInvocationSpecJsonFromOwnedInvocationSpec(
+            allocator,
+            &owned_spec,
+        ) catch {
+            reportInvalidCliMessage("error: spec-program-invoke arguments are invalid\n", .{});
+            return error.InvalidCli;
+        };
         defer allocator.free(invocation_spec_json);
         try printInvocationSpecJson(invocation_spec_json);
         return;
     }
 
     if (command == .spec_instructions) {
-        const invocation_spec_json = try buildInstructionsInvocationSpecJsonForCommand(
+        var owned_spec = try buildInstructionsOwnedInvocationSpecForCommand(
             allocator,
             command,
             invoke_payload_args.instructions_spec_arg,
@@ -5735,13 +5744,22 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             program_invoke_additional_signer_secret_keys_arg,
             recent_blockhash_arg,
         );
+        defer owned_spec.deinit(allocator);
+
+        const invocation_spec_json = client.invoke.buildInvocationSpecJsonFromOwnedInvocationSpec(
+            allocator,
+            &owned_spec,
+        ) catch {
+            reportInvalidCliMessage("error: spec-instructions spec is invalid\n", .{});
+            return error.InvalidCli;
+        };
         defer allocator.free(invocation_spec_json);
         try printInvocationSpecJson(invocation_spec_json);
         return;
     }
 
     if (command == .spec_idl_invoke) {
-        const invocation_spec_json = try buildAnchorIdlInvokeInvocationSpecJsonForCommand(
+        var owned_spec = try buildAnchorIdlOwnedInvocationSpecForCommand(
             allocator,
             command,
             idl_spec_arg,
@@ -5761,6 +5779,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
+        defer owned_spec.deinit(allocator);
+
+        const invocation_spec_json = client.invoke.buildInvocationSpecJsonFromOwnedInvocationSpec(
+            allocator,
+            &owned_spec,
+        ) catch {
+            reportInvalidCliMessage("error: spec-idl-invoke arguments are invalid\n", .{});
+            return error.InvalidCli;
+        };
         defer allocator.free(invocation_spec_json);
         try printInvocationSpecJson(invocation_spec_json);
         return;
@@ -13423,12 +13450,21 @@ test "runCommand spec-program-invoke emits invocation spec json for schema args"
     const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
     defer allocator.free(captured);
 
+    const expected_program_id = try std.fmt.allocPrint(
+        allocator,
+        "\"program_id\":\"{s}\"",
+        .{program_id_base58},
+    );
+    defer allocator.free(expected_program_id);
+
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"payer_secret_key\":\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, captured, "\"program_id\":\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, captured, "\"accounts\":[") != null);
-    try std.testing.expect(std.mem.indexOf(u8, captured, "\"data_schema\":") != null);
-    try std.testing.expect(std.mem.indexOf(u8, captured, "\"args\":") != null);
-    try std.testing.expect(std.mem.indexOf(u8, captured, "\"schema_encoding\":\"borsh\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"recent_blockhash\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"instructions\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, expected_program_id) != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"data_bytes\":[1,7,0]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"data_schema\":") == null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"args\":") == null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"schema_encoding\":") == null);
 }
 
 test "runCommand explain-program-invoke emits json analysis for schema args" {
