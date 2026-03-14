@@ -732,6 +732,13 @@ pub const PreferredInvocationExecutionReport = struct {
     }
 };
 
+pub const PreferredInvocationModeResolution = struct {
+    requested_mode: ?InvocationMode,
+    selected_mode: ?InvocationMode,
+    requested_mode_buildable: bool,
+    used_fallback: bool,
+};
+
 pub const PreferredOwnedMessageExecutionResult = struct {
     execution_report: PreferredInvocationExecutionReport,
     message: OwnedInvocationMessage,
@@ -5319,6 +5326,37 @@ pub fn buildInvocationModeReportFromInvocationSpecJson(
     );
 }
 
+pub fn buildPreferredInvocationModeResolution(
+    mode_report: *const InvocationModeReport,
+    options: PreferredInvocationModeOptions,
+) PreferredInvocationModeResolution {
+    const requested_mode_buildable = if (options.preferred_mode) |requested_mode|
+        switch (requested_mode) {
+            .legacy => mode_report.legacy_buildable,
+            .versioned => mode_report.versioned_buildable,
+        }
+    else
+        false;
+
+    const selected_mode = blk: {
+        if (options.preferred_mode) |requested_mode| {
+            if (requested_mode_buildable) break :blk requested_mode;
+            if (!options.allow_fallback) break :blk null;
+        }
+        break :blk mode_report.preferred_mode;
+    };
+
+    return .{
+        .requested_mode = options.preferred_mode,
+        .selected_mode = selected_mode,
+        .requested_mode_buildable = requested_mode_buildable,
+        .used_fallback = if (options.preferred_mode) |requested_mode|
+            selected_mode != null and selected_mode.? != requested_mode
+        else
+            false,
+    };
+}
+
 fn resolvePreferredInvocationMode(
     allocator: Allocator,
     rpc: anytype,
@@ -5326,24 +5364,22 @@ fn resolvePreferredInvocationMode(
     invocation_spec_json: []const u8,
     options: BuildPreferredInvocationSpecOptions,
 ) !InvocationMode {
-    const mode_report = try buildInvocationModeReportFromInvocationSpecJson(
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
-        rpc,
         family,
         invocation_spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    const resolution = try buildPreferredInvocationModeResolutionFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        &owned_spec,
         options.build,
+        options.mode,
     );
 
-    if (options.mode.preferred_mode) |preferred_mode| {
-        if ((preferred_mode == .legacy and mode_report.legacy_buildable) or
-            (preferred_mode == .versioned and mode_report.versioned_buildable))
-        {
-            return preferred_mode;
-        }
-        if (!options.mode.allow_fallback) return error.NoBuildableInvocationMode;
-    }
-
-    return mode_report.preferred_mode orelse error.NoBuildableInvocationMode;
+    return resolution.selected_mode orelse error.NoBuildableInvocationMode;
 }
 
 pub fn buildPreferredOwnedMessageExecutionResultFromInvocationSpecJson(
@@ -5729,6 +5765,22 @@ pub fn buildPreferredInvocationReportFromOwnedInvocationSpec(
     };
 }
 
+pub fn buildPreferredInvocationModeResolutionFromOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: anytype,
+    owned_spec: *const OwnedInvocationSpec,
+    build_options: BuildInvocationSpecOptions,
+    mode_options: PreferredInvocationModeOptions,
+) !PreferredInvocationModeResolution {
+    const mode_report = try buildInvocationModeReportFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        owned_spec,
+        build_options,
+    );
+    return buildPreferredInvocationModeResolution(&mode_report, mode_options);
+}
+
 pub fn buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
     allocator: Allocator,
     rpc: anytype,
@@ -5747,34 +5799,16 @@ pub fn buildPreferredInvocationExecutionReportFromOwnedInvocationSpec(
         try cloneOwnedInvocationSpec(allocator, owned_spec),
     );
     errdefer report.deinit(allocator);
-
-    const requested_mode_buildable = if (options.mode.preferred_mode) |requested_mode|
-        switch (requested_mode) {
-            .legacy => mode_report.legacy_buildable,
-            .versioned => mode_report.versioned_buildable,
-        }
-    else
-        false;
-
-    const selected_mode = blk: {
-        if (options.mode.preferred_mode) |requested_mode| {
-            if (requested_mode_buildable) break :blk requested_mode;
-            if (!options.mode.allow_fallback) break :blk null;
-        }
-        break :blk mode_report.preferred_mode;
-    };
+    const mode_resolution = buildPreferredInvocationModeResolution(&mode_report, options.mode);
 
     return .{
         .mode_report = mode_report,
         .report = report,
-        .requested_mode = options.mode.preferred_mode,
-        .selected_mode = selected_mode,
-        .requested_mode_buildable = requested_mode_buildable,
-        .used_fallback = if (options.mode.preferred_mode) |requested_mode|
-            selected_mode != null and selected_mode.? != requested_mode
-        else
-            false,
-        .can_execute_selected_mode = selected_mode != null and report.can_execute,
+        .requested_mode = mode_resolution.requested_mode,
+        .selected_mode = mode_resolution.selected_mode,
+        .requested_mode_buildable = mode_resolution.requested_mode_buildable,
+        .used_fallback = mode_resolution.used_fallback,
+        .can_execute_selected_mode = mode_resolution.selected_mode != null and report.can_execute,
     };
 }
 
@@ -5916,6 +5950,22 @@ pub fn buildPreferredInvocationReportFromOwnedResolvedInvocationRef(
     );
 }
 
+pub fn buildPreferredInvocationModeResolutionFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    rpc: anytype,
+    resolved: *const OwnedResolvedInvocation,
+    build_options: BuildInvocationSpecOptions,
+    mode_options: PreferredInvocationModeOptions,
+) !PreferredInvocationModeResolution {
+    const mode_report = try buildInvocationModeReportFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        resolved,
+        build_options,
+    );
+    return buildPreferredInvocationModeResolution(&mode_report, mode_options);
+}
+
 pub fn buildPreferredInvocationExecutionReportFromOwnedResolvedInvocation(
     allocator: Allocator,
     rpc: anytype,
@@ -5937,34 +5987,16 @@ pub fn buildPreferredInvocationExecutionReportFromOwnedResolvedInvocation(
         try cloneOwnedResolvedInvocation(allocator, &owned_resolved),
     );
     errdefer report.deinit(allocator);
-
-    const requested_mode_buildable = if (options.mode.preferred_mode) |requested_mode|
-        switch (requested_mode) {
-            .legacy => mode_report.legacy_buildable,
-            .versioned => mode_report.versioned_buildable,
-        }
-    else
-        false;
-
-    const selected_mode = blk: {
-        if (options.mode.preferred_mode) |requested_mode| {
-            if (requested_mode_buildable) break :blk requested_mode;
-            if (!options.mode.allow_fallback) break :blk null;
-        }
-        break :blk mode_report.preferred_mode;
-    };
+    const mode_resolution = buildPreferredInvocationModeResolution(&mode_report, options.mode);
 
     return .{
         .mode_report = mode_report,
         .report = report,
-        .requested_mode = options.mode.preferred_mode,
-        .selected_mode = selected_mode,
-        .requested_mode_buildable = requested_mode_buildable,
-        .used_fallback = if (options.mode.preferred_mode) |requested_mode|
-            selected_mode != null and selected_mode.? != requested_mode
-        else
-            false,
-        .can_execute_selected_mode = selected_mode != null and report.can_execute,
+        .requested_mode = mode_resolution.requested_mode,
+        .selected_mode = mode_resolution.selected_mode,
+        .requested_mode_buildable = mode_resolution.requested_mode_buildable,
+        .used_fallback = mode_resolution.used_fallback,
+        .can_execute_selected_mode = mode_resolution.selected_mode != null and report.can_execute,
     };
 }
 
@@ -16196,6 +16228,37 @@ test "invoke.buildInvocationModeReportFromOwnedInvocationSpec prefers versioned 
     try std.testing.expectEqual(@as(?InvocationMode, .versioned), mode_report.preferred_mode);
 }
 
+test "invoke.buildPreferredInvocationModeResolutionFromOwnedInvocationSpec tracks fallback selection" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 601, 602, 603, 604, 605);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    const resolution = try buildPreferredInvocationModeResolutionFromOwnedInvocationSpec(
+        allocator,
+        DummyRpc{},
+        &owned_spec,
+        .{},
+        .{
+            .preferred_mode = .legacy,
+            .allow_fallback = true,
+        },
+    );
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), resolution.requested_mode);
+    try std.testing.expectEqual(@as(?InvocationMode, .versioned), resolution.selected_mode);
+    try std.testing.expect(!resolution.requested_mode_buildable);
+    try std.testing.expect(resolution.used_fallback);
+}
+
 test "invoke.buildPreferredInvocationExecutionReportFromOwnedInvocationSpec tracks fallback selection" {
     const allocator = std.testing.allocator;
     const DummyRpc = struct {};
@@ -16284,6 +16347,40 @@ test "invoke.buildInvocationModeReportFromOwnedResolvedInvocationRef prefers ver
     try std.testing.expect(!mode_report.legacy_buildable);
     try std.testing.expect(mode_report.versioned_buildable);
     try std.testing.expectEqual(@as(?InvocationMode, .versioned), mode_report.preferred_mode);
+}
+
+test "invoke.buildPreferredInvocationModeResolutionFromOwnedResolvedInvocationRef blocks fallback when disabled" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 606, 607, 608, 609, 610);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    const resolution = try buildPreferredInvocationModeResolutionFromOwnedResolvedInvocationRef(
+        allocator,
+        DummyRpc{},
+        &resolved,
+        .{},
+        .{
+            .preferred_mode = .legacy,
+            .allow_fallback = false,
+        },
+    );
+
+    try std.testing.expectEqual(@as(?InvocationMode, .legacy), resolution.requested_mode);
+    try std.testing.expectEqual(@as(?InvocationMode, null), resolution.selected_mode);
+    try std.testing.expect(!resolution.requested_mode_buildable);
+    try std.testing.expect(!resolution.used_fallback);
 }
 
 test "invoke.buildPreferredInvocationExecutionReportFromOwnedResolvedInvocationRef tracks fallback selection" {
