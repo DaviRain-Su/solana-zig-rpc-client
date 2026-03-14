@@ -3292,6 +3292,47 @@ fn loadCliInstructionSpecWithSenderAndAdditionalSigners(
     );
 }
 
+fn buildOwnedInvocationSpecFromLoadedCliInstructionSpec(
+    allocator: Allocator,
+    loaded: LoadedCliInstructionSpec,
+    recent_blockhash_arg: ?[]const u8,
+) !client.invoke.OwnedInvocationSpec {
+    var mutable = loaded;
+    errdefer mutable.deinit(allocator);
+
+    const recent_blockhash = if (recent_blockhash_arg) |value|
+        try client.Hash.fromBase58(allocator, value)
+    else
+        null;
+    const nonce_account = if (mutable.nonce_account) |value|
+        try client.Pubkey.fromBase58(allocator, value)
+    else
+        null;
+
+    if (mutable.nonce_account) |value| {
+        allocator.free(value);
+        mutable.nonce_account = null;
+    }
+
+    const signers = mutable.signers;
+    mutable.signers = &.{};
+    const owned_instructions = mutable.owned_instructions;
+    mutable.owned_instructions.instructions = &.{};
+    const address_lookup_tables = mutable.address_lookup_tables;
+    mutable.address_lookup_tables = &.{};
+    mutable.address_lookup_table_count = 0;
+
+    return .{
+        .payer = mutable.payer,
+        .signers = signers,
+        .owned_instructions = owned_instructions,
+        .address_lookup_tables = address_lookup_tables,
+        .recent_blockhash = recent_blockhash,
+        .nonce_account = nonce_account,
+        .nonce_authority = mutable.nonce_authority,
+    };
+}
+
 fn resolveInstructionKeypairSecretKeyBase58(
     allocator: Allocator,
     secret_key: ?[]const u8,
@@ -4117,28 +4158,56 @@ fn buildInstructionsOwnedInvocationSpecForCommand(
     additional_signer_secret_keys_arg: []const []const u8,
     recent_blockhash_arg: ?[]const u8,
 ) !client.invoke.OwnedInvocationSpec {
-    const invocation_spec_json = try buildInstructionsInvocationSpecJsonForCommand(
+    const command_label = if (lookupInvokeCommandSpec(command)) |spec|
+        spec.label
+    else switch (command) {
+        .invoke_instructions => "invoke-instructions",
+        .invoke_instructions_and_confirm => "invoke-instructions-and-confirm",
+        .invoke_instructions_simulate => "invoke-instructions-simulate",
+        .preview_instructions => "preview-instructions",
+        .explain_instructions => "explain-instructions",
+        .validate_instructions => "validate-instructions",
+        .prepare_instructions => "prepare-instructions",
+        .estimate_instructions_fee => "estimate-instructions-fee",
+        .spec_instructions => "spec-instructions",
+        else => unreachable,
+    };
+    const spec_arg = instructions_spec_arg orelse {
+        reportInvalidCliMessage("error: {s} requires <instruction-spec-json>\n", .{command_label});
+        return error.InvalidCli;
+    };
+    const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
+        reportInvalidCliMessage("error: {s} spec must be valid JSON or @path\n", .{command_label});
+        return error.InvalidCli;
+    };
+    defer allocator.free(spec_source);
+
+    const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
+        .ignore_unknown_fields = true,
+    }) catch {
+        reportInvalidCliMessage("error: {s} spec must be valid JSON\n", .{command_label});
+        return error.InvalidCli;
+    };
+    defer parsed_spec.deinit();
+
+    var loaded = loadCliInstructionSpecWithSenderAndAdditionalSigners(
         allocator,
-        command,
-        instructions_spec_arg,
+        &parsed_spec.value,
         effective_sender_keypair_path,
         sender_secret_key_arg,
         additional_signer_secret_keys_arg,
-        recent_blockhash_arg,
-    );
-    defer allocator.free(invocation_spec_json);
-
-    return client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
-        allocator,
-        .instructions,
-        invocation_spec_json,
     ) catch {
-        reportInvalidCliMessage("error: {s} spec is invalid\n", .{if (lookupInvokeCommandSpec(command)) |spec|
-            spec.label
-        else switch (command) {
-            .spec_instructions => "spec-instructions",
-            else => unreachable,
-        }});
+        reportInvalidCliMessage("error: {s} spec is invalid\n", .{command_label});
+        return error.InvalidCli;
+    };
+
+    return buildOwnedInvocationSpecFromLoadedCliInstructionSpec(
+        allocator,
+        loaded,
+        recent_blockhash_arg orelse parsed_spec.value.recent_blockhash,
+    ) catch {
+        loaded.deinit(allocator);
+        reportInvalidCliMessage("error: {s} spec is invalid\n", .{command_label});
         return error.InvalidCli;
     };
 }
