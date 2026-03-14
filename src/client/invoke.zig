@@ -2678,6 +2678,16 @@ pub const OwnedInvocationSpecParts = struct {
     nonce_authority: ?sdk.Pubkey = null,
 };
 
+pub const BorrowedInvocationSpecParts = struct {
+    payer: sdk.Pubkey,
+    signers: []const sdk.Keypair,
+    instructions: []const sdk.Instruction,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    recent_blockhash: ?sdk.Hash = null,
+    nonce_account: ?sdk.Pubkey = null,
+    nonce_authority: ?sdk.Pubkey = null,
+};
+
 pub fn buildOwnedInvocationSpecFromOwnedParts(
     parts: OwnedInvocationSpecParts,
 ) !OwnedInvocationSpec {
@@ -2694,6 +2704,50 @@ pub fn buildOwnedInvocationSpecFromOwnedParts(
         .nonce_account = parts.nonce_account,
         .nonce_authority = parts.nonce_authority,
     };
+}
+
+pub fn buildOwnedInvocationSpecFromBorrowedParts(
+    allocator: Allocator,
+    parts: BorrowedInvocationSpecParts,
+) !OwnedInvocationSpec {
+    const signers = try allocator.dupe(sdk.Keypair, parts.signers);
+    errdefer allocator.free(signers);
+
+    var owned_instructions = try sdk.cloneInstructions(
+        allocator,
+        parts.instructions,
+    );
+    errdefer owned_instructions.deinit(allocator);
+
+    const address_lookup_tables = try allocator.alloc(
+        sdk.AddressLookupTableAccount,
+        parts.address_lookup_tables.len,
+    );
+    errdefer allocator.free(address_lookup_tables);
+    var initialized_tables_len: usize = 0;
+    errdefer {
+        for (address_lookup_tables[0..initialized_tables_len]) |table| {
+            allocator.free(table.addresses);
+        }
+        allocator.free(address_lookup_tables);
+    }
+    for (parts.address_lookup_tables, 0..) |table, index| {
+        address_lookup_tables[index] = .{
+            .account_key = table.account_key,
+            .addresses = try allocator.dupe(sdk.Pubkey, table.addresses),
+        };
+        initialized_tables_len += 1;
+    }
+
+    return buildOwnedInvocationSpecFromOwnedParts(.{
+        .payer = parts.payer,
+        .signers = signers,
+        .owned_instructions = owned_instructions,
+        .address_lookup_tables = address_lookup_tables,
+        .recent_blockhash = parts.recent_blockhash,
+        .nonce_account = parts.nonce_account,
+        .nonce_authority = parts.nonce_authority,
+    });
 }
 
 pub const BuildInvocationSpecJsonFromOwnedInvocationSpecError =
@@ -3042,44 +3096,15 @@ fn cloneOwnedInvocationSpec(
     allocator: Allocator,
     source: *const OwnedInvocationSpec,
 ) !OwnedInvocationSpec {
-    const signers = try allocator.dupe(sdk.Keypair, source.signers);
-    errdefer allocator.free(signers);
-
-    var owned_instructions = try sdk.cloneInstructions(
-        allocator,
-        source.owned_instructions.instructions,
-    );
-    errdefer owned_instructions.deinit(allocator);
-
-    const address_lookup_tables = try allocator.alloc(
-        sdk.AddressLookupTableAccount,
-        source.address_lookup_tables.len,
-    );
-    errdefer allocator.free(address_lookup_tables);
-    var initialized_tables_len: usize = 0;
-    errdefer {
-        for (address_lookup_tables[0..initialized_tables_len]) |table| {
-            allocator.free(table.addresses);
-        }
-        allocator.free(address_lookup_tables);
-    }
-    for (source.address_lookup_tables, 0..) |table, index| {
-        address_lookup_tables[index] = .{
-            .account_key = table.account_key,
-            .addresses = try allocator.dupe(sdk.Pubkey, table.addresses),
-        };
-        initialized_tables_len += 1;
-    }
-
-    return .{
+    return buildOwnedInvocationSpecFromBorrowedParts(allocator, .{
         .payer = source.payer,
-        .signers = signers,
-        .owned_instructions = owned_instructions,
-        .address_lookup_tables = address_lookup_tables,
+        .signers = source.signers,
+        .instructions = source.owned_instructions.instructions,
+        .address_lookup_tables = source.address_lookup_tables,
         .recent_blockhash = source.recent_blockhash,
         .nonce_account = source.nonce_account,
         .nonce_authority = source.nonce_authority,
-    };
+    });
 }
 
 fn cloneOwnedResolvedInvocation(
