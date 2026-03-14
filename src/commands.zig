@@ -4536,6 +4536,8 @@ const InspectSection = enum {
     mode_report,
     mode_resolution,
     analysis,
+    instructions,
+    resolved,
 };
 
 fn parseInspectSectionArg(section_arg: ?[]const u8) !InspectSection {
@@ -4553,7 +4555,9 @@ fn parseInspectSectionArg(section_arg: ?[]const u8) !InspectSection {
     if (std.mem.eql(u8, raw, "mode-report")) return .mode_report;
     if (std.mem.eql(u8, raw, "mode-resolution")) return .mode_resolution;
     if (std.mem.eql(u8, raw, "analysis")) return .analysis;
-    reportInvalidCliMessage("error: --inspect-section must be inspection, report, accounts, signers, summary, plan, preflight, validation, lookup-coverage, diagnostics, mode-report, mode-resolution, or analysis\n", .{});
+    if (std.mem.eql(u8, raw, "instructions")) return .instructions;
+    if (std.mem.eql(u8, raw, "resolved")) return .resolved;
+    reportInvalidCliMessage("error: --inspect-section must be inspection, report, accounts, signers, summary, plan, preflight, validation, lookup-coverage, diagnostics, mode-report, mode-resolution, analysis, instructions, or resolved\n", .{});
     return error.InvalidCli;
 }
 
@@ -4819,9 +4823,25 @@ fn emitInvocationInspectSection(
                 .{ .mode = preferred_invocation_mode_options },
             );
         },
+        .instructions => {
+            const json = try client.invoke.buildInstructionsJsonFromOwnedInvocationSpec(
+                allocator,
+                owned_spec,
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        },
+        .resolved => {
+            const json = try client.invoke.buildResolvedInvocationJsonFromOwnedInvocationSpecRef(
+                allocator,
+                owned_spec,
+            );
+            defer allocator.free(json);
+            try stdout_writer.interface.print("{s}\n", .{json});
+        },
     }
 
-    if (!output_json) try stdout_writer.interface.writeAll("\n");
+    if (!output_json and section != .instructions and section != .resolved) try stdout_writer.interface.writeAll("\n");
     try stdout_writer.interface.flush();
 }
 
@@ -14680,6 +14700,144 @@ test "runCommand inspect-program-invoke emits mode resolution section json" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"auto\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
+}
+
+test "runCommand inspect-program-invoke emits instructions section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-program-invoke-instructions-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{102} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 201);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{33} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_pubkey = client.Pubkey.fromBytes(.{34} ** 32);
+    const account_pubkey_base58 = try account_pubkey.toBase58(allocator);
+    defer allocator.free(account_pubkey_base58);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"is_writable\":true}}]",
+        .{account_pubkey_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-program-invoke",
+        "--json",
+        "--inspect-section",
+        "instructions",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        program_id_base58,
+        accounts_json,
+        "[]",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "[{\"program_id\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"accounts\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"data_bytes\":[") != null);
+}
+
+test "runCommand inspect-program-invoke emits resolved section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-program-invoke-resolved-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{103} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 221);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{35} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_pubkey = client.Pubkey.fromBytes(.{36} ** 32);
+    const account_pubkey_base58 = try account_pubkey.toBase58(allocator);
+    defer allocator.free(account_pubkey_base58);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"is_writable\":true}}]",
+        .{account_pubkey_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-program-invoke",
+        "--json",
+        "--inspect-section",
+        "resolved",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        program_id_base58,
+        accounts_json,
+        "[]",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"payer\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"signer_pubkeys\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"instructions\":[") != null);
 }
 
 test "runCommand validate-spec fails on missing required signer" {

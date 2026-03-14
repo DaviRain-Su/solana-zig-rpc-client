@@ -119,7 +119,7 @@ const cli_option_help_params = clap.parseParamsComptime(
     \\    --additional-signer-secret-key <additional-signer-secret-key> Additional signer secret key (base58, repeatable)
     \\    --invoke-mode <mode>               Preferred invocation mode: auto|legacy|versioned (invoke/explain/preview/validate/prepare/estimate/spec commands)
     \\    --no-mode-fallback                 Disable automatic legacy/versioned fallback for invoke/explain/preview/validate/prepare/estimate/spec commands
-    \\    --inspect-section <section>        Inspect output section: inspection|report|accounts|signers|summary|plan|preflight|validation|lookup-coverage|diagnostics|mode-report|mode-resolution|analysis (inspect commands)
+    \\    --inspect-section <section>        Inspect output section: inspection|report|accounts|signers|summary|plan|preflight|validation|lookup-coverage|diagnostics|mode-report|mode-resolution|analysis|instructions|resolved (inspect commands)
     \\    --data-schema-json <json|@path>    Program-invoke instruction data schema JSON (used with --args-json)
     \\    --args-json <json|@path>           Program-invoke instruction args JSON (used with --data-schema-json)
     \\    --schema-encoding <encoding>       Program-invoke schema encoding (currently borsh)
