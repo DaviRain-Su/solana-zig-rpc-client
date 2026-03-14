@@ -5759,6 +5759,47 @@ pub fn allocPreferredPreparedInvocationJsonFromInvocationSpecJson(
     return try allocPreferredPreparedInvocationJson(allocator, &prepared);
 }
 
+pub fn writePreparedInvocationTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    options: BuildInvocationSpecOptions,
+) !void {
+    var prepared = try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        rpc,
+        family,
+        versioned,
+        invocation_spec_json,
+        options,
+    );
+    defer prepared.deinit(allocator);
+    try writePreparedInvocationText(writer, allocator, &prepared);
+}
+
+pub fn allocPreparedInvocationJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    versioned: bool,
+    invocation_spec_json: []const u8,
+    options: BuildInvocationSpecOptions,
+) ![]u8 {
+    var prepared = try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        rpc,
+        family,
+        versioned,
+        invocation_spec_json,
+        options,
+    );
+    defer prepared.deinit(allocator);
+    return try allocPreparedInvocationJson(allocator, &prepared);
+}
+
 pub fn buildPreparedInvocationFromOwnedInvocationSpec(
     allocator: Allocator,
     rpc: anytype,
@@ -16504,6 +16545,27 @@ test "invoke.allocPreparedInvocationJsonFromOwnedInvocationSpecRef emits generic
         DummyRpc{},
         false,
         &owned_spec,
+        .{},
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"transaction_base64\":\"") != null);
+}
+
+test "invoke.allocPreparedInvocationJsonFromInvocationSpecJson emits generic prepared fields" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 393, 394, 395);
+    defer allocator.free(spec_json);
+
+    const json = try allocPreparedInvocationJsonFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        false,
+        spec_json,
         .{},
     );
     defer allocator.free(json);
