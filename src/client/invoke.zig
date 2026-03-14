@@ -5068,6 +5068,44 @@ pub fn allocSentPreparedInvocationJsonFromOwnedInvocationSpec(
     return try allocSentPreparedInvocationJson(allocator, &sent);
 }
 
+pub fn writeSentPreparedInvocationTextFromOwnedInvocationSpecRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: *const OwnedInvocationSpec,
+    options: SendInvocationSpecOptions,
+    confirmed: bool,
+) !void {
+    var sent = try sendPreparedInvocationFromOwnedInvocationSpecRef(
+        allocator,
+        rpc,
+        versioned,
+        owned_spec,
+        options,
+    );
+    defer sent.deinit(allocator);
+    try writeSentPreparedInvocationText(writer, allocator, &sent, confirmed);
+}
+
+pub fn allocSentPreparedInvocationJsonFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: *const OwnedInvocationSpec,
+    options: SendInvocationSpecOptions,
+) ![]u8 {
+    var sent = try sendPreparedInvocationFromOwnedInvocationSpecRef(
+        allocator,
+        rpc,
+        versioned,
+        owned_spec,
+        options,
+    );
+    defer sent.deinit(allocator);
+    return try allocSentPreparedInvocationJson(allocator, &sent);
+}
+
 pub fn writeSimulatedPreparedInvocationTextFromOwnedInvocationSpec(
     writer: *std.Io.Writer,
     allocator: Allocator,
@@ -5105,6 +5143,43 @@ pub fn allocSimulatedPreparedInvocationJsonFromOwnedInvocationSpec(
     return try allocSimulatedPreparedInvocationJson(allocator, &simulated);
 }
 
+pub fn writeSimulatedPreparedInvocationTextFromOwnedInvocationSpecRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: *const OwnedInvocationSpec,
+    options: SimulateInvocationSpecOptions,
+) !void {
+    var simulated = try simulatePreparedInvocationFromOwnedInvocationSpecRef(
+        allocator,
+        rpc,
+        versioned,
+        owned_spec,
+        options,
+    );
+    defer simulated.deinit(allocator);
+    try writeSimulatedPreparedInvocationText(writer, allocator, &simulated);
+}
+
+pub fn allocSimulatedPreparedInvocationJsonFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: *const OwnedInvocationSpec,
+    options: SimulateInvocationSpecOptions,
+) ![]u8 {
+    var simulated = try simulatePreparedInvocationFromOwnedInvocationSpecRef(
+        allocator,
+        rpc,
+        versioned,
+        owned_spec,
+        options,
+    );
+    defer simulated.deinit(allocator);
+    return try allocSimulatedPreparedInvocationJson(allocator, &simulated);
+}
+
 pub fn writePreparedInvocationFeeTextFromOwnedInvocationSpec(
     writer: *std.Io.Writer,
     allocator: Allocator,
@@ -5132,6 +5207,43 @@ pub fn allocPreparedInvocationFeeJsonFromOwnedInvocationSpec(
     options: GetFeeForInvocationSpecOptions,
 ) ![]u8 {
     var fee_result = try getFeeForOwnedPreparedInvocationFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        versioned,
+        owned_spec,
+        options,
+    );
+    defer fee_result.deinit(allocator);
+    return try allocPreparedInvocationFeeJson(allocator, &fee_result);
+}
+
+pub fn writePreparedInvocationFeeTextFromOwnedInvocationSpecRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: *const OwnedInvocationSpec,
+    options: GetFeeForInvocationSpecOptions,
+) !void {
+    var fee_result = try getFeeForPreparedInvocationFromOwnedInvocationSpecRef(
+        allocator,
+        rpc,
+        versioned,
+        owned_spec,
+        options,
+    );
+    defer fee_result.deinit(allocator);
+    try writePreparedInvocationFeeText(writer, allocator, &fee_result);
+}
+
+pub fn allocPreparedInvocationFeeJsonFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    owned_spec: *const OwnedInvocationSpec,
+    options: GetFeeForInvocationSpecOptions,
+) ![]u8 {
+    var fee_result = try getFeeForPreparedInvocationFromOwnedInvocationSpecRef(
         allocator,
         rpc,
         versioned,
@@ -12256,6 +12368,110 @@ test "invoke.writePreparedInvocationFeeTextFromOwnedInvocationSpec emits fee tex
 
     try std.testing.expect(std.mem.indexOf(u8, text, "mode: legacy") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "fee: 889") != null);
+}
+
+test "invoke.allocSentPreparedInvocationJsonFromOwnedInvocationSpecRef emits signature fields" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn sendTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return try allocator.dupe(u8, "typed-explicit-send-ref");
+        }
+
+        pub fn sendVersionedTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return error.UnexpectedVersionedCall;
+        }
+    };
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 250, 251, 252);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    const json = try allocSentPreparedInvocationJsonFromOwnedInvocationSpecRef(
+        allocator,
+        DummyRpc{},
+        false,
+        &owned_spec,
+        .{},
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"signature\":\"typed-explicit-send-ref\"") != null);
+}
+
+test "invoke.writePreparedInvocationFeeTextFromOwnedInvocationSpecRef emits fee text" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn getFeeForMessageTyped(
+            self: *@This(),
+            message: sdk.LegacyMessage,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = message;
+            _ = commitment;
+            return .{ .value = 991 };
+        }
+
+        pub fn getFeeForVersionedMessageTyped(
+            self: *@This(),
+            message: sdk.VersionedMessageV0,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = message;
+            _ = commitment;
+            return error.UnexpectedVersionedCall;
+        }
+    };
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 253, 254, 255);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+
+    try writePreparedInvocationFeeTextFromOwnedInvocationSpecRef(
+        &aw.writer,
+        allocator,
+        DummyRpc{},
+        false,
+        &owned_spec,
+        .{},
+    );
+
+    const text = try aw.toOwnedSlice();
+    defer allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "mode: legacy") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "fee: 991") != null);
 }
 
 test "invoke.buildLegacyMessageBytesFromOwnedInvocationSpecWithOptions matches explicit json builder" {
