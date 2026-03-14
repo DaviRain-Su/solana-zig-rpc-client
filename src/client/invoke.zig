@@ -5030,6 +5030,27 @@ pub fn buildPreferredInvocationDiagnosticsFromOwnedResolvedInvocation(
     return try buildInvocationDiagnosticsFromPreferredExecutionReport(allocator, &report);
 }
 
+pub fn buildPreferredInvocationDiagnosticsFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !OwnedInvocationDiagnostics {
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+    return try buildPreferredInvocationDiagnosticsFromOwnedInvocationSpec(
+        allocator,
+        rpc,
+        &owned_spec,
+        options,
+    );
+}
+
 pub fn writePreferredInvocationDiagnosticsTextFromOwnedInvocationSpec(
     writer: *std.Io.Writer,
     allocator: Allocator,
@@ -5041,6 +5062,25 @@ pub fn writePreferredInvocationDiagnosticsTextFromOwnedInvocationSpec(
         allocator,
         rpc,
         owned_spec,
+        options,
+    );
+    defer diagnostics.deinit(allocator);
+    try writeInvocationDiagnosticsText(writer, diagnostics);
+}
+
+pub fn writePreferredInvocationDiagnosticsTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) !void {
+    var diagnostics = try buildPreferredInvocationDiagnosticsFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
         options,
     );
     defer diagnostics.deinit(allocator);
@@ -5074,6 +5114,36 @@ pub fn allocPreferredInvocationDiagnosticsJsonFromOwnedInvocationSpec(
         allocator,
         rpc,
         owned_spec,
+        options,
+    );
+    defer diagnostics.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+
+    var first = true;
+    try aw.writer.writeAll("{");
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+    try writeJsonDiagnosticsField(&aw.writer, &first, diagnostics);
+    try aw.writer.writeAll("}");
+
+    return try aw.toOwnedSlice();
+}
+
+pub fn allocPreferredInvocationDiagnosticsJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+    options: BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var diagnostics = try buildPreferredInvocationDiagnosticsFromInvocationSpecJson(
+        allocator,
+        rpc,
+        family,
+        invocation_spec_json,
         options,
     );
     defer diagnostics.deinit(allocator);
@@ -5302,6 +5372,61 @@ pub fn buildInvocationDiagnosticsFromOwnedInvocationSpecRef(
     var report = try buildInvocationReportFromOwnedInvocationSpecRef(allocator, owned_spec);
     defer report.deinit(allocator);
     return try buildInvocationDiagnosticsFromReport(allocator, &report);
+}
+
+pub fn buildInvocationDiagnosticsFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !OwnedInvocationDiagnostics {
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+    return try buildInvocationDiagnosticsFromOwnedInvocationSpecRef(allocator, &owned_spec);
+}
+
+pub fn writeInvocationDiagnosticsTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !void {
+    var diagnostics = try buildInvocationDiagnosticsFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer diagnostics.deinit(allocator);
+    try writeInvocationDiagnosticsText(writer, diagnostics);
+}
+
+pub fn allocInvocationDiagnosticsJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) ![]u8 {
+    var diagnostics = try buildInvocationDiagnosticsFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer diagnostics.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+
+    var first = true;
+    try aw.writer.writeAll("{");
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_error_count", diagnostics.errorCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_warning_count", diagnostics.warningCount());
+    try writeJsonUsizeField(&aw.writer, &first, "diagnostic_info_count", diagnostics.infoCount());
+    try writeJsonDiagnosticsField(&aw.writer, &first, diagnostics);
+    try aw.writer.writeAll("}");
+
+    return try aw.toOwnedSlice();
 }
 
 pub fn buildInvocationModeReportFromInvocationSpecJson(
@@ -11783,6 +11908,24 @@ test "invoke.buildInvocationDiagnosticsFromOwnedResolvedInvocationRef reuses bor
     try std.testing.expect(saw_duplicate_lookup_tables);
 }
 
+test "invoke.allocInvocationDiagnosticsJsonFromInvocationSpecJson emits diagnostic json" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithDuplicateSignerAndLookupTable(allocator, 595, 596, 597, 598, 599, 600);
+    defer allocator.free(spec_json);
+
+    const json = try allocInvocationDiagnosticsJsonFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"diagnostic_error_count\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"code\":\"duplicate_signers\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"code\":\"duplicate_lookup_tables\"") != null);
+}
+
 test "invoke.buildPreferredInvocationDiagnosticsFromOwnedInvocationSpec preserves preferred diagnostics" {
     const allocator = std.testing.allocator;
     const DummyRpc = struct {};
@@ -11816,6 +11959,31 @@ test "invoke.buildPreferredInvocationDiagnosticsFromOwnedInvocationSpec preserve
     }
 
     try std.testing.expect(saw_no_buildable_mode);
+}
+
+test "invoke.allocPreferredInvocationDiagnosticsJsonFromInvocationSpecJson emits diagnostic json" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 601, 602, 603, 604, 605);
+    defer allocator.free(spec_json);
+
+    const json = try allocPreferredInvocationDiagnosticsJsonFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = false,
+            },
+        },
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"diagnostic_error_count\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"code\":\"no_buildable_mode\"") != null);
 }
 
 test "invoke.allocPreferredInvocationDiagnosticsJsonFromOwnedInvocationSpec emits diagnostic json" {
