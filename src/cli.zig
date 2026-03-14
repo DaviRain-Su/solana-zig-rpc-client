@@ -102,7 +102,7 @@ const cli_option_help_params = clap.parseParamsComptime(
     \\    --limit <count>                     Maximum results to return (signatures-for-address)
     \\    --min-context-slot <slot>           Minimum context slot (send commands, signatures-for-address, account/program queries, or token-account)
     \\    --search-transaction-history        Search transaction history for status and confirmation queries
-    \\    --json                             Print invoke, explain, preview, validate, prepare, estimate, or spec command output as JSON
+    \\    --json                             Print invoke, inspect, explain, preview, validate, prepare, estimate, or spec command output as JSON
     \\    --skip-preflight                    Skip tx preflight checks (send commands)
     \\    --sig-verify                        Verify signatures during simulation (simulate-transaction)
     \\    --replace-recent-blockhash          Replace recent blockhash during simulation
@@ -740,6 +740,7 @@ const command_usage_entries = [_]CommandUsageEntry{
     .{ .command = .preview_spec, .style = .invocation_spec, .parse_style = .instruction },
     .{ .command = .explain_spec, .style = .invocation_spec, .parse_style = .instruction },
     .{ .command = .validate_spec, .style = .invocation_spec, .parse_style = .instruction },
+    .{ .command = .inspect_spec, .style = .invocation_spec, .parse_style = .instruction },
     .{ .command = .prepare_spec, .style = .invocation_spec, .parse_style = .instruction },
     .{ .command = .estimate_spec_fee, .style = .invocation_spec, .parse_style = .instruction },
     .{ .command = .send_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]", .parse_style = .program_invoke_legacy },
@@ -1660,6 +1661,7 @@ pub const Command = enum {
     preview_spec,
     explain_spec,
     validate_spec,
+    inspect_spec,
     prepare_spec,
     estimate_spec_fee,
     send_program_invoke,
@@ -1835,6 +1837,7 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "preview-spec <invocation-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "explain-spec <invocation-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "validate-spec <invocation-spec-json|@path>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "inspect-spec <invocation-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "prepare-spec <invocation-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "estimate-spec-fee <invocation-spec-json|@path>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
@@ -2254,6 +2257,21 @@ test "cli.parseCliArgs parses preview-spec spec" {
     defer parsed.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(Command.preview_spec, parsed.command);
+    try std.testing.expectEqualStrings(
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+        parsed.instructions_spec_arg orelse "",
+    );
+}
+
+test "cli.parseCliArgs parses inspect-spec spec" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "inspect-spec",
+        "--json",
+        "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.inspect_spec, parsed.command);
     try std.testing.expectEqualStrings(
         "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
         parsed.instructions_spec_arg orelse "",

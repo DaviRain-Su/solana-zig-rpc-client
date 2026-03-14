@@ -3915,6 +3915,7 @@ fn buildProvidedInvocationSpecJsonForCommand(
         .preview_spec => "preview-spec",
         .explain_spec => "explain-spec",
         .validate_spec => "validate-spec",
+        .inspect_spec => "inspect-spec",
         .prepare_spec => "prepare-spec",
         .estimate_spec_fee => "estimate-spec-fee",
         else => unreachable,
@@ -3952,6 +3953,7 @@ fn buildProvidedOwnedInvocationSpecForCommand(
             .preview_spec => "preview-spec",
             .explain_spec => "explain-spec",
             .validate_spec => "validate-spec",
+            .inspect_spec => "inspect-spec",
             .prepare_spec => "prepare-spec",
             .estimate_spec_fee => "estimate-spec-fee",
             else => unreachable,
@@ -5315,6 +5317,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .preview_spec and
         command != .explain_spec and
         command != .validate_spec and
+        command != .inspect_spec and
         command != .prepare_spec and
         command != .estimate_spec_fee and
         command != .invoke_program_invoke and
@@ -5336,7 +5339,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .estimate_idl_invoke_fee and
         command != .spec_idl_invoke)
     {
-        reportInvalidCliMessage("error: --json requires invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, prepare-instructions, estimate-instructions-fee, spec-instructions, invoke-spec, invoke-spec-and-confirm, invoke-spec-simulate, preview-spec, explain-spec, validate-spec, prepare-spec, estimate-spec-fee, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, spec-program-invoke, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, prepare-idl-invoke, estimate-idl-invoke-fee, or spec-idl-invoke\n", .{});
+        reportInvalidCliMessage("error: --json requires invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, prepare-instructions, estimate-instructions-fee, spec-instructions, invoke-spec, invoke-spec-and-confirm, invoke-spec-simulate, preview-spec, explain-spec, validate-spec, inspect-spec, prepare-spec, estimate-spec-fee, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, spec-program-invoke, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, prepare-idl-invoke, estimate-idl-invoke-fee, or spec-idl-invoke\n", .{});
         return error.InvalidCli;
     }
 
@@ -6061,6 +6064,37 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         defer result.deinit(allocator);
 
         try emitPreferredFeeExecutionResult(allocator, &result, output_json);
+        return;
+    }
+
+    if (command == .inspect_spec) {
+        var owned_spec = try buildProvidedOwnedInvocationSpecForCommand(
+            allocator,
+            command,
+            instructions_spec_arg,
+        );
+        defer owned_spec.deinit(allocator);
+
+        var inspection = client.invoke.buildInvocationInspectionFromOwnedInvocationSpecRef(
+            allocator,
+            &owned_spec,
+        ) catch return error.InvalidCli;
+        defer inspection.deinit(allocator);
+
+        var stdout_buffer: [4096]u8 = undefined;
+        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+
+        if (output_json) {
+            const inspection_json = try client.invoke.allocInvocationInspectionJson(
+                allocator,
+                inspection,
+            );
+            defer allocator.free(inspection_json);
+            try stdout_writer.interface.print("{s}\n", .{inspection_json});
+        } else {
+            try client.invoke.writeInvocationInspectionText(&stdout_writer.interface, allocator, inspection);
+        }
+        try stdout_writer.interface.flush();
         return;
     }
 
@@ -6816,6 +6850,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         .preview_spec => unreachable,
         .explain_spec => unreachable,
         .validate_spec => unreachable,
+        .inspect_spec => unreachable,
         .prepare_spec => unreachable,
         .estimate_spec_fee => unreachable,
         .invoke_program_invoke => unreachable,
@@ -13775,6 +13810,69 @@ test "runCommand prepare-spec emits json prepared invocation" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"legacy\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"transaction_base64\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"message_base64\":\"") != null);
+}
+
+test "runCommand inspect-spec emits json inspection sections" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-spec-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{96} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 91);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{16} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_pubkey = client.Pubkey.fromBytes(.{17} ** 32);
+    const account_pubkey_base58 = try account_pubkey.toBase58(allocator);
+    defer allocator.free(account_pubkey_base58);
+
+    const invocation_spec_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"payer_secret_key\":\"{s}\",\"recent_blockhash\":\"{s}\",\"instructions\":[{{\"program_id\":\"{s}\",\"accounts\":[{{\"pubkey\":\"{s}\",\"is_writable\":true}}],\"data_bytes\":[4,5,6]}}]}}",
+        .{ payer_secret_key_base58, recent_blockhash, program_id_base58, account_pubkey_base58 },
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-spec",
+        "--json",
+        invocation_spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"report\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"accounts\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostics\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"can_execute\":true") != null);
 }
 
 test "runCommand validate-spec fails on missing required signer" {
