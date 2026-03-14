@@ -133,6 +133,88 @@ pub const OwnedResolvedInvocation = struct {
     }
 };
 
+pub const OwnedResolvedInvocationParts = struct {
+    payer: sdk.Pubkey,
+    signer_pubkeys: []sdk.Pubkey,
+    owned_instructions: sdk.OwnedInstructions,
+    address_lookup_tables: []sdk.AddressLookupTableAccount = &.{},
+    recent_blockhash: ?sdk.Hash = null,
+    nonce_account: ?sdk.Pubkey = null,
+    nonce_authority: ?sdk.Pubkey = null,
+};
+
+pub const BorrowedResolvedInvocationParts = struct {
+    payer: sdk.Pubkey,
+    signer_pubkeys: []const sdk.Pubkey,
+    instructions: []const sdk.Instruction,
+    address_lookup_tables: []const sdk.AddressLookupTableAccount = &.{},
+    recent_blockhash: ?sdk.Hash = null,
+    nonce_account: ?sdk.Pubkey = null,
+    nonce_authority: ?sdk.Pubkey = null,
+};
+
+pub fn buildOwnedResolvedInvocationFromOwnedParts(
+    parts: OwnedResolvedInvocationParts,
+) !OwnedResolvedInvocation {
+    if (parts.recent_blockhash != null and parts.nonce_account != null) {
+        return error.ConflictingRecentBlockhashAndNonce;
+    }
+
+    return .{
+        .payer = parts.payer,
+        .signer_pubkeys = parts.signer_pubkeys,
+        .owned_instructions = parts.owned_instructions,
+        .address_lookup_tables = parts.address_lookup_tables,
+        .recent_blockhash = parts.recent_blockhash,
+        .nonce_account = parts.nonce_account,
+        .nonce_authority = parts.nonce_authority,
+    };
+}
+
+pub fn buildOwnedResolvedInvocationFromBorrowedParts(
+    allocator: Allocator,
+    parts: BorrowedResolvedInvocationParts,
+) !OwnedResolvedInvocation {
+    const signer_pubkeys = try allocator.dupe(sdk.Pubkey, parts.signer_pubkeys);
+    errdefer allocator.free(signer_pubkeys);
+
+    var owned_instructions = try sdk.cloneInstructions(
+        allocator,
+        parts.instructions,
+    );
+    errdefer owned_instructions.deinit(allocator);
+
+    const address_lookup_tables = try allocator.alloc(
+        sdk.AddressLookupTableAccount,
+        parts.address_lookup_tables.len,
+    );
+    errdefer allocator.free(address_lookup_tables);
+    var initialized_tables_len: usize = 0;
+    errdefer {
+        for (address_lookup_tables[0..initialized_tables_len]) |table| {
+            allocator.free(table.addresses);
+        }
+        allocator.free(address_lookup_tables);
+    }
+    for (parts.address_lookup_tables, 0..) |table, index| {
+        address_lookup_tables[index] = .{
+            .account_key = table.account_key,
+            .addresses = try allocator.dupe(sdk.Pubkey, table.addresses),
+        };
+        initialized_tables_len += 1;
+    }
+
+    return buildOwnedResolvedInvocationFromOwnedParts(.{
+        .payer = parts.payer,
+        .signer_pubkeys = signer_pubkeys,
+        .owned_instructions = owned_instructions,
+        .address_lookup_tables = address_lookup_tables,
+        .recent_blockhash = parts.recent_blockhash,
+        .nonce_account = parts.nonce_account,
+        .nonce_authority = parts.nonce_authority,
+    });
+}
+
 pub const InvocationAccountInfo = struct {
     pubkey: sdk.Pubkey,
     is_signer: bool = false,
@@ -3081,7 +3163,7 @@ fn buildOwnedResolvedInvocationFromOwnedSpec(
     allocator.free(mutable.signers);
     mutable.signers = &.{};
 
-    return .{
+    return buildOwnedResolvedInvocationFromOwnedParts(.{
         .payer = mutable.payer,
         .signer_pubkeys = signer_pubkeys,
         .owned_instructions = owned_instructions,
@@ -3089,7 +3171,7 @@ fn buildOwnedResolvedInvocationFromOwnedSpec(
         .recent_blockhash = mutable.recent_blockhash,
         .nonce_account = mutable.nonce_account,
         .nonce_authority = mutable.nonce_authority,
-    };
+    });
 }
 
 fn cloneOwnedInvocationSpec(
