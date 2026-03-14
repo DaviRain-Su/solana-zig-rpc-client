@@ -4355,6 +4355,42 @@ pub fn buildInvocationDiagnosticsFromPreferredExecutionReport(
     };
 }
 
+pub fn buildInvocationDiagnosticsFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    resolved: OwnedResolvedInvocation,
+) !OwnedInvocationDiagnostics {
+    var report = try buildInvocationReportFromOwnedResolvedInvocation(allocator, resolved);
+    defer report.deinit(allocator);
+    return try buildInvocationDiagnosticsFromReport(allocator, &report);
+}
+
+pub fn buildInvocationDiagnosticsFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !OwnedInvocationDiagnostics {
+    var report = try buildInvocationReportFromOwnedResolvedInvocationRef(allocator, resolved);
+    defer report.deinit(allocator);
+    return try buildInvocationDiagnosticsFromReport(allocator, &report);
+}
+
+pub fn buildInvocationDiagnosticsFromOwnedInvocationSpec(
+    allocator: Allocator,
+    owned_spec: OwnedInvocationSpec,
+) !OwnedInvocationDiagnostics {
+    var report = try buildInvocationReportFromOwnedInvocationSpec(allocator, owned_spec);
+    defer report.deinit(allocator);
+    return try buildInvocationDiagnosticsFromReport(allocator, &report);
+}
+
+pub fn buildInvocationDiagnosticsFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !OwnedInvocationDiagnostics {
+    var report = try buildInvocationReportFromOwnedInvocationSpecRef(allocator, owned_spec);
+    defer report.deinit(allocator);
+    return try buildInvocationDiagnosticsFromReport(allocator, &report);
+}
+
 pub fn buildInvocationModeReportFromInvocationSpecJson(
     allocator: Allocator,
     rpc: anytype,
@@ -9902,6 +9938,69 @@ test "invoke.buildInvocationReportFromOwnedResolvedInvocationRef reuses borrowed
     try std.testing.expect(report.can_execute);
     try std.testing.expect(report.uses_durable_nonce);
     try std.testing.expectEqual(InvocationBlockhashMode.durable_nonce, report.plan.blockhash_mode);
+}
+
+test "invoke.buildInvocationDiagnosticsFromOwnedInvocationSpecRef reuses borrowed spec" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithDuplicateSignerAndLookupTable(allocator, 583, 584, 585, 586, 587, 588);
+    defer allocator.free(spec_json);
+
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer owned_spec.deinit(allocator);
+
+    var diagnostics = try buildInvocationDiagnosticsFromOwnedInvocationSpecRef(
+        allocator,
+        &owned_spec,
+    );
+    defer diagnostics.deinit(allocator);
+
+    var saw_duplicate_signers = false;
+    var saw_duplicate_lookup_tables = false;
+    for (diagnostics.items) |diagnostic| {
+        if (diagnostic.code == .duplicate_signers) saw_duplicate_signers = true;
+        if (diagnostic.code == .duplicate_lookup_tables) saw_duplicate_lookup_tables = true;
+    }
+
+    try std.testing.expect(saw_duplicate_signers);
+    try std.testing.expect(saw_duplicate_lookup_tables);
+}
+
+test "invoke.buildInvocationDiagnosticsFromOwnedResolvedInvocationRef reuses borrowed resolved invocation" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithDuplicateSignerAndLookupTable(allocator, 589, 590, 591, 592, 593, 594);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var diagnostics = try buildInvocationDiagnosticsFromOwnedResolvedInvocationRef(
+        allocator,
+        &resolved,
+    );
+    defer diagnostics.deinit(allocator);
+
+    var saw_duplicate_signers = false;
+    var saw_duplicate_lookup_tables = false;
+    for (diagnostics.items) |diagnostic| {
+        if (diagnostic.code == .duplicate_signers) saw_duplicate_signers = true;
+        if (diagnostic.code == .duplicate_lookup_tables) saw_duplicate_lookup_tables = true;
+    }
+
+    try std.testing.expect(saw_duplicate_signers);
+    try std.testing.expect(saw_duplicate_lookup_tables);
 }
 
 test "invoke.buildInvocationSignerPubkeysFromInvocationSpecJson dispatches instructions family" {
