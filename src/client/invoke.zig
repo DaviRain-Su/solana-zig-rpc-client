@@ -2535,6 +2535,162 @@ pub fn allocInvocationLookupCoverageJsonFromOwnedResolvedInvocationRef(
     return try allocInvocationLookupCoverageJson(allocator, coverage);
 }
 
+pub fn writeInvocationReportText(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    report: OwnedInvocationReport,
+) !void {
+    try writer.print("can execute: {}\n", .{report.can_execute});
+    try writer.print("uses durable nonce: {}\n", .{report.uses_durable_nonce});
+    try writer.print("has full lookup coverage: {}\n", .{report.has_full_lookup_coverage});
+    try writer.print("has missing required signers: {}\n", .{report.has_missing_required_signers});
+    try writer.print("has extra signers: {}\n", .{report.has_extra_signers});
+    try writer.print("has duplicate signers: {}\n", .{report.has_duplicate_signers});
+    try writer.print("has duplicate lookup tables: {}\n", .{report.has_duplicate_lookup_tables});
+    try writer.writeAll("\nsummary:\n");
+    try writeInvocationSummaryText(writer, allocator, report.summary);
+    try writer.writeAll("\nplan:\n");
+    try writeInvocationPlanText(writer, allocator, report.plan);
+    try writer.writeAll("\npreflight:\n");
+    try writeInvocationPreflightText(writer, allocator, report.preflight);
+    try writer.writeAll("\nvalidation:\n");
+    try writeInvocationValidationText(writer, allocator, report.validation);
+    try writer.writeAll("\nlookup coverage:\n");
+    try writeInvocationLookupCoverageText(writer, allocator, report.lookup_coverage);
+}
+
+pub fn writeInvocationReportJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    report: OwnedInvocationReport,
+) !void {
+    var first = true;
+    try writer.writeAll("{");
+    try writeJsonBoolField(writer, &first, "can_execute", report.can_execute);
+    try writeJsonBoolField(writer, &first, "uses_durable_nonce", report.uses_durable_nonce);
+    try writeJsonBoolField(writer, &first, "has_full_lookup_coverage", report.has_full_lookup_coverage);
+    try writeJsonBoolField(writer, &first, "has_missing_required_signers", report.has_missing_required_signers);
+    try writeJsonBoolField(writer, &first, "has_extra_signers", report.has_extra_signers);
+    try writeJsonBoolField(writer, &first, "has_duplicate_signers", report.has_duplicate_signers);
+    try writeJsonBoolField(writer, &first, "has_duplicate_lookup_tables", report.has_duplicate_lookup_tables);
+
+    if (!first) try writer.writeAll(",");
+    first = false;
+    try std.json.Stringify.value("summary", .{}, writer);
+    try writer.writeAll(":");
+    try writeInvocationSummaryJson(writer, allocator, report.summary);
+
+    try writer.writeAll(",");
+    try std.json.Stringify.value("plan", .{}, writer);
+    try writer.writeAll(":");
+    try writeInvocationPlanJson(writer, allocator, report.plan);
+
+    try writer.writeAll(",");
+    try std.json.Stringify.value("preflight", .{}, writer);
+    try writer.writeAll(":");
+    try writeInvocationPreflightJson(writer, allocator, report.preflight);
+
+    try writer.writeAll(",");
+    try std.json.Stringify.value("validation", .{}, writer);
+    try writer.writeAll(":");
+    try writeInvocationValidationJson(writer, allocator, report.validation);
+
+    try writer.writeAll(",");
+    try std.json.Stringify.value("lookup_coverage", .{}, writer);
+    try writer.writeAll(":");
+    try writeInvocationLookupCoverageJson(writer, allocator, report.lookup_coverage);
+    try writer.writeAll("}");
+}
+
+pub fn allocInvocationReportJson(
+    allocator: Allocator,
+    report: OwnedInvocationReport,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try writeInvocationReportJson(&aw.writer, allocator, report);
+    return try aw.toOwnedSlice();
+}
+
+pub fn writeInvocationReportTextFromInvocationSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) !void {
+    var report = try buildInvocationReportFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer report.deinit(allocator);
+    try writeInvocationReportText(writer, allocator, report);
+}
+
+pub fn allocInvocationReportJsonFromInvocationSpecJson(
+    allocator: Allocator,
+    family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) ![]u8 {
+    var report = try buildInvocationReportFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer report.deinit(allocator);
+    return try allocInvocationReportJson(allocator, report);
+}
+
+pub fn writeInvocationReportTextFromOwnedInvocationSpecRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) !void {
+    var report = try buildInvocationReportFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer report.deinit(allocator);
+    try writeInvocationReportText(writer, allocator, report);
+}
+
+pub fn allocInvocationReportJsonFromOwnedInvocationSpecRef(
+    allocator: Allocator,
+    owned_spec: *const OwnedInvocationSpec,
+) ![]u8 {
+    var report = try buildInvocationReportFromOwnedInvocationSpecRef(
+        allocator,
+        owned_spec,
+    );
+    defer report.deinit(allocator);
+    return try allocInvocationReportJson(allocator, report);
+}
+
+pub fn writeInvocationReportTextFromOwnedResolvedInvocationRef(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !void {
+    var report = try buildInvocationReportFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    defer report.deinit(allocator);
+    try writeInvocationReportText(writer, allocator, report);
+}
+
+pub fn allocInvocationReportJsonFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) ![]u8 {
+    var report = try buildInvocationReportFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
+    );
+    defer report.deinit(allocator);
+    return try allocInvocationReportJson(allocator, report);
+}
+
 pub fn writeInvocationAccountsTextFromInvocationSpecJson(
     writer: *std.Io.Writer,
     allocator: Allocator,
@@ -14070,6 +14226,61 @@ test "invoke.allocInvocationLookupCoverageJsonFromInvocationSpecJson emits looku
     try std.testing.expect(std.mem.indexOf(u8, json, "\"lookup_table_count\":1") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"lookup_table_address_pubkeys\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"lookup_covered_pubkeys\":[") != null);
+}
+
+test "invoke.allocInvocationReportJsonFromInvocationSpecJson emits nested sections" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 510, 511, 512, 513, 514);
+    defer allocator.free(spec_json);
+
+    const json = try allocInvocationReportJsonFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"can_execute\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"summary\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"plan\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"preflight\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"validation\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"lookup_coverage\":{") != null);
+}
+
+test "invoke.writeInvocationReportTextFromOwnedResolvedInvocationRef emits sectioned text" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 515, 516, 517, 518, 519);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+
+    try writeInvocationReportTextFromOwnedResolvedInvocationRef(
+        &aw.writer,
+        allocator,
+        &resolved,
+    );
+
+    const text = try aw.toOwnedSlice();
+    defer allocator.free(text);
+
+    try std.testing.expect(std.mem.indexOf(u8, text, "can execute: true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "summary:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "preflight:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "lookup coverage:") != null);
 }
 
 test "invoke.buildInvocationSignerPubkeysFromInvocationSpecJson dispatches instructions family" {
