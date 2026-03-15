@@ -2922,6 +2922,11 @@ fn loadAnchorIdlInvokeInstructionSpecLegacyWithPayerSecret(
             cli_accounts[next_index + remaining_accounts.len + index] = account;
         }
     }
+    const deduped_cli_accounts = try dedupeCliInstructionAccountMetas(
+        allocator,
+        cli_accounts[0..(next_index + remaining_accounts.len + if (parsed_remaining_accounts) |value| value.value.len else 0)],
+    );
+    defer allocator.free(deduped_cli_accounts);
 
     const discriminator_hex = try allocator.alloc(u8, encoded_data.len * 2);
     defer allocator.free(discriminator_hex);
@@ -2933,7 +2938,7 @@ fn loadAnchorIdlInvokeInstructionSpecLegacyWithPayerSecret(
     const instruction_specs = [_]CliInstructionSpec{
         .{
             .program_id = program_id,
-            .accounts = cli_accounts,
+            .accounts = deduped_cli_accounts,
             .data = discriminator_hex,
             .data_encoding = .hex,
         },
@@ -3206,19 +3211,25 @@ fn loadCliInstructionSpec(
     }
 
     for (spec.instructions, 0..) |instruction_spec, index| {
-        const accounts = try allocator.alloc(client.AccountMeta, instruction_spec.accounts.len);
-        errdefer allocator.free(accounts);
+        var accounts = std.ArrayListUnmanaged(client.AccountMeta){};
+        defer accounts.deinit(allocator);
+
         for (instruction_spec.accounts, 0..) |account_spec, account_index| {
-            accounts[account_index] = client.AccountMeta.init(
+            _ = account_index;
+            try appendOrUpgradeClientAccountMeta(
+                allocator,
+                &accounts,
                 try client.Pubkey.fromBase58(allocator, account_spec.pubkey),
                 account_spec.is_signer,
                 account_spec.is_writable,
             );
         }
 
+        const deduped_accounts = try accounts.toOwnedSlice(allocator);
+
         instructions[index] = .{
             .program_id = try client.Pubkey.fromBase58(allocator, instruction_spec.program_id),
-            .accounts = accounts,
+            .accounts = deduped_accounts,
             .data = try loadCliInstructionData(allocator, instruction_spec),
         };
     }
@@ -3248,6 +3259,54 @@ fn containsSignerPubkey(
         if (std.meta.eql(value.public_key, pubkey)) return true;
     }
     return false;
+}
+
+fn appendOrUpgradeClientAccountMeta(
+    allocator: Allocator,
+    accounts: *std.ArrayListUnmanaged(client.AccountMeta),
+    pubkey: client.Pubkey,
+    is_signer: bool,
+    is_writable: bool,
+) !void {
+    for (accounts.items) |*account| {
+        if (std.meta.eql(account.pubkey, pubkey)) {
+            account.is_signer = account.is_signer or is_signer;
+            account.is_writable = account.is_writable or is_writable;
+            return;
+        }
+    }
+
+    try accounts.append(allocator, .{
+        .pubkey = pubkey,
+        .is_signer = is_signer,
+        .is_writable = is_writable,
+    });
+}
+
+fn dedupeCliInstructionAccountMetas(
+    allocator: Allocator,
+    accounts: []const CliInstructionAccountMeta,
+) ![]CliInstructionAccountMeta {
+    var deduped = std.ArrayListUnmanaged(CliInstructionAccountMeta){};
+    defer deduped.deinit(allocator);
+
+    for (accounts) |candidate| {
+        var merged = false;
+        for (deduped.items) |*existing| {
+            if (std.mem.eql(u8, existing.pubkey, candidate.pubkey)) {
+                existing.is_signer = existing.is_signer or candidate.is_signer;
+                existing.is_writable = existing.is_writable or candidate.is_writable;
+                merged = true;
+                break;
+            }
+        }
+
+        if (!merged) {
+            try deduped.append(allocator, candidate);
+        }
+    }
+
+    return try deduped.toOwnedSlice(allocator);
 }
 
 fn loadCliInstructionSpecWithSender(
@@ -23938,11 +23997,8 @@ test "loadAnchorIdlInvokeInstructionSpec resolves recent blockhashes builtin ali
     const expected_recent_blockhashes = try client.Sysvar.recentBlockhashes(allocator);
 
     try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
-    try std.testing.expectEqual(@as(usize, 4), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_recent_blockhashes));
-    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(expected_recent_blockhashes));
-    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[2].pubkey.eql(expected_recent_blockhashes));
-    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[3].pubkey.eql(expected_recent_blockhashes));
 }
 
 test "loadAnchorIdlInvokeInstructionSpec resolves additional sysvar aliases automatically" {
@@ -24365,10 +24421,9 @@ test "loadAnchorIdlInvokeInstructionSpec resolves forward relation through neste
     const expected_vault = try findProgramAddress(allocator, &.{payer_pubkey_bytes[0..]}, program_id);
 
     try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
-    try std.testing.expectEqual(@as(usize, 3), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(expected_vault));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(payer));
-    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[2].pubkey.eql(payer));
 }
 
 test "loadAnchorIdlInvokeInstructionSpec resolves forward nested event cpi accounts in pda program" {
@@ -25220,10 +25275,9 @@ test "loadAnchorIdlInvokeInstructionSpec resolves relation group aliases" {
     defer loaded.deinit(allocator);
 
     try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
-    try std.testing.expectEqual(@as(usize, 2), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].pubkey.eql(authority));
     try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[0].is_signer);
-    try std.testing.expect(loaded.owned_instructions.instructions[0].accounts[1].pubkey.eql(authority));
 }
 
 test "loadAnchorIdlInvokeInstructionSpec derives pda seed account from related binding" {
@@ -27117,6 +27171,51 @@ test "loadCliInstructionSpec loads instruction data from path" {
 
     try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
     try std.testing.expectEqualSlices(u8, &instruction_data, loaded.owned_instructions.instructions[0].data);
+}
+
+test "loadCliInstructionSpec deduplicates duplicate account metas" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{9} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_bytes = payer_raw.public_key.toBytes();
+    const payer_pubkey_base58 = try client.encodeBase58(allocator, &payer_pubkey_bytes);
+    defer allocator.free(payer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{3} ** 32);
+    const destination_pubkey_bytes = destination_raw.public_key.toBytes();
+    const destination_pubkey_base58 = try client.encodeBase58(allocator, &destination_pubkey_bytes);
+    defer allocator.free(destination_pubkey_base58);
+
+    const account_specs = [_]CliInstructionAccountMeta{
+        .{ .pubkey = payer_pubkey_base58, .is_signer = true, .is_writable = true },
+        .{ .pubkey = destination_pubkey_base58, .is_signer = false, .is_writable = true },
+        .{ .pubkey = destination_pubkey_base58, .is_signer = true, .is_writable = false },
+    };
+    const instruction_specs = [_]CliInstructionSpec{
+        .{
+            .program_id = "11111111111111111111111111111111",
+            .accounts = &account_specs,
+            .data = "ping",
+            .data_encoding = .utf8,
+        },
+    };
+    const spec = CliSimulateInstructionsSpec{
+        .payer_secret_key = payer_secret_key_base58,
+        .instructions = &instruction_specs,
+    };
+
+    var loaded = try loadCliInstructionSpec(allocator, &spec);
+    defer loaded.deinit(allocator);
+
+    const instruction = loaded.owned_instructions.instructions[0];
+    try std.testing.expectEqual(@as(usize, 2), instruction.accounts.len);
+    try std.testing.expect(std.mem.eql(u8, &instruction.accounts[0].pubkey.bytes, &payer_pubkey_bytes));
+    try std.testing.expect(std.mem.eql(u8, &instruction.accounts[1].pubkey.bytes, &destination_pubkey_bytes));
+    try std.testing.expect(instruction.accounts[1].is_signer);
+    try std.testing.expect(instruction.accounts[1].is_writable);
 }
 
 test "mergeAdditionalSignerSecretKeys deduplicates merged secret keys" {
