@@ -18993,6 +18993,127 @@ test "runCommand invoke-program-invoke handles schema lookup tables as single po
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"signature\":\"SigInvokeAuto111111111111111111111111111111111111111111111111111111111111\"") != null);
 }
 
+test "runCommand invoke-program-invoke handles schema positional signer array and explicit lookup arg" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        "\"SigInvokeAuto111111111111111111111111111111111111111111111111111111111111\"",
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://invoke-program-invoke-schema-signer-positional-explicit-lookup-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{98} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 93);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{62} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const lookup_table_key = client.Pubkey.fromBytes(.{82} ** 32);
+    const lookup_table_key_base58 = try lookup_table_key.toBase58(allocator);
+    defer allocator.free(lookup_table_key_base58);
+    const lookup_table_address = client.Pubkey.fromBytes(.{83} ** 32);
+    const lookup_table_address_base58 = try lookup_table_address.toBase58(allocator);
+    defer allocator.free(lookup_table_address_base58);
+    const lookup_tables_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"account_key\":\"{s}\",\"addresses\":[\"{s}\"]}}]",
+        .{ lookup_table_key_base58, lookup_table_address_base58 },
+    );
+    defer allocator.free(lookup_tables_json);
+    const signer_one_raw = try Ed25519.KeyPair.generateDeterministic(.{110} ** 32);
+    const signer_one_secret_key = signer_one_raw.secret_key.toBytes();
+    const signer_one_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-program-invoke-schema-signer-a-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(signer_one_keypair_path);
+    defer std.fs.cwd().deleteFile(signer_one_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, signer_one_keypair_path, &signer_one_secret_key);
+
+    const signer_two_raw = try Ed25519.KeyPair.generateDeterministic(.{111} ** 32);
+    const signer_two_secret_key = signer_two_raw.secret_key.toBytes();
+    const signer_two_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-program-invoke-schema-signer-b-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(signer_two_keypair_path);
+    defer std.fs.cwd().deleteFile(signer_two_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, signer_two_keypair_path, &signer_two_secret_key);
+
+    const signers_json = try std.fmt.allocPrint(
+        allocator,
+        "[\"{s}\",\"{s}\"]",
+        .{ signer_one_keypair_path, signer_two_keypair_path },
+    );
+    defer allocator.free(signers_json);
+
+    const schema_json =
+        \\{"type":"struct","fields":[{"name":"enabled","type":"bool"},{"name":"count","type":"u16"}]}
+    ;
+    const args_json =
+        \\{"enabled":true,"count":55}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "invoke-program-invoke",
+        "--json",
+        "--invoke-mode",
+        "versioned",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--data-schema-json",
+        schema_json,
+        "--args-json",
+        args_json,
+        "--schema-encoding",
+        "borsh",
+        program_id_base58,
+        "[]",
+        signers_json,
+        "--address-lookup-table",
+        lookup_tables_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"signature\":\"SigInvokeAuto111111111111111111111111111111111111111111111111111111111111\"") != null);
+}
+
 test "runCommand estimate-instructions-fee emits json preferred fee result" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
