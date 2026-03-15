@@ -708,16 +708,17 @@ fn parseAddressLookupTableFromJsonValue(
         else => return error.InvalidInstructionSpec,
     };
 
-    const addresses = try allocator.alloc(sdk.Pubkey, address_items.len);
-    errdefer allocator.free(addresses);
+    var parsed_addresses = std.ArrayListUnmanaged(sdk.Pubkey){};
+    errdefer parsed_addresses.deinit(allocator);
 
-    for (address_items, 0..) |address_value, index| {
-        addresses[index] = try parseJsonPubkey(allocator, address_value);
+    for (address_items) |address_value| {
+        const address = try parseJsonPubkey(allocator, address_value);
+        try appendAddressLookupTableAddress(allocator, &parsed_addresses, address);
     }
 
     return .{
         .account_key = account_key,
-        .addresses = addresses,
+        .addresses = try parsed_addresses.toOwnedSlice(allocator),
     };
 }
 
@@ -4454,6 +4455,41 @@ test "instructions_invoke.buildOwnedInstructionsFromJson deduplicates duplicate 
     try std.testing.expectEqual(account, owned.instructions[0].accounts[0].pubkey);
     try std.testing.expect(owned.instructions[0].accounts[0].is_signer);
     try std.testing.expect(!owned.instructions[0].accounts[0].is_writable);
+}
+
+test "instructions_invoke.buildOwnedAddressLookupTablesFromJson deduplicates duplicate addresses within table" {
+    const allocator = std.testing.allocator;
+    const table_key = sdk.Pubkey.fromBytes([_]u8{91} ** 32);
+    const first_address = sdk.Pubkey.fromBytes([_]u8{92} ** 32);
+    const second_address = sdk.Pubkey.fromBytes([_]u8{93} ** 32);
+
+    const table_key_base58 = try table_key.toBase58(allocator);
+    defer allocator.free(table_key_base58);
+    const first_address_base58 = try first_address.toBase58(allocator);
+    defer allocator.free(first_address_base58);
+    const second_address_base58 = try second_address.toBase58(allocator);
+    defer allocator.free(second_address_base58);
+
+    const address_lookup_tables_json = try std.fmt.allocPrint(
+        allocator,
+        \\[
+        \\  {{
+        \\    "accountKey":"{s}",
+        \\    "addresses":["{s}","{s}","{s}","{s}"]
+        \\  }}
+        \\]
+    ,
+        .{ table_key_base58, first_address_base58, first_address_base58, second_address_base58, first_address_base58 },
+    );
+    defer allocator.free(address_lookup_tables_json);
+
+    var owned_tables = try buildOwnedAddressLookupTablesFromJson(allocator, address_lookup_tables_json);
+    defer owned_tables.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), owned_tables.tables.len);
+    try std.testing.expectEqual(@as(usize, 2), owned_tables.tables[0].addresses.len);
+    try std.testing.expectEqual(first_address, owned_tables.tables[0].addresses[0]);
+    try std.testing.expectEqual(second_address, owned_tables.tables[0].addresses[1]);
 }
 
 test "instructions_invoke.buildOwnedInstructionsFromJson encodes schema-driven instruction data" {
