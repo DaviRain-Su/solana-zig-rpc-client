@@ -406,6 +406,64 @@ fn dedupeSigners(allocator: Allocator, signers: []const sdk.Keypair) ![]sdk.Keyp
     return try deduped.toOwnedSlice(allocator);
 }
 
+fn appendUniqueSignerFromKeypair(
+    allocator: Allocator,
+    signers: *std.ArrayListUnmanaged(sdk.Keypair),
+    signer: sdk.Keypair,
+) !void {
+    for (signers.items) |existing_signer| {
+        if (existing_signer.public_key.eql(signer.public_key)) return;
+    }
+
+    try signers.append(allocator, signer);
+}
+
+fn buildAdditionalSignerSecretKeysJsonFromProgramInvokeSpec(
+    allocator: Allocator,
+    payer_secret_key: []const u8,
+    additional_signers_value: std.json.Value,
+) BuildError!?[]u8 {
+    if (additional_signers_value != .array) return error.InvalidProgramInvokeSpec;
+
+    const payer_keypair = sdk.Keypair.fromBase58SecretKey(allocator, payer_secret_key) catch {
+        return error.InvalidProgramInvokeSpec;
+    };
+
+    var signers = std.ArrayListUnmanaged(sdk.Keypair){};
+    defer signers.deinit(allocator);
+    try appendUniqueSignerFromKeypair(allocator, &signers, payer_keypair);
+
+    for (additional_signers_value.array.items) |additional_signer| {
+        if (additional_signer != .string) return error.InvalidProgramInvokeSpec;
+        const signer = sdk.Keypair.fromBase58SecretKey(allocator, additional_signer.string) catch {
+            return error.InvalidProgramInvokeSpec;
+        };
+        try appendUniqueSignerFromKeypair(allocator, &signers, signer);
+    }
+
+    if (signers.items.len <= 1) return null;
+
+    var json_buffer: std.ArrayListUnmanaged(u8) = .{};
+    errdefer json_buffer.deinit(allocator);
+
+    try json_buffer.append(allocator, '[');
+    for (signers.items[1..], 0..) |signer, index| {
+        const encoded_signer = try sdk.encodeBase58(allocator, &signer.secret_key);
+        defer allocator.free(encoded_signer);
+
+        if (index != 0) {
+            try json_buffer.append(allocator, ',');
+        }
+
+        try json_buffer.append(allocator, '"');
+        try json_buffer.appendSlice(allocator, encoded_signer);
+        try json_buffer.append(allocator, '"');
+    }
+    try json_buffer.append(allocator, ']');
+
+    return try json_buffer.toOwnedSlice(allocator);
+}
+
 fn findJsonObjectField(object: std.json.ObjectMap, comptime names: []const []const u8) ?std.json.Value {
     inline for (names) |name| {
         if (object.get(name)) |value| return value;
@@ -548,9 +606,17 @@ pub fn buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
     var owned_additional_signers_json: ?[]u8 = null;
     defer if (owned_additional_signers_json) |value| allocator.free(value);
     const additional_signer_secret_keys_json = if (findJsonObjectField(object, &.{ "additional_signer_secret_keys", "additionalSignerSecretKeys" })) |value| blk: {
-        const encoded = try stringifyJsonValue(allocator, value);
-        owned_additional_signers_json = encoded;
-        break :blk encoded;
+        const encoded = try buildAdditionalSignerSecretKeysJsonFromProgramInvokeSpec(
+            allocator,
+            payer_secret_key_value.string,
+            value,
+        );
+        if (encoded) |deduped| {
+            owned_additional_signers_json = deduped;
+            break :blk deduped;
+        }
+
+        break :blk null;
     } else null;
 
     var owned_lookup_tables_json: ?[]u8 = null;
@@ -3484,6 +3550,57 @@ test "program_invoke.buildInstructionInvocationSpecJsonFromProgramInvokeSpec enc
     try std.testing.expect(std.mem.indexOf(u8, instruction_spec_json, "\"data_bytes\":[1,2]") != null);
     try std.testing.expect(std.mem.indexOf(u8, instruction_spec_json, "\"data_schema\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, instruction_spec_json, "\"args\"") == null);
+}
+
+test "program_invoke.buildInstructionInvocationSpecJsonFromProgramInvokeSpec deduplicates additional signers" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{170} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const extra_raw = try sdk.Keypair.fromSecretKeyBytes(.{171} ** 32);
+    const extra_secret_key = extra_raw.secret_key.toBytes();
+    const extra_secret_key_base58 = try sdk.encodeBase58(allocator, &extra_secret_key);
+    defer allocator.free(extra_secret_key_base58);
+
+    const program_id = sdk.Pubkey.fromBytes(.{172} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const instruction_spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "additional_signer_secret_keys":["{s}","{s}","{s}"],
+        \\  "data":"ping",
+        \\  "data_encoding":"utf8"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+            extra_secret_key_base58,
+            extra_secret_key_base58,
+            payer_secret_key_base58,
+        },
+    );
+    defer allocator.free(instruction_spec_json);
+
+    const result_json = try buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
+        allocator,
+        instruction_spec_json,
+    );
+    defer allocator.free(result_json);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, result_json, .{});
+    defer parsed.deinit();
+
+    const additional_signers = parsed.value.object.get("additional_signer_secret_keys").?.array;
+    try std.testing.expectEqual(@as(usize, 1), additional_signers.items.len);
+    try std.testing.expectEqualStrings(extra_secret_key_base58, additional_signers.items[0].string);
 }
 
 test "program_invoke.buildOwnedInstruction accepts flexible json account forms" {
