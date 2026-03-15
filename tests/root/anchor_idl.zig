@@ -571,10 +571,9 @@ test "root.anchor_idl_invoke.buildOwnedInstruction resolves forward relation thr
 
     const expected_vault = try findProgramAddress(allocator, &.{payer.bytes[0..]}, program_id);
 
-    try std.testing.expectEqual(@as(usize, 3), owned.instruction.accounts.len);
+    try std.testing.expectEqual(@as(usize, 2), owned.instruction.accounts.len);
     try std.testing.expect(owned.instruction.accounts[0].pubkey.eql(expected_vault));
     try std.testing.expect(owned.instruction.accounts[1].pubkey.eql(payer));
-    try std.testing.expect(owned.instruction.accounts[2].pubkey.eql(payer));
 }
 
 test "root.anchor_idl_invoke.buildOwnedInstruction resolves forward nested event cpi accounts in pda program" {
@@ -771,6 +770,77 @@ test "root.anchor_idl_invoke.buildSignedLegacyTransactionFromJson signs and enco
     try std.testing.expect(signed.firstSignature() != null);
     try std.testing.expect(direct_base64.len > 0);
     try std.testing.expectEqualSlices(u8, direct_base64, helper_base64);
+}
+
+test "root.anchor_idl_invoke.buildSignedLegacyTransactionFromJson deduplicates duplicate signers" {
+    const allocator = std.testing.allocator;
+    const signer_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{17} ** 32);
+    const signer = try client.Keypair.fromSecretKeyBytes(signer_raw.secret_key.toBytes());
+    const target_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic([_]u8{18} ** 32);
+    const target = client.Pubkey.fromBytes(target_raw.public_key.toBytes());
+    const recent_blockhash = client.Hash.fromBytes([_]u8{0x22} ** 32);
+    const idl_json =
+        \\{
+        \\  "address": "11111111111111111111111111111111",
+        \\  "instructions": [
+        \\    {
+        \\      "name": "setValue",
+        \\      "discriminator": [1, 2, 3, 4, 5, 6, 7, 8],
+        \\      "accounts": [
+        \\        { "name": "authority", "writable": true, "signer": true },
+        \\        { "name": "target", "writable": true }
+        \\      ],
+        \\      "args": [
+        \\        { "name": "value", "type": "u64" }
+        \\      ]
+        \\    }
+        \\  ]
+        \\}
+    ;
+
+    const deduped_base64 = try client.anchor_idl_invoke.buildLegacyTransactionBase64FromJson(
+        allocator,
+        idl_json,
+        "setValue",
+        .{
+            .payer = signer.public_key,
+            .recent_blockhash = recent_blockhash,
+            .signers = &.{signer},
+            .instruction_options = .{
+                .args_json = "{\"value\":42}",
+                .account_bindings = &.{
+                    .{ .path = "authority", .pubkey = signer.public_key },
+                    .{ .path = "target", .pubkey = target },
+                },
+            },
+        },
+    );
+    defer allocator.free(deduped_base64);
+
+    var duplicated = try client.anchor_idl_invoke.buildSignedLegacyTransactionFromJson(
+        allocator,
+        idl_json,
+        "setValue",
+        .{
+            .payer = signer.public_key,
+            .recent_blockhash = recent_blockhash,
+            .signers = &.{ signer, signer },
+            .instruction_options = .{
+                .args_json = "{\"value\":42}",
+                .account_bindings = &.{
+                    .{ .path = "authority", .pubkey = signer.public_key },
+                    .{ .path = "target", .pubkey = target },
+                },
+            },
+        },
+    );
+    defer duplicated.deinit(allocator);
+
+    const duplicated_base64 = try duplicated.toBase64(allocator);
+    defer allocator.free(duplicated_base64);
+
+    try std.testing.expect(duplicated.firstSignature() != null);
+    try std.testing.expectEqualSlices(u8, deduped_base64, duplicated_base64);
 }
 
 test "root.anchor_idl_invoke.buildOwnedVersionedMessageFromJson compiles and signs versioned transaction" {

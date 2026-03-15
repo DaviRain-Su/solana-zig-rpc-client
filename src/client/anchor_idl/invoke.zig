@@ -1948,13 +1948,52 @@ fn appendInstructionAccounts(
             resolution_stack,
         );
 
-        metas[next_index.*] = .{
-            .pubkey = resolved.pubkey,
-            .is_signer = if (resolved.missing_optional) false else is_signer,
-            .is_writable = if (resolved.missing_optional) false else is_writable,
-        };
-        next_index.* += 1;
+        appendOrUpgradeAccountMeta(
+            metas,
+            next_index,
+            resolved.pubkey,
+            if (resolved.missing_optional) false else is_signer,
+            if (resolved.missing_optional) false else is_writable,
+        );
     }
+}
+
+fn appendOrUpgradeAccountMeta(
+    accounts: []sdk.AccountMeta,
+    next_index: *usize,
+    pubkey: sdk.Pubkey,
+    is_signer: bool,
+    is_writable: bool,
+) void {
+    for (accounts[0..next_index.*]) |*account| {
+        if (account.pubkey.eql(pubkey)) {
+            account.is_signer = account.is_signer or is_signer;
+            account.is_writable = account.is_writable or is_writable;
+            return;
+        }
+    }
+
+    accounts[next_index.*] = .{
+        .pubkey = pubkey,
+        .is_signer = is_signer,
+        .is_writable = is_writable,
+    };
+    next_index.* += 1;
+}
+
+fn dedupeSigners(allocator: Allocator, signers: []const sdk.Keypair) ![]sdk.Keypair {
+    var deduped = std.ArrayListUnmanaged(sdk.Keypair){};
+    try deduped.ensureTotalCapacity(allocator, signers.len);
+
+    for (signers) |signer| {
+        for (deduped.items) |existing_signer| {
+            if (existing_signer.public_key.eql(signer.public_key)) break;
+        } else {
+            try deduped.append(allocator, signer);
+        }
+    }
+
+    return try deduped.toOwnedSlice(allocator);
 }
 
 pub fn buildOwnedInstruction(
@@ -2052,13 +2091,29 @@ pub fn buildOwnedInstruction(
         &resolution_stack,
         null,
     );
-    @memcpy(accounts[next_index .. next_index + resolved_remaining_accounts.len], resolved_remaining_accounts);
-    next_index += resolved_remaining_accounts.len;
+    for (resolved_remaining_accounts) |remaining_account| {
+        appendOrUpgradeAccountMeta(
+            accounts,
+            &next_index,
+            remaining_account.pubkey,
+            remaining_account.is_signer,
+            remaining_account.is_writable,
+        );
+    }
+
+    const final_accounts = if (next_index == accounts.len)
+        accounts[0..next_index]
+    else
+        try allocator.dupe(sdk.AccountMeta, accounts[0..next_index]);
+
+    if (next_index != accounts.len) {
+        allocator.free(accounts);
+    }
 
     return .{
         .instruction = .{
             .program_id = program_id,
-            .accounts = accounts[0..next_index],
+            .accounts = final_accounts,
             .data = data,
         },
     };
@@ -2989,6 +3044,9 @@ pub fn buildSignedLegacyTransaction(
     instruction_name: []const u8,
     options: BuildLegacyTransactionOptions,
 ) BuildLegacyTransactionError!sdk.SignedLegacyTransaction {
+    const signers = try dedupeSigners(allocator, options.signers);
+    defer allocator.free(signers);
+
     var owned_message = try buildOwnedLegacyMessage(
         allocator,
         idl,
@@ -3001,7 +3059,7 @@ pub fn buildSignedLegacyTransaction(
     );
     defer owned_message.deinit(allocator);
 
-    return try owned_message.sign(allocator, options.signers);
+    return try owned_message.sign(allocator, signers);
 }
 
 pub fn buildSignedLegacyTransactionFromJson(
@@ -3252,6 +3310,9 @@ pub fn buildSignedVersionedTransaction(
     instruction_name: []const u8,
     options: BuildVersionedTransactionOptions,
 ) BuildVersionedTransactionError!sdk.SignedVersionedTransaction {
+    const signers = try dedupeSigners(allocator, options.signers);
+    defer allocator.free(signers);
+
     var owned_message = try buildOwnedVersionedMessage(
         allocator,
         idl,
@@ -3265,7 +3326,7 @@ pub fn buildSignedVersionedTransaction(
     );
     defer owned_message.deinit(allocator);
 
-    return try owned_message.sign(allocator, options.signers);
+    return try owned_message.sign(allocator, signers);
 }
 
 pub fn buildSignedVersionedTransactionFromJson(
@@ -3577,6 +3638,9 @@ pub fn buildSignedLegacyTransactionWithBlockhashQuery(
     instruction_name: []const u8,
     build_options: BuildLegacyTransactionWithBlockhashQueryOptions,
 ) !sdk.SignedLegacyTransaction {
+    const signers = try dedupeSigners(allocator, build_options.signers);
+    defer allocator.free(signers);
+
     var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
     defer owned_instruction.deinit(allocator);
 
@@ -3584,7 +3648,7 @@ pub fn buildSignedLegacyTransactionWithBlockhashQuery(
     return try rpc.buildSignedLegacyTransactionWithBlockhashQuery(
         build_options.payer,
         instructions[0..],
-        build_options.signers,
+        signers,
         build_options.blockhash_query,
         build_options.nonce_authority,
     );
@@ -3616,6 +3680,9 @@ pub fn buildLegacyTransactionBase64WithBlockhashQuery(
     instruction_name: []const u8,
     build_options: BuildLegacyTransactionWithBlockhashQueryOptions,
 ) ![]u8 {
+    const signers = try dedupeSigners(allocator, build_options.signers);
+    defer allocator.free(signers);
+
     var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
     defer owned_instruction.deinit(allocator);
 
@@ -3623,7 +3690,7 @@ pub fn buildLegacyTransactionBase64WithBlockhashQuery(
     return try rpc.buildLegacyTransactionBase64WithBlockhashQuery(
         build_options.payer,
         instructions[0..],
-        build_options.signers,
+        signers,
         build_options.blockhash_query,
         build_options.nonce_authority,
     );
@@ -3655,6 +3722,9 @@ pub fn buildSignedVersionedTransactionWithBlockhashQuery(
     instruction_name: []const u8,
     build_options: BuildVersionedTransactionWithBlockhashQueryOptions,
 ) !sdk.SignedVersionedTransaction {
+    const signers = try dedupeSigners(allocator, build_options.signers);
+    defer allocator.free(signers);
+
     var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
     defer owned_instruction.deinit(allocator);
 
@@ -3663,7 +3733,7 @@ pub fn buildSignedVersionedTransactionWithBlockhashQuery(
         build_options.payer,
         instructions[0..],
         build_options.address_lookup_tables,
-        build_options.signers,
+        signers,
         build_options.blockhash_query,
         build_options.nonce_authority,
     );
@@ -3695,6 +3765,9 @@ pub fn buildVersionedTransactionBase64WithBlockhashQuery(
     instruction_name: []const u8,
     build_options: BuildVersionedTransactionWithBlockhashQueryOptions,
 ) ![]u8 {
+    const signers = try dedupeSigners(allocator, build_options.signers);
+    defer allocator.free(signers);
+
     var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
     defer owned_instruction.deinit(allocator);
 
@@ -3703,7 +3776,7 @@ pub fn buildVersionedTransactionBase64WithBlockhashQuery(
         build_options.payer,
         instructions[0..],
         build_options.address_lookup_tables,
-        build_options.signers,
+        signers,
         build_options.blockhash_query,
         build_options.nonce_authority,
     );
@@ -3736,6 +3809,9 @@ pub fn sendLegacyTransactionWithBlockhashQuery(
     build_options: BuildLegacyTransactionWithBlockhashQueryOptions,
     options: SendOptions,
 ) ![]const u8 {
+    const signers = try dedupeSigners(allocator, build_options.signers);
+    defer allocator.free(signers);
+
     var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
     defer owned_instruction.deinit(allocator);
 
@@ -3743,7 +3819,7 @@ pub fn sendLegacyTransactionWithBlockhashQuery(
     return try rpc.sendLegacyInstructionsWithOptions(
         build_options.payer,
         instructions[0..],
-        build_options.signers,
+        signers,
         .{
             .blockhash_query = build_options.blockhash_query,
             .nonce_authority = build_options.nonce_authority,
@@ -3781,6 +3857,9 @@ pub fn simulateLegacyTransactionWithBlockhashQuery(
     build_options: BuildLegacyTransactionWithBlockhashQueryOptions,
     options: SimulateOptions,
 ) !rpc_types.SimulatedTransaction {
+    const signers = try dedupeSigners(allocator, build_options.signers);
+    defer allocator.free(signers);
+
     var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
     defer owned_instruction.deinit(allocator);
 
@@ -3788,7 +3867,7 @@ pub fn simulateLegacyTransactionWithBlockhashQuery(
     return try rpc.simulateLegacyInstructionsWithOptions(
         build_options.payer,
         instructions[0..],
-        build_options.signers,
+        signers,
         .{
             .blockhash_query = build_options.blockhash_query,
             .nonce_authority = build_options.nonce_authority,
@@ -3826,6 +3905,9 @@ pub fn sendAndConfirmLegacyTransactionWithBlockhashQuery(
     build_options: BuildLegacyTransactionWithBlockhashQueryOptions,
     options: SendAndConfirmOptions,
 ) ![]const u8 {
+    const signers = try dedupeSigners(allocator, build_options.signers);
+    defer allocator.free(signers);
+
     var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
     defer owned_instruction.deinit(allocator);
 
@@ -3833,7 +3915,7 @@ pub fn sendAndConfirmLegacyTransactionWithBlockhashQuery(
     return try rpc.sendAndConfirmLegacyInstructionsWithOptions(
         build_options.payer,
         instructions[0..],
-        build_options.signers,
+        signers,
         .{
             .blockhash_query = build_options.blockhash_query,
             .nonce_authority = build_options.nonce_authority,
@@ -3875,6 +3957,9 @@ pub fn sendAndConfirmLegacyTransactionWithBlockhashQueryAndSpinner(
     build_options: BuildLegacyTransactionWithBlockhashQueryOptions,
     options: SendAndConfirmOptions,
 ) ![]const u8 {
+    const signers = try dedupeSigners(allocator, build_options.signers);
+    defer allocator.free(signers);
+
     var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
     defer owned_instruction.deinit(allocator);
 
@@ -3882,7 +3967,7 @@ pub fn sendAndConfirmLegacyTransactionWithBlockhashQueryAndSpinner(
     return try rpc.sendAndConfirmLegacyInstructionsWithSpinnerAndOptions(
         build_options.payer,
         instructions[0..],
-        build_options.signers,
+        signers,
         .{
             .blockhash_query = build_options.blockhash_query,
             .nonce_authority = build_options.nonce_authority,
@@ -3924,6 +4009,9 @@ pub fn sendVersionedTransactionWithBlockhashQuery(
     build_options: BuildVersionedTransactionWithBlockhashQueryOptions,
     options: SendOptions,
 ) ![]const u8 {
+    const signers = try dedupeSigners(allocator, build_options.signers);
+    defer allocator.free(signers);
+
     var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
     defer owned_instruction.deinit(allocator);
 
@@ -3932,7 +4020,7 @@ pub fn sendVersionedTransactionWithBlockhashQuery(
         build_options.payer,
         instructions[0..],
         build_options.address_lookup_tables,
-        build_options.signers,
+        signers,
         .{
             .blockhash_query = build_options.blockhash_query,
             .nonce_authority = build_options.nonce_authority,
@@ -3970,6 +4058,9 @@ pub fn simulateVersionedTransactionWithBlockhashQuery(
     build_options: BuildVersionedTransactionWithBlockhashQueryOptions,
     options: SimulateOptions,
 ) !rpc_types.SimulatedTransaction {
+    const signers = try dedupeSigners(allocator, build_options.signers);
+    defer allocator.free(signers);
+
     var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
     defer owned_instruction.deinit(allocator);
 
@@ -3978,7 +4069,7 @@ pub fn simulateVersionedTransactionWithBlockhashQuery(
         build_options.payer,
         instructions[0..],
         build_options.address_lookup_tables,
-        build_options.signers,
+        signers,
         .{
             .blockhash_query = build_options.blockhash_query,
             .nonce_authority = build_options.nonce_authority,
@@ -4016,6 +4107,9 @@ pub fn sendAndConfirmVersionedTransactionWithBlockhashQuery(
     build_options: BuildVersionedTransactionWithBlockhashQueryOptions,
     options: SendAndConfirmOptions,
 ) ![]const u8 {
+    const signers = try dedupeSigners(allocator, build_options.signers);
+    defer allocator.free(signers);
+
     var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
     defer owned_instruction.deinit(allocator);
 
@@ -4024,7 +4118,7 @@ pub fn sendAndConfirmVersionedTransactionWithBlockhashQuery(
         build_options.payer,
         instructions[0..],
         build_options.address_lookup_tables,
-        build_options.signers,
+        signers,
         .{
             .blockhash_query = build_options.blockhash_query,
             .nonce_authority = build_options.nonce_authority,
@@ -4066,6 +4160,9 @@ pub fn sendAndConfirmVersionedTransactionWithBlockhashQueryAndSpinner(
     build_options: BuildVersionedTransactionWithBlockhashQueryOptions,
     options: SendAndConfirmOptions,
 ) ![]const u8 {
+    const signers = try dedupeSigners(allocator, build_options.signers);
+    defer allocator.free(signers);
+
     var owned_instruction = try buildOwnedInstruction(allocator, idl, instruction_name, build_options.instruction_options);
     defer owned_instruction.deinit(allocator);
 
@@ -4074,7 +4171,7 @@ pub fn sendAndConfirmVersionedTransactionWithBlockhashQueryAndSpinner(
         build_options.payer,
         instructions[0..],
         build_options.address_lookup_tables,
-        build_options.signers,
+        signers,
         .{
             .blockhash_query = build_options.blockhash_query,
             .nonce_authority = build_options.nonce_authority,
