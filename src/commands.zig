@@ -3636,6 +3636,39 @@ fn appendUniqueCliStringValues(
     }
 }
 
+fn areSignerKeypairPathsEquivalent(
+    allocator: Allocator,
+    left: []const u8,
+    right: []const u8,
+) bool {
+    if (std.mem.eql(u8, left, right)) return true;
+
+    const left_realpath = std.fs.cwd().realpathAlloc(allocator, left) catch return false;
+    defer allocator.free(left_realpath);
+
+    const right_realpath = std.fs.cwd().realpathAlloc(allocator, right) catch return false;
+    defer allocator.free(right_realpath);
+
+    return std.mem.eql(u8, left_realpath, right_realpath);
+}
+
+fn appendUniqueSignerKeypairPathValues(
+    allocator: Allocator,
+    merged_values: *std.ArrayListUnmanaged([]const u8),
+    values: []const []const u8,
+) !void {
+    for (values) |value| {
+        var exists = false;
+        for (merged_values.items) |existing| {
+            if (areSignerKeypairPathsEquivalent(allocator, existing, value)) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) try merged_values.append(allocator, value);
+    }
+}
+
 fn mergeCliSignerKeypairPathsArg(
     allocator: Allocator,
     signer_keypair_paths_arg: ?[]const u8,
@@ -3653,9 +3686,9 @@ fn mergeCliSignerKeypairPathsArg(
     defer merged_signer_keypair_paths.deinit(allocator);
 
     if (parsed_signer_keypair_paths) |value| {
-        try appendUniqueCliStringValues(allocator, &merged_signer_keypair_paths, value.value);
+        try appendUniqueSignerKeypairPathValues(allocator, &merged_signer_keypair_paths, value.value);
     }
-    try appendUniqueCliStringValues(allocator, &merged_signer_keypair_paths, additional_signer_keypair_paths_arg);
+    try appendUniqueSignerKeypairPathValues(allocator, &merged_signer_keypair_paths, additional_signer_keypair_paths_arg);
 
     var buffer: std.io.Writer.Allocating = .init(allocator);
     defer buffer.deinit();
@@ -15736,6 +15769,49 @@ test "mergeCliSignerKeypairPathsArg deduplicates duplicate path values" {
     try std.testing.expectEqualStrings("/tmp/signer-c.json", parsed.value[2]);
 }
 
+test "mergeCliSignerKeypairPathsArg deduplicates canonicalized path values" {
+    const allocator = std.testing.allocator;
+
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{111} ** 32);
+    const extra_signer_secret_key = extra_signer_raw.secret_key.toBytes();
+    const extra_signer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-program-invoke-signer-keypair-canon-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(extra_signer_keypair_path);
+    defer std.fs.cwd().deleteFile(extra_signer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, extra_signer_keypair_path, &extra_signer_secret_key);
+
+    const signer_keypair_paths_source = try std.fmt.allocPrint(
+        allocator,
+        "[\"{s}\"]",
+        .{extra_signer_keypair_path},
+    );
+    defer allocator.free(signer_keypair_paths_source);
+
+    const extra_signer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, extra_signer_keypair_path);
+    defer allocator.free(extra_signer_keypair_realpath);
+
+    const merged = try mergeCliSignerKeypairPathsArg(
+        allocator,
+        signer_keypair_paths_source,
+        &.{
+            extra_signer_keypair_realpath,
+        },
+    );
+    defer if (merged) |value| allocator.free(value);
+
+    try std.testing.expect(merged != null);
+
+    var parsed = try std.json.parseFromSlice([]const []const u8, allocator, merged.?, .{
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), parsed.value.len);
+}
+
 test "runCommand inspect-spec emits simulation section json" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
@@ -19683,6 +19759,123 @@ test "runCommand invoke-program-invoke deduplicates positional signer keypair ma
         "ping",
         "utf8",
         signers_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try expectSendTransactionRequestSignatureMetadata(
+        allocator,
+        commandCapturedRequestAt(&sender_context, 0),
+        2,
+        2,
+    );
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
+}
+
+test "runCommand invoke-program-invoke deduplicates duplicate additional-signer-keypair paths in non-schema mode" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        "\"SigInvokeAuto111111111111111111111111111111111111111111111111111111111111\"",
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://invoke-program-invoke-non-schema-dedup-keypair-paths" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{100} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const duplicate_payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-program-invoke-non-schema-extra-signer-path-duplicate-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(duplicate_payer_keypair_path);
+    defer std.fs.cwd().deleteFile(duplicate_payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, duplicate_payer_keypair_path, &payer_secret_key);
+    const duplicate_payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, duplicate_payer_keypair_path);
+    defer allocator.free(duplicate_payer_keypair_realpath);
+
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{104} ** 32);
+    const extra_signer_secret_key = extra_signer_raw.secret_key.toBytes();
+    const extra_signer = try client.Keypair.fromSecretKeyBytes(extra_signer_secret_key);
+    const extra_signer_pubkey_base58 = try extra_signer.public_key.toBase58(allocator);
+    defer allocator.free(extra_signer_pubkey_base58);
+    const extra_signer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-program-invoke-non-schema-extra-signer-path-extra-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(extra_signer_keypair_path);
+    defer std.fs.cwd().deleteFile(extra_signer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, extra_signer_keypair_path, &extra_signer_secret_key);
+    const extra_signer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, extra_signer_keypair_path);
+    defer allocator.free(extra_signer_keypair_realpath);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 99);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_writable":false,"is_signer":false}}]
+    ,
+        .{ payer_pubkey_base58, extra_signer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    const program_id = client.Pubkey.fromBytes(.{62} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "invoke-program-invoke",
+        "--json",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--additional-signer-keypair",
+        duplicate_payer_keypair_realpath,
+        "--additional-signer-keypair",
+        extra_signer_keypair_realpath,
+        "--additional-signer-keypair",
+        extra_signer_keypair_realpath,
+        program_id_base58,
+        accounts_json,
+        "ping",
+        "utf8",
     });
     defer parsed.deinit(allocator);
 
