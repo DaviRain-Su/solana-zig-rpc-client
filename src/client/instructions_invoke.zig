@@ -754,6 +754,46 @@ fn buildOwnedAddressLookupTablesFromJson(
     return .{ .tables = tables };
 }
 
+fn appendAddressLookupTableAddress(
+    allocator: Allocator,
+    addresses: *std.ArrayListUnmanaged(sdk.Pubkey),
+    address: sdk.Pubkey,
+) !void {
+    for (addresses.items) |value| {
+        if (std.meta.eql(value, address)) return;
+    }
+    try addresses.append(allocator, address);
+}
+
+fn appendOrUpgradeAddressLookupTable(
+    allocator: Allocator,
+    tables: *std.ArrayListUnmanaged(sdk.AddressLookupTableAccount),
+    table: sdk.AddressLookupTableAccount,
+) !void {
+    for (tables.items) |*existing| {
+        if (std.meta.eql(existing.account_key, table.account_key)) {
+            var merged_addresses = std.ArrayListUnmanaged(sdk.Pubkey){};
+            errdefer merged_addresses.deinit(allocator);
+            try merged_addresses.ensureTotalCapacity(allocator, existing.addresses.len + table.addresses.len);
+            for (existing.addresses) |address| {
+                try appendAddressLookupTableAddress(allocator, &merged_addresses, address);
+            }
+            for (table.addresses) |address| {
+                try appendAddressLookupTableAddress(allocator, &merged_addresses, address);
+            }
+
+            allocator.free(existing.addresses);
+            existing.addresses = try merged_addresses.toOwnedSlice(allocator);
+            return;
+        }
+    }
+
+    try tables.append(allocator, .{
+        .account_key = table.account_key,
+        .addresses = try allocator.dupe(sdk.Pubkey, table.addresses),
+    });
+}
+
 fn cloneAddressLookupTables(
     allocator: Allocator,
     address_lookup_tables: []const sdk.AddressLookupTableAccount,
@@ -788,34 +828,22 @@ fn buildMergedAddressLookupTables(
         parsed_tables = try buildOwnedAddressLookupTablesFromJson(allocator, value);
     }
 
-    const parsed_len = if (parsed_tables) |tables| tables.tables.len else 0;
-    const total_len = parsed_len + address_lookup_tables.len;
-    const merged = try allocator.alloc(sdk.AddressLookupTableAccount, total_len);
-    var initialized_len: usize = 0;
+    var merged = std.ArrayListUnmanaged(sdk.AddressLookupTableAccount){};
     errdefer {
-        for (merged[0..initialized_len]) |table| allocator.free(table.addresses);
-        allocator.free(merged);
+        for (merged.items) |table| allocator.free(table.addresses);
+        merged.deinit(allocator);
     }
 
     if (parsed_tables) |tables| {
-        for (tables.tables, 0..) |table, index| {
-            merged[index] = .{
-                .account_key = table.account_key,
-                .addresses = try allocator.dupe(sdk.Pubkey, table.addresses),
-            };
-            initialized_len += 1;
+        for (tables.tables) |table| {
+            try appendOrUpgradeAddressLookupTable(allocator, &merged, table);
         }
     }
-
-    for (address_lookup_tables, 0..) |table, index| {
-        merged[parsed_len + index] = .{
-            .account_key = table.account_key,
-            .addresses = try allocator.dupe(sdk.Pubkey, table.addresses),
-        };
-        initialized_len += 1;
+    for (address_lookup_tables) |table| {
+        try appendOrUpgradeAddressLookupTable(allocator, &merged, table);
     }
 
-    return .{ .tables = merged };
+    return .{ .tables = try merged.toOwnedSlice(allocator) };
 }
 
 pub fn buildOwnedInstructionsFromJson(
@@ -4763,6 +4791,53 @@ test "instructions_invoke.buildOwnedVersionedMessageFromJson uses address_lookup
     try std.testing.expectEqual(@as(usize, 0), owned.message.address_table_lookups[0].writable_indexes.len);
     try std.testing.expectEqual(@as(usize, 1), owned.message.address_table_lookups[0].readonly_indexes.len);
     try std.testing.expectEqual(@as(u8, 0), owned.message.address_table_lookups[0].readonly_indexes[0]);
+}
+
+test "instructions_invoke.buildMergedAddressLookupTables deduplicates duplicate lookup tables and addresses" {
+    const allocator = std.testing.allocator;
+    const table_key = sdk.Pubkey.fromBytes([_]u8{100} ** 32);
+    const address_one = sdk.Pubkey.fromBytes([_]u8{101} ** 32);
+    const address_two = sdk.Pubkey.fromBytes([_]u8{102} ** 32);
+    const address_three = sdk.Pubkey.fromBytes([_]u8{103} ** 32);
+
+    const table_key_base58 = try table_key.toBase58(allocator);
+    defer allocator.free(table_key_base58);
+    const address_one_base58 = try address_one.toBase58(allocator);
+    defer allocator.free(address_one_base58);
+    const address_two_base58 = try address_two.toBase58(allocator);
+    defer allocator.free(address_two_base58);
+    const address_three_base58 = try address_three.toBase58(allocator);
+    defer allocator.free(address_three_base58);
+
+    const base_addresses = try allocator.dupe(sdk.Pubkey, &.{ address_one, address_two });
+    defer allocator.free(base_addresses);
+    const base_tables = [_]sdk.AddressLookupTableAccount{
+        .{
+            .account_key = table_key,
+            .addresses = base_addresses,
+        },
+    };
+
+    const address_lookup_tables_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{
+        \\  "accountKey":"{s}",
+        \\  "addresses":["{s}","{s}","{s}"]
+        \\}}]
+    ,
+        .{ table_key_base58, address_two_base58, address_three_base58, address_one_base58 },
+    );
+    defer allocator.free(address_lookup_tables_json);
+
+    var merged = try buildMergedAddressLookupTables(allocator, base_tables[0..], address_lookup_tables_json);
+    defer merged.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), merged.tables.len);
+    try std.testing.expectEqual(@as(usize, 3), merged.tables[0].addresses.len);
+    try std.testing.expect(merged.tables[0].account_key.eql(table_key));
+    try std.testing.expect(merged.tables[0].addresses[0].eql(address_one));
+    try std.testing.expect(merged.tables[0].addresses[1].eql(address_two));
+    try std.testing.expect(merged.tables[0].addresses[2].eql(address_three));
 }
 
 test "instructions_invoke.buildLegacyMessageBase64WithOptionsFromJson forwards parsed instructions and build options" {
