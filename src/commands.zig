@@ -3169,23 +3169,32 @@ fn loadCliInstructionSpec(
     else
         null;
 
-    loaded.signers = try allocator.alloc(
-        client.Keypair,
-        1 + spec.additional_signer_secret_keys.len + spec.additional_signer_keypair_paths.len + if (nonce_authority_keypair != null) @as(usize, 1) else 0,
-    );
-    loaded.signers[0] = payer_keypair;
-    for (spec.additional_signer_secret_keys, 0..) |secret_key, index| {
-        loaded.signers[index + 1] = try client.Keypair.fromBase58SecretKey(allocator, secret_key);
+    var unique_signers = std.ArrayListUnmanaged(client.Keypair){};
+    defer unique_signers.deinit(allocator);
+    try unique_signers.append(allocator, payer_keypair);
+
+    for (spec.additional_signer_secret_keys) |secret_key| {
+        const signer = try client.Keypair.fromBase58SecretKey(allocator, secret_key);
+        if (!containsSignerPubkey(unique_signers.items, signer.public_key)) {
+            try unique_signers.append(allocator, signer);
+        }
     }
-    for (spec.additional_signer_keypair_paths, 0..) |path, index| {
-        loaded.signers[1 + spec.additional_signer_secret_keys.len + index] = try loadInstructionKeypairFromPath(
+    for (spec.additional_signer_keypair_paths) |path| {
+        const signer = try loadInstructionKeypairFromPath(
             allocator,
             path,
         );
+        if (!containsSignerPubkey(unique_signers.items, signer.public_key)) {
+            try unique_signers.append(allocator, signer);
+        }
     }
     if (nonce_authority_keypair) |value| {
-        loaded.signers[1 + spec.additional_signer_secret_keys.len + spec.additional_signer_keypair_paths.len] = value;
+        if (!containsSignerPubkey(unique_signers.items, value.public_key)) {
+            try unique_signers.append(allocator, value);
+        }
     }
+
+    loaded.signers = try unique_signers.toOwnedSlice(allocator);
 
     const instructions = try allocator.alloc(client.Instruction, spec.instructions.len);
     errdefer {
@@ -3231,6 +3240,16 @@ fn loadCliInstructionSpec(
     return loaded;
 }
 
+fn containsSignerPubkey(
+    signers: []const client.Keypair,
+    pubkey: client.Pubkey,
+) bool {
+    for (signers) |value| {
+        if (std.meta.eql(value.public_key, pubkey)) return true;
+    }
+    return false;
+}
+
 fn loadCliInstructionSpecWithSender(
     allocator: Allocator,
     spec: *const CliSimulateInstructionsSpec,
@@ -3259,12 +3278,28 @@ fn mergeAdditionalSignerSecretKeys(
     base: []const []const u8,
     extra: []const []const u8,
 ) ![]const []const u8 {
-    if (extra.len == 0) return base;
+    var merged = std.ArrayListUnmanaged([]const u8){};
+    defer merged.deinit(allocator);
 
-    const merged = try allocator.alloc([]const u8, base.len + extra.len);
-    @memcpy(merged[0..base.len], base);
-    @memcpy(merged[base.len..], extra);
-    return merged;
+    for (base) |secret_key| {
+        try appendUniqueSecretKeyValue(allocator, &merged, secret_key);
+    }
+    for (extra) |secret_key| {
+        try appendUniqueSecretKeyValue(allocator, &merged, secret_key);
+    }
+
+    return try merged.toOwnedSlice(allocator);
+}
+
+fn appendUniqueSecretKeyValue(
+    allocator: Allocator,
+    values: *std.ArrayListUnmanaged([]const u8),
+    value: []const u8,
+) !void {
+    for (values.items) |item| {
+        if (std.mem.eql(u8, item, value)) return;
+    }
+    try values.append(allocator, value);
 }
 
 fn loadCliInstructionSpecWithSenderAndAdditionalSigners(
@@ -3279,7 +3314,7 @@ fn loadCliInstructionSpecWithSenderAndAdditionalSigners(
         spec.additional_signer_secret_keys,
         additional_signer_secret_keys_arg,
     );
-    defer if (additional_signer_secret_keys_arg.len > 0) allocator.free(merged_additional_signer_secret_keys);
+    defer if (merged_additional_signer_secret_keys.ptr != spec.additional_signer_secret_keys.ptr and merged_additional_signer_secret_keys.len > 0) allocator.free(merged_additional_signer_secret_keys);
 
     var resolved_spec = spec.*;
     resolved_spec.additional_signer_secret_keys = merged_additional_signer_secret_keys;
@@ -3525,15 +3560,15 @@ fn encodeResolvedSignerSecretKeysJson(
     defer effective_secret_keys.deinit(allocator);
 
     for (base_secret_keys) |value| {
-        try effective_secret_keys.append(allocator, value);
+        try appendUniqueSecretKeyValue(allocator, &effective_secret_keys, value);
     }
     for (keypair_paths) |value| {
         const resolved = try resolveInstructionKeypairSecretKeyBase58(allocator, null, value) orelse return error.InvalidCli;
         try owned_resolved_secret_keys.append(allocator, resolved);
-        try effective_secret_keys.append(allocator, resolved);
+        try appendUniqueSecretKeyValue(allocator, &effective_secret_keys, resolved);
     }
     for (additional_secret_keys) |value| {
-        try effective_secret_keys.append(allocator, value);
+        try appendUniqueSecretKeyValue(allocator, &effective_secret_keys, value);
     }
 
     var json_buffer: std.io.Writer.Allocating = .init(allocator);
@@ -13255,6 +13290,95 @@ test "runCommand send-program-invoke accepts additional-signer-secret-key" {
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature: SigExtraSig2222222222222222222222222222222222222222222222222222222222222222\n",
+        captured,
+    );
+}
+
+test "runCommand send-program-invoke deduplicates additional-signer-secret-key matching sender-keypair" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var latest_blockhash_bytes: [32]u8 = undefined;
+    for (&latest_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 52);
+    const latest_blockhash = try client.encodeBase58(allocator, &latest_blockhash_bytes);
+    defer allocator.free(latest_blockhash);
+    try sender_context.sender.pushLatestBlockhashResponse(
+        44,
+        latest_blockhash,
+        108,
+    );
+    try sender_context.sender.pushResultJson("\"SigDupSigner3333333333333333333333333333333333333333333333333333333333333333\"");
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-program-invoke-dedup-signer" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{17} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-program-invoke-dedup-signer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
+    ,
+        .{ payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-program-invoke",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        "--additional-signer-secret-key",
+        payer_secret_key_base58,
+        "11111111111111111111111111111111",
+        accounts_json,
+        "ping",
+        "utf8",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "signature: SigDupSigner3333333333333333333333333333333333333333333333333333333333333333\n",
         captured,
     );
 }
@@ -26993,6 +27117,92 @@ test "loadCliInstructionSpec loads instruction data from path" {
 
     try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
     try std.testing.expectEqualSlices(u8, &instruction_data, loaded.owned_instructions.instructions[0].data);
+}
+
+test "mergeAdditionalSignerSecretKeys deduplicates merged secret keys" {
+    const allocator = std.testing.allocator;
+
+    const base_secret_keys = [_][]const u8{
+        "extra_signer_key_a",
+        "extra_signer_key_b",
+        "extra_signer_key_a",
+    };
+    const extra_secret_keys = [_][]const u8{
+        "extra_signer_key_b",
+        "extra_signer_key_c",
+        "extra_signer_key_a",
+        "extra_signer_key_c",
+    };
+
+    const merged = try mergeAdditionalSignerSecretKeys(
+        allocator,
+        &base_secret_keys,
+        &extra_secret_keys,
+    );
+    defer allocator.free(merged);
+
+    try std.testing.expectEqual(@as(usize, 3), merged.len);
+    try std.testing.expect(std.mem.eql(u8, "extra_signer_key_a", merged[0]));
+    try std.testing.expect(std.mem.eql(u8, "extra_signer_key_b", merged[1]));
+    try std.testing.expect(std.mem.eql(u8, "extra_signer_key_c", merged[2]));
+}
+
+test "encodeResolvedSignerSecretKeysJson deduplicates signer key sources" {
+    const allocator = std.testing.allocator;
+
+    const duplicate_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{10} ** 32);
+    const duplicate_signer_secret_key = duplicate_signer_raw.secret_key.toBytes();
+    const duplicate_signer_secret_key_base58 = try client.encodeBase58(allocator, &duplicate_signer_secret_key);
+    defer allocator.free(duplicate_signer_secret_key_base58);
+
+    const unique_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{11} ** 32);
+    const unique_signer_secret_key = unique_signer_raw.secret_key.toBytes();
+    const unique_signer_secret_key_base58 = try client.encodeBase58(allocator, &unique_signer_secret_key);
+    defer allocator.free(unique_signer_secret_key_base58);
+
+    const duplicate_signer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-encode-signers-json-dedup-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(duplicate_signer_keypair_path);
+    defer std.fs.cwd().deleteFile(duplicate_signer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, duplicate_signer_keypair_path, &duplicate_signer_secret_key);
+
+    const base_secret_keys = [_][]const u8{ duplicate_signer_secret_key_base58, unique_signer_secret_key_base58 };
+    const keypair_paths = [_][]const u8{duplicate_signer_keypair_path};
+    const additional_secret_keys = [_][]const u8{
+        duplicate_signer_secret_key_base58,
+        unique_signer_secret_key_base58,
+    };
+
+    const json = try encodeResolvedSignerSecretKeysJson(
+        allocator,
+        &base_secret_keys,
+        &keypair_paths,
+        &additional_secret_keys,
+    );
+    defer allocator.free(json);
+
+    var parsed = try std.json.parseFromSlice([][]const u8, allocator, json, .{});
+    defer parsed.deinit();
+    const resolved_secret_keys = parsed.value;
+
+    try std.testing.expectEqual(@as(usize, 2), resolved_secret_keys.len);
+    try std.testing.expect(
+        std.mem.eql(
+            u8,
+            resolved_secret_keys[0],
+            duplicate_signer_secret_key_base58,
+        ),
+    );
+    try std.testing.expect(
+        std.mem.eql(
+            u8,
+            resolved_secret_keys[1],
+            unique_signer_secret_key_base58,
+        ),
+    );
 }
 
 test "runCommand simulate-versioned-instructions simulates with lookup tables" {
