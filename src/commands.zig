@@ -4243,6 +4243,64 @@ test "loadCliInvocationContextResolvedSecrets defaults to empty signer secret ke
     try std.testing.expectEqual(@as(usize, 0), parsed.value.len);
 }
 
+test "loadCliInvocationContextResolvedSecrets deduplicates signer secret keys across payer, signer keypairs, and explicit additional keys" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{55} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const duplicate_signer_raw = payer_raw;
+    const duplicate_signer_secret_key = duplicate_signer_raw.secret_key.toBytes();
+    const duplicate_signer_secret_key_base58 = payer_secret_key_base58;
+
+    const unique_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{56} ** 32);
+    const unique_signer_secret_key = unique_signer_raw.secret_key.toBytes();
+    const unique_signer_secret_key_base58 = try client.encodeBase58(allocator, &unique_signer_secret_key);
+    defer allocator.free(unique_signer_secret_key_base58);
+
+    const duplicate_signer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-invoke-context-resolved-secrets-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(duplicate_signer_keypair_path);
+    defer std.fs.cwd().deleteFile(duplicate_signer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, duplicate_signer_keypair_path, &duplicate_signer_secret_key);
+
+    var resolved = try loadCliInvocationContextResolvedSecrets(
+        allocator,
+        .{
+            .payer_secret_key = payer_secret_key_base58,
+            .base_additional_signer_secret_keys = &.{
+                unique_signer_secret_key_base58,
+                duplicate_signer_secret_key_base58,
+            },
+            .additional_signer_secret_keys_arg = &.{
+                duplicate_signer_secret_key_base58,
+            },
+        },
+        &.{duplicate_signer_keypair_path},
+    );
+    defer resolved.deinit(allocator);
+
+    try std.testing.expect(resolved.nonce_authority_secret_key == null);
+
+    var parsed = try std.json.parseFromSlice(
+        [][]const u8,
+        allocator,
+        resolved.additional_signer_secret_keys_json,
+        .{},
+    );
+    defer parsed.deinit();
+    const resolved_signer_secret_keys = parsed.value;
+
+    try std.testing.expectEqual(@as(usize, 2), resolved_signer_secret_keys.len);
+    try std.testing.expect(std.mem.eql(u8, resolved_signer_secret_keys[0], payer_secret_key_base58));
+    try std.testing.expect(std.mem.eql(u8, resolved_signer_secret_keys[1], unique_signer_secret_key_base58));
+}
+
 const LoadedCliAnchorInvokeAccountInputs = struct {
     merged_account_bindings_json_source: ?[]u8 = null,
     combined_account_bindings_json_source: ?[]u8 = null,
