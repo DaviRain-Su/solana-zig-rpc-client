@@ -10151,6 +10151,69 @@ fn expectSendTransactionRequestSignatureMetadata(
     try std.testing.expectEqual(expected_required_signers, required_signers);
 }
 
+fn expectSendVersionedTransactionRequestSignatureMetadata(
+    allocator: Allocator,
+    body: []const u8,
+    expected_signature_count: u8,
+    expected_required_signers: u8,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("sendTransaction", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+    try std.testing.expectEqual(@as(usize, 2), params.items.len);
+
+    const encoded_transaction = switch (params.items[0]) {
+        .string => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    const options = switch (params.items[1]) {
+        .object => |value| value,
+        else => return error.InvalidResponse,
+    };
+    _ = options;
+
+    const tx_bytes_len = try std.base64.standard.Decoder.calcSizeForSlice(encoded_transaction);
+    const tx_bytes = try allocator.alloc(u8, tx_bytes_len);
+    defer allocator.free(tx_bytes);
+    try std.base64.standard.Decoder.decode(tx_bytes, encoded_transaction);
+
+    var index: usize = 0;
+    var value: usize = 0;
+    var shift: u6 = 0;
+    while (index < tx_bytes.len) : (index += 1) {
+        const byte = tx_bytes[index];
+        value |= (@as(usize, byte & 0x7f) << shift);
+        if ((byte & 0x80) == 0) break;
+        shift +%= 7;
+    } else return error.InvalidResponse;
+
+    const signature_count = value;
+    try std.testing.expectEqual(expected_signature_count, @as(u8, @intCast(signature_count)));
+    const signature_offset = index + 1 + signature_count * Ed25519.Signature.encoded_length;
+    try std.testing.expect(signature_offset < tx_bytes.len);
+
+    const message = tx_bytes[signature_offset..];
+    try std.testing.expect(message.len > 1);
+    const required_signers = message[1];
+    try std.testing.expectEqual(expected_required_signers, required_signers);
+}
+
 fn expectGetFeeForMessageRequest(
     allocator: Allocator,
     body: []const u8,
@@ -14182,6 +14245,82 @@ test "runCommand send-versioned-program-invoke sends versioned instruction built
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature: Sig141414141414141414141414141414141414141414141414141414141414141414\n",
+        captured,
+    );
+}
+
+test "runCommand send-versioned-program-invoke deduplicates duplicate signers in serialized transaction" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson("\"Sig2424242424242424242424242424242424242424242424242424242424242424\"");
+
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-versioned-program-invoke-dedup-serialized" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{6} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":true,"is_writable":false}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
+    ,
+        .{ payer_pubkey_base58, payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 31);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-versioned-program-invoke",
+        "--recent-blockhash",
+        recent_blockhash,
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "11111111111111111111111111111111",
+        accounts_json,
+        "ping",
+        "utf8",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try expectSendVersionedTransactionRequestSignatureMetadata(allocator, commandCapturedRequestAt(&sender_context, 0), 1, 1);
+    try std.testing.expectEqualStrings(
+        "signature: Sig2424242424242424242424242424242424242424242424242424242424242424\n",
         captured,
     );
 }
