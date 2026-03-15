@@ -14619,6 +14619,70 @@ test "runCommand inspect-spec emits fee section json" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"fee\":19999") != null);
 }
 
+test "runCommand inspect-spec emits mode resolution section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-spec-mode-resolution-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{120} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 91);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{18} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_pubkey = client.Pubkey.fromBytes(.{29} ** 32);
+    const account_pubkey_base58 = try account_pubkey.toBase58(allocator);
+    defer allocator.free(account_pubkey_base58);
+
+    const invocation_spec_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"payer_secret_key\":\"{s}\",\"recent_blockhash\":\"{s}\",\"instructions\":[{{\"program_id\":\"{s}\",\"accounts\":[{{\"pubkey\":\"{s}\",\"is_writable\":true}}],\"data_bytes\":[4,5,6]}}]}}",
+        .{ payer_secret_key_base58, recent_blockhash, program_id_base58, account_pubkey_base58 },
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-spec",
+        "--json",
+        "--inspect-section",
+        "mode-resolution",
+        invocation_spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"auto\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
+}
+
 test "runCommand inspect-instructions emits simulation section json" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
@@ -14694,6 +14758,75 @@ test "runCommand inspect-instructions emits simulation section json" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"context_slot\":531") != null);
+}
+
+test "runCommand inspect-instructions emits mode resolution section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-instructions-mode-resolution-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{109} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{108} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 55);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const invocation_spec_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"recent_blockhash\":\"{s}\",\"instructions\":[{{\"program_id\":\"11111111111111111111111111111111\",\"accounts\":[{{\"pubkey\":\"{s}\",\"is_signer\":true,\"is_writable\":true}},{{\"pubkey\":\"{s}\",\"is_signer\":false,\"is_writable\":true}}],\"data\":\"ping\",\"data_encoding\":\"utf8\"}}]}}",
+        .{ recent_blockhash, payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-instructions",
+        "--json",
+        "--inspect-section",
+        "mode-resolution",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        invocation_spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"auto\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
 }
 
 test "runCommand inspect-instructions emits fee section json" {
