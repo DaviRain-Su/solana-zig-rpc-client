@@ -15036,6 +15036,65 @@ test "runCommand inspect-idl-invoke emits fee section json" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"fee\":13001") != null);
 }
 
+test "runCommand inspect-idl-invoke emits mode resolution section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-idl-invoke-mode-resolution-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{114} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 159);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-idl-invoke",
+        "--json",
+        "--inspect-section",
+        "mode-resolution",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"auto\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
+}
+
 test "runCommand inspect-program-invoke emits json inspection for schema args" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
