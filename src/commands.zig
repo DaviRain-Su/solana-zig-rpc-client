@@ -10095,6 +10095,62 @@ fn expectSendTransferTransactionRequest(
     try std.testing.expectEqual(expected_lamports, std.mem.readInt(u64, message[139..147], .little));
 }
 
+fn expectSendTransactionRequestSignatureMetadata(
+    allocator: Allocator,
+    body: []const u8,
+    expected_signature_count: u8,
+    expected_required_signers: u8,
+) !void {
+    const ParsedRequest = struct {
+        jsonrpc: []const u8 = "",
+        id: u64 = 0,
+        method: []const u8 = "",
+        params: std.json.Value = .null,
+    };
+
+    var parsed_request = try std.json.parseFromSlice(ParsedRequest, allocator, body, .{ .ignore_unknown_fields = true });
+    defer parsed_request.deinit();
+    const request = parsed_request.value;
+
+    try std.testing.expectEqualStrings("sendTransaction", request.method);
+    try std.testing.expectEqualStrings("2.0", request.jsonrpc);
+
+    const params = switch (request.params) {
+        .array => |value| value,
+        else => return error.InvalidResponse,
+    };
+    try std.testing.expectEqual(@as(usize, 2), params.items.len);
+
+    const encoded_transaction = switch (params.items[0]) {
+        .string => |value| value,
+        else => return error.InvalidResponse,
+    };
+    const options = switch (params.items[1]) {
+        .object => |value| value,
+        else => return error.InvalidResponse,
+    };
+
+    switch (options.get("encoding") orelse return error.InvalidResponse) {
+        .string => |value| try std.testing.expectEqualStrings("base64", value),
+        else => return error.InvalidResponse,
+    }
+
+    const tx_bytes_len = try std.base64.standard.Decoder.calcSizeForSlice(encoded_transaction);
+    const tx_bytes = try allocator.alloc(u8, tx_bytes_len);
+    defer allocator.free(tx_bytes);
+    try std.base64.standard.Decoder.decode(tx_bytes, encoded_transaction);
+
+    try std.testing.expect(tx_bytes.len > 0);
+    const signature_count = tx_bytes[0];
+    try std.testing.expectEqual(expected_signature_count, signature_count);
+
+    const message_offset = 1 + @as(usize, signature_count) * Ed25519.Signature.encoded_length;
+    try std.testing.expect(message_offset < tx_bytes.len);
+
+    const required_signers = tx_bytes[message_offset];
+    try std.testing.expectEqual(expected_required_signers, required_signers);
+}
+
 fn expectGetFeeForMessageRequest(
     allocator: Allocator,
     body: []const u8,
@@ -13330,14 +13386,6 @@ test "runCommand send-program-invoke accepts additional-signer-secret-key" {
     const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
     defer allocator.free(payer_pubkey_base58);
 
-    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{11} ** 32);
-    const extra_signer_secret_key = extra_signer_raw.secret_key.toBytes();
-    const extra_signer_secret_key_base58 = try client.encodeBase58(allocator, &extra_signer_secret_key);
-    defer allocator.free(extra_signer_secret_key_base58);
-    const extra_signer_pubkey_bytes = extra_signer_raw.public_key.toBytes();
-    const extra_signer_pubkey_base58 = try client.encodeBase58(allocator, &extra_signer_pubkey_bytes);
-    defer allocator.free(extra_signer_pubkey_base58);
-
     const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
     const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
     const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
@@ -13345,9 +13393,9 @@ test "runCommand send-program-invoke accepts additional-signer-secret-key" {
 
     const accounts_json = try std.fmt.allocPrint(
         allocator,
-        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":true,"is_writable":false}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":false}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
     ,
-        .{ payer_pubkey_base58, extra_signer_pubkey_base58, destination_pubkey_base58 },
+        .{ payer_pubkey_base58, payer_pubkey_base58, destination_pubkey_base58 },
     );
     defer allocator.free(accounts_json);
 
@@ -13357,8 +13405,6 @@ test "runCommand send-program-invoke accepts additional-signer-secret-key" {
         "send-program-invoke",
         "--sender-secret-key",
         payer_secret_key_base58,
-        "--additional-signer-secret-key",
-        extra_signer_secret_key_base58,
         "11111111111111111111111111111111",
         accounts_json,
         data_arg,
@@ -13466,6 +13512,91 @@ test "runCommand send-program-invoke deduplicates additional-signer-secret-key m
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature: SigDupSigner3333333333333333333333333333333333333333333333333333333333333333\n",
+        captured,
+    );
+}
+
+test "runCommand send-program-invoke deduplicates duplicate signers in serialized transaction" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var latest_blockhash_bytes: [32]u8 = undefined;
+    for (&latest_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 31);
+    const latest_blockhash = try client.encodeBase58(allocator, &latest_blockhash_bytes);
+    defer allocator.free(latest_blockhash);
+    try sender_context.sender.pushLatestBlockhashResponse(
+        44,
+        latest_blockhash,
+        108,
+    );
+    try sender_context.sender.pushResultJson("\"SigUniqSigners4444444444444444444444444444444444444444444444444444444444444444\"");
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-program-invoke-dedup-serialized" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{17} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{11} ** 32);
+    const extra_signer_secret_key = extra_signer_raw.secret_key.toBytes();
+    const extra_signer_secret_key_base58 = try client.encodeBase58(allocator, &extra_signer_secret_key);
+    defer allocator.free(extra_signer_secret_key_base58);
+    const extra_signer_pubkey_bytes = extra_signer_raw.public_key.toBytes();
+    const extra_signer_pubkey_base58 = try client.encodeBase58(allocator, &extra_signer_pubkey_bytes);
+    defer allocator.free(extra_signer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":true,"is_writable":false}},{{"pubkey":"{s}","is_signer":true,"is_writable":false}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
+    ,
+        .{ payer_pubkey_base58, payer_pubkey_base58, payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-program-invoke",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "11111111111111111111111111111111",
+        accounts_json,
+        "ping",
+        "utf8",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try expectSendTransactionRequestSignatureMetadata(allocator, commandCapturedRequestAt(&sender_context, 1), 1, 1);
+    try std.testing.expectEqualStrings(
+        "signature: SigUniqSigners4444444444444444444444444444444444444444444444444444444444444444\n",
         captured,
     );
 }
