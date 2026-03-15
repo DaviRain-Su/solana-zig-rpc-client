@@ -228,13 +228,16 @@ pub fn getNonceAccountResponseWithOptions(
     options: ?UiAccountQueryOptions,
 ) !NonceAccountResponse {
     const response = try self.getUiAccountResponseWithOptions(nonce_account_pubkey, options);
-    errdefer if (response.account) |account| freeOwnedJsonParsedAccount(self, account);
 
     return NonceAccountResponse{
         .context_slot = response.context_slot,
         .account = if (response.account) |account| blk: {
-            defer freeOwnedJsonParsedAccount(self, account);
-            break :blk try parseNonceAccount(self, account);
+            const parsed_account = parseNonceAccount(self, account) catch |err| {
+                freeOwnedJsonParsedAccount(self, account);
+                return err;
+            };
+            freeOwnedJsonParsedAccount(self, account);
+            break :blk parsed_account;
         } else null,
     };
 }

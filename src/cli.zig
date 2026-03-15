@@ -57,7 +57,10 @@ const cli_params = clap.parseParamsComptime(
     \\    --recent-blockhash <string>...
     \\    --sender-keypair <string>...
     \\    --sender-secret-key <string>...
+    \\    --instruction-json <string>...
+    \\    --additional-signer-keypair <string>...
     \\    --additional-signer-secret-key <string>...
+    \\    --address-lookup-table <string>...
     \\    --invoke-mode <string>...
     \\    --no-mode-fallback
     \\    --inspect-section <string>...
@@ -115,18 +118,21 @@ const cli_option_help_params = clap.parseParamsComptime(
     \\    --max-retries <count>               Max tx retries before giving up
     \\    --preflight-commitment <level>      Commitment for tx preflight checks
     \\    --airdrop-recent-blockhash <blockhash> Recent blockhash override for request-airdrop
-    \\    --sender-keypair <path>             Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)
-    \\    --sender-secret-key <sender-secret-key> Transfer/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer secret key (base58)
+    \\    --sender-keypair <path>             Transfer/invocation-spec/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer keypair JSON file (default: Solana CLI config keypair_path or ~/.config/solana/id.json)
+    \\    --sender-secret-key <sender-secret-key> Transfer/invocation-spec/program-invoke/idl/send-instructions/simulate-instructions/simulate-program-invoke/simulate-idl-invoke/simulate-versioned-program-invoke/simulate-versioned-idl-invoke payer secret key (base58)
+    \\    --instruction-json <json|@path>    Generic instruction JSON object or array for instructions and invocation-spec commands (repeatable)
+    \\    --additional-signer-keypair <path> Additional signer keypair JSON file (repeatable)
     \\    --additional-signer-secret-key <additional-signer-secret-key> Additional signer secret key (base58, repeatable)
+    \\    --address-lookup-table <json|@path> Address lookup table JSON object, JSON array, or @path (repeatable)
     \\    --invoke-mode <mode>               Preferred invocation mode: auto|legacy|versioned (invoke/explain/preview/validate/prepare/estimate/spec commands)
     \\    --no-mode-fallback                 Disable automatic legacy/versioned fallback for invoke/explain/preview/validate/prepare/estimate/spec commands
     \\    --inspect-section <section>        Inspect output section: inspection|report|accounts|signers|summary|plan|preflight|validation|lookup-coverage|lookup-tables|diagnostics|mode-report|mode-resolution|analysis|prepared|message|transaction|simulation|fee|instructions|resolved (inspect commands)
     \\    --data-schema-json <json|@path>    Program-invoke instruction data schema JSON (used with --args-json)
     \\    --args-json <json|@path>           Program-invoke instruction args JSON (used with --data-schema-json)
     \\    --schema-encoding <encoding>       Program-invoke schema encoding (currently borsh)
-    \\    --nonce-account <pubkey>           Durable nonce account for program-invoke and idl-invoke commands
-    \\    --nonce-authority-secret-key <nonce-authority-secret-key> Durable nonce authority secret key (base58) for program-invoke and idl-invoke commands
-    \\    --nonce-authority-keypair <path>   Durable nonce authority keypair JSON file for program-invoke and idl-invoke commands
+    \\    --nonce-account <pubkey>           Durable nonce account for instructions, invocation-spec, program-invoke, and idl-invoke commands
+    \\    --nonce-authority-secret-key <nonce-authority-secret-key> Durable nonce authority secret key (base58) for instructions, invocation-spec, program-invoke, and idl-invoke commands
+    \\    --nonce-authority-keypair <path>   Durable nonce authority keypair JSON file for instructions, invocation-spec, program-invoke, and idl-invoke commands
     \\    --transfer-recent-blockhash <blockhash> Recent blockhash override for transfer
     \\    --epoch <epoch>                     Epoch override for inflation-reward
     \\    --encoding <mode>                   json|jsonParsed|base58|base64 (block and transaction)
@@ -290,14 +296,34 @@ const recent_performance_samples_command_positionals_params = clap.parseParamsCo
 const instruction_command_usage_params = clap.parseParamsComptime(
     \\    --sender-keypair <path>
     \\    --sender-secret-key <sender-secret-key>
+    \\    --instruction-json <json|@path>...
+    \\    --additional-signer-keypair <path>...
+    \\    --address-lookup-table <json|@path>...
     \\    --recent-blockhash <base58>
-    \\<instruction-spec-json|@path>
+    \\    --nonce-account <pubkey>
+    \\    --nonce-authority-secret-key <nonce-authority-secret-key>
+    \\    --nonce-authority-keypair <path>
+    \\
+);
+
+const invocation_spec_command_usage_params = clap.parseParamsComptime(
+    \\    --sender-keypair <path>
+    \\    --sender-secret-key <sender-secret-key>
+    \\    --instruction-json <json|@path>...
+    \\    --additional-signer-keypair <path>...
+    \\    --address-lookup-table <json|@path>...
+    \\    --recent-blockhash <base58>
+    \\    --nonce-account <pubkey>
+    \\    --nonce-authority-secret-key <nonce-authority-secret-key>
+    \\    --nonce-authority-keypair <path>
     \\
 );
 
 const program_invoke_command_usage_params = clap.parseParamsComptime(
     \\    --sender-keypair <path>
     \\    --sender-secret-key <sender-secret-key>
+    \\    --additional-signer-keypair <path>...
+    \\    --address-lookup-table <json|@path>...
     \\    --recent-blockhash <base58>
     \\    --nonce-account <pubkey>
     \\    --nonce-authority-secret-key <nonce-authority-secret-key>
@@ -313,6 +339,8 @@ const program_invoke_command_usage_params = clap.parseParamsComptime(
 const idl_invoke_command_usage_params = clap.parseParamsComptime(
     \\    --sender-keypair <path>
     \\    --sender-secret-key <sender-secret-key>
+    \\    --additional-signer-keypair <path>...
+    \\    --address-lookup-table <json|@path>...
     \\    --recent-blockhash <base58>
     \\    --program-id <pubkey>
     \\    --nonce-account <pubkey>
@@ -729,29 +757,29 @@ const command_usage_entries = [_]CommandUsageEntry{
     .{ .command = .signature_statuses, .style = .signature_list, .suffix = " [signature-2 ...]", .parse_style = .signature_list },
     .{ .command = .send_transaction, .style = .signed_transaction, .parse_style = .signed_transaction },
     .{ .command = .send_transaction_and_confirm, .style = .signed_transaction, .parse_style = .signed_transaction },
-    .{ .command = .send_instructions, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .send_instructions_and_confirm, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .send_versioned_instructions, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .send_versioned_instructions_and_confirm, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .invoke_instructions, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .invoke_instructions_and_confirm, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .invoke_instructions_simulate, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .preview_instructions, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .explain_instructions, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .validate_instructions, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .inspect_instructions, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .prepare_instructions, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .estimate_instructions_fee, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .spec_instructions, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .invoke_spec, .style = .invocation_spec, .parse_style = .instruction },
-    .{ .command = .invoke_spec_and_confirm, .style = .invocation_spec, .parse_style = .instruction },
-    .{ .command = .invoke_spec_simulate, .style = .invocation_spec, .parse_style = .instruction },
-    .{ .command = .preview_spec, .style = .invocation_spec, .parse_style = .instruction },
-    .{ .command = .explain_spec, .style = .invocation_spec, .parse_style = .instruction },
-    .{ .command = .validate_spec, .style = .invocation_spec, .parse_style = .instruction },
-    .{ .command = .inspect_spec, .style = .invocation_spec, .parse_style = .instruction },
-    .{ .command = .prepare_spec, .style = .invocation_spec, .parse_style = .instruction },
-    .{ .command = .estimate_spec_fee, .style = .invocation_spec, .parse_style = .instruction },
+    .{ .command = .send_instructions, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .send_instructions_and_confirm, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .send_versioned_instructions, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .send_versioned_instructions_and_confirm, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .invoke_instructions, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .invoke_instructions_and_confirm, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .invoke_instructions_simulate, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .preview_instructions, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .explain_instructions, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .validate_instructions, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .inspect_instructions, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .prepare_instructions, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .estimate_instructions_fee, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .spec_instructions, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .invoke_spec, .style = .invocation_spec, .suffix = " [invocation-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .invoke_spec_and_confirm, .style = .invocation_spec, .suffix = " [invocation-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .invoke_spec_simulate, .style = .invocation_spec, .suffix = " [invocation-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .preview_spec, .style = .invocation_spec, .suffix = " [invocation-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .explain_spec, .style = .invocation_spec, .suffix = " [invocation-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .validate_spec, .style = .invocation_spec, .suffix = " [invocation-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .inspect_spec, .style = .invocation_spec, .suffix = " [invocation-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .prepare_spec, .style = .invocation_spec, .suffix = " [invocation-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .estimate_spec_fee, .style = .invocation_spec, .suffix = " [invocation-spec-json|@path]", .parse_style = .instruction },
     .{ .command = .send_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]", .parse_style = .program_invoke_legacy },
     .{ .command = .send_program_invoke_and_confirm, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]", .parse_style = .program_invoke_legacy },
     .{ .command = .send_versioned_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
@@ -768,8 +796,8 @@ const command_usage_entries = [_]CommandUsageEntry{
     .{ .command = .spec_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
     .{ .command = .transfer, .style = .literal, .suffix = "[--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>", .parse_style = .transfer },
     .{ .command = .simulate_transaction, .style = .signed_transaction, .parse_style = .signed_transaction },
-    .{ .command = .simulate_instructions, .style = .instruction, .parse_style = .instruction },
-    .{ .command = .simulate_versioned_instructions, .style = .instruction, .parse_style = .instruction },
+    .{ .command = .simulate_instructions, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
+    .{ .command = .simulate_versioned_instructions, .style = .instruction, .suffix = " [instruction-spec-json|@path]", .parse_style = .instruction },
     .{ .command = .simulate_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]", .parse_style = .program_invoke_legacy },
     .{ .command = .simulate_versioned_program_invoke, .style = .program_invoke, .suffix = " [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]", .parse_style = .program_invoke_versioned },
     .{ .command = .simulate_idl_invoke, .style = .idl_invoke, .suffix = " [additional-signer-keypair-paths-json|@path]", .parse_style = .idl_invoke_legacy },
@@ -856,7 +884,7 @@ fn writeCommandUsageEntry(out: *std.Io.Writer, entry: CommandUsageEntry) !void {
         .signature_list => try writeCommandUsageLine(out, entry.command, &signature_statuses_command_usage_params, entry.suffix),
         .signed_transaction => try writeCommandUsageLine(out, entry.command, &signed_transaction_command_usage_params, entry.suffix),
         .instruction => try writeCommandUsageLine(out, entry.command, &instruction_command_usage_params, entry.suffix),
-        .invocation_spec => try writeCommandUsageLine(out, entry.command, &invocation_spec_command_positionals_params, entry.suffix),
+        .invocation_spec => try writeCommandUsageLine(out, entry.command, &invocation_spec_command_usage_params, entry.suffix),
         .program_invoke => try writeCommandUsageLine(out, entry.command, &program_invoke_command_usage_params, entry.suffix),
         .idl_invoke => try writeCommandUsageLine(out, entry.command, &idl_invoke_command_usage_params, entry.suffix),
         .raw_rpc => try writeCommandUsageLine(out, entry.command, &raw_rpc_command_usage_params, entry.suffix),
@@ -1065,6 +1093,7 @@ pub const ParsedArgs = struct {
     blocks_limit_arg: ?[]const u8,
     message_arg: ?[]const u8,
     instructions_spec_arg: ?[]const u8,
+    instruction_json_args: std.ArrayListUnmanaged([]const u8),
     program_invoke_program_id_arg: ?[]const u8,
     program_invoke_accounts_arg: ?[]const u8,
     program_invoke_data_arg: ?[]const u8,
@@ -1073,7 +1102,9 @@ pub const ParsedArgs = struct {
     program_invoke_args_json_arg: ?[]const u8,
     program_invoke_schema_encoding_arg: ?[]const u8,
     program_invoke_signer_keypair_paths_arg: ?[]const u8,
+    program_invoke_additional_signer_keypair_paths: std.ArrayListUnmanaged([]const u8),
     program_invoke_additional_signer_secret_keys: std.ArrayListUnmanaged([]const u8),
+    program_invoke_additional_lookup_tables: std.ArrayListUnmanaged([]const u8),
     program_invoke_lookup_tables_arg: ?[]const u8,
     program_invoke_nonce_account_arg: ?[]const u8,
     program_invoke_nonce_authority_secret_key_arg: ?[]const u8,
@@ -1129,9 +1160,12 @@ pub const ParsedArgs = struct {
         self.signature_statuses.deinit(allocator);
         self.multiple_accounts.deinit(allocator);
         self.simulation_accounts.deinit(allocator);
+        self.instruction_json_args.deinit(allocator);
         self.idl_account_bindings.deinit(allocator);
         self.idl_remaining_accounts.deinit(allocator);
+        self.program_invoke_additional_signer_keypair_paths.deinit(allocator);
         self.program_invoke_additional_signer_secret_keys.deinit(allocator);
+        self.program_invoke_additional_lookup_tables.deinit(allocator);
     }
 };
 
@@ -1185,6 +1219,10 @@ fn parseCommandPositionalsFromMetadata(allocator: Allocator, parsed: *ParsedArgs
 
     switch (parse_style) {
         .instruction => {
+            if (positionals.len == 0 and parsed.instruction_json_args.items.len > 0) {
+                parsed.instructions_spec_arg = null;
+                return true;
+            }
             var command_result = try parsePositionalsWithClap(&instruction_command_positionals_params, allocator, positionals);
             defer command_result.deinit();
 
@@ -1454,6 +1492,7 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .blocks_limit_arg = null,
         .message_arg = null,
         .instructions_spec_arg = null,
+        .instruction_json_args = .{},
         .program_invoke_program_id_arg = null,
         .program_invoke_accounts_arg = null,
         .program_invoke_data_arg = null,
@@ -1462,7 +1501,9 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
         .program_invoke_args_json_arg = null,
         .program_invoke_schema_encoding_arg = null,
         .program_invoke_signer_keypair_paths_arg = null,
+        .program_invoke_additional_signer_keypair_paths = .{},
         .program_invoke_additional_signer_secret_keys = .{},
+        .program_invoke_additional_lookup_tables = .{},
         .program_invoke_lookup_tables_arg = null,
         .program_invoke_nonce_account_arg = null,
         .program_invoke_nonce_authority_secret_key_arg = null,
@@ -1608,7 +1649,10 @@ pub fn parseCliArgs(allocator: Allocator, args: []const []const u8) !ParsedArgs 
     }
 
     try appendStringArgs(allocator, &parsed.simulation_accounts, @field(result.args, "simulation-account"));
+    try appendStringArgs(allocator, &parsed.instruction_json_args, @field(result.args, "instruction-json"));
+    try appendStringArgs(allocator, &parsed.program_invoke_additional_signer_keypair_paths, @field(result.args, "additional-signer-keypair"));
     try appendStringArgs(allocator, &parsed.program_invoke_additional_signer_secret_keys, @field(result.args, "additional-signer-secret-key"));
+    try appendStringArgs(allocator, &parsed.program_invoke_additional_lookup_tables, @field(result.args, "address-lookup-table"));
     try appendStringArgs(allocator, &parsed.idl_account_bindings, @field(result.args, "account"));
     try appendStringArgs(allocator, &parsed.idl_remaining_accounts, @field(result.args, "remaining-account"));
 
@@ -1847,53 +1891,53 @@ test "cli.printUsage includes new commands" {
     try std.testing.expect(std.mem.indexOf(u8, usage, "inflation-reward <address-1> [address-2 ...] [--epoch <epoch>]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transaction <signature>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-transaction <signed-tx-base64>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-instructions-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "preview-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "explain-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "validate-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "inspect-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "prepare-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "spec-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-spec <invocation-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-spec-and-confirm <invocation-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-spec-simulate <invocation-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "preview-spec <invocation-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "explain-spec <invocation-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "validate-spec <invocation-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "inspect-spec <invocation-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "prepare-spec <invocation-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "estimate-spec-fee <invocation-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "preview-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "explain-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "validate-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "inspect-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "prepare-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "spec-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] <instruction-spec-json|@path>") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-idl-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "preview-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "explain-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "validate-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "inspect-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "prepare-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
-    try std.testing.expect(std.mem.indexOf(u8, usage, "spec-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [instruction-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-instructions-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [instruction-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [instruction-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-instructions-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [instruction-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "preview-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [instruction-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "explain-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [instruction-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "validate-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [instruction-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "inspect-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [instruction-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "prepare-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [instruction-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "spec-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [instruction-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-spec [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [invocation-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-spec-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [invocation-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-spec-simulate [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [invocation-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "preview-spec [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [invocation-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "explain-spec [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [invocation-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "validate-spec [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [invocation-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "inspect-spec [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [invocation-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "prepare-spec [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [invocation-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "estimate-spec-fee [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [invocation-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "invoke-program-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "preview-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "explain-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "validate-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "inspect-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "prepare-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "spec-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [instruction-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-instructions [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--instruction-json <json|@path>...] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [instruction-spec-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-program-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--data-schema-json <json|@path>] [--args-json <json|@path>] [--schema-encoding <encoding>] <program-id> <accounts-json|@path> [data|@path] [data-encoding] [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "simulate-versioned-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-idl-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "send-versioned-idl-invoke-and-confirm [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "preview-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "explain-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "validate-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "inspect-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "prepare-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage, "spec-idl-invoke [--sender-keypair <path>] [--sender-secret-key <sender-secret-key>] [--additional-signer-keypair <path>...] [--address-lookup-table <json|@path>...] [--recent-blockhash <base58>] [--program-id <pubkey>] [--nonce-account <pubkey>] [--nonce-authority-secret-key <nonce-authority-secret-key>] [--nonce-authority-keypair <path>] [--idl-args-json <json|@path>] [--accounts-json <json|@path>] [--account <name=pubkey>...] [--remaining-account <pubkey[,is_signer,is_writable]>...] [--remaining-accounts-json <json|@path>] <idl-json|@path> <instruction-name> [additional-signer-keypair-paths-json|@path] [address-lookup-tables-json|@path]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "raw-rpc <method> [params-json]") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "transfer [--sender-keypair <path> | <sender-secret-key>] <destination> <lamports>") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage, "poll-balance <account>") != null);
@@ -2353,6 +2397,120 @@ test "cli.parseCliArgs parses invoke-spec args" {
     );
 }
 
+test "cli.parseCliArgs parses invoke-spec-simulate with sender and nonce overrides" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "invoke-spec-simulate",
+        "--sender-secret-key",
+        "SpecSender11111111111111111111111111111111111111111111111111111111111111",
+        "--nonce-account",
+        "SpecNonce111111111111111111111111111111111111111111",
+        "--nonce-authority-secret-key",
+        "SpecNonceAuthority1111111111111111111111111111111111111111111111111111",
+        "{\"instructions\":[]}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.invoke_spec_simulate, parsed.command);
+    try std.testing.expectEqualStrings(
+        "SpecSender11111111111111111111111111111111111111111111111111111111111111",
+        parsed.sender_secret_key_arg orelse "",
+    );
+    try std.testing.expectEqualStrings(
+        "SpecNonce111111111111111111111111111111111111111111",
+        parsed.program_invoke_nonce_account_arg orelse "",
+    );
+    try std.testing.expectEqualStrings(
+        "SpecNonceAuthority1111111111111111111111111111111111111111111111111111",
+        parsed.program_invoke_nonce_authority_secret_key_arg orelse "",
+    );
+    try std.testing.expectEqualStrings("{\"instructions\":[]}", parsed.instructions_spec_arg orelse "");
+}
+
+test "cli.parseCliArgs parses validate-instructions with repeated instruction-json" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "validate-instructions",
+        "--instruction-json",
+        "{\"program_id\":\"11111111111111111111111111111111\",\"accounts\":[],\"data\":\"ping\",\"data_encoding\":\"utf8\"}",
+        "--instruction-json",
+        "{\"program_id\":\"11111111111111111111111111111111\",\"accounts\":[],\"data\":\"pong\",\"data_encoding\":\"utf8\"}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.validate_instructions, parsed.command);
+    try std.testing.expect(parsed.instructions_spec_arg == null);
+    try std.testing.expectEqual(@as(usize, 2), parsed.instruction_json_args.items.len);
+    try std.testing.expectEqualStrings(
+        "{\"program_id\":\"11111111111111111111111111111111\",\"accounts\":[],\"data\":\"ping\",\"data_encoding\":\"utf8\"}",
+        parsed.instruction_json_args.items[0],
+    );
+    try std.testing.expectEqualStrings(
+        "{\"program_id\":\"11111111111111111111111111111111\",\"accounts\":[],\"data\":\"pong\",\"data_encoding\":\"utf8\"}",
+        parsed.instruction_json_args.items[1],
+    );
+}
+
+test "cli.parseCliArgs parses validate-spec with additional-signer-keypair" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "validate-spec",
+        "--additional-signer-keypair",
+        "/tmp/signer-a.json",
+        "--additional-signer-keypair",
+        "/tmp/signer-b.json",
+        "{\"instructions\":[]}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.validate_spec, parsed.command);
+    try std.testing.expectEqual(@as(usize, 2), parsed.program_invoke_additional_signer_keypair_paths.items.len);
+    try std.testing.expectEqualStrings("/tmp/signer-a.json", parsed.program_invoke_additional_signer_keypair_paths.items[0]);
+    try std.testing.expectEqualStrings("/tmp/signer-b.json", parsed.program_invoke_additional_signer_keypair_paths.items[1]);
+    try std.testing.expectEqualStrings("{\"instructions\":[]}", parsed.instructions_spec_arg orelse "");
+}
+
+test "cli.parseCliArgs parses validate-spec with repeated instruction-json" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "validate-spec",
+        "--instruction-json",
+        "{\"program_id\":\"11111111111111111111111111111111\",\"accounts\":[],\"data\":\"ping\",\"data_encoding\":\"utf8\"}",
+        "--instruction-json",
+        "{\"program_id\":\"11111111111111111111111111111111\",\"accounts\":[],\"data\":\"pong\",\"data_encoding\":\"utf8\"}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.validate_spec, parsed.command);
+    try std.testing.expect(parsed.instructions_spec_arg == null);
+    try std.testing.expectEqual(@as(usize, 2), parsed.instruction_json_args.items.len);
+    try std.testing.expectEqualStrings(
+        "{\"program_id\":\"11111111111111111111111111111111\",\"accounts\":[],\"data\":\"ping\",\"data_encoding\":\"utf8\"}",
+        parsed.instruction_json_args.items[0],
+    );
+    try std.testing.expectEqualStrings(
+        "{\"program_id\":\"11111111111111111111111111111111\",\"accounts\":[],\"data\":\"pong\",\"data_encoding\":\"utf8\"}",
+        parsed.instruction_json_args.items[1],
+    );
+}
+
+test "cli.parseCliArgs parses inspect-spec with additional address lookup tables" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "inspect-spec",
+        "--address-lookup-table",
+        "{\"account_key\":\"Lookup111111111111111111111111111111111\",\"addresses\":[\"Addr1111111111111111111111111111111111111\"]}",
+        "--address-lookup-table",
+        "@tables/lookup.json",
+        "{\"instructions\":[]}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.inspect_spec, parsed.command);
+    try std.testing.expectEqual(@as(usize, 2), parsed.program_invoke_additional_lookup_tables.items.len);
+    try std.testing.expectEqualStrings(
+        "{\"account_key\":\"Lookup111111111111111111111111111111111\",\"addresses\":[\"Addr1111111111111111111111111111111111111\"]}",
+        parsed.program_invoke_additional_lookup_tables.items[0],
+    );
+    try std.testing.expectEqualStrings("@tables/lookup.json", parsed.program_invoke_additional_lookup_tables.items[1]);
+    try std.testing.expectEqualStrings("{\"instructions\":[]}", parsed.instructions_spec_arg orelse "");
+}
+
 test "cli.parseCliArgs parses prepare-spec spec" {
     var parsed = try parseCliArgs(std.testing.allocator, &.{
         "prepare-spec",
@@ -2467,6 +2625,30 @@ test "cli.parseCliArgs parses simulate-versioned-instructions spec" {
         "{\"payer_secret_key\":\"abc\",\"instructions\":[]}",
         parsed.instructions_spec_arg orelse "",
     );
+}
+
+test "cli.parseCliArgs parses send-versioned-instructions with nonce authority secret key" {
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "send-versioned-instructions",
+        "--nonce-account",
+        "NonceInstructions11111111111111111111111111111111111",
+        "--nonce-authority-secret-key",
+        "NonceAuthorityInstructions11111111111111111111111111111111111111111111",
+        "{\"instructions\":[]}",
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.send_versioned_instructions, parsed.command);
+    try std.testing.expectEqualStrings(
+        "NonceInstructions11111111111111111111111111111111111",
+        parsed.program_invoke_nonce_account_arg orelse "",
+    );
+    try std.testing.expectEqualStrings(
+        "NonceAuthorityInstructions11111111111111111111111111111111111111111111",
+        parsed.program_invoke_nonce_authority_secret_key_arg orelse "",
+    );
+    try std.testing.expect(parsed.program_invoke_nonce_authority_keypair_path_arg == null);
+    try std.testing.expectEqualStrings("{\"instructions\":[]}", parsed.instructions_spec_arg orelse "");
 }
 
 test "cli.parseCliArgs parses simulate-idl-invoke with sender-secret-key" {

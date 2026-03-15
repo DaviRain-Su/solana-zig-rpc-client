@@ -5088,6 +5088,17 @@ pub fn buildInstructionInvocationSpecJson(
     family: InvokeFamily,
     invocation_spec_json: []const u8,
 ) ![]u8 {
+    if (family != .instructions) {
+        var owned_spec = client.instructions_invoke.buildOwnedInvocationSpecFromJson(
+            allocator,
+            invocation_spec_json,
+        ) catch null;
+        if (owned_spec) |*value| {
+            defer value.deinit(allocator);
+            return try allocator.dupe(u8, invocation_spec_json);
+        }
+    }
+
     return switch (family) {
         .instructions => try allocator.dupe(u8, invocation_spec_json),
         .program => try client.program_invoke.buildInstructionInvocationSpecJsonFromProgramInvokeSpec(
@@ -14067,6 +14078,41 @@ test "invoke.buildInstructionInvocationSpecJson dispatches program family" {
     try std.testing.expect(std.mem.indexOf(u8, instruction_spec_json, "\"instructions\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, instruction_spec_json, "\"program_id\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, instruction_spec_json, "\"payer_secret_key\"") != null);
+}
+
+test "invoke.buildInstructionInvocationSpecJson accepts canonical instructions for program family" {
+    const allocator = std.testing.allocator;
+
+    const instruction_spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 44, 45, 46);
+    defer allocator.free(instruction_spec_json);
+
+    const canonical = try buildInstructionInvocationSpecJson(
+        allocator,
+        .program,
+        instruction_spec_json,
+    );
+    defer allocator.free(canonical);
+
+    try std.testing.expectEqualStrings(instruction_spec_json, canonical);
+}
+
+test "invoke.buildOwnedInvocationSpecFromInvocationSpecJson accepts canonical instructions for anchor family" {
+    const allocator = std.testing.allocator;
+
+    const instruction_spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 47, 48, 49);
+    defer allocator.free(instruction_spec_json);
+
+    var owned = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        .anchor_idl,
+        instruction_spec_json,
+    );
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), owned.instructions.len);
+    try std.testing.expectEqual(@as(usize, 0), owned.additional_signers.len);
+    try std.testing.expectEqual(@as(usize, 0), owned.address_lookup_tables.len);
+    try std.testing.expectEqualSlices(u8, &.{ 4, 5, 6 }, owned.instructions[0].data);
 }
 
 test "invoke.buildOwnedInvocationSpecFromInvocationSpecJson dispatches program family" {
