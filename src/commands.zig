@@ -4153,6 +4153,7 @@ fn buildProgramInvokeInvocationSpecJsonForCommand(
     lookup_tables_arg: ?[]const u8,
     recent_blockhash_arg: ?[]const u8,
     nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) ![]u8 {
@@ -4195,6 +4196,7 @@ fn buildProgramInvokeInvocationSpecJsonForCommand(
         lookup_tables_arg,
         recent_blockhash_arg,
         nonce_account_arg,
+        nonce_authority_secret_key_arg,
         nonce_authority_keypair_path_arg,
         additional_signer_secret_keys_arg,
     ) catch {
@@ -4220,6 +4222,7 @@ fn buildAnchorIdlInvokeInvocationSpecJsonForCommand(
     lookup_tables_arg: ?[]const u8,
     recent_blockhash_arg: ?[]const u8,
     nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) ![]u8 {
@@ -4268,6 +4271,7 @@ fn buildAnchorIdlInvokeInvocationSpecJsonForCommand(
         lookup_tables_arg,
         recent_blockhash_arg,
         nonce_account_arg,
+        nonce_authority_secret_key_arg,
         nonce_authority_keypair_path_arg,
         additional_signer_secret_keys_arg,
     ) catch {
@@ -5285,6 +5289,7 @@ fn buildProgramInvokeInvocationSpecJson(
     lookup_tables_arg: ?[]const u8,
     recent_blockhash_arg: ?[]const u8,
     nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) ![]u8 {
@@ -5302,6 +5307,7 @@ fn buildProgramInvokeInvocationSpecJson(
         .lookup_tables_arg = lookup_tables_arg,
         .recent_blockhash_arg = recent_blockhash_arg,
         .nonce_account_arg = nonce_account_arg,
+        .nonce_authority_secret_key_arg = nonce_authority_secret_key_arg,
         .nonce_authority_keypair_path_arg = nonce_authority_keypair_path_arg,
         .additional_signer_secret_keys_arg = additional_signer_secret_keys_arg,
     };
@@ -5375,6 +5381,7 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
     lookup_tables_arg: ?[]const u8,
     recent_blockhash_arg: ?[]const u8,
     nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) ![]u8 {
@@ -5385,6 +5392,7 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
         .lookup_tables_arg = lookup_tables_arg,
         .recent_blockhash_arg = recent_blockhash_arg,
         .nonce_account_arg = nonce_account_arg,
+        .nonce_authority_secret_key_arg = nonce_authority_secret_key_arg,
         .nonce_authority_keypair_path_arg = nonce_authority_keypair_path_arg,
         .additional_signer_secret_keys_arg = additional_signer_secret_keys_arg,
     };
@@ -5727,6 +5735,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const program_invoke_additional_signer_secret_keys_arg = args.program_invoke_additional_signer_secret_keys.items;
     const program_invoke_lookup_tables_arg = args.program_invoke_lookup_tables_arg;
     const program_invoke_nonce_account_arg = args.program_invoke_nonce_account_arg;
+    const program_invoke_nonce_authority_secret_key_arg = args.program_invoke_nonce_authority_secret_key_arg;
     const program_invoke_nonce_authority_keypair_path_arg = args.program_invoke_nonce_authority_keypair_path_arg;
     const idl_program_id_arg = args.idl_program_id_arg;
     const idl_spec_arg = args.idl_spec_arg;
@@ -6192,7 +6201,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    if (program_invoke_nonce_authority_keypair_path_arg != null and
+    if ((program_invoke_nonce_authority_secret_key_arg != null or program_invoke_nonce_authority_keypair_path_arg != null) and
         command != .invoke_program_invoke and
         command != .invoke_program_invoke_and_confirm and
         command != .invoke_program_invoke_simulate and
@@ -6223,12 +6232,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command != .send_versioned_idl_invoke and
         command != .send_versioned_idl_invoke_and_confirm)
     {
-        reportInvalidCliMessage("error: --nonce-authority-keypair requires program-invoke or idl-invoke commands\n", .{});
+        reportInvalidCliMessage("error: --nonce-authority-keypair/--nonce-authority-secret-key requires program-invoke or idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
-    if (program_invoke_nonce_authority_keypair_path_arg != null and program_invoke_nonce_account_arg == null) {
-        reportInvalidCliMessage("error: --nonce-authority-keypair requires --nonce-account\n", .{});
+    if ((program_invoke_nonce_authority_secret_key_arg != null or program_invoke_nonce_authority_keypair_path_arg != null) and program_invoke_nonce_account_arg == null) {
+        reportInvalidCliMessage("error: --nonce-authority-keypair/--nonce-authority-secret-key requires --nonce-account\n", .{});
         return error.InvalidCli;
     }
 
@@ -6436,6 +6445,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         effective_program_invoke_lookup_tables_arg,
         recent_blockhash_arg,
         program_invoke_nonce_account_arg,
+        program_invoke_nonce_authority_secret_key_arg,
         program_invoke_nonce_authority_keypair_path_arg,
         program_invoke_additional_signer_secret_keys_arg,
     );
@@ -27550,6 +27560,128 @@ test "runCommand send-versioned-program-invoke supports nonce authority keypair"
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature: Sig171717171717171717171717171717171717171717171717171717171717171717\n",
+        captured,
+    );
+}
+
+test "runCommand send-versioned-program-invoke supports nonce authority secret key" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{54} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-send-versioned-program-invoke-nonce-secret-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{55} ** 32);
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const nonce_authority_secret_key_base58 = try client.encodeBase58(allocator, &nonce_authority_secret_key);
+    defer allocator.free(nonce_authority_secret_key_base58);
+    const nonce_authority = try client.Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+    const nonce_authority_pubkey_base58 = try nonce_authority.public_key.toBase58(allocator);
+    defer allocator.free(nonce_authority_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{56} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{57} ** 32);
+    const nonce_account_pubkey = try client.encodeBase58(allocator, &nonce_account_raw.public_key.toBytes());
+    defer allocator.free(nonce_account_pubkey);
+
+    var nonce_blockhash_bytes: [32]u8 = undefined;
+    for (&nonce_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 191);
+    const nonce_blockhash = try client.encodeBase58(allocator, &nonce_blockhash_bytes);
+    defer allocator.free(nonce_blockhash);
+
+    const nonce_data_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"program":"system","parsed":{{"type":"nonce","info":{{"authority":"{s}","blockhash":"{s}"}}}}}}
+    ,
+        .{ nonce_authority_pubkey_base58, nonce_blockhash },
+    );
+    defer allocator.free(nonce_data_json);
+
+    try sender_context.sender.pushUiAccountResponse(73, .{
+        .data_json = nonce_data_json,
+        .executable = false,
+        .lamports = 1,
+        .owner = "11111111111111111111111111111111",
+        .rent_epoch = 0,
+        .space = 80,
+    });
+    try sender_context.sender.pushResultJson("\"Sig181818181818181818181818181818181818181818181818181818181818181818\"");
+
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-versioned-program-invoke-nonce-secret" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
+    ,
+        .{ payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-versioned-program-invoke",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        "--nonce-account",
+        nonce_account_pubkey,
+        "--nonce-authority-secret-key",
+        nonce_authority_secret_key_base58,
+        "11111111111111111111111111111111",
+        accounts_json,
+        "ping",
+        "utf8",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetUiAccountRequest(
+        allocator,
+        commandCapturedRequestAt(&sender_context, 0),
+        nonce_account_pubkey,
+        null,
+        null,
+    );
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expectEqualStrings(
+        "signature: Sig181818181818181818181818181818181818181818181818181818181818181818\n",
         captured,
     );
 }

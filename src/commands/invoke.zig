@@ -13,6 +13,7 @@ pub const CliInvokeContextArgs = struct {
     lookup_tables_arg: ?[]const u8,
     recent_blockhash_arg: ?[]const u8,
     nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 };
@@ -71,6 +72,7 @@ pub fn buildCliInvokeContextArgs(
     lookup_tables_arg: ?[]const u8,
     recent_blockhash_arg: ?[]const u8,
     nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) CliInvokeContextArgs {
@@ -81,6 +83,7 @@ pub fn buildCliInvokeContextArgs(
         .lookup_tables_arg = lookup_tables_arg,
         .recent_blockhash_arg = recent_blockhash_arg,
         .nonce_account_arg = nonce_account_arg,
+        .nonce_authority_secret_key_arg = nonce_authority_secret_key_arg,
         .nonce_authority_keypair_path_arg = nonce_authority_keypair_path_arg,
         .additional_signer_secret_keys_arg = additional_signer_secret_keys_arg,
     };
@@ -218,6 +221,7 @@ pub fn buildInvocationSpecJsonForCommand(
             if (behavior.versioned) context_args.lookup_tables_arg else null,
             context_args.recent_blockhash_arg,
             context_args.nonce_account_arg,
+            context_args.nonce_authority_secret_key_arg,
             context_args.nonce_authority_keypair_path_arg,
             context_args.additional_signer_secret_keys_arg,
         ),
@@ -238,6 +242,7 @@ pub fn buildInvocationSpecJsonForCommand(
             if (behavior.versioned) context_args.lookup_tables_arg else null,
             context_args.recent_blockhash_arg,
             context_args.nonce_account_arg,
+            context_args.nonce_authority_secret_key_arg,
             context_args.nonce_authority_keypair_path_arg,
             context_args.additional_signer_secret_keys_arg,
         ),
