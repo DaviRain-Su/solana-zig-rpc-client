@@ -3602,6 +3602,23 @@ fn parseCliSignerKeypairPathsJsonSource(
         null;
 }
 
+fn looksLikeSignerKeypairPathsArg(
+    allocator: Allocator,
+    source: ?[]const u8,
+) !bool {
+    const signer_keypair_paths_source = try loadOptionalInstructionSpecSource(allocator, source);
+    defer if (signer_keypair_paths_source) |value| allocator.free(value);
+
+    var parsed = parseCliSignerKeypairPathsJsonSource(allocator, signer_keypair_paths_source) catch |err| {
+        return switch (err) {
+            error.InvalidCli => false,
+        };
+    };
+    defer if (parsed) |*value| value.deinit();
+
+    return parsed != null;
+}
+
 fn appendUniqueCliStringValues(
     allocator: Allocator,
     merged_values: *std.ArrayListUnmanaged([]const u8),
@@ -3809,6 +3826,23 @@ fn parseCliAddressLookupTablesJsonSource(
         }) catch return error.InvalidCli
     else
         null;
+}
+
+fn looksLikeAddressLookupTablesArg(
+    allocator: Allocator,
+    source: ?[]const u8,
+) !bool {
+    const lookup_tables_source = try loadOptionalInstructionSpecSource(allocator, source);
+    defer if (lookup_tables_source) |value| allocator.free(value);
+
+    var parsed = parseCliAddressLookupTablesJsonSource(allocator, lookup_tables_source) catch |err| {
+        return switch (err) {
+            error.InvalidCli => false,
+        };
+    };
+    defer if (parsed) |*value| value.deinit();
+
+    return parsed != null;
 }
 
 fn parseCliRemainingAccountsJsonSource(
@@ -6682,6 +6716,19 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const program_invoke_uses_schema = program_invoke_data_schema_json_arg != null or
         program_invoke_args_json_arg != null or
         program_invoke_schema_encoding_arg != null;
+    const program_invoke_data_arg_looks_like_signer_keypair_paths = if (program_invoke_uses_schema)
+        try looksLikeSignerKeypairPathsArg(allocator, program_invoke_data_arg)
+    else
+        false;
+    const program_invoke_data_encoding_arg_looks_like_lookup_tables = if (program_invoke_uses_schema)
+        try looksLikeAddressLookupTablesArg(allocator, program_invoke_data_encoding_arg)
+    else
+        false;
+    const program_invoke_data_arg_looks_like_lookup_tables = if (program_invoke_uses_schema and
+        !program_invoke_data_arg_looks_like_signer_keypair_paths)
+        try looksLikeAddressLookupTablesArg(allocator, program_invoke_data_arg)
+    else
+        false;
     const effective_program_invoke_data_arg = if (program_invoke_uses_schema)
         null
     else
@@ -6691,7 +6738,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     else
         program_invoke_data_encoding_arg;
     const effective_program_invoke_signer_keypair_paths_arg = if (program_invoke_uses_schema)
-        program_invoke_signer_keypair_paths_arg orelse program_invoke_data_arg
+        if (program_invoke_signer_keypair_paths_arg) |value|
+            value
+        else if (program_invoke_data_arg_looks_like_signer_keypair_paths)
+            program_invoke_data_arg
+        else
+            null
     else
         program_invoke_signer_keypair_paths_arg;
     const merged_program_invoke_signer_keypair_paths_arg = try mergeCliSignerKeypairPathsArg(
@@ -6705,7 +6757,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     else
         effective_program_invoke_signer_keypair_paths_arg;
     const effective_program_invoke_lookup_tables_arg = if (program_invoke_uses_schema)
-        program_invoke_lookup_tables_arg orelse program_invoke_data_encoding_arg
+        if (program_invoke_lookup_tables_arg) |value|
+            value
+        else if (program_invoke_data_encoding_arg_looks_like_lookup_tables)
+            program_invoke_data_encoding_arg
+        else if (program_invoke_data_arg_looks_like_lookup_tables and
+            program_invoke_data_encoding_arg == null and
+            !program_invoke_data_arg_looks_like_signer_keypair_paths)
+            program_invoke_data_arg
+        else
+            null
     else
         program_invoke_lookup_tables_arg;
     const merged_program_invoke_lookup_tables_arg = try mergeCliAddressLookupTablesArg(
@@ -18821,6 +18882,97 @@ test "runCommand invoke-program-invoke emits json preferred send result" {
         "borsh",
         program_id_base58,
         "[]",
+        "[]",
+        lookup_tables_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"signature\":\"SigInvokeAuto111111111111111111111111111111111111111111111111111111111111\"") != null);
+}
+
+test "runCommand invoke-program-invoke handles schema lookup tables as single positional table arg" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        "\"SigInvokeAuto111111111111111111111111111111111111111111111111111111111111\"",
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://invoke-program-invoke-single-positional-table-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{97} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 92);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{59} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const lookup_table_key = client.Pubkey.fromBytes(.{80} ** 32);
+    const lookup_table_key_base58 = try lookup_table_key.toBase58(allocator);
+    defer allocator.free(lookup_table_key_base58);
+    const lookup_table_address = client.Pubkey.fromBytes(.{81} ** 32);
+    const lookup_table_address_base58 = try lookup_table_address.toBase58(allocator);
+    defer allocator.free(lookup_table_address_base58);
+    const lookup_tables_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"account_key\":\"{s}\",\"addresses\":[\"{s}\"]}}]",
+        .{ lookup_table_key_base58, lookup_table_address_base58 },
+    );
+    defer allocator.free(lookup_tables_json);
+
+    const schema_json =
+        \\{"type":"struct","fields":[{"name":"enabled","type":"bool"},{"name":"count","type":"u16"}]}
+    ;
+    const args_json =
+        \\{"enabled":true,"count":31}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "invoke-program-invoke",
+        "--json",
+        "--invoke-mode",
+        "versioned",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--data-schema-json",
+        schema_json,
+        "--args-json",
+        args_json,
+        "--schema-encoding",
+        "borsh",
+        program_id_base58,
         "[]",
         lookup_tables_json,
     });

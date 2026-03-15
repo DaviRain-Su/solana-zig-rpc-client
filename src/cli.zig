@@ -3232,6 +3232,38 @@ test "cli.parseCliArgs parses invoke-program-invoke with schema args and lookup 
     try std.testing.expectEqualStrings("borsh", parsed.program_invoke_schema_encoding_arg orelse "");
 }
 
+test "cli.parseCliArgs parses invoke-program-invoke with schema args and single positional lookup tables" {
+    const sender_secret_key = "SecretInvokeSinglePositional11111111111111111111111111";
+    const lookup_tables_json =
+        "[{\"account_key\":\"LookupSinglePositional1111111111111111111111111111111\",\"addresses\":[\"AddrSinglePositional11111111111111111111111111111111\"]}]";
+
+    var parsed = try parseCliArgs(std.testing.allocator, &.{
+        "invoke-program-invoke",
+        "--sender-secret-key",
+        sender_secret_key,
+        "--data-schema-json",
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}",
+        "--args-json",
+        "{\"enabled\":true}",
+        "--schema-encoding",
+        "borsh",
+        "11111111111111111111111111111111",
+        "[]",
+        lookup_tables_json,
+    });
+    defer parsed.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Command.invoke_program_invoke, parsed.command);
+    try std.testing.expectEqualStrings(sender_secret_key, parsed.sender_secret_key_arg orelse "");
+    try std.testing.expectEqualStrings("{\"type\":\"struct\",\"fields\":[{\"name\":\"enabled\",\"type\":\"bool\"}]}", parsed.program_invoke_data_schema_json_arg orelse "");
+    try std.testing.expectEqualStrings("{\"enabled\":true}", parsed.program_invoke_args_json_arg orelse "");
+    try std.testing.expectEqualStrings("borsh", parsed.program_invoke_schema_encoding_arg orelse "");
+    try std.testing.expectEqualStrings(lookup_tables_json, parsed.program_invoke_data_arg orelse "");
+    try std.testing.expect(parsed.program_invoke_data_encoding_arg == null);
+    try std.testing.expect(parsed.program_invoke_signer_keypair_paths_arg == null);
+    try std.testing.expect(parsed.program_invoke_lookup_tables_arg == null);
+}
+
 test "cli.parseCliArgs parses invoke-program-invoke-and-confirm with schema args and lookup tables" {
     var parsed = try parseCliArgs(std.testing.allocator, &.{
         "invoke-program-invoke-and-confirm",
