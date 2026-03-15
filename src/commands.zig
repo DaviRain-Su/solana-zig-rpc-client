@@ -3476,7 +3476,7 @@ fn buildInvocationSpecJsonFromCliSpec(
     additional_signer_secret_keys_arg: []const []const u8,
     recent_blockhash_arg: ?[]const u8,
 ) ![]u8 {
-    const context_args: CliInvocationContextArgs = .{
+    var context_args: CliInvocationContextArgs = .{
         .payer_keypair_path_arg = if (sender_keypair_path_arg != null or sender_secret_key_arg != null) sender_keypair_path_arg else spec.payer_keypair_path,
         .payer_secret_key_arg = if (sender_keypair_path_arg != null or sender_secret_key_arg != null) sender_secret_key_arg else spec.payer_secret_key,
         .recent_blockhash_arg = recent_blockhash_arg orelse spec.recent_blockhash,
@@ -3495,6 +3495,7 @@ fn buildInvocationSpecJsonFromCliSpec(
         context_args.payer_keypair_path_arg,
     );
     defer payer_inputs.deinit(allocator);
+    context_args.payer_secret_key = payer_inputs.secret_key;
 
     if (context_args.recent_blockhash_arg != null and context_args.nonce_account_arg != null) return error.InvalidCli;
 
@@ -3623,6 +3624,7 @@ fn parseCliRemainingAccountsJsonSource(
 
 fn encodeResolvedSignerSecretKeysJson(
     allocator: Allocator,
+    payer_secret_key: ?[]const u8,
     base_secret_keys: []const []const u8,
     keypair_paths: []const []const u8,
     additional_secret_keys: []const []const u8,
@@ -3635,6 +3637,10 @@ fn encodeResolvedSignerSecretKeysJson(
 
     var effective_secret_keys = std.ArrayListUnmanaged([]const u8){};
     defer effective_secret_keys.deinit(allocator);
+
+    if (payer_secret_key) |value| {
+        try appendUniqueSecretKeyValue(allocator, &effective_secret_keys, value);
+    }
 
     for (base_secret_keys) |value| {
         try appendUniqueSecretKeyValue(allocator, &effective_secret_keys, value);
@@ -3684,6 +3690,7 @@ fn loadRequiredCliInvokePayerInputs(
 const CliInvocationContextArgs = struct {
     payer_keypair_path_arg: ?[]const u8 = null,
     payer_secret_key_arg: ?[]const u8 = null,
+    payer_secret_key: ?[]const u8 = null,
     signer_keypair_paths_arg: ?[]const u8 = null,
     lookup_tables_arg: ?[]const u8 = null,
     recent_blockhash_arg: ?[]const u8 = null,
@@ -3769,6 +3776,7 @@ fn loadCliInvocationContextJsonInputs(
 
     const additional_signer_secret_keys_json = try encodeResolvedSignerSecretKeysJson(
         allocator,
+        context_args.payer_secret_key,
         context_args.base_additional_signer_secret_keys,
         if (parsed_signer_keypair_paths) |value| value.value else context_args.base_additional_signer_keypair_paths,
         context_args.additional_signer_secret_keys_arg,
@@ -5287,7 +5295,7 @@ fn buildProgramInvokeInvocationSpecJson(
         return error.InvalidCli;
     }
 
-    const context_args: CliInvocationContextArgs = .{
+    var context_args: CliInvocationContextArgs = .{
         .payer_keypair_path_arg = payer_keypair_path_arg,
         .payer_secret_key_arg = payer_secret_key_arg,
         .signer_keypair_paths_arg = signer_keypair_paths_arg,
@@ -5304,6 +5312,7 @@ fn buildProgramInvokeInvocationSpecJson(
         context_args.payer_keypair_path_arg,
     );
     defer payer_inputs.deinit(allocator);
+    context_args.payer_secret_key = payer_inputs.secret_key;
 
     const accounts_source = try loadInstructionSpecSource(allocator, accounts_arg);
     defer allocator.free(accounts_source);
@@ -5369,7 +5378,7 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) ![]u8 {
-    const context_args: CliInvocationContextArgs = .{
+    var context_args: CliInvocationContextArgs = .{
         .payer_keypair_path_arg = payer_keypair_path_arg,
         .payer_secret_key_arg = payer_secret_key_arg,
         .signer_keypair_paths_arg = signer_keypair_paths_arg,
@@ -5386,6 +5395,7 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
         context_args.payer_keypair_path_arg,
     );
     defer payer_inputs.deinit(allocator);
+    context_args.payer_secret_key = payer_inputs.secret_key;
 
     const idl_source = try loadInstructionSpecSource(allocator, idl_arg);
     defer allocator.free(idl_source);
@@ -27295,6 +27305,7 @@ test "encodeResolvedSignerSecretKeysJson deduplicates signer key sources" {
 
     const json = try encodeResolvedSignerSecretKeysJson(
         allocator,
+        null,
         &base_secret_keys,
         &keypair_paths,
         &additional_secret_keys,
@@ -27320,6 +27331,45 @@ test "encodeResolvedSignerSecretKeysJson deduplicates signer key sources" {
             unique_signer_secret_key_base58,
         ),
     );
+}
+
+test "encodeResolvedSignerSecretKeysJson deduplicates payer and additional signers by pubkey" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{13} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const extra_raw = try Ed25519.KeyPair.generateDeterministic(.{14} ** 32);
+    const extra_secret_key = extra_raw.secret_key.toBytes();
+    const extra_secret_key_base58 = try client.encodeBase58(allocator, &extra_secret_key);
+    defer allocator.free(extra_secret_key_base58);
+
+    const duplicate_secret_key_base58 = payer_secret_key_base58;
+    const additional_secret_keys = [_][]const u8{
+        duplicate_secret_key_base58,
+        duplicate_secret_key_base58,
+        extra_secret_key_base58,
+        duplicate_secret_key_base58,
+    };
+
+    const json = try encodeResolvedSignerSecretKeysJson(
+        allocator,
+        payer_secret_key_base58,
+        &.{},
+        &.{},
+        &additional_secret_keys,
+    );
+    defer allocator.free(json);
+
+    var parsed = try std.json.parseFromSlice([][]const u8, allocator, json, .{});
+    defer parsed.deinit();
+    const resolved_secret_keys = parsed.value;
+
+    try std.testing.expectEqual(@as(usize, 2), resolved_secret_keys.len);
+    try std.testing.expect(std.mem.eql(u8, resolved_secret_keys[0], payer_secret_key_base58));
+    try std.testing.expect(std.mem.eql(u8, resolved_secret_keys[1], extra_secret_key_base58));
 }
 
 test "runCommand simulate-versioned-instructions simulates with lookup tables" {
