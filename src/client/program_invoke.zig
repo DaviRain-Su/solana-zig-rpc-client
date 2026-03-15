@@ -391,6 +391,21 @@ fn appendOrUpgradeAccountMeta(
     });
 }
 
+fn dedupeSigners(allocator: Allocator, signers: []const sdk.Keypair) ![]sdk.Keypair {
+    var deduped = std.ArrayListUnmanaged(sdk.Keypair){};
+    try deduped.ensureTotalCapacity(allocator, signers.len);
+
+    for (signers) |signer| {
+        for (deduped.items) |existing_signer| {
+            if (existing_signer.public_key.eql(signer.public_key)) break;
+        } else {
+            try deduped.append(allocator, signer);
+        }
+    }
+
+    return try deduped.toOwnedSlice(allocator);
+}
+
 fn findJsonObjectField(object: std.json.ObjectMap, comptime names: []const []const u8) ?std.json.Value {
     inline for (names) |name| {
         if (object.get(name)) |value| return value;
@@ -1166,13 +1181,16 @@ pub fn buildSignedLegacyTransaction(
     var owned_instruction = try buildOwnedInstruction(allocator, program_id, options.instruction);
     defer owned_instruction.deinit(allocator);
 
+    const signers = try dedupeSigners(allocator, options.signers);
+    defer allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try sdk.buildSignedLegacyTransaction(
         allocator,
         options.payer,
         options.recent_blockhash,
         instructions[0..],
-        options.signers,
+        signers,
     );
 }
 
@@ -1192,13 +1210,16 @@ pub fn buildLegacyTransactionBase64(
     var owned_instruction = try buildOwnedInstruction(allocator, program_id, options.instruction);
     defer owned_instruction.deinit(allocator);
 
+    const signers = try dedupeSigners(allocator, options.signers);
+    defer allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try sdk.buildLegacyTransactionBase64(
         allocator,
         options.payer,
         options.recent_blockhash,
         instructions[0..],
-        options.signers,
+        signers,
     );
 }
 
@@ -1296,6 +1317,9 @@ pub fn buildSignedVersionedTransaction(
     var owned_instruction = try buildOwnedInstruction(allocator, program_id, options.instruction);
     defer owned_instruction.deinit(allocator);
 
+    const signers = try dedupeSigners(allocator, options.signers);
+    defer allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try sdk.buildSignedVersionedTransaction(
         allocator,
@@ -1303,7 +1327,7 @@ pub fn buildSignedVersionedTransaction(
         options.recent_blockhash,
         instructions[0..],
         options.address_lookup_tables,
-        options.signers,
+        signers,
     );
 }
 
@@ -1323,6 +1347,9 @@ pub fn buildVersionedTransactionBase64(
     var owned_instruction = try buildOwnedInstruction(allocator, program_id, options.instruction);
     defer owned_instruction.deinit(allocator);
 
+    const signers = try dedupeSigners(allocator, options.signers);
+    defer allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try sdk.buildVersionedTransactionBase64(
         allocator,
@@ -1330,7 +1357,7 @@ pub fn buildVersionedTransactionBase64(
         options.recent_blockhash,
         instructions[0..],
         options.address_lookup_tables,
-        options.signers,
+        signers,
     );
 }
 
@@ -1350,11 +1377,14 @@ pub fn sendLegacyTransaction(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.sendLegacyInstructionsWithOptions(
         options.payer,
         instructions[0..],
-        options.signers,
+        signers,
         options.rpc,
     );
 }
@@ -1375,11 +1405,14 @@ pub fn simulateLegacyTransaction(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.simulateLegacyInstructionsWithOptions(
         options.payer,
         instructions[0..],
-        options.signers,
+        signers,
         options.build,
         options.rpc,
     );
@@ -1401,11 +1434,14 @@ pub fn sendAndConfirmLegacyTransaction(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.sendAndConfirmLegacyInstructionsWithOptions(
         options.payer,
         instructions[0..],
-        options.signers,
+        signers,
         options.rpc,
     );
 }
@@ -1426,12 +1462,15 @@ pub fn sendVersionedTransaction(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.sendVersionedInstructionsWithOptions(
         options.payer,
         instructions[0..],
         options.address_lookup_tables,
-        options.signers,
+        signers,
         options.rpc,
     );
 }
@@ -1543,12 +1582,15 @@ pub fn simulateVersionedTransaction(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.simulateVersionedInstructionsWithOptions(
         options.payer,
         instructions[0..],
         options.address_lookup_tables,
-        options.signers,
+        signers,
         options.build,
         options.rpc,
     );
@@ -1586,12 +1628,15 @@ pub fn sendAndConfirmVersionedTransaction(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.sendAndConfirmVersionedInstructionsWithOptions(
         options.payer,
         instructions[0..],
         options.address_lookup_tables,
-        options.signers,
+        signers,
         options.rpc,
     );
 }
@@ -1899,11 +1944,14 @@ pub fn buildSignedLegacyTransactionWithOptions(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.buildSignedLegacyTransactionWithOptions(
         options.payer,
         instructions[0..],
-        options.signers,
+        signers,
         options.build,
     );
 }
@@ -2003,12 +2051,15 @@ pub fn buildSignedVersionedTransactionWithOptions(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.buildSignedVersionedTransactionWithOptions(
         options.payer,
         instructions[0..],
         options.address_lookup_tables,
-        options.signers,
+        signers,
         options.build,
     );
 }
@@ -2047,11 +2098,14 @@ pub fn sendAndConfirmLegacyTransactionWithSpinner(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.sendAndConfirmLegacyInstructionsWithSpinnerAndOptions(
         options.payer,
         instructions[0..],
-        options.signers,
+        signers,
         options.rpc,
     );
 }
@@ -2072,12 +2126,15 @@ pub fn sendAndConfirmVersionedTransactionWithSpinner(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.sendAndConfirmVersionedInstructionsWithSpinnerAndOptions(
         options.payer,
         instructions[0..],
         options.address_lookup_tables,
-        options.signers,
+        signers,
         options.rpc,
     );
 }
@@ -2199,11 +2256,14 @@ pub fn buildSignedLegacyTransactionWithBlockhashQuery(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.buildSignedLegacyTransactionWithBlockhashQuery(
         options.payer,
         instructions[0..],
-        options.signers,
+        signers,
         options.blockhash_query,
         options.nonce_authority,
     );
@@ -2305,12 +2365,15 @@ pub fn buildSignedVersionedTransactionWithBlockhashQuery(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.buildSignedVersionedTransactionWithBlockhashQuery(
         options.payer,
         instructions[0..],
         options.address_lookup_tables,
-        options.signers,
+        signers,
         options.blockhash_query,
         options.nonce_authority,
     );
@@ -2350,11 +2413,14 @@ pub fn sendLegacyTransactionWithBlockhashQuery(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.sendLegacyInstructionsWithBlockhashQuery(
         options.payer,
         instructions[0..],
-        options.signers,
+        signers,
         options.blockhash_query,
         options.nonce_authority,
         options.send_transaction_options,
@@ -2377,11 +2443,14 @@ pub fn simulateLegacyTransactionWithBlockhashQuery(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.simulateLegacyInstructionsWithBlockhashQuery(
         options.payer,
         instructions[0..],
-        options.signers,
+        signers,
         options.blockhash_query,
         options.nonce_authority,
         options.simulate_options,
@@ -2404,11 +2473,14 @@ pub fn sendAndConfirmLegacyTransactionWithBlockhashQuery(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.sendAndConfirmLegacyInstructionsWithBlockhashQuery(
         options.payer,
         instructions[0..],
-        options.signers,
+        signers,
         options.blockhash_query,
         options.nonce_authority,
         options.send_transaction_options,
@@ -2435,11 +2507,14 @@ pub fn sendAndConfirmLegacyTransactionWithBlockhashQueryWithSpinner(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.sendAndConfirmLegacyInstructionsWithBlockhashQueryWithSpinner(
         options.payer,
         instructions[0..],
-        options.signers,
+        signers,
         options.blockhash_query,
         options.nonce_authority,
         options.send_transaction_options,
@@ -2466,12 +2541,15 @@ pub fn sendVersionedTransactionWithBlockhashQuery(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.sendVersionedInstructionsWithBlockhashQuery(
         options.payer,
         instructions[0..],
         options.address_lookup_tables,
-        options.signers,
+        signers,
         options.blockhash_query,
         options.nonce_authority,
         .{ .send_transaction_options = options.send_transaction_options },
@@ -2494,12 +2572,15 @@ pub fn simulateVersionedTransactionWithBlockhashQuery(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.simulateVersionedInstructionsWithBlockhashQuery(
         options.payer,
         instructions[0..],
         options.address_lookup_tables,
-        options.signers,
+        signers,
         options.blockhash_query,
         options.nonce_authority,
         options.simulate_options,
@@ -2522,12 +2603,15 @@ pub fn sendAndConfirmVersionedTransactionWithBlockhashQuery(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.sendAndConfirmVersionedInstructionsWithBlockhashQuery(
         options.payer,
         instructions[0..],
         options.address_lookup_tables,
-        options.signers,
+        signers,
         options.blockhash_query,
         options.nonce_authority,
         .{
@@ -2556,12 +2640,15 @@ pub fn sendAndConfirmVersionedTransactionWithBlockhashQueryWithSpinner(
     var owned_instruction = try buildOwnedInstruction(self.allocator, program_id, options.instruction);
     defer owned_instruction.deinit(self.allocator);
 
+    const signers = try dedupeSigners(self.allocator, options.signers);
+    defer self.allocator.free(signers);
+
     const instructions = [_]sdk.Instruction{owned_instruction.instruction};
     return try self.sendAndConfirmVersionedInstructionsWithBlockhashQueryWithSpinner(
         options.payer,
         instructions[0..],
         options.address_lookup_tables,
-        options.signers,
+        signers,
         options.blockhash_query,
         options.nonce_authority,
         options.send_transaction_options,
@@ -3591,6 +3678,247 @@ test "program_invoke.sendLegacyTransaction delegates built instruction to rpc cl
     try std.testing.expectEqual(@as(usize, 1), mock.captured_account_count);
     try std.testing.expectEqual(@as(usize, 0), mock.captured_signer_count);
     try std.testing.expectEqualStrings("ping", mock.captured_data.?);
+}
+
+test "program_invoke.sendLegacyTransaction deduplicates duplicate signers" {
+    const allocator = std.testing.allocator;
+    const MockLegacyClient = struct {
+        allocator: Allocator,
+        captured_signer_count: usize = 0,
+
+        pub fn sendLegacyInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            options: ?rpc_types.SendLegacyInstructionsOptions,
+        ) ![]const u8 {
+            _ = payer;
+            _ = instructions;
+            _ = options;
+            self.captured_signer_count = signers.len;
+            return "mock-signature";
+        }
+    };
+
+    var mock = MockLegacyClient{ .allocator = allocator };
+
+    const program_id = sdk.Pubkey.fromBytes(.{165} ** 32);
+    const payer = sdk.Pubkey.fromBytes(.{166} ** 32);
+    const duplicate_signer = try sdk.Keypair.fromSecretKeyBytes(.{167} ** 32);
+
+    const signature = try sendLegacyTransaction(
+        &mock,
+        program_id,
+        .{
+            .payer = payer,
+            .signers = &.{ duplicate_signer, duplicate_signer },
+            .instruction = .{
+                .data = "ping",
+                .data_encoding = .utf8,
+            },
+        },
+    );
+
+    try std.testing.expectEqualStrings("mock-signature", signature);
+    try std.testing.expectEqual(@as(usize, 1), mock.captured_signer_count);
+}
+
+test "program_invoke.simulateVersionedTransaction deduplicates duplicate signers" {
+    const MockVersionedClient = struct {
+        captured_signer_count: usize = 0,
+
+        pub fn simulateVersionedInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            address_lookup_tables: []const sdk.AddressLookupTableAccount,
+            signers: []const sdk.Keypair,
+            build_options: ?rpc_types.VersionedInstructionsBuildOptions,
+            simulate_options: ?rpc_types.SimulateTransactionOptions,
+        ) !rpc_types.SimulatedTransaction {
+            _ = payer;
+            _ = instructions;
+            _ = address_lookup_tables;
+            _ = build_options;
+            _ = simulate_options;
+            self.captured_signer_count = signers.len;
+            return .{ .units_consumed = 42 };
+        }
+    };
+
+    var mock = MockVersionedClient{};
+    const program_id = sdk.Pubkey.fromBytes(.{165} ** 32);
+    const payer = sdk.Pubkey.fromBytes(.{166} ** 32);
+    const duplicate_signer = try sdk.Keypair.fromSecretKeyBytes(.{167} ** 32);
+
+    const simulated = try simulateVersionedTransaction(
+        &mock,
+        program_id,
+        .{
+            .payer = payer,
+            .address_lookup_tables = &.{},
+            .signers = &.{ duplicate_signer, duplicate_signer },
+            .instruction = .{
+                .data = "ping",
+                .data_encoding = .utf8,
+            },
+        },
+    );
+
+    try std.testing.expectEqualStrings("ping", duplicate_signer.public_key.toBytes());
+    try std.testing.expectEqual(@as(usize, 1), mock.captured_signer_count);
+    try std.testing.expectEqual(@as(?u64, 42), simulated.units_consumed);
+}
+
+test "program_invoke.buildSignedLegacyTransactionWithOptions deduplicates duplicate signers" {
+    const allocator = std.testing.allocator;
+
+    const MockLegacyBuilder = struct {
+        allocator: Allocator,
+        captured_signer_count: usize = 0,
+
+        pub fn buildSignedLegacyTransactionWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            build_options: ?rpc_types.LegacyInstructionsBuildOptions,
+        ) !sdk.SignedLegacyTransaction {
+            _ = payer;
+            _ = build_options;
+            self.captured_signer_count = signers.len;
+
+            return try sdk.buildSignedLegacyTransaction(
+                self.allocator,
+                signers[0].public_key,
+                sdk.Hash.fromBytes(.{210} ** 32),
+                instructions,
+                signers,
+            );
+        }
+
+        fn deinit(self: *@This()) void {
+            _ = self;
+        }
+    };
+
+    var mock = MockLegacyBuilder{ .allocator = allocator };
+    const program_id = sdk.Pubkey.fromBytes(.{171} ** 32);
+    const duplicate_signer = try sdk.Keypair.fromSecretKeyBytes(.{172} ** 32);
+
+    const signed = try buildSignedLegacyTransactionWithOptions(
+        &mock,
+        program_id,
+        .{
+            .payer = duplicate_signer.public_key,
+            .signers = &.{ duplicate_signer, duplicate_signer },
+            .instruction = .{
+                .data = "ping",
+                .data_encoding = .utf8,
+            },
+        },
+    );
+    defer signed.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), mock.captured_signer_count);
+}
+
+test "program_invoke.buildSignedVersionedTransactionWithOptions deduplicates duplicate signers" {
+    const allocator = std.testing.allocator;
+
+    const MockVersionedBuilder = struct {
+        allocator: Allocator,
+        captured_signer_count: usize = 0,
+
+        pub fn buildSignedVersionedTransactionWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            address_lookup_tables: []const sdk.AddressLookupTableAccount,
+            signers: []const sdk.Keypair,
+            build_options: ?rpc_types.VersionedInstructionsBuildOptions,
+        ) !sdk.SignedVersionedTransaction {
+            _ = payer;
+            _ = build_options;
+            self.captured_signer_count = signers.len;
+
+            return try sdk.buildSignedVersionedTransaction(
+                self.allocator,
+                signers[0].public_key,
+                sdk.Hash.fromBytes(.{220} ** 32),
+                instructions,
+                address_lookup_tables,
+                signers,
+            );
+        }
+    };
+
+    var mock = MockVersionedBuilder{ .allocator = allocator };
+    const program_id = sdk.Pubkey.fromBytes(.{221} ** 32);
+    const duplicate_signer = try sdk.Keypair.fromSecretKeyBytes(.{222} ** 32);
+
+    const signed = try buildSignedVersionedTransactionWithOptions(
+        &mock,
+        program_id,
+        .{
+            .payer = duplicate_signer.public_key,
+            .address_lookup_tables = &.{},
+            .signers = &.{ duplicate_signer, duplicate_signer },
+            .instruction = .{
+                .data = "ping",
+                .data_encoding = .utf8,
+            },
+        },
+    );
+    defer signed.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), mock.captured_signer_count);
+}
+
+test "program_invoke.sendAndConfirmVersionedTransactionWithSpinner deduplicates duplicate signers" {
+    const MockVersionedSpinnerClient = struct {
+        captured_signer_count: usize = 0,
+
+        pub fn sendAndConfirmVersionedInstructionsWithSpinnerAndOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            address_lookup_tables: []const sdk.AddressLookupTableAccount,
+            signers: []const sdk.Keypair,
+            options: ?rpc_types.VersionedInstructionsOptions,
+        ) ![]const u8 {
+            _ = payer;
+            _ = instructions;
+            _ = address_lookup_tables;
+            _ = options;
+            self.captured_signer_count = signers.len;
+            return "mock-versioned-spinner-signature";
+        }
+    };
+
+    var mock = MockVersionedSpinnerClient{};
+    const program_id = sdk.Pubkey.fromBytes(.{223} ** 32);
+    const payer = sdk.Pubkey.fromBytes(.{224} ** 32);
+    const duplicate_signer = try sdk.Keypair.fromSecretKeyBytes(.{225} ** 32);
+
+    const signature = try sendAndConfirmVersionedTransactionWithSpinner(
+        &mock,
+        program_id,
+        .{
+            .payer = payer,
+            .address_lookup_tables = &.{},
+            .signers = &.{ duplicate_signer, duplicate_signer },
+            .instruction = .{
+                .data = "ping",
+                .data_encoding = .utf8,
+            },
+            .rpc = .{ .recent_blockhash = "mock-blockhash" },
+        },
+    );
+
+    try std.testing.expectEqualStrings("mock-versioned-spinner-signature", signature);
+    try std.testing.expectEqual(@as(usize, 1), mock.captured_signer_count);
 }
 
 test "program_invoke.sendLegacyTransactionFromJson parses program id string" {
