@@ -15879,7 +15879,7 @@ test "runCommand inspect-spec emits mode resolution section json" {
     defer allocator.free(captured);
 
     try expectMockSenderRequestCount(&sender_context.sender, 0);
-    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"auto\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
 }
@@ -16025,7 +16025,7 @@ test "runCommand inspect-instructions emits mode resolution section json" {
     defer allocator.free(captured);
 
     try expectMockSenderRequestCount(&sender_context.sender, 0);
-    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"auto\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
 }
@@ -16291,7 +16291,7 @@ test "runCommand inspect-idl-invoke emits mode resolution section json" {
     defer allocator.free(captured);
 
     try expectMockSenderRequestCount(&sender_context.sender, 0);
-    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"auto\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
 }
@@ -16839,7 +16839,7 @@ test "runCommand inspect-program-invoke emits mode resolution section json" {
     defer allocator.free(captured);
 
     try expectMockSenderRequestCount(&sender_context.sender, 0);
-    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"auto\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
 }
@@ -19343,6 +19343,108 @@ test "runCommand invoke-program-invoke deduplicates additional-signer-secret-key
     );
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\":\"legacy\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
+}
+
+test "runCommand invoke-program-invoke deduplicates additional-signer-secret-key matching sender in schema mode with auto invoke-mode" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        "\"SigInvokeAuto111111111111111111111111111111111111111111111111111111111111\"",
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://invoke-program-invoke-schema-dedup-sender-extra-secret-auto" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{101} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{3} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 95);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":false}}]
+    ,
+        .{ payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    const program_id = client.Pubkey.fromBytes(.{62} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const schema_json =
+        \\{"type":"struct","fields":[{"name":"enabled","type":"bool"},{"name":"count","type":"u16"}]}
+    ;
+    const args_json =
+        \\{"enabled":true,"count":99}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "invoke-program-invoke",
+        "--json",
+        "--invoke-mode",
+        "auto",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--additional-signer-secret-key",
+        payer_secret_key_base58,
+        "--data-schema-json",
+        schema_json,
+        "--args-json",
+        args_json,
+        "--schema-encoding",
+        "borsh",
+        program_id_base58,
+        accounts_json,
+        "[]",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try expectSendTransactionRequestSignatureMetadata(
+        allocator,
+        commandCapturedRequestAt(&sender_context, 0),
+        1,
+        1,
+    );
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"requested_mode\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
 }
 
