@@ -1996,6 +1996,18 @@ fn dedupeSigners(allocator: Allocator, signers: []const sdk.Keypair) ![]sdk.Keyp
     return try deduped.toOwnedSlice(allocator);
 }
 
+fn appendUniqueSignerFromPubkey(
+    allocator: Allocator,
+    signers: *std.ArrayListUnmanaged(sdk.Keypair),
+    signer: sdk.Keypair,
+) Allocator.Error!void {
+    for (signers.items) |existing_signer| {
+        if (existing_signer.public_key.eql(signer.public_key)) return;
+    }
+
+    try signers.append(allocator, signer);
+}
+
 pub fn buildOwnedInstruction(
     allocator: Allocator,
     idl: *const idl_types.Idl,
@@ -2375,6 +2387,27 @@ pub fn buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
 
     const additional_signers_value = jsonObjectField(object, &.{ "additional_signer_secret_keys", "additionalSignerSecretKeys" });
     const include_default_signer = !std.mem.eql(u8, default_signer_secret_key, payer_secret_key_value.string);
+
+    var additional_signers = std.ArrayListUnmanaged(sdk.Keypair){};
+    defer additional_signers.deinit(allocator);
+
+    try appendUniqueSignerFromPubkey(allocator, &additional_signers, payer_keypair);
+
+    if (additional_signers_value) |value| {
+        if (value != .array) return error.InvalidInvocationSpec;
+        for (value.array.items) |secret_key_value| {
+            if (secret_key_value != .string) return error.InvalidInvocationSpec;
+            const signer = sdk.Keypair.fromBase58SecretKey(allocator, secret_key_value.string) catch {
+                return error.InvalidInvocationSpec;
+            };
+            try appendUniqueSignerFromPubkey(allocator, &additional_signers, signer);
+        }
+    }
+
+    if (include_default_signer) {
+        try appendUniqueSignerFromPubkey(allocator, &additional_signers, default_signer_keypair);
+    }
+
     var owned_additional_signers_json: ?[]u8 = null;
     defer if (owned_additional_signers_json) |value| allocator.free(value);
     const additional_signer_secret_keys_json = if (include_default_signer or additional_signers_value != null) blk: {
@@ -2382,20 +2415,12 @@ pub fn buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
         defer json_buffer.deinit();
         try json_buffer.writer.writeByte('[');
         var wrote_signer = false;
-        if (include_default_signer) {
-            try std.json.Stringify.value(default_signer_secret_key, .{}, &json_buffer.writer);
+        for (additional_signers.items[1..]) |signer| {
+            if (wrote_signer) try json_buffer.writer.writeByte(',');
+            const signer_secret_key = try sdk.encodeBase58(allocator, &signer.secret_key);
+            defer allocator.free(signer_secret_key);
+            try std.json.Stringify.value(signer_secret_key, .{}, &json_buffer.writer);
             wrote_signer = true;
-        }
-        if (additional_signers_value) |value| {
-            if (value != .array) return error.InvalidInvocationSpec;
-            for (value.array.items) |secret_key_value| {
-                if (secret_key_value != .string) return error.InvalidInvocationSpec;
-                if (std.mem.eql(u8, secret_key_value.string, payer_secret_key_value.string)) continue;
-                if (std.mem.eql(u8, secret_key_value.string, default_signer_secret_key)) continue;
-                if (wrote_signer) try json_buffer.writer.writeByte(',');
-                try std.json.Stringify.value(secret_key_value.string, .{}, &json_buffer.writer);
-                wrote_signer = true;
-            }
         }
         try json_buffer.writer.writeByte(']');
         const encoded = try allocator.dupe(u8, json_buffer.written());
@@ -4769,4 +4794,67 @@ test "anchor_idl_invoke.buildOwnedInstructionFromJson upgrades matching remainin
     try std.testing.expect(owned_instruction.instruction.accounts[0].pubkey.eql(signer));
     try std.testing.expect(owned_instruction.instruction.accounts[0].is_signer);
     try std.testing.expect(owned_instruction.instruction.accounts[0].is_writable);
+}
+
+test "anchor_idl_invoke.buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec deduplicates additional signers" {
+    const allocator = std.testing.allocator;
+
+    const payer = try sdk.Keypair.fromSecretKeySlice([_]u8{10} ** 32);
+    const default_signer = try sdk.Keypair.fromSecretKeySlice([_]u8{11} ** 32);
+    const duplicate_signer = try sdk.Keypair.fromSecretKeySlice([_]u8{12} ** 32);
+
+    const payer_secret_key = try sdk.encodeBase58(allocator, &payer.secret_key);
+    defer allocator.free(payer_secret_key);
+    const default_signer_secret_key = try sdk.encodeBase58(allocator, &default_signer.secret_key);
+    defer allocator.free(default_signer_secret_key);
+    const duplicate_signer_secret_key = try sdk.encodeBase58(allocator, &duplicate_signer.secret_key);
+    defer allocator.free(duplicate_signer_secret_key);
+
+    const invocation_spec_json_str = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "default_signer_secret_key":"{s}",
+        \\  "additional_signer_secret_keys":["{s}","{s}","{s}","{s}"],
+        \\  "idl":{{
+        \\    "address":"11111111111111111111111111111111",
+        \\    "instructions":[{{"name":"setValue","discriminator":[1,1,1,1,1,1,1,1],"accounts":[]}}]
+        \\  }},
+        \\  "instruction_name":"setValue"
+        \\}}
+    ,
+        .{
+            payer_secret_key,
+            default_signer_secret_key,
+            default_signer_secret_key,
+            payer_secret_key,
+            duplicate_signer_secret_key,
+            duplicate_signer_secret_key,
+        },
+    );
+    defer allocator.free(invocation_spec_json_str);
+
+    const exported_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        invocation_spec_json_str,
+    );
+    defer allocator.free(exported_json);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, exported_json, .{});
+    defer parsed.deinit();
+
+    const invocation_spec = switch (parsed.value) {
+        .object => |value| value,
+        else => unreachable,
+    };
+
+    const additional_signers = jsonObjectField(invocation_spec, &.{
+        "additional_signer_secret_keys",
+        "additionalSignerSecretKeys",
+    }) orelse unreachable;
+
+    try std.testing.expect(additional_signers == .array);
+    try std.testing.expectEqual(@as(usize, 2), additional_signers.array.items.len);
+    try std.testing.expectEqualStrings(default_signer_secret_key, additional_signers.array.items[0].string);
+    try std.testing.expectEqualStrings(duplicate_signer_secret_key, additional_signers.array.items[1].string);
 }
