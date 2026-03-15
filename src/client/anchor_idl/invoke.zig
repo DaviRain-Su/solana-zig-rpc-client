@@ -4678,3 +4678,95 @@ test "anchor_idl_invoke.buildOwnedInstructionFromJson infers multisig alias seed
     try std.testing.expect(owned_instruction.instruction.accounts[0].pubkey.eql(multisig));
     try std.testing.expect(owned_instruction.instruction.accounts[1].pubkey.eql(expected_pda));
 }
+
+test "anchor_idl_invoke.buildOwnedInstructionFromJson keeps structured account bindings over account_bindings_json for explicit account keys" {
+    const allocator = std.testing.allocator;
+
+    const program_id = sdk.Pubkey.fromBytes(.{80} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_first = sdk.Pubkey.fromBytes(.{1} ** 32);
+    const account_second = sdk.Pubkey.fromBytes(.{2} ** 32);
+    const account_second_base58 = try account_second.toBase58(allocator);
+    defer allocator.free(account_second_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"setAuthority","discriminator":[1,1,1,1,1,1,1,1],"accounts":[{{"name":"authority","writable":true,"signer":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const account_bindings_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"authority\":\"{s}\"}}",
+        .{account_second_base58},
+    );
+    defer allocator.free(account_bindings_json);
+
+    const structured_bindings = [_]AccountBinding{.{ .path = "authority", .pubkey = account_first }};
+
+    var owned_instruction = try buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "setAuthority",
+        .{
+            .account_bindings = &structured_bindings,
+            .account_bindings_json = account_bindings_json,
+        },
+    );
+    defer owned_instruction.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), owned_instruction.instruction.accounts.len);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].pubkey.eql(account_first));
+    try std.testing.expect(owned_instruction.instruction.accounts[0].is_signer);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].is_writable);
+}
+
+test "anchor_idl_invoke.buildOwnedInstructionFromJson upgrades matching remaining account metas by pubkey" {
+    const allocator = std.testing.allocator;
+
+    const program_id = sdk.Pubkey.fromBytes(.{81} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const signer = sdk.Pubkey.fromBytes(.{3} ** 32);
+    const signer_base58 = try signer.toBase58(allocator);
+    defer allocator.free(signer_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"setAuthority","discriminator":[9,9,9,9,9,9,9,9],"accounts":[{{"name":"authority","writable":true,"signer":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const structured_remaining = [_]sdk.AccountMeta{.{ .pubkey = signer, .is_signer = false, .is_writable = false }};
+    const remaining_accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}}]
+    ,
+        .{signer_base58},
+    );
+    defer allocator.free(remaining_accounts_json);
+
+    const structured_bindings = [_]AccountBinding{.{ .path = "authority", .pubkey = signer }};
+
+    var owned_instruction = try buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "setAuthority",
+        .{
+            .account_bindings = &structured_bindings,
+            .remaining_accounts = &structured_remaining,
+            .remaining_accounts_json = remaining_accounts_json,
+        },
+    );
+    defer owned_instruction.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), owned_instruction.instruction.accounts.len);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].pubkey.eql(signer));
+    try std.testing.expect(owned_instruction.instruction.accounts[0].is_signer);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].is_writable);
+}
