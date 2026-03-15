@@ -369,6 +369,28 @@ const OwnedAccounts = struct {
     }
 };
 
+fn appendOrUpgradeAccountMeta(
+    allocator: Allocator,
+    accounts: *std.ArrayListUnmanaged(sdk.AccountMeta),
+    pubkey: sdk.Pubkey,
+    is_signer: bool,
+    is_writable: bool,
+) !void {
+    for (accounts.items) |*account| {
+        if (std.meta.eql(account.pubkey, pubkey)) {
+            account.is_signer = account.is_signer or is_signer;
+            account.is_writable = account.is_writable or is_writable;
+            return;
+        }
+    }
+
+    try accounts.append(allocator, .{
+        .pubkey = pubkey,
+        .is_signer = is_signer,
+        .is_writable = is_writable,
+    });
+}
+
 fn findJsonObjectField(object: std.json.ObjectMap, comptime names: []const []const u8) ?std.json.Value {
     inline for (names) |name| {
         if (object.get(name)) |value| return value;
@@ -437,14 +459,22 @@ fn parseAccountsJson(allocator: Allocator, json_source: []const u8) BuildError!O
         else => return error.InvalidProgramInvokeSpec,
     };
 
-    const metas = try allocator.alloc(sdk.AccountMeta, items.len);
-    errdefer allocator.free(metas);
+    var metas = std.ArrayListUnmanaged(sdk.AccountMeta){};
+    defer metas.deinit(allocator);
+    try metas.ensureTotalCapacity(allocator, items.len);
 
-    for (items, 0..) |account, index| {
-        metas[index] = try parseJsonAccountMeta(allocator, account);
+    for (items) |account| {
+        const parsed_account = try parseJsonAccountMeta(allocator, account);
+        try appendOrUpgradeAccountMeta(
+            allocator,
+            &metas,
+            parsed_account.pubkey,
+            parsed_account.is_signer,
+            parsed_account.is_writable,
+        );
     }
 
-    return .{ .metas = metas };
+    return .{ .metas = try metas.toOwnedSlice(allocator) };
 }
 
 fn parseProgramId(allocator: Allocator, program_id: []const u8) BuildError!sdk.Pubkey {
@@ -995,20 +1025,32 @@ pub fn buildOwnedInstruction(
         null;
     defer if (json_accounts) |*value| value.deinit(allocator);
 
-    var merged_accounts: ?[]sdk.AccountMeta = null;
-    defer if (merged_accounts) |value| allocator.free(value);
-    const resolved_accounts = if (json_accounts) |value| blk: {
-        if (options.accounts.len == 0) break :blk value.metas;
-        if (value.metas.len == 0) break :blk options.accounts;
+    var resolved_accounts = std.ArrayListUnmanaged(sdk.AccountMeta){};
+    defer resolved_accounts.deinit(allocator);
+    try resolved_accounts.ensureTotalCapacity(allocator, options.accounts.len + if (json_accounts) |value| value.metas.len else 0);
 
-        const merged = try allocator.alloc(sdk.AccountMeta, options.accounts.len + value.metas.len);
-        merged_accounts = merged;
-        @memcpy(merged[0..options.accounts.len], options.accounts);
-        @memcpy(merged[options.accounts.len..], value.metas);
-        break :blk merged;
-    } else options.accounts;
+    for (options.accounts) |account| {
+        try appendOrUpgradeAccountMeta(
+            allocator,
+            &resolved_accounts,
+            account.pubkey,
+            account.is_signer,
+            account.is_writable,
+        );
+    }
+    if (json_accounts) |value| {
+        for (value.metas) |account| {
+            try appendOrUpgradeAccountMeta(
+                allocator,
+                &resolved_accounts,
+                account.pubkey,
+                account.is_signer,
+                account.is_writable,
+            );
+        }
+    }
 
-    const accounts = try allocator.dupe(sdk.AccountMeta, resolved_accounts);
+    const accounts = try resolved_accounts.toOwnedSlice(allocator);
     errdefer allocator.free(accounts);
 
     const data = if (options.data_bytes) |value|
@@ -3190,6 +3232,49 @@ test "program_invoke.buildOwnedInstruction merges typed accounts before json acc
     try std.testing.expect(owned_instruction.instruction.accounts[1].pubkey.eql(json));
     try std.testing.expect(owned_instruction.instruction.accounts[1].is_writable);
     try std.testing.expectEqualStrings("ping", owned_instruction.instruction.data);
+}
+
+test "program_invoke.buildOwnedInstruction merges duplicate account metas across typed and json" {
+    const allocator = std.testing.allocator;
+
+    const program_id = sdk.Pubkey.fromBytes(.{84} ** 32);
+    const typed_signer = sdk.Pubkey.fromBytes(.{85} ** 32);
+    const json_only = sdk.Pubkey.fromBytes(.{86} ** 32);
+    const json_only_base58 = try json_only.toBase58(allocator);
+    defer allocator.free(json_only_base58);
+    const typed_base58 = try typed_signer.toBase58(allocator);
+    defer allocator.free(typed_base58);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"is_signer\":true,\"is_writable\":true}},\"{s}\",{{\"pubkey\":\"{s}\",\"signer\":true,\"writable\":false}}]",
+        .{ typed_base58, json_only_base58, typed_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    const typed_accounts = [_]sdk.AccountMeta{
+        sdk.AccountMeta.init(typed_signer, false, false),
+    };
+
+    var owned_instruction = try buildOwnedInstruction(
+        allocator,
+        program_id,
+        .{
+            .accounts = &typed_accounts,
+            .accounts_json = accounts_json,
+            .data = "ping",
+            .data_encoding = .utf8,
+        },
+    );
+    defer owned_instruction.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), owned_instruction.instruction.accounts.len);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].pubkey.eql(typed_signer));
+    try std.testing.expect(owned_instruction.instruction.accounts[0].is_signer);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].is_writable);
+    try std.testing.expect(owned_instruction.instruction.accounts[1].pubkey.eql(json_only));
+    try std.testing.expect(!owned_instruction.instruction.accounts[1].is_signer);
+    try std.testing.expect(!owned_instruction.instruction.accounts[1].is_writable);
 }
 
 test "program_invoke.buildOwnedInstruction decodes base64 data" {
