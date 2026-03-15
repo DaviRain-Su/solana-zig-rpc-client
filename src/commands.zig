@@ -3643,13 +3643,34 @@ fn areSignerKeypairPathsEquivalent(
 ) bool {
     if (std.mem.eql(u8, left, right)) return true;
 
-    const left_realpath = std.fs.cwd().realpathAlloc(allocator, left) catch return false;
-    defer allocator.free(left_realpath);
+    const left_canonical = canonicalizeSignerKeypairPathForMerge(allocator, left) catch return false;
+    defer allocator.free(left_canonical);
 
-    const right_realpath = std.fs.cwd().realpathAlloc(allocator, right) catch return false;
-    defer allocator.free(right_realpath);
+    const right_canonical = canonicalizeSignerKeypairPathForMerge(allocator, right) catch return false;
+    defer allocator.free(right_canonical);
 
-    return std.mem.eql(u8, left_realpath, right_realpath);
+    return std.mem.eql(u8, left_canonical, right_canonical);
+}
+
+fn canonicalizeSignerKeypairPathForMerge(
+    allocator: Allocator,
+    value: []const u8,
+) ![]u8 {
+    const home_dir = std.process.getEnvVarOwned(allocator, "HOME") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => null,
+        else => return err,
+    };
+    defer if (home_dir) |dir| allocator.free(dir);
+
+    const expanded = try expandUserPathForHome(allocator, value, home_dir);
+
+    const canonical = std.fs.cwd().realpathAlloc(allocator, expanded) catch null;
+    if (canonical) |path| {
+        allocator.free(expanded);
+        return path;
+    }
+
+    return expanded;
 }
 
 fn appendUniqueSignerKeypairPathValues(
@@ -15798,6 +15819,55 @@ test "mergeCliSignerKeypairPathsArg deduplicates canonicalized path values" {
         signer_keypair_paths_source,
         &.{
             extra_signer_keypair_realpath,
+        },
+    );
+    defer if (merged) |value| allocator.free(value);
+
+    try std.testing.expect(merged != null);
+
+    var parsed = try std.json.parseFromSlice([]const []const u8, allocator, merged.?, .{
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), parsed.value.len);
+}
+
+test "mergeCliSignerKeypairPathsArg deduplicates home-expanded path values" {
+    const allocator = std.testing.allocator;
+
+    const home_dir = std.process.getEnvVarOwned(allocator, "HOME") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => return,
+        else => return err,
+    };
+    defer allocator.free(home_dir);
+
+    const signer_keypair_filename = try std.fmt.allocPrint(
+        allocator,
+        "test-program-invoke-signer-keypair-home-tilde-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(signer_keypair_filename);
+
+    const extra_signer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/{s}",
+        .{ home_dir, signer_keypair_filename },
+    );
+    defer allocator.free(extra_signer_keypair_path);
+
+    const signer_keypair_paths_source = try std.fmt.allocPrint(
+        allocator,
+        "[\"~/{s}\"]",
+        .{signer_keypair_filename},
+    );
+    defer allocator.free(signer_keypair_paths_source);
+
+    const merged = try mergeCliSignerKeypairPathsArg(
+        allocator,
+        signer_keypair_paths_source,
+        &.{
+            extra_signer_keypair_path,
         },
     );
     defer if (merged) |value| allocator.free(value);
