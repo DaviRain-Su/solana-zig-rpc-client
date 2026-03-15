@@ -2935,25 +2935,22 @@ fn loadAnchorIdlInvokeInstructionSpecLegacyWithPayerSecret(
         discriminator_hex[i * 2 + 1] = std.fmt.hex_charset[byte & 0x0f];
     }
 
-    const instruction_specs = [_]CliInstructionSpec{
+    return try loadCliInstructionSpecFromSingleCliInstructionSpec(
+        allocator,
         .{
             .program_id = program_id,
             .accounts = deduped_cli_accounts,
             .data = discriminator_hex,
             .data_encoding = .hex,
         },
-    };
-    const spec = CliSimulateInstructionsSpec{
-        .payer_secret_key = payer_secret_key_arg,
-        .payer_keypair_path = payer_keypair_path_arg,
-        .nonce_account = nonce_account_arg,
-        .nonce_authority_keypair_path = nonce_authority_keypair_path_arg,
-        .additional_signer_secret_keys = additional_signer_secret_keys_arg,
-        .additional_signer_keypair_paths = if (parsed_signer_keypair_paths) |value| value.value else &.{},
-        .address_lookup_tables = if (parsed_lookup_tables) |value| value.value else &.{},
-        .instructions = &instruction_specs,
-    };
-    return try loadCliInstructionSpec(allocator, &spec);
+        payer_secret_key_arg,
+        payer_keypair_path_arg,
+        nonce_account_arg,
+        nonce_authority_keypair_path_arg,
+        additional_signer_secret_keys_arg,
+        if (parsed_signer_keypair_paths) |value| value.value else &.{},
+        if (parsed_lookup_tables) |value| value.value else &.{},
+    );
 }
 
 const LoadedCliInstructionSpec = struct {
@@ -3474,15 +3471,23 @@ fn buildInvocationSpecJsonFromCliSpec(
     sender_keypair_path_arg: ?[]const u8,
     sender_secret_key_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
     recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
 ) ![]u8 {
+    const override_nonce_authority = nonce_authority_secret_key_arg != null or nonce_authority_keypair_path_arg != null;
     var context_args: CliInvocationContextArgs = .{
         .payer_keypair_path_arg = if (sender_keypair_path_arg != null or sender_secret_key_arg != null) sender_keypair_path_arg else spec.payer_keypair_path,
         .payer_secret_key_arg = if (sender_keypair_path_arg != null or sender_secret_key_arg != null) sender_secret_key_arg else spec.payer_secret_key,
+        .signer_keypair_paths_arg = signer_keypair_paths_arg,
+        .lookup_tables_arg = lookup_tables_arg,
         .recent_blockhash_arg = recent_blockhash_arg orelse spec.recent_blockhash,
-        .nonce_account_arg = spec.nonce_account,
-        .nonce_authority_secret_key_arg = spec.nonce_authority_secret_key,
-        .nonce_authority_keypair_path_arg = spec.nonce_authority_keypair_path,
+        .nonce_account_arg = nonce_account_arg orelse spec.nonce_account,
+        .nonce_authority_secret_key_arg = if (override_nonce_authority) nonce_authority_secret_key_arg else spec.nonce_authority_secret_key,
+        .nonce_authority_keypair_path_arg = if (override_nonce_authority) nonce_authority_keypair_path_arg else spec.nonce_authority_keypair_path,
         .base_additional_signer_secret_keys = spec.additional_signer_secret_keys,
         .base_additional_signer_keypair_paths = spec.additional_signer_keypair_paths,
         .base_address_lookup_tables = spec.address_lookup_tables,
@@ -3595,6 +3600,202 @@ fn parseCliSignerKeypairPathsJsonSource(
         }) catch return error.InvalidCli
     else
         null;
+}
+
+fn appendUniqueCliStringValues(
+    allocator: Allocator,
+    merged_values: *std.ArrayListUnmanaged([]const u8),
+    values: []const []const u8,
+) !void {
+    for (values) |value| {
+        var exists = false;
+        for (merged_values.items) |existing| {
+            if (std.mem.eql(u8, existing, value)) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) try merged_values.append(allocator, value);
+    }
+}
+
+fn mergeCliSignerKeypairPathsArg(
+    allocator: Allocator,
+    signer_keypair_paths_arg: ?[]const u8,
+    additional_signer_keypair_paths_arg: []const []const u8,
+) !?[]u8 {
+    if (signer_keypair_paths_arg == null and additional_signer_keypair_paths_arg.len == 0) return null;
+
+    const signer_keypair_paths_source = try loadOptionalInstructionSpecSource(allocator, signer_keypair_paths_arg);
+    defer if (signer_keypair_paths_source) |value| allocator.free(value);
+
+    var parsed_signer_keypair_paths = try parseCliSignerKeypairPathsJsonSource(allocator, signer_keypair_paths_source);
+    defer if (parsed_signer_keypair_paths) |*value| value.deinit();
+
+    var merged_signer_keypair_paths: std.ArrayListUnmanaged([]const u8) = .{};
+    defer merged_signer_keypair_paths.deinit(allocator);
+
+    if (parsed_signer_keypair_paths) |value| {
+        try appendUniqueCliStringValues(allocator, &merged_signer_keypair_paths, value.value);
+    }
+    try appendUniqueCliStringValues(allocator, &merged_signer_keypair_paths, additional_signer_keypair_paths_arg);
+
+    var buffer: std.io.Writer.Allocating = .init(allocator);
+    defer buffer.deinit();
+    std.json.Stringify.value(merged_signer_keypair_paths.items, .{}, &buffer.writer) catch unreachable;
+    return try allocator.dupe(u8, buffer.written());
+}
+
+fn appendCliAddressLookupTableSpecsJson(
+    buffer: *std.io.Writer.Allocating,
+    wrote_any: *bool,
+    tables: []const CliAddressLookupTableSpec,
+) !void {
+    for (tables) |table| {
+        if (wrote_any.*) try buffer.writer.writeByte(',');
+        std.json.Stringify.value(table, .{}, &buffer.writer) catch unreachable;
+        wrote_any.* = true;
+    }
+}
+
+fn appendDeduplicatedCliAddressLookupTableSpecsJson(
+    allocator: Allocator,
+    buffer: *std.io.Writer.Allocating,
+    wrote_any: *bool,
+    seen_account_keys: *std.ArrayListUnmanaged([]u8),
+    tables: []const CliAddressLookupTableSpec,
+) !void {
+    for (tables) |table| {
+        var exists = false;
+        for (seen_account_keys.items) |existing| {
+            if (std.mem.eql(u8, existing, table.account_key)) {
+                exists = true;
+                break;
+            }
+        }
+        if (exists) continue;
+
+        try appendCliAddressLookupTableSpecsJson(buffer, wrote_any, &.{table});
+        try seen_account_keys.append(allocator, try allocator.dupe(u8, table.account_key));
+    }
+}
+
+fn mergeCliAddressLookupTablesArg(
+    allocator: Allocator,
+    base_lookup_tables: []const CliAddressLookupTableSpec,
+    lookup_tables_arg: ?[]const u8,
+    additional_lookup_tables_arg: []const []const u8,
+) !?[]u8 {
+    if (base_lookup_tables.len == 0 and lookup_tables_arg == null and additional_lookup_tables_arg.len == 0) return null;
+
+    const lookup_tables_source = try loadOptionalInstructionSpecSource(allocator, lookup_tables_arg);
+    defer if (lookup_tables_source) |value| allocator.free(value);
+
+    var parsed_lookup_tables = try parseCliAddressLookupTablesJsonSource(allocator, lookup_tables_source);
+    defer if (parsed_lookup_tables) |*value| value.deinit();
+
+    var seen_account_keys: std.ArrayListUnmanaged([]u8) = .{};
+    defer {
+        for (seen_account_keys.items) |value| allocator.free(value);
+        seen_account_keys.deinit(allocator);
+    }
+
+    var buffer: std.io.Writer.Allocating = .init(allocator);
+    defer buffer.deinit();
+    try buffer.writer.writeByte('[');
+    var wrote_any = false;
+
+    try appendDeduplicatedCliAddressLookupTableSpecsJson(allocator, &buffer, &wrote_any, &seen_account_keys, base_lookup_tables);
+
+    if (parsed_lookup_tables) |value| {
+        try appendDeduplicatedCliAddressLookupTableSpecsJson(allocator, &buffer, &wrote_any, &seen_account_keys, value.value);
+    }
+
+    for (additional_lookup_tables_arg) |arg| {
+        const source = try loadInstructionSpecSource(allocator, arg);
+        defer allocator.free(source);
+
+        if (std.json.parseFromSlice([]CliAddressLookupTableSpec, allocator, source, .{
+            .allocate = .alloc_always,
+            .ignore_unknown_fields = true,
+        })) |parsed_tables| {
+            defer parsed_tables.deinit();
+            try appendDeduplicatedCliAddressLookupTableSpecsJson(allocator, &buffer, &wrote_any, &seen_account_keys, parsed_tables.value);
+        } else |_| {
+            var parsed_table = std.json.parseFromSlice(CliAddressLookupTableSpec, allocator, source, .{
+                .allocate = .alloc_always,
+                .ignore_unknown_fields = true,
+            }) catch return error.InvalidCli;
+            defer parsed_table.deinit();
+            const table = [_]CliAddressLookupTableSpec{parsed_table.value};
+            try appendDeduplicatedCliAddressLookupTableSpecsJson(allocator, &buffer, &wrote_any, &seen_account_keys, &table);
+        }
+    }
+
+    try buffer.writer.writeByte(']');
+    return try allocator.dupe(u8, buffer.written());
+}
+
+fn buildInlineInstructionsSpecSource(
+    allocator: Allocator,
+    instruction_json_args: []const []const u8,
+) !?[]u8 {
+    if (instruction_json_args.len == 0) return null;
+
+    var buffer: std.io.Writer.Allocating = .init(allocator);
+    defer buffer.deinit();
+    try buffer.writer.writeAll("{\"instructions\":[");
+    var wrote_any = false;
+
+    for (instruction_json_args) |arg| {
+        const source = try loadInstructionSpecSource(allocator, arg);
+        defer allocator.free(source);
+
+        const parsed = std.json.parseFromSlice(std.json.Value, allocator, source, .{}) catch return error.InvalidCli;
+        defer parsed.deinit();
+
+        switch (parsed.value) {
+            .object => {
+                if (wrote_any) try buffer.writer.writeByte(',');
+                std.json.Stringify.value(parsed.value, .{}, &buffer.writer) catch unreachable;
+                wrote_any = true;
+            },
+            .array => |items| {
+                for (items.items) |item| {
+                    if (item != .object) return error.InvalidCli;
+                    if (wrote_any) try buffer.writer.writeByte(',');
+                    std.json.Stringify.value(item, .{}, &buffer.writer) catch unreachable;
+                    wrote_any = true;
+                }
+            },
+            else => return error.InvalidCli,
+        }
+    }
+
+    try buffer.writer.writeAll("]}");
+    return try allocator.dupe(u8, buffer.written());
+}
+
+fn loadCliInvocationSpecSource(
+    allocator: Allocator,
+    command_label: []const u8,
+    positional_spec_arg: ?[]const u8,
+    positional_spec_label: []const u8,
+    instruction_json_args: []const []const u8,
+) ![]u8 {
+    if (positional_spec_arg) |spec_arg| {
+        return loadInstructionSpecSource(allocator, spec_arg) catch {
+            reportInvalidCliMessage("error: {s} spec must be valid JSON or @path\n", .{command_label});
+            return error.InvalidCli;
+        };
+    }
+    return buildInlineInstructionsSpecSource(allocator, instruction_json_args) catch {
+        reportInvalidCliMessage("error: {s} --instruction-json values must be valid JSON objects, arrays of objects, or @path\n", .{command_label});
+        return error.InvalidCli;
+    } orelse {
+        reportInvalidCliMessage("error: {s} requires {s} or --instruction-json\n", .{ command_label, positional_spec_label });
+        return error.InvalidCli;
+    };
 }
 
 fn parseCliAddressLookupTablesJsonSource(
@@ -3747,26 +3948,117 @@ const LoadedCliInvocationContextJsonInputs = struct {
     }
 };
 
-fn loadCliInvocationContextJsonInputs(
+const LoadedCliInvocationContextSources = struct {
+    signer_keypair_paths_source: ?[]u8 = null,
+    lookup_tables_source: ?[]u8 = null,
+
+    fn deinit(self: *@This(), allocator: Allocator) void {
+        if (self.signer_keypair_paths_source) |value| allocator.free(value);
+        if (self.lookup_tables_source) |value| allocator.free(value);
+    }
+};
+
+fn loadCliInvocationContextSources(
     allocator: Allocator,
     context_args: CliInvocationContextArgs,
-) !LoadedCliInvocationContextJsonInputs {
-    const signer_keypair_paths_source = try loadOptionalInstructionSpecSource(allocator, context_args.signer_keypair_paths_arg);
-    defer if (signer_keypair_paths_source) |value| allocator.free(value);
+) !LoadedCliInvocationContextSources {
+    const signer_keypair_paths_source = try mergeCliSignerKeypairPathsArg(
+        allocator,
+        context_args.signer_keypair_paths_arg,
+        context_args.base_additional_signer_keypair_paths,
+    );
+    errdefer if (signer_keypair_paths_source) |value| allocator.free(value);
 
-    var parsed_signer_keypair_paths = try parseCliSignerKeypairPathsJsonSource(allocator, signer_keypair_paths_source);
-    defer if (parsed_signer_keypair_paths) |*value| value.deinit();
-
-    const lookup_tables_source = if (context_args.lookup_tables_arg) |value|
-        try loadInstructionSpecSource(allocator, value)
-    else if (context_args.base_address_lookup_tables.len > 0) blk: {
-        var buffer: std.io.Writer.Allocating = .init(allocator);
-        defer buffer.deinit();
-        std.json.Stringify.value(context_args.base_address_lookup_tables, .{}, &buffer.writer) catch unreachable;
-        break :blk try allocator.dupe(u8, buffer.written());
-    } else null;
+    const lookup_tables_source = try mergeCliAddressLookupTablesArg(
+        allocator,
+        context_args.base_address_lookup_tables,
+        context_args.lookup_tables_arg,
+        &.{},
+    );
     errdefer if (lookup_tables_source) |value| allocator.free(value);
 
+    return .{
+        .signer_keypair_paths_source = signer_keypair_paths_source,
+        .lookup_tables_source = lookup_tables_source,
+    };
+}
+
+const LoadedCliInvocationContextParsedSources = struct {
+    signer_keypair_paths_source: ?[]u8 = null,
+    parsed_signer_keypair_paths: ?std.json.Parsed([]const []const u8) = null,
+    lookup_tables_source: ?[]u8 = null,
+    parsed_lookup_tables: ?std.json.Parsed([]CliAddressLookupTableSpec) = null,
+
+    fn signerKeypairPaths(self: *const @This()) []const []const u8 {
+        return if (self.parsed_signer_keypair_paths) |value| value.value else &.{};
+    }
+
+    fn addressLookupTables(self: *const @This()) []const CliAddressLookupTableSpec {
+        return if (self.parsed_lookup_tables) |value| value.value else &.{};
+    }
+
+    fn takeLookupTablesSource(self: *@This()) ?[]u8 {
+        const value = self.lookup_tables_source;
+        self.lookup_tables_source = null;
+        return value;
+    }
+
+    fn takeParsedSignerKeypairPaths(self: *@This()) ?std.json.Parsed([]const []const u8) {
+        const value = self.parsed_signer_keypair_paths;
+        self.parsed_signer_keypair_paths = null;
+        return value;
+    }
+
+    fn takeParsedLookupTables(self: *@This()) ?std.json.Parsed([]CliAddressLookupTableSpec) {
+        const value = self.parsed_lookup_tables;
+        self.parsed_lookup_tables = null;
+        return value;
+    }
+
+    fn deinit(self: *@This(), allocator: Allocator) void {
+        if (self.signer_keypair_paths_source) |value| allocator.free(value);
+        if (self.parsed_signer_keypair_paths) |*value| value.deinit();
+        if (self.lookup_tables_source) |value| allocator.free(value);
+        if (self.parsed_lookup_tables) |*value| value.deinit();
+    }
+};
+
+fn loadCliInvocationContextParsedSources(
+    allocator: Allocator,
+    context_args: CliInvocationContextArgs,
+) !LoadedCliInvocationContextParsedSources {
+    var context_sources = try loadCliInvocationContextSources(allocator, context_args);
+    errdefer context_sources.deinit(allocator);
+
+    var parsed_signer_keypair_paths = try parseCliSignerKeypairPathsJsonSource(allocator, context_sources.signer_keypair_paths_source);
+    errdefer if (parsed_signer_keypair_paths) |*value| value.deinit();
+
+    var parsed_lookup_tables = try parseCliAddressLookupTablesJsonSource(allocator, context_sources.lookup_tables_source);
+    errdefer if (parsed_lookup_tables) |*value| value.deinit();
+
+    return .{
+        .signer_keypair_paths_source = context_sources.signer_keypair_paths_source,
+        .parsed_signer_keypair_paths = parsed_signer_keypair_paths,
+        .lookup_tables_source = context_sources.lookup_tables_source,
+        .parsed_lookup_tables = parsed_lookup_tables,
+    };
+}
+
+const LoadedCliInvocationContextResolvedSecrets = struct {
+    nonce_authority_secret_key: ?[]u8 = null,
+    additional_signer_secret_keys_json: []u8,
+
+    fn deinit(self: *@This(), allocator: Allocator) void {
+        if (self.nonce_authority_secret_key) |value| allocator.free(value);
+        allocator.free(self.additional_signer_secret_keys_json);
+    }
+};
+
+fn loadCliInvocationContextResolvedSecrets(
+    allocator: Allocator,
+    context_args: CliInvocationContextArgs,
+    signer_keypair_paths: []const []const u8,
+) !LoadedCliInvocationContextResolvedSecrets {
     const nonce_authority_secret_key = try resolveInstructionKeypairSecretKeyBase58(
         allocator,
         context_args.nonce_authority_secret_key_arg,
@@ -3778,16 +4070,47 @@ fn loadCliInvocationContextJsonInputs(
         allocator,
         context_args.payer_secret_key,
         context_args.base_additional_signer_secret_keys,
-        if (parsed_signer_keypair_paths) |value| value.value else context_args.base_additional_signer_keypair_paths,
+        signer_keypair_paths,
         context_args.additional_signer_secret_keys_arg,
     );
     errdefer allocator.free(additional_signer_secret_keys_json);
 
     return .{
-        .lookup_tables_source = lookup_tables_source,
         .nonce_authority_secret_key = nonce_authority_secret_key,
         .additional_signer_secret_keys_json = additional_signer_secret_keys_json,
     };
+}
+
+fn buildCliInvocationContextJsonInputsFromParsedSources(
+    allocator: Allocator,
+    context_args: CliInvocationContextArgs,
+    context_sources: *LoadedCliInvocationContextParsedSources,
+) !LoadedCliInvocationContextJsonInputs {
+    var resolved_secrets = try loadCliInvocationContextResolvedSecrets(
+        allocator,
+        context_args,
+        context_sources.signerKeypairPaths(),
+    );
+    errdefer resolved_secrets.deinit(allocator);
+
+    return .{
+        .lookup_tables_source = context_sources.takeLookupTablesSource(),
+        .nonce_authority_secret_key = resolved_secrets.nonce_authority_secret_key,
+        .additional_signer_secret_keys_json = resolved_secrets.additional_signer_secret_keys_json,
+    };
+}
+
+fn loadCliInvocationContextJsonInputs(
+    allocator: Allocator,
+    context_args: CliInvocationContextArgs,
+) !LoadedCliInvocationContextJsonInputs {
+    var context_sources = try loadCliInvocationContextParsedSources(allocator, context_args);
+    defer context_sources.deinit(allocator);
+    return buildCliInvocationContextJsonInputsFromParsedSources(
+        allocator,
+        context_args,
+        &context_sources,
+    );
 }
 
 const LoadedCliInvocationContextSpecInputs = struct {
@@ -3808,26 +4131,82 @@ const LoadedCliInvocationContextSpecInputs = struct {
     }
 };
 
+fn buildCliInvocationContextSpecInputsFromParsedSources(
+    context_sources: *LoadedCliInvocationContextParsedSources,
+) LoadedCliInvocationContextSpecInputs {
+    return .{
+        .parsed_signer_keypair_paths = context_sources.takeParsedSignerKeypairPaths(),
+        .parsed_lookup_tables = context_sources.takeParsedLookupTables(),
+    };
+}
+
 fn loadCliInvocationContextSpecInputs(
     allocator: Allocator,
     context_args: CliInvocationContextArgs,
 ) !LoadedCliInvocationContextSpecInputs {
-    const signer_keypair_paths_source = try loadOptionalInstructionSpecSource(allocator, context_args.signer_keypair_paths_arg);
-    defer if (signer_keypair_paths_source) |value| allocator.free(value);
+    var context_sources = try loadCliInvocationContextParsedSources(allocator, context_args);
+    defer context_sources.deinit(allocator);
 
-    const lookup_tables_source = try loadOptionalInstructionSpecSource(allocator, context_args.lookup_tables_arg);
-    defer if (lookup_tables_source) |value| allocator.free(value);
+    return buildCliInvocationContextSpecInputsFromParsedSources(&context_sources);
+}
 
-    var parsed_signer_keypair_paths = try parseCliSignerKeypairPathsJsonSource(allocator, signer_keypair_paths_source);
-    errdefer if (parsed_signer_keypair_paths) |*value| value.deinit();
+test "buildCliInvocationContextSpecInputsFromParsedSources transfers parsed sources" {
+    const allocator = std.testing.allocator;
 
-    var parsed_lookup_tables = try parseCliAddressLookupTablesJsonSource(allocator, lookup_tables_source);
-    errdefer if (parsed_lookup_tables) |*value| value.deinit();
+    const signer_keypair_paths_source = try allocator.dupe(u8, "[\"/tmp/signer-a.json\",\"/tmp/signer-b.json\"]");
+    const lookup_tables_source = try allocator.dupe(u8,
+        \\[
+        \\  {
+        \\    "account_key": "11111111111111111111111111111111",
+        \\    "writable_indexes": [0],
+        \\    "readonly_indexes": [1]
+        \\  }
+        \\]
+    );
 
-    return .{
-        .parsed_signer_keypair_paths = parsed_signer_keypair_paths,
-        .parsed_lookup_tables = parsed_lookup_tables,
+    var context_sources = LoadedCliInvocationContextParsedSources{
+        .signer_keypair_paths_source = signer_keypair_paths_source,
+        .parsed_signer_keypair_paths = try parseCliSignerKeypairPathsJsonSource(allocator, signer_keypair_paths_source),
+        .lookup_tables_source = lookup_tables_source,
+        .parsed_lookup_tables = try parseCliAddressLookupTablesJsonSource(allocator, lookup_tables_source),
     };
+    defer context_sources.deinit(allocator);
+
+    var spec_inputs = buildCliInvocationContextSpecInputsFromParsedSources(&context_sources);
+    defer spec_inputs.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), spec_inputs.additionalSignerKeypairPaths().len);
+    try std.testing.expectEqualStrings("/tmp/signer-a.json", spec_inputs.additionalSignerKeypairPaths()[0]);
+    try std.testing.expectEqual(@as(usize, 1), spec_inputs.addressLookupTables().len);
+    try std.testing.expectEqualStrings(
+        "11111111111111111111111111111111",
+        spec_inputs.addressLookupTables()[0].account_key,
+    );
+    try std.testing.expect(context_sources.parsed_signer_keypair_paths == null);
+    try std.testing.expect(context_sources.parsed_lookup_tables == null);
+}
+
+test "loadCliInvocationContextResolvedSecrets defaults to empty signer secret keys json" {
+    const allocator = std.testing.allocator;
+
+    var resolved = try loadCliInvocationContextResolvedSecrets(
+        allocator,
+        .{},
+        &.{},
+    );
+    defer resolved.deinit(allocator);
+
+    try std.testing.expect(resolved.nonce_authority_secret_key == null);
+
+    var parsed = try std.json.parseFromSlice(
+        []const []const u8,
+        allocator,
+        resolved.additional_signer_secret_keys_json,
+        .{},
+    );
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), parsed.value.len);
 }
 
 const LoadedCliAnchorInvokeAccountInputs = struct {
@@ -3937,6 +4316,61 @@ fn loadCliAnchorInvokeAccountInputs(
     };
 }
 
+fn loadCliInstructionSpecFromSingleCliInstructionSpec(
+    allocator: Allocator,
+    instruction_spec: CliInstructionSpec,
+    payer_secret_key_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+    additional_signer_keypair_paths: []const []const u8,
+    address_lookup_tables: []const CliAddressLookupTableSpec,
+) !LoadedCliInstructionSpec {
+    const instruction_specs = [_]CliInstructionSpec{instruction_spec};
+    const spec = CliSimulateInstructionsSpec{
+        .payer_secret_key = payer_secret_key_arg,
+        .payer_keypair_path = payer_keypair_path_arg,
+        .nonce_account = nonce_account_arg,
+        .nonce_authority_keypair_path = nonce_authority_keypair_path_arg,
+        .additional_signer_secret_keys = additional_signer_secret_keys_arg,
+        .additional_signer_keypair_paths = additional_signer_keypair_paths,
+        .address_lookup_tables = address_lookup_tables,
+        .instructions = &instruction_specs,
+    };
+    return try loadCliInstructionSpec(allocator, &spec);
+}
+
+fn buildInvocationSpecJsonFromSingleCliInstructionSpecWithContext(
+    allocator: Allocator,
+    instruction_spec: CliInstructionSpec,
+    context_args: CliInvocationContextArgs,
+) ![]u8 {
+    const instruction_specs = [_]CliInstructionSpec{instruction_spec};
+    const spec = CliSimulateInstructionsSpec{
+        .payer_secret_key = context_args.payer_secret_key_arg,
+        .payer_keypair_path = context_args.payer_keypair_path_arg,
+        .nonce_account = context_args.nonce_account_arg,
+        .nonce_authority_secret_key = context_args.nonce_authority_secret_key_arg,
+        .nonce_authority_keypair_path = context_args.nonce_authority_keypair_path_arg,
+        .instructions = &instruction_specs,
+        .recent_blockhash = context_args.recent_blockhash_arg,
+    };
+    return try buildInvocationSpecJsonFromCliSpec(
+        allocator,
+        &spec,
+        null,
+        null,
+        context_args.additional_signer_secret_keys_arg,
+        context_args.signer_keypair_paths_arg,
+        context_args.lookup_tables_arg,
+        null,
+        null,
+        null,
+        null,
+    );
+}
+
 fn loadCliInstructionSpecFromSingleInstructionWithContext(
     allocator: Allocator,
     instruction: client.Instruction,
@@ -3946,25 +4380,237 @@ fn loadCliInstructionSpecFromSingleInstructionWithContext(
     var serialized_instruction = try serializeCliInstruction(allocator, instruction);
     defer serialized_instruction.deinit(allocator);
 
-    const instruction_specs = [_]CliInstructionSpec{
+    return try loadCliInstructionSpecFromSingleCliInstructionSpec(
+        allocator,
         .{
             .program_id = serialized_instruction.program_id,
             .accounts = serialized_instruction.accounts,
             .data = serialized_instruction.data_hex,
             .data_encoding = .hex,
         },
+        context_args.payer_secret_key_arg,
+        context_args.payer_keypair_path_arg,
+        context_args.nonce_account_arg,
+        context_args.nonce_authority_keypair_path_arg,
+        context_args.additional_signer_secret_keys_arg,
+        context_spec_inputs.additionalSignerKeypairPaths(),
+        context_spec_inputs.addressLookupTables(),
+    );
+}
+
+fn buildInvocationSpecJsonFromSingleInstructionWithContext(
+    allocator: Allocator,
+    instruction: client.Instruction,
+    context_args: CliInvocationContextArgs,
+) ![]u8 {
+    var serialized_instruction = try serializeCliInstruction(allocator, instruction);
+    defer serialized_instruction.deinit(allocator);
+
+    return try buildInvocationSpecJsonFromSingleCliInstructionSpecWithContext(
+        allocator,
+        .{
+            .program_id = serialized_instruction.program_id,
+            .accounts = serialized_instruction.accounts,
+            .data = serialized_instruction.data_hex,
+            .data_encoding = .hex,
+        },
+        context_args,
+    );
+}
+
+test "loadCliInstructionSpecFromSingleCliInstructionSpec loads a single instruction with payer context" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{7} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_pubkey_bytes = payer_raw.public_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{8} ** 32);
+    const destination_pubkey_bytes = destination_raw.public_key.toBytes();
+    const destination_pubkey_base58 = try client.encodeBase58(allocator, &destination_pubkey_bytes);
+    defer allocator.free(destination_pubkey_base58);
+
+    const account_specs = [_]CliInstructionAccountMeta{
+        .{ .pubkey = destination_pubkey_base58, .is_signer = false, .is_writable = true },
     };
-    const spec = CliSimulateInstructionsSpec{
-        .payer_secret_key = context_args.payer_secret_key_arg,
-        .payer_keypair_path = context_args.payer_keypair_path_arg,
-        .nonce_account = context_args.nonce_account_arg,
-        .nonce_authority_keypair_path = context_args.nonce_authority_keypair_path_arg,
-        .additional_signer_secret_keys = context_args.additional_signer_secret_keys_arg,
-        .additional_signer_keypair_paths = context_spec_inputs.additionalSignerKeypairPaths(),
-        .address_lookup_tables = context_spec_inputs.addressLookupTables(),
-        .instructions = &instruction_specs,
+
+    var loaded = try loadCliInstructionSpecFromSingleCliInstructionSpec(
+        allocator,
+        .{
+            .program_id = "11111111111111111111111111111111",
+            .accounts = &account_specs,
+            .data = "ping",
+            .data_encoding = .utf8,
+        },
+        payer_secret_key_base58,
+        null,
+        null,
+        null,
+        &.{},
+        &.{},
+        &.{},
+    );
+    defer loaded.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), loaded.owned_instructions.instructions[0].accounts.len);
+    try std.testing.expect(std.mem.eql(u8, &loaded.payer.bytes, &payer_pubkey_bytes));
+}
+
+test "buildInvocationSpecJsonFromSingleCliInstructionSpecWithContext emits canonical instructions spec" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{11} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{12} ** 32);
+    const destination_pubkey_bytes = destination_raw.public_key.toBytes();
+    const destination_pubkey_base58 = try client.encodeBase58(allocator, &destination_pubkey_bytes);
+    defer allocator.free(destination_pubkey_base58);
+
+    const account_specs = [_]CliInstructionAccountMeta{
+        .{ .pubkey = destination_pubkey_base58, .is_signer = false, .is_writable = true },
     };
-    return try loadCliInstructionSpec(allocator, &spec);
+
+    const invocation_spec_json = try buildInvocationSpecJsonFromSingleCliInstructionSpecWithContext(
+        allocator,
+        .{
+            .program_id = "11111111111111111111111111111111",
+            .accounts = &account_specs,
+            .data = "ping",
+            .data_encoding = .utf8,
+        },
+        .{ .payer_secret_key_arg = payer_secret_key_base58 },
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, invocation_spec_json, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), parsed.value.instructions.len);
+    try std.testing.expectEqualStrings(
+        "11111111111111111111111111111111",
+        parsed.value.instructions[0].program_id,
+    );
+    try std.testing.expectEqual(@as(usize, 1), parsed.value.instructions[0].accounts.len);
+}
+
+test "buildProgramInvokeInvocationSpecJson emits canonical instructions spec" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{13} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_base58 = try client.encodeBase58(allocator, &payer_raw.public_key.toBytes());
+    defer allocator.free(payer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{14} ** 32);
+    const destination_pubkey_base58 = try client.encodeBase58(allocator, &destination_raw.public_key.toBytes());
+    defer allocator.free(destination_pubkey_base58);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
+    ,
+        .{ payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    const invocation_spec_json = try buildProgramInvokeInvocationSpecJson(
+        allocator,
+        "11111111111111111111111111111111",
+        accounts_json,
+        "ping",
+        "utf8",
+        null,
+        null,
+        null,
+        null,
+        payer_secret_key_base58,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        &.{},
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, invocation_spec_json, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), parsed.value.instructions.len);
+    try std.testing.expectEqualStrings(
+        "11111111111111111111111111111111",
+        parsed.value.instructions[0].program_id,
+    );
+    try std.testing.expectEqual(@as(usize, 2), parsed.value.instructions[0].accounts.len);
+}
+
+test "buildAnchorIdlInvokeInvocationSpecJson emits canonical instructions spec" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{15} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const program_id = client.Pubkey.fromBytes(.{16} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const target = client.Pubkey.fromBytes(.{17} ** 32);
+    const target_base58 = try target.toBase58(allocator);
+    defer allocator.free(target_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"ping","discriminator":[1,2,3,4,5,6,7,8],"accounts":[{{"name":"target","address":"{s}"}}],"args":[]}}]}}
+    ,
+        .{ program_id_base58, target_base58 },
+    );
+    defer allocator.free(idl_json);
+
+    const invocation_spec_json = try buildAnchorIdlInvokeInvocationSpecJson(
+        allocator,
+        idl_json,
+        "ping",
+        null,
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        null,
+        payer_secret_key_base58,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        &.{},
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, invocation_spec_json, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), parsed.value.instructions.len);
+    try std.testing.expectEqualStrings(program_id_base58, parsed.value.instructions[0].program_id);
+    try std.testing.expectEqual(@as(usize, 1), parsed.value.instructions[0].accounts.len);
 }
 
 const InvokeFamily = command_invoke.InvokeFamily;
@@ -4027,6 +4673,7 @@ fn buildProvidedInvocationSpecJsonForCommand(
     allocator: Allocator,
     command: cli.Command,
     invocation_spec_arg: ?[]const u8,
+    instruction_json_args: []const []const u8,
 ) ![]u8 {
     const command_label = switch (command) {
         .invoke_spec => "invoke-spec",
@@ -4040,44 +4687,82 @@ fn buildProvidedInvocationSpecJsonForCommand(
         .estimate_spec_fee => "estimate-spec-fee",
         else => unreachable,
     };
-
-    const invocation_spec_json = try loadOptionalInstructionSpecSource(allocator, invocation_spec_arg);
-    if (invocation_spec_json == null) {
-        reportInvalidCliMessage("error: {s} requires <invocation-spec-json|@path>\n", .{command_label});
-        return error.InvalidCli;
-    }
-    return invocation_spec_json.?;
+    return loadCliInvocationSpecSource(
+        allocator,
+        command_label,
+        invocation_spec_arg,
+        "<invocation-spec-json|@path>",
+        instruction_json_args,
+    );
 }
 
 fn buildProvidedOwnedInvocationSpecForCommand(
     allocator: Allocator,
     command: cli.Command,
     invocation_spec_arg: ?[]const u8,
+    instruction_json_args: []const []const u8,
+    effective_sender_keypair_path: ?[]const u8,
+    sender_secret_key_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
 ) !client.invoke.OwnedInvocationSpec {
+    const command_label = switch (command) {
+        .invoke_spec => "invoke-spec",
+        .invoke_spec_and_confirm => "invoke-spec-and-confirm",
+        .invoke_spec_simulate => "invoke-spec-simulate",
+        .preview_spec => "preview-spec",
+        .explain_spec => "explain-spec",
+        .validate_spec => "validate-spec",
+        .inspect_spec => "inspect-spec",
+        .prepare_spec => "prepare-spec",
+        .estimate_spec_fee => "estimate-spec-fee",
+        else => unreachable,
+    };
     const invocation_spec_json = try buildProvidedInvocationSpecJsonForCommand(
         allocator,
         command,
         invocation_spec_arg,
+        instruction_json_args,
     );
     defer allocator.free(invocation_spec_json);
+
+    const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, invocation_spec_json, .{
+        .ignore_unknown_fields = true,
+    }) catch {
+        reportInvalidCliMessage("error: {s} spec must be valid JSON\n", .{command_label});
+        return error.InvalidCli;
+    };
+    defer parsed_spec.deinit();
+
+    const overridden_invocation_spec_json = buildInvocationSpecJsonFromCliSpec(
+        allocator,
+        &parsed_spec.value,
+        effective_sender_keypair_path,
+        sender_secret_key_arg,
+        additional_signer_secret_keys_arg,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+        recent_blockhash_arg,
+        nonce_account_arg,
+        nonce_authority_secret_key_arg,
+        nonce_authority_keypair_path_arg,
+    ) catch {
+        reportInvalidCliMessage("error: {s} spec is invalid\n", .{command_label});
+        return error.InvalidCli;
+    };
+    defer allocator.free(overridden_invocation_spec_json);
 
     return client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
         .instructions,
-        invocation_spec_json,
+        overridden_invocation_spec_json,
     ) catch {
-        reportInvalidCliMessage("error: {s} spec is invalid\n", .{switch (command) {
-            .invoke_spec => "invoke-spec",
-            .invoke_spec_and_confirm => "invoke-spec-and-confirm",
-            .invoke_spec_simulate => "invoke-spec-simulate",
-            .preview_spec => "preview-spec",
-            .explain_spec => "explain-spec",
-            .validate_spec => "validate-spec",
-            .inspect_spec => "inspect-spec",
-            .prepare_spec => "prepare-spec",
-            .estimate_spec_fee => "estimate-spec-fee",
-            else => unreachable,
-        }});
+        reportInvalidCliMessage("error: {s} spec is invalid\n", .{command_label});
         return error.InvalidCli;
     };
 }
@@ -4086,34 +4771,25 @@ fn buildInstructionsInvocationSpecJsonForCommand(
     allocator: Allocator,
     command: cli.Command,
     instructions_spec_arg: ?[]const u8,
+    instruction_json_args: []const []const u8,
     effective_sender_keypair_path: ?[]const u8,
     sender_secret_key_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
     recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
 ) ![]u8 {
-    const command_label = if (lookupInvokeCommandSpec(command)) |spec|
-        spec.label
-    else switch (command) {
-        .inspect_instructions => "inspect-instructions",
-        .invoke_instructions => "invoke-instructions",
-        .invoke_instructions_and_confirm => "invoke-instructions-and-confirm",
-        .invoke_instructions_simulate => "invoke-instructions-simulate",
-        .preview_instructions => "preview-instructions",
-        .explain_instructions => "explain-instructions",
-        .validate_instructions => "validate-instructions",
-        .prepare_instructions => "prepare-instructions",
-        .estimate_instructions_fee => "estimate-instructions-fee",
-        .spec_instructions => "spec-instructions",
-        else => unreachable,
-    };
-    const spec_arg = instructions_spec_arg orelse {
-        reportInvalidCliMessage("error: {s} requires <instruction-spec-json>\n", .{command_label});
-        return error.InvalidCli;
-    };
-    const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
-        reportInvalidCliMessage("error: {s} spec must be valid JSON or @path\n", .{command_label});
-        return error.InvalidCli;
-    };
+    const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
+    const spec_source = try loadCliInvocationSpecSource(
+        allocator,
+        command_label,
+        instructions_spec_arg,
+        "<instruction-spec-json>",
+        instruction_json_args,
+    );
     defer allocator.free(spec_source);
 
     const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
@@ -4130,7 +4806,12 @@ fn buildInstructionsInvocationSpecJsonForCommand(
         effective_sender_keypair_path,
         sender_secret_key_arg,
         additional_signer_secret_keys_arg,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
         recent_blockhash_arg,
+        nonce_account_arg,
+        nonce_authority_secret_key_arg,
+        nonce_authority_keypair_path_arg,
     ) catch {
         reportInvalidCliMessage("error: {s} spec is invalid\n", .{command_label});
         return error.InvalidCli;
@@ -4157,21 +4838,7 @@ fn buildProgramInvokeInvocationSpecJsonForCommand(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) ![]u8 {
-    const command_label = if (lookupInvokeCommandSpec(command)) |spec|
-        spec.label
-    else switch (command) {
-        .invoke_program_invoke => "invoke-program-invoke",
-        .invoke_program_invoke_and_confirm => "invoke-program-invoke-and-confirm",
-        .invoke_program_invoke_simulate => "invoke-program-invoke-simulate",
-        .preview_program_invoke => "preview-program-invoke",
-        .explain_program_invoke => "explain-program-invoke",
-        .validate_program_invoke => "validate-program-invoke",
-        .inspect_program_invoke => "inspect-program-invoke",
-        .prepare_program_invoke => "prepare-program-invoke",
-        .estimate_program_invoke_fee => "estimate-program-invoke-fee",
-        .spec_program_invoke => "spec-program-invoke",
-        else => unreachable,
-    };
+    const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
     const program_id = program_id_arg orelse {
         reportInvalidCliMessage("error: {s} requires <program-id> <accounts-json|@path>\n", .{command_label});
         return error.InvalidCli;
@@ -4226,21 +4893,7 @@ fn buildAnchorIdlInvokeInvocationSpecJsonForCommand(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) ![]u8 {
-    const command_label = if (lookupInvokeCommandSpec(command)) |spec|
-        spec.label
-    else switch (command) {
-        .invoke_idl_invoke => "invoke-idl-invoke",
-        .invoke_idl_invoke_and_confirm => "invoke-idl-invoke-and-confirm",
-        .invoke_idl_invoke_simulate => "invoke-idl-invoke-simulate",
-        .preview_idl_invoke => "preview-idl-invoke",
-        .explain_idl_invoke => "explain-idl-invoke",
-        .validate_idl_invoke => "validate-idl-invoke",
-        .inspect_idl_invoke => "inspect-idl-invoke",
-        .prepare_idl_invoke => "prepare-idl-invoke",
-        .estimate_idl_invoke_fee => "estimate-idl-invoke-fee",
-        .spec_idl_invoke => "spec-idl-invoke",
-        else => unreachable,
-    };
+    const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
     const idl = idl_arg orelse {
         reportInvalidCliMessage("error: {s} requires <idl-json|@path> <instruction-name>\n", .{command_label});
         return error.InvalidCli;
@@ -4284,61 +4937,40 @@ fn buildInstructionsOwnedInvocationSpecForCommand(
     allocator: Allocator,
     command: cli.Command,
     instructions_spec_arg: ?[]const u8,
+    instruction_json_args: []const []const u8,
     effective_sender_keypair_path: ?[]const u8,
     sender_secret_key_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
     recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
 ) !client.invoke.OwnedInvocationSpec {
-    const command_label = if (lookupInvokeCommandSpec(command)) |spec|
-        spec.label
-    else switch (command) {
-        .inspect_instructions => "inspect-instructions",
-        .invoke_instructions => "invoke-instructions",
-        .invoke_instructions_and_confirm => "invoke-instructions-and-confirm",
-        .invoke_instructions_simulate => "invoke-instructions-simulate",
-        .preview_instructions => "preview-instructions",
-        .explain_instructions => "explain-instructions",
-        .validate_instructions => "validate-instructions",
-        .prepare_instructions => "prepare-instructions",
-        .estimate_instructions_fee => "estimate-instructions-fee",
-        .spec_instructions => "spec-instructions",
-        else => unreachable,
-    };
-    const spec_arg = instructions_spec_arg orelse {
-        reportInvalidCliMessage("error: {s} requires <instruction-spec-json>\n", .{command_label});
-        return error.InvalidCli;
-    };
-    const spec_source = loadInstructionSpecSource(allocator, spec_arg) catch {
-        reportInvalidCliMessage("error: {s} spec must be valid JSON or @path\n", .{command_label});
-        return error.InvalidCli;
-    };
-    defer allocator.free(spec_source);
-
-    const parsed_spec = std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, spec_source, .{
-        .ignore_unknown_fields = true,
-    }) catch {
-        reportInvalidCliMessage("error: {s} spec must be valid JSON\n", .{command_label});
-        return error.InvalidCli;
-    };
-    defer parsed_spec.deinit();
-
-    var loaded = loadCliInstructionSpecWithSenderAndAdditionalSigners(
+    const invocation_spec_json = try buildInstructionsInvocationSpecJsonForCommand(
         allocator,
-        &parsed_spec.value,
+        command,
+        instructions_spec_arg,
+        instruction_json_args,
         effective_sender_keypair_path,
         sender_secret_key_arg,
         additional_signer_secret_keys_arg,
-    ) catch {
-        reportInvalidCliMessage("error: {s} spec is invalid\n", .{command_label});
-        return error.InvalidCli;
-    };
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+        recent_blockhash_arg,
+        nonce_account_arg,
+        nonce_authority_secret_key_arg,
+        nonce_authority_keypair_path_arg,
+    );
+    defer allocator.free(invocation_spec_json);
 
-    return buildOwnedInvocationSpecFromLoadedCliInstructionSpec(
+    return client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
-        loaded,
-        recent_blockhash_arg orelse parsed_spec.value.recent_blockhash,
+        .instructions,
+        invocation_spec_json,
     ) catch {
-        loaded.deinit(allocator);
+        const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
         reportInvalidCliMessage("error: {s} spec is invalid\n", .{command_label});
         return error.InvalidCli;
     };
@@ -4360,60 +4992,38 @@ fn buildProgramOwnedInvocationSpecForCommand(
     lookup_tables_arg: ?[]const u8,
     recent_blockhash_arg: ?[]const u8,
     nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) !client.invoke.OwnedInvocationSpec {
-    const command_label = if (lookupInvokeCommandSpec(command)) |spec|
-        spec.label
-    else switch (command) {
-        .invoke_program_invoke => "invoke-program-invoke",
-        .invoke_program_invoke_and_confirm => "invoke-program-invoke-and-confirm",
-        .invoke_program_invoke_simulate => "invoke-program-invoke-simulate",
-        .preview_program_invoke => "preview-program-invoke",
-        .explain_program_invoke => "explain-program-invoke",
-        .validate_program_invoke => "validate-program-invoke",
-        .inspect_program_invoke => "inspect-program-invoke",
-        .prepare_program_invoke => "prepare-program-invoke",
-        .estimate_program_invoke_fee => "estimate-program-invoke-fee",
-        .spec_program_invoke => "spec-program-invoke",
-        else => unreachable,
-    };
-    const program_id = program_id_arg orelse {
-        reportInvalidCliMessage("error: {s} requires <program-id> <accounts-json|@path>\n", .{command_label});
-        return error.InvalidCli;
-    };
-    const accounts = accounts_arg orelse {
-        reportInvalidCliMessage("error: {s} requires <program-id> <accounts-json|@path>\n", .{command_label});
-        return error.InvalidCli;
-    };
-
-    var loaded = loadProgramInvokeInstructionSpecWithPayerSecretAndAdditionalSigners(
+    const invocation_spec_json = try buildProgramInvokeInvocationSpecJsonForCommand(
         allocator,
-        program_id,
-        accounts,
+        command,
+        program_id_arg,
+        accounts_arg,
         data_arg,
         data_encoding_arg,
         data_schema_json_arg,
         args_json_arg,
         schema_encoding_arg,
-        signer_keypair_paths_arg,
-        lookup_tables_arg,
         payer_keypair_path_arg,
         payer_secret_key_arg,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+        recent_blockhash_arg,
         nonce_account_arg,
+        nonce_authority_secret_key_arg,
         nonce_authority_keypair_path_arg,
         additional_signer_secret_keys_arg,
-    ) catch {
-        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
-        return error.InvalidCli;
-    };
+    );
+    defer allocator.free(invocation_spec_json);
 
-    return buildOwnedInvocationSpecFromLoadedCliInstructionSpec(
+    return client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
-        loaded,
-        recent_blockhash_arg,
+        .instructions,
+        invocation_spec_json,
     ) catch {
-        loaded.deinit(allocator);
+        const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
         reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
         return error.InvalidCli;
     };
@@ -4436,37 +5046,15 @@ fn buildAnchorIdlOwnedInvocationSpecForCommand(
     lookup_tables_arg: ?[]const u8,
     recent_blockhash_arg: ?[]const u8,
     nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) !client.invoke.OwnedInvocationSpec {
-    const command_label = if (lookupInvokeCommandSpec(command)) |spec|
-        spec.label
-    else switch (command) {
-        .invoke_idl_invoke => "invoke-idl-invoke",
-        .invoke_idl_invoke_and_confirm => "invoke-idl-invoke-and-confirm",
-        .invoke_idl_invoke_simulate => "invoke-idl-invoke-simulate",
-        .preview_idl_invoke => "preview-idl-invoke",
-        .explain_idl_invoke => "explain-idl-invoke",
-        .validate_idl_invoke => "validate-idl-invoke",
-        .inspect_idl_invoke => "inspect-idl-invoke",
-        .prepare_idl_invoke => "prepare-idl-invoke",
-        .estimate_idl_invoke_fee => "estimate-idl-invoke-fee",
-        .spec_idl_invoke => "spec-idl-invoke",
-        else => unreachable,
-    };
-    const idl = idl_arg orelse {
-        reportInvalidCliMessage("error: {s} requires <idl-json|@path> <instruction-name>\n", .{command_label});
-        return error.InvalidCli;
-    };
-    const instruction_name = instruction_name_arg orelse {
-        reportInvalidCliMessage("error: {s} requires <idl-json|@path> <instruction-name>\n", .{command_label});
-        return error.InvalidCli;
-    };
-
-    var loaded = loadAnchorIdlInvokeInstructionSpecWithOptionsWithPayerSecret(
+    const invocation_spec_json = try buildAnchorIdlInvokeInvocationSpecJsonForCommand(
         allocator,
-        idl,
-        instruction_name,
+        command,
+        idl_arg,
+        instruction_name_arg,
         program_id_arg,
         args_json_arg,
         accounts_json_arg,
@@ -4477,23 +5065,20 @@ fn buildAnchorIdlOwnedInvocationSpecForCommand(
         payer_secret_key_arg,
         signer_keypair_paths_arg,
         lookup_tables_arg,
+        recent_blockhash_arg,
         nonce_account_arg,
+        nonce_authority_secret_key_arg,
         nonce_authority_keypair_path_arg,
         additional_signer_secret_keys_arg,
-    ) catch {
-        reportInvalidCliMessage(
-            "error: {s} currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n",
-            .{command_label},
-        );
-        return error.InvalidCli;
-    };
+    );
+    defer allocator.free(invocation_spec_json);
 
-    return buildOwnedInvocationSpecFromLoadedCliInstructionSpec(
+    return client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
-        loaded,
-        recent_blockhash_arg,
+        .instructions,
+        invocation_spec_json,
     ) catch {
-        loaded.deinit(allocator);
+        const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
         reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
         return error.InvalidCli;
     };
@@ -5246,6 +5831,19 @@ fn emitPreferredPreparedInvocation(
     }
 }
 
+const command_invoke_builders: command_invoke.CliInvokeBuilderCallbacks = .{
+    .buildInstructions = buildInstructionsInvocationSpecJsonForCommand,
+    .buildProgram = buildProgramInvokeInvocationSpecJsonForCommand,
+    .buildAnchorIdl = buildAnchorIdlInvokeInvocationSpecJsonForCommand,
+};
+
+const command_invoke_callbacks: command_invoke.CliInvokeRuntimeCallbacks = .{
+    .builders = command_invoke_builders,
+    .buildSimulationOptions = buildCliSimulationOptionsFromExecutionArgs,
+    .freeSimulation = freeSimulatedTransaction,
+    .printSimulationResult = printSimulationResult,
+};
+
 fn runGenericInvocationCommand(
     allocator: Allocator,
     rpc: *client.RpcClient,
@@ -5261,17 +5859,32 @@ fn runGenericInvocationCommand(
         payload_args,
         context_args,
         execution_args,
-        .{
-            .builders = .{
-                .buildInstructions = buildInstructionsInvocationSpecJsonForCommand,
-                .buildProgram = buildProgramInvokeInvocationSpecJsonForCommand,
-                .buildAnchorIdl = buildAnchorIdlInvokeInvocationSpecJsonForCommand,
-            },
-            .buildSimulationOptions = buildCliSimulationOptionsFromExecutionArgs,
-            .freeSimulation = freeSimulatedTransaction,
-            .printSimulationResult = printSimulationResult,
-        },
+        command_invoke_callbacks,
     );
+}
+
+fn buildAndEmitCanonicalInvocationSpecJsonForPayloadFamily(
+    allocator: Allocator,
+    payload_family: client.invoke.InvokeFamily,
+    command: cli.Command,
+    payload_args: CliInvokePayloadArgs,
+    context_args: CliInvokeContextArgs,
+    invalid_error_message: []const u8,
+) !void {
+    const invocation_spec_json = command_invoke.buildCanonicalInvocationSpecJsonForPayloadFamily(
+        allocator,
+        payload_family,
+        command,
+        payload_args,
+        context_args,
+        command_invoke_builders,
+    ) catch {
+        reportInvalidCliMessage("{s}", .{invalid_error_message});
+        return error.InvalidCli;
+    };
+    defer allocator.free(invocation_spec_json);
+
+    try printInvocationSpecJson(invocation_spec_json);
 }
 
 fn buildProgramInvokeInvocationSpecJson(
@@ -5300,7 +5913,7 @@ fn buildProgramInvokeInvocationSpecJson(
         return error.InvalidCli;
     }
 
-    var context_args: CliInvocationContextArgs = .{
+    const context_args: CliInvocationContextArgs = .{
         .payer_keypair_path_arg = payer_keypair_path_arg,
         .payer_secret_key_arg = payer_secret_key_arg,
         .signer_keypair_paths_arg = signer_keypair_paths_arg,
@@ -5312,14 +5925,6 @@ fn buildProgramInvokeInvocationSpecJson(
         .additional_signer_secret_keys_arg = additional_signer_secret_keys_arg,
     };
 
-    var payer_inputs = try loadRequiredCliInvokePayerInputs(
-        allocator,
-        context_args.payer_secret_key_arg,
-        context_args.payer_keypair_path_arg,
-    );
-    defer payer_inputs.deinit(allocator);
-    context_args.payer_secret_key = payer_inputs.secret_key;
-
     const accounts_source = try loadInstructionSpecSource(allocator, accounts_arg);
     defer allocator.free(accounts_source);
 
@@ -5329,40 +5934,36 @@ fn buildProgramInvokeInvocationSpecJson(
     const args_json_source = try loadOptionalInstructionSpecSource(allocator, args_json_arg);
     defer if (args_json_source) |value| allocator.free(value);
 
-    const instruction_data_base64 = blk: {
-        if (data_schema_json_source != null or args_json_source != null) break :blk null;
-
-        const instruction_data = try loadProgramInvokeDataArg(
+    const instruction_data = if (data_schema_json_source == null and args_json_source == null)
+        loadProgramInvokeDataArg(
             allocator,
             data_arg,
             data_encoding_arg,
-        );
-        defer allocator.free(instruction_data);
-        break :blk try client.encodeBase64(allocator, instruction_data);
-    };
-    defer if (instruction_data_base64) |value| allocator.free(value);
+        ) catch return error.InvalidCli
+    else
+        null;
+    defer if (instruction_data) |value| allocator.free(value);
 
-    var invocation_context = try loadCliInvocationContextJsonInputs(allocator, context_args);
-    defer invocation_context.deinit(allocator);
+    const program_id_pubkey = client.Pubkey.fromBase58(allocator, program_id) catch return error.InvalidCli;
+    const schema_encoding = client.instruction_schema.parseSchemaEncoding(schema_encoding_arg orelse "borsh") catch return error.InvalidCli;
+    var owned_instruction = client.program_invoke.buildOwnedInstruction(
+        allocator,
+        program_id_pubkey,
+        .{
+            .accounts_json = accounts_source,
+            .data_bytes = instruction_data,
+            .data_schema_json = data_schema_json_source,
+            .args_json = args_json_source,
+            .schema_encoding = schema_encoding,
+        },
+    ) catch return error.InvalidCli;
+    defer owned_instruction.deinit(allocator);
 
-    return client.invocation_spec_json.buildProgramInvocationSpecJson(allocator, .{
-        .payer_secret_key = payer_inputs.secret_key,
-        .additional_signer_secret_keys_json = invocation_context.additional_signer_secret_keys_json,
-        .address_lookup_tables_json = invocation_context.lookup_tables_source,
-        .recent_blockhash = context_args.recent_blockhash_arg,
-        .nonce_account = context_args.nonce_account_arg,
-        .nonce_authority_secret_key = invocation_context.nonce_authority_secret_key,
-        .program_id = program_id,
-        .accounts_json = accounts_source,
-        .data = instruction_data_base64,
-        .data_encoding = if (instruction_data_base64 != null) "base64" else null,
-        .data_schema_json = data_schema_json_source,
-        .args_json = args_json_source,
-        .schema_encoding = schema_encoding_arg,
-    }) catch |err| switch (err) {
-        error.InvalidInvocationSpec => return error.InvalidCli,
-        else => return err,
-    };
+    return try buildInvocationSpecJsonFromSingleInstructionWithContext(
+        allocator,
+        owned_instruction.instruction,
+        context_args,
+    );
 }
 
 fn buildAnchorIdlInvokeInvocationSpecJson(
@@ -5420,12 +6021,6 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
     const remaining_accounts_json_source = try loadOptionalInstructionSpecSource(allocator, remaining_accounts_json_arg);
     defer if (remaining_accounts_json_source) |value| allocator.free(value);
 
-    var invocation_context = try loadCliInvocationContextJsonInputs(allocator, context_args);
-    defer invocation_context.deinit(allocator);
-
-    var parsed_lookup_tables = try parseCliAddressLookupTablesJsonSource(allocator, invocation_context.lookup_tables_source);
-    defer if (parsed_lookup_tables) |*value| value.deinit();
-
     var account_inputs = try loadCliAnchorInvokeAccountInputs(
         allocator,
         accounts_json_source,
@@ -5455,23 +6050,11 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
     ) catch return error.InvalidCli;
     defer owned_instruction.deinit(allocator);
 
-    return client.invocation_spec_json.buildAnchorIdlInvocationSpecJson(allocator, .{
-        .payer_secret_key = payer_inputs.secret_key,
-        .additional_signer_secret_keys_json = invocation_context.additional_signer_secret_keys_json,
-        .address_lookup_tables_json = invocation_context.lookup_tables_source,
-        .recent_blockhash = context_args.recent_blockhash_arg,
-        .nonce_account = context_args.nonce_account_arg,
-        .nonce_authority_secret_key = invocation_context.nonce_authority_secret_key,
-        .idl_json = idl_source,
-        .instruction_name = instruction_name,
-        .program_id = program_id_override_arg,
-        .args_json = args_json_source,
-        .account_bindings_json = account_inputs.combined_account_bindings_json_source,
-        .remaining_accounts_json = account_inputs.canonical_remaining_accounts_json,
-    }) catch |err| switch (err) {
-        error.InvalidInvocationSpec => return error.InvalidCli,
-        else => return err,
-    };
+    return try buildInvocationSpecJsonFromSingleInstructionWithContext(
+        allocator,
+        owned_instruction.instruction,
+        context_args,
+    );
 }
 
 fn loadProgramInvokeInstructionSpec(
@@ -5724,6 +6307,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const blocks_end_slot_arg = args.blocks_end_slot_arg;
     const message_arg = args.message_arg;
     const instructions_spec_arg = args.instructions_spec_arg;
+    const instruction_json_args = args.instruction_json_args.items;
     const program_invoke_program_id_arg = args.program_invoke_program_id_arg;
     const program_invoke_accounts_arg = args.program_invoke_accounts_arg;
     const program_invoke_data_arg = args.program_invoke_data_arg;
@@ -5732,7 +6316,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const program_invoke_args_json_arg = args.program_invoke_args_json_arg;
     const program_invoke_schema_encoding_arg = args.program_invoke_schema_encoding_arg;
     const program_invoke_signer_keypair_paths_arg = args.program_invoke_signer_keypair_paths_arg;
+    const program_invoke_additional_signer_keypair_paths_arg = args.program_invoke_additional_signer_keypair_paths.items;
     const program_invoke_additional_signer_secret_keys_arg = args.program_invoke_additional_signer_secret_keys.items;
+    const program_invoke_additional_lookup_tables_arg = args.program_invoke_additional_lookup_tables.items;
     const program_invoke_lookup_tables_arg = args.program_invoke_lookup_tables_arg;
     const program_invoke_nonce_account_arg = args.program_invoke_nonce_account_arg;
     const program_invoke_nonce_authority_secret_key_arg = args.program_invoke_nonce_authority_secret_key_arg;
@@ -5788,30 +6374,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     const is_balance_wait_command = command == .poll_balance or command == .wait_for_balance;
     const is_send_command = command == .send_transaction or
         command == .send_transaction_and_confirm or
-        command == .send_instructions or
-        command == .send_instructions_and_confirm or
-        command == .send_versioned_instructions or
-        command == .send_versioned_instructions_and_confirm or
-        command == .invoke_instructions or
-        command == .invoke_instructions_and_confirm or
-        command == .invoke_instructions_simulate or
-        command == .invoke_spec or
-        command == .invoke_spec_and_confirm or
-        command == .invoke_spec_simulate or
-        command == .send_program_invoke or
-        command == .send_program_invoke_and_confirm or
-        command == .send_versioned_program_invoke or
-        command == .invoke_program_invoke or
-        command == .invoke_program_invoke_and_confirm or
-        command == .invoke_program_invoke_simulate or
-        command == .send_idl_invoke or
-        command == .send_idl_invoke_and_confirm or
-        command == .invoke_idl_invoke or
-        command == .invoke_idl_invoke_and_confirm or
-        command == .invoke_idl_invoke_simulate or
-        command == .send_versioned_idl_invoke or
-        command == .send_versioned_idl_invoke_and_confirm or
-        command == .send_versioned_program_invoke_and_confirm or
+        command_invoke.isInvocationSendCommand(command) or
         command == .transfer;
     const is_account_min_context_command = command == .account_data or
         command == .account_info or
@@ -5845,9 +6408,9 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         client.default_balance_poll_interval_ms
     else
         status_poll_ms;
-    if ((send_skip_preflight or send_max_retries != null or send_preflight_commitment != null) and !is_send_command) {
+    if ((send_skip_preflight or send_max_retries != null or send_preflight_commitment != null) and !command_invoke.supportsSendOptions(command)) {
         reportInvalidCliMessage(
-            "error: send options (--skip-preflight, --max-retries, --preflight-commitment) require send-transaction, send-transaction-and-confirm, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, invoke-instructions, invoke-instructions-and-confirm, invoke-spec, invoke-spec-and-confirm, send-program-invoke, send-program-invoke-and-confirm, invoke-program-invoke, invoke-program-invoke-and-confirm, send-idl-invoke, send-idl-invoke-and-confirm, invoke-idl-invoke, invoke-idl-invoke-and-confirm, or transfer\n",
+            "error: send options (--skip-preflight, --max-retries, --preflight-commitment) require send-transaction, send-transaction-and-confirm, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, invoke-instructions, invoke-instructions-and-confirm, invoke-spec, invoke-spec-and-confirm, send-program-invoke, send-program-invoke-and-confirm, send-versioned-program-invoke, send-versioned-program-invoke-and-confirm, invoke-program-invoke, invoke-program-invoke-and-confirm, send-idl-invoke, send-idl-invoke-and-confirm, send-versioned-idl-invoke, send-versioned-idl-invoke-and-confirm, invoke-idl-invoke, invoke-idl-invoke-and-confirm, or transfer\n",
             .{},
         );
         return error.InvalidCli;
@@ -5858,57 +6421,8 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    if (recent_blockhash_arg != null and
-        command != .send_instructions and
-        command != .send_instructions_and_confirm and
-        command != .send_versioned_instructions and
-        command != .send_versioned_instructions_and_confirm and
-        command != .invoke_instructions and
-        command != .invoke_instructions_and_confirm and
-        command != .invoke_instructions_simulate and
-        command != .preview_instructions and
-        command != .explain_instructions and
-        command != .validate_instructions and
-        command != .inspect_instructions and
-        command != .prepare_instructions and
-        command != .estimate_instructions_fee and
-        command != .spec_instructions and
-        command != .simulate_instructions and
-        command != .simulate_versioned_instructions and
-        command != .invoke_program_invoke and
-        command != .invoke_program_invoke_and_confirm and
-        command != .invoke_program_invoke_simulate and
-        command != .preview_program_invoke and
-        command != .explain_program_invoke and
-        command != .validate_program_invoke and
-        command != .inspect_program_invoke and
-        command != .prepare_program_invoke and
-        command != .estimate_program_invoke_fee and
-        command != .spec_program_invoke and
-        command != .send_program_invoke and
-        command != .send_program_invoke_and_confirm and
-        command != .send_versioned_program_invoke and
-        command != .send_versioned_program_invoke_and_confirm and
-        command != .invoke_idl_invoke and
-        command != .invoke_idl_invoke_and_confirm and
-        command != .invoke_idl_invoke_simulate and
-        command != .preview_idl_invoke and
-        command != .explain_idl_invoke and
-        command != .validate_idl_invoke and
-        command != .inspect_idl_invoke and
-        command != .prepare_idl_invoke and
-        command != .estimate_idl_invoke_fee and
-        command != .spec_idl_invoke and
-        command != .send_idl_invoke and
-        command != .send_idl_invoke_and_confirm and
-        command != .send_versioned_idl_invoke and
-        command != .send_versioned_idl_invoke_and_confirm and
-        command != .simulate_program_invoke and
-        command != .simulate_versioned_program_invoke and
-        command != .simulate_idl_invoke and
-        command != .simulate_versioned_idl_invoke)
-    {
-        reportInvalidCliMessage("error: --recent-blockhash requires instruction, program-invoke, or idl-invoke commands\n", .{});
+    if (recent_blockhash_arg != null and !command_invoke.supportsRecentBlockhash(command)) {
+        reportInvalidCliMessage("error: --recent-blockhash requires instructions, invocation-spec, program-invoke, or idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
@@ -5917,157 +6431,45 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    if (output_json and
-        command != .invoke_instructions and
-        command != .invoke_instructions_and_confirm and
-        command != .invoke_instructions_simulate and
-        command != .preview_instructions and
-        command != .explain_instructions and
-        command != .validate_instructions and
-        command != .inspect_instructions and
-        command != .prepare_instructions and
-        command != .estimate_instructions_fee and
-        command != .spec_instructions and
-        command != .invoke_spec and
-        command != .invoke_spec_and_confirm and
-        command != .invoke_spec_simulate and
-        command != .preview_spec and
-        command != .explain_spec and
-        command != .validate_spec and
-        command != .inspect_spec and
-        command != .prepare_spec and
-        command != .estimate_spec_fee and
-        command != .invoke_program_invoke and
-        command != .invoke_program_invoke_and_confirm and
-        command != .invoke_program_invoke_simulate and
-        command != .preview_program_invoke and
-        command != .explain_program_invoke and
-        command != .validate_program_invoke and
-        command != .inspect_program_invoke and
-        command != .prepare_program_invoke and
-        command != .estimate_program_invoke_fee and
-        command != .spec_program_invoke and
-        command != .invoke_idl_invoke and
-        command != .invoke_idl_invoke_and_confirm and
-        command != .invoke_idl_invoke_simulate and
-        command != .preview_idl_invoke and
-        command != .explain_idl_invoke and
-        command != .validate_idl_invoke and
-        command != .inspect_idl_invoke and
-        command != .prepare_idl_invoke and
-        command != .estimate_idl_invoke_fee and
-        command != .spec_idl_invoke)
-    {
+    if (output_json and !command_invoke.supportsJsonOutput(command)) {
         reportInvalidCliMessage("error: --json requires invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, inspect-instructions, prepare-instructions, estimate-instructions-fee, spec-instructions, invoke-spec, invoke-spec-and-confirm, invoke-spec-simulate, preview-spec, explain-spec, validate-spec, inspect-spec, prepare-spec, estimate-spec-fee, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, inspect-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, spec-program-invoke, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, inspect-idl-invoke, prepare-idl-invoke, estimate-idl-invoke-fee, or spec-idl-invoke\n", .{});
         return error.InvalidCli;
     }
 
-    if ((invoke_mode_arg != null or no_mode_fallback) and
-        command != .invoke_instructions and
-        command != .invoke_instructions_and_confirm and
-        command != .invoke_instructions_simulate and
-        command != .preview_instructions and
-        command != .explain_instructions and
-        command != .validate_instructions and
-        command != .inspect_instructions and
-        command != .prepare_instructions and
-        command != .estimate_instructions_fee and
-        command != .invoke_spec and
-        command != .invoke_spec_and_confirm and
-        command != .invoke_spec_simulate and
-        command != .preview_spec and
-        command != .explain_spec and
-        command != .validate_spec and
-        command != .inspect_spec and
-        command != .prepare_spec and
-        command != .estimate_spec_fee and
-        command != .invoke_program_invoke and
-        command != .invoke_program_invoke_and_confirm and
-        command != .invoke_program_invoke_simulate and
-        command != .preview_program_invoke and
-        command != .explain_program_invoke and
-        command != .validate_program_invoke and
-        command != .inspect_program_invoke and
-        command != .prepare_program_invoke and
-        command != .estimate_program_invoke_fee and
-        command != .invoke_idl_invoke and
-        command != .invoke_idl_invoke_and_confirm and
-        command != .invoke_idl_invoke_simulate and
-        command != .preview_idl_invoke and
-        command != .explain_idl_invoke and
-        command != .validate_idl_invoke and
-        command != .inspect_idl_invoke and
-        command != .prepare_idl_invoke and
-        command != .estimate_idl_invoke_fee)
-    {
+    if ((invoke_mode_arg != null or no_mode_fallback) and !command_invoke.supportsPreferredInvocationMode(command)) {
         reportInvalidCliMessage("error: --invoke-mode/--no-mode-fallback require invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, inspect-instructions, prepare-instructions, estimate-instructions-fee, invoke-spec, invoke-spec-and-confirm, invoke-spec-simulate, preview-spec, explain-spec, validate-spec, inspect-spec, prepare-spec, estimate-spec-fee, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, inspect-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, inspect-idl-invoke, prepare-idl-invoke, or estimate-idl-invoke-fee\n", .{});
         return error.InvalidCli;
     }
 
-    if (inspect_section_arg != null and
-        command != .inspect_instructions and
-        command != .inspect_spec and
-        command != .inspect_program_invoke and
-        command != .inspect_idl_invoke)
-    {
+    if (inspect_section_arg != null and !command_invoke.supportsInspectSection(command)) {
         reportInvalidCliMessage("error: --inspect-section requires inspect-instructions, inspect-spec, inspect-program-invoke, or inspect-idl-invoke\n", .{});
         return error.InvalidCli;
     }
 
     const inspect_section = try parseInspectSectionArg(inspect_section_arg);
 
-    if ((sender_keypair_path_arg != null or sender_secret_key_arg != null) and
-        command != .transfer and
-        command != .send_instructions and
-        command != .send_instructions_and_confirm and
-        command != .send_versioned_instructions and
-        command != .send_versioned_instructions_and_confirm and
-        command != .invoke_instructions and
-        command != .invoke_instructions_and_confirm and
-        command != .invoke_instructions_simulate and
-        command != .preview_instructions and
-        command != .explain_instructions and
-        command != .validate_instructions and
-        command != .inspect_instructions and
-        command != .prepare_instructions and
-        command != .estimate_instructions_fee and
-        command != .spec_instructions and
-        command != .simulate_instructions and
-        command != .simulate_versioned_instructions and
-        command != .invoke_program_invoke and
-        command != .invoke_program_invoke_and_confirm and
-        command != .invoke_program_invoke_simulate and
-        command != .preview_program_invoke and
-        command != .explain_program_invoke and
-        command != .validate_program_invoke and
-        command != .inspect_program_invoke and
-        command != .prepare_program_invoke and
-        command != .estimate_program_invoke_fee and
-        command != .spec_program_invoke and
-        command != .send_program_invoke and
-        command != .send_program_invoke_and_confirm and
-        command != .simulate_program_invoke and
-        command != .send_versioned_program_invoke and
-        command != .send_versioned_program_invoke_and_confirm and
-        command != .simulate_versioned_program_invoke and
-        command != .invoke_idl_invoke and
-        command != .invoke_idl_invoke_and_confirm and
-        command != .invoke_idl_invoke_simulate and
-        command != .preview_idl_invoke and
-        command != .explain_idl_invoke and
-        command != .validate_idl_invoke and
-        command != .inspect_idl_invoke and
-        command != .prepare_idl_invoke and
-        command != .estimate_idl_invoke_fee and
-        command != .spec_idl_invoke and
-        command != .simulate_idl_invoke and
-        command != .send_idl_invoke and
-        command != .send_idl_invoke_and_confirm and
-        command != .simulate_versioned_idl_invoke and
-        command != .send_versioned_idl_invoke and
-        command != .send_versioned_idl_invoke_and_confirm)
-    {
-        reportInvalidCliMessage("error: --sender-keypair/--sender-secret-key requires transfer, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, inspect-instructions, prepare-instructions, estimate-instructions-fee, spec-instructions, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, inspect-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, spec-program-invoke, simulate-instructions, simulate-versioned-instructions, send-program-invoke, send-program-invoke-and-confirm, send-versioned-program-invoke, send-versioned-program-invoke-and-confirm, simulate-program-invoke, simulate-versioned-program-invoke, send-idl-invoke, send-idl-invoke-and-confirm, send-versioned-idl-invoke, send-versioned-idl-invoke-and-confirm, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, inspect-idl-invoke, prepare-idl-invoke, estimate-idl-invoke-fee, spec-idl-invoke, simulate-idl-invoke, or simulate-versioned-idl-invoke commands\n", .{});
+    if ((sender_keypair_path_arg != null or sender_secret_key_arg != null) and !command_invoke.supportsSenderCredentials(command)) {
+        reportInvalidCliMessage("error: --sender-keypair/--sender-secret-key requires transfer, send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, inspect-instructions, prepare-instructions, estimate-instructions-fee, spec-instructions, invoke-spec, invoke-spec-and-confirm, invoke-spec-simulate, preview-spec, explain-spec, validate-spec, inspect-spec, prepare-spec, estimate-spec-fee, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, inspect-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, spec-program-invoke, simulate-instructions, simulate-versioned-instructions, send-program-invoke, send-program-invoke-and-confirm, send-versioned-program-invoke, send-versioned-program-invoke-and-confirm, simulate-program-invoke, simulate-versioned-program-invoke, send-idl-invoke, send-idl-invoke-and-confirm, send-versioned-idl-invoke, send-versioned-idl-invoke-and-confirm, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, inspect-idl-invoke, prepare-idl-invoke, estimate-idl-invoke-fee, spec-idl-invoke, simulate-idl-invoke, or simulate-versioned-idl-invoke commands\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((program_invoke_additional_signer_secret_keys_arg.len > 0 or program_invoke_additional_signer_keypair_paths_arg.len > 0) and !command_invoke.supportsAdditionalSigners(command)) {
+        reportInvalidCliMessage("error: --additional-signer-keypair/--additional-signer-secret-key requires instructions, invocation-spec, program-invoke, or idl-invoke commands\n", .{});
+        return error.InvalidCli;
+    }
+
+    if ((program_invoke_lookup_tables_arg != null or program_invoke_additional_lookup_tables_arg.len > 0) and !command_invoke.supportsAddressLookupTables(command)) {
+        reportInvalidCliMessage("error: --address-lookup-table requires instructions, invocation-spec, program-invoke, or idl-invoke commands\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (instruction_json_args.len > 0 and !command_invoke.supportsInstructionJson(command)) {
+        reportInvalidCliMessage("error: --instruction-json requires instructions or invocation spec commands\n", .{});
+        return error.InvalidCli;
+    }
+
+    if (command_invoke.hasInstructionJsonPositionalConflict(instruction_json_args.len, instructions_spec_arg)) {
+        reportInvalidCliMessage("error: --instruction-json cannot be combined with a positional spec argument\n", .{});
         return error.InvalidCli;
     }
 
@@ -6076,46 +6478,12 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     else
         null;
 
-    if (idl_args_json_arg != null and
-        command != .invoke_idl_invoke and
-        command != .invoke_idl_invoke_and_confirm and
-        command != .invoke_idl_invoke_simulate and
-        command != .preview_idl_invoke and
-        command != .explain_idl_invoke and
-        command != .validate_idl_invoke and
-        command != .inspect_idl_invoke and
-        command != .prepare_idl_invoke and
-        command != .estimate_idl_invoke_fee and
-        command != .spec_idl_invoke and
-        command != .simulate_idl_invoke and
-        command != .send_idl_invoke and
-        command != .send_idl_invoke_and_confirm and
-        command != .simulate_versioned_idl_invoke and
-        command != .send_versioned_idl_invoke and
-        command != .send_versioned_idl_invoke_and_confirm)
-    {
+    if (idl_args_json_arg != null and !command_invoke.isIdlInvokeCommand(command)) {
         reportInvalidCliMessage("error: --idl-args-json requires idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
-    if (idl_program_id_arg != null and
-        command != .invoke_idl_invoke and
-        command != .invoke_idl_invoke_and_confirm and
-        command != .invoke_idl_invoke_simulate and
-        command != .preview_idl_invoke and
-        command != .explain_idl_invoke and
-        command != .validate_idl_invoke and
-        command != .inspect_idl_invoke and
-        command != .prepare_idl_invoke and
-        command != .estimate_idl_invoke_fee and
-        command != .spec_idl_invoke and
-        command != .simulate_idl_invoke and
-        command != .send_idl_invoke and
-        command != .send_idl_invoke_and_confirm and
-        command != .simulate_versioned_idl_invoke and
-        command != .send_versioned_idl_invoke and
-        command != .send_versioned_idl_invoke_and_confirm)
-    {
+    if (idl_program_id_arg != null and !command_invoke.isIdlInvokeCommand(command)) {
         reportInvalidCliMessage("error: --program-id requires idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
@@ -6123,149 +6491,42 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     if ((program_invoke_data_schema_json_arg != null or
         program_invoke_args_json_arg != null or
         program_invoke_schema_encoding_arg != null) and
-        command != .invoke_program_invoke and
-        command != .invoke_program_invoke_and_confirm and
-        command != .invoke_program_invoke_simulate and
-        command != .send_program_invoke and
-        command != .send_program_invoke_and_confirm and
-        command != .preview_program_invoke and
-        command != .explain_program_invoke and
-        command != .validate_program_invoke and
-        command != .inspect_program_invoke and
-        command != .prepare_program_invoke and
-        command != .estimate_program_invoke_fee and
-        command != .spec_program_invoke and
-        command != .simulate_program_invoke and
-        command != .send_versioned_program_invoke and
-        command != .send_versioned_program_invoke_and_confirm and
-        command != .simulate_versioned_program_invoke)
+        !command_invoke.isProgramInvokeCommand(command))
     {
         reportInvalidCliMessage("error: --data-schema-json, --args-json, and --schema-encoding require program-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
-    if (idl_account_bindings.items.len > 0 and
-        command != .invoke_idl_invoke and
-        command != .invoke_idl_invoke_and_confirm and
-        command != .invoke_idl_invoke_simulate and
-        command != .preview_idl_invoke and
-        command != .explain_idl_invoke and
-        command != .validate_idl_invoke and
-        command != .inspect_idl_invoke and
-        command != .prepare_idl_invoke and
-        command != .spec_idl_invoke and
-        command != .simulate_idl_invoke and
-        command != .send_idl_invoke and
-        command != .send_idl_invoke_and_confirm and
-        command != .simulate_versioned_idl_invoke and
-        command != .send_versioned_idl_invoke and
-        command != .send_versioned_idl_invoke_and_confirm)
-    {
+    if (idl_account_bindings.items.len > 0 and !command_invoke.isIdlInvokeCommand(command)) {
         reportInvalidCliMessage("error: --account requires idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
-    if (program_invoke_nonce_account_arg != null and
-        command != .invoke_program_invoke and
-        command != .invoke_program_invoke_and_confirm and
-        command != .invoke_program_invoke_simulate and
-        command != .send_program_invoke and
-        command != .send_program_invoke_and_confirm and
-        command != .preview_program_invoke and
-        command != .explain_program_invoke and
-        command != .validate_program_invoke and
-        command != .inspect_program_invoke and
-        command != .prepare_program_invoke and
-        command != .estimate_program_invoke_fee and
-        command != .spec_program_invoke and
-        command != .simulate_program_invoke and
-        command != .send_versioned_program_invoke and
-        command != .send_versioned_program_invoke_and_confirm and
-        command != .simulate_versioned_program_invoke and
-        command != .preview_idl_invoke and
-        command != .explain_idl_invoke and
-        command != .validate_idl_invoke and
-        command != .inspect_idl_invoke and
-        command != .prepare_idl_invoke and
-        command != .estimate_idl_invoke_fee and
-        command != .spec_idl_invoke and
-        command != .invoke_idl_invoke_simulate and
-        command != .simulate_idl_invoke and
-        command != .send_idl_invoke and
-        command != .send_idl_invoke_and_confirm and
-        command != .simulate_versioned_idl_invoke and
-        command != .send_versioned_idl_invoke and
-        command != .send_versioned_idl_invoke_and_confirm)
-    {
-        reportInvalidCliMessage("error: --nonce-account requires program-invoke or idl-invoke commands\n", .{});
+    if (program_invoke_nonce_account_arg != null and !command_invoke.supportsNonceAccount(command)) {
+        reportInvalidCliMessage("error: --nonce-account requires instructions, invocation-spec, program-invoke, or idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
-    if ((program_invoke_nonce_authority_secret_key_arg != null or program_invoke_nonce_authority_keypair_path_arg != null) and
-        command != .invoke_program_invoke and
-        command != .invoke_program_invoke_and_confirm and
-        command != .invoke_program_invoke_simulate and
-        command != .send_program_invoke and
-        command != .send_program_invoke_and_confirm and
-        command != .preview_program_invoke and
-        command != .explain_program_invoke and
-        command != .validate_program_invoke and
-        command != .inspect_program_invoke and
-        command != .prepare_program_invoke and
-        command != .spec_program_invoke and
-        command != .simulate_program_invoke and
-        command != .send_versioned_program_invoke and
-        command != .send_versioned_program_invoke_and_confirm and
-        command != .simulate_versioned_program_invoke and
-        command != .preview_idl_invoke and
-        command != .explain_idl_invoke and
-        command != .validate_idl_invoke and
-        command != .inspect_idl_invoke and
-        command != .prepare_idl_invoke and
-        command != .estimate_idl_invoke_fee and
-        command != .spec_idl_invoke and
-        command != .invoke_idl_invoke_simulate and
-        command != .simulate_idl_invoke and
-        command != .send_idl_invoke and
-        command != .send_idl_invoke_and_confirm and
-        command != .simulate_versioned_idl_invoke and
-        command != .send_versioned_idl_invoke and
-        command != .send_versioned_idl_invoke_and_confirm)
-    {
-        reportInvalidCliMessage("error: --nonce-authority-keypair/--nonce-authority-secret-key requires program-invoke or idl-invoke commands\n", .{});
+    if ((program_invoke_nonce_authority_secret_key_arg != null or program_invoke_nonce_authority_keypair_path_arg != null) and !command_invoke.supportsNonceAuthority(command)) {
+        reportInvalidCliMessage("error: --nonce-authority-keypair/--nonce-authority-secret-key requires instructions, invocation-spec, program-invoke, or idl-invoke commands\n", .{});
         return error.InvalidCli;
     }
 
-    if ((program_invoke_nonce_authority_secret_key_arg != null or program_invoke_nonce_authority_keypair_path_arg != null) and program_invoke_nonce_account_arg == null) {
+    if (command_invoke.hasMissingNonceAccountForNonceAuthority(
+        program_invoke_nonce_account_arg,
+        program_invoke_nonce_authority_secret_key_arg,
+        program_invoke_nonce_authority_keypair_path_arg,
+    )) {
         reportInvalidCliMessage("error: --nonce-authority-keypair/--nonce-authority-secret-key requires --nonce-account\n", .{});
         return error.InvalidCli;
     }
 
-    if ((timeout_ms_overridden or poll_ms_overridden) and command != .status and command != .poll_balance and command != .wait_for_balance and command != .send_transaction_and_confirm and command != .send_instructions_and_confirm and command != .invoke_instructions_and_confirm and command != .invoke_spec_and_confirm and command != .send_versioned_instructions_and_confirm and command != .send_program_invoke_and_confirm and command != .invoke_program_invoke_and_confirm and command != .send_versioned_program_invoke_and_confirm and command != .send_idl_invoke_and_confirm and command != .invoke_idl_invoke_and_confirm and command != .send_versioned_idl_invoke_and_confirm and command != .poll_for_signature_confirmation and command != .transfer) {
+    if ((timeout_ms_overridden or poll_ms_overridden) and !command_invoke.supportsWaitOptions(command)) {
         reportInvalidCliMessage("error: wait options (--timeout-ms, --poll-ms) require status, poll-balance, wait-for-balance, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, invoke-instructions-and-confirm, invoke-spec-and-confirm, send-versioned-instructions-and-confirm, send-program-invoke-and-confirm, invoke-program-invoke-and-confirm, send-versioned-program-invoke-and-confirm, send-idl-invoke-and-confirm, invoke-idl-invoke-and-confirm, send-versioned-idl-invoke-and-confirm, or transfer\n", .{});
         return error.InvalidCli;
     }
 
-    if (search_transaction_history and
-        command != .status and
-        command != .confirm_transaction and
-        command != .signature_status and
-        command != .signature_statuses and
-        command != .blocks_since_signature_confirmation and
-        command != .poll_for_signature_confirmation and
-        command != .send_transaction_and_confirm and
-        command != .send_instructions_and_confirm and
-        command != .invoke_instructions_and_confirm and
-        command != .invoke_spec_and_confirm and
-        command != .invoke_program_invoke_and_confirm and
-        command != .send_program_invoke_and_confirm and
-        command != .send_versioned_program_invoke_and_confirm and
-        command != .send_idl_invoke_and_confirm and
-        command != .invoke_idl_invoke_and_confirm and
-        command != .send_versioned_idl_invoke_and_confirm and
-        command != .send_versioned_instructions_and_confirm and
-        command != .transfer)
-    {
+    if (search_transaction_history and !command_invoke.supportsSearchTransactionHistory(command)) {
         reportInvalidCliMessage(
             "error: --search-transaction-history requires status, confirm-transaction, signature-status, signature-statuses, blocks-since-signature-confirmation, poll-for-signature-confirmation, send-transaction-and-confirm, send-instructions-and-confirm, invoke-instructions-and-confirm, invoke-spec-and-confirm, send-versioned-instructions-and-confirm, send-program-invoke-and-confirm, invoke-program-invoke-and-confirm, send-versioned-program-invoke-and-confirm, send-idl-invoke-and-confirm, invoke-idl-invoke-and-confirm, send-versioned-idl-invoke-and-confirm, or transfer\n",
             .{},
@@ -6288,14 +6549,14 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return error.InvalidCli;
     }
 
-    const is_simulate_command = command == .simulate_transaction or command == .simulate_instructions or command == .simulate_versioned_instructions or command == .invoke_instructions_simulate or command == .invoke_spec_simulate or command == .simulate_program_invoke or command == .simulate_versioned_program_invoke or command == .invoke_program_invoke_simulate or command == .simulate_idl_invoke or command == .simulate_versioned_idl_invoke or command == .invoke_idl_invoke_simulate;
-    if ((simulate_sig_verify or simulate_replace_recent_blockhash) and !is_simulate_command) {
+    const supports_simulation_query_options = command_invoke.supportsSimulationQueryOptions(command);
+    if ((simulate_sig_verify or simulate_replace_recent_blockhash) and !supports_simulation_query_options) {
         reportInvalidCliMessage("error: --sig-verify and --replace-recent-blockhash require simulate-transaction, simulate-instructions, simulate-versioned-instructions, invoke-instructions-simulate, invoke-spec-simulate, simulate-program-invoke, simulate-versioned-program-invoke, invoke-program-invoke-simulate, simulate-idl-invoke, simulate-versioned-idl-invoke, or invoke-idl-invoke-simulate\n", .{});
         return error.InvalidCli;
     }
 
     if ((simulate_inner_instructions or simulation_account_encoding_arg != null or simulation_min_context_slot_arg != null or simulation_accounts.items.len > 0) and
-        !is_simulate_command)
+        !supports_simulation_query_options)
     {
         reportInvalidCliMessage(
             "error: simulation query options require simulate-transaction, simulate-instructions, simulate-versioned-instructions, invoke-instructions-simulate, invoke-spec-simulate, simulate-program-invoke, simulate-versioned-program-invoke, invoke-program-invoke-simulate, simulate-idl-invoke, simulate-versioned-idl-invoke, or invoke-idl-invoke-simulate\n",
@@ -6433,16 +6694,37 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         program_invoke_signer_keypair_paths_arg orelse program_invoke_data_arg
     else
         program_invoke_signer_keypair_paths_arg;
+    const merged_program_invoke_signer_keypair_paths_arg = try mergeCliSignerKeypairPathsArg(
+        allocator,
+        effective_program_invoke_signer_keypair_paths_arg,
+        program_invoke_additional_signer_keypair_paths_arg,
+    );
+    defer if (merged_program_invoke_signer_keypair_paths_arg) |value| allocator.free(value);
+    const resolved_program_invoke_signer_keypair_paths_arg = if (merged_program_invoke_signer_keypair_paths_arg) |value|
+        value
+    else
+        effective_program_invoke_signer_keypair_paths_arg;
     const effective_program_invoke_lookup_tables_arg = if (program_invoke_uses_schema)
         program_invoke_lookup_tables_arg orelse program_invoke_data_encoding_arg
     else
         program_invoke_lookup_tables_arg;
+    const merged_program_invoke_lookup_tables_arg = try mergeCliAddressLookupTablesArg(
+        allocator,
+        &.{},
+        effective_program_invoke_lookup_tables_arg,
+        program_invoke_additional_lookup_tables_arg,
+    );
+    defer if (merged_program_invoke_lookup_tables_arg) |value| allocator.free(value);
+    const resolved_program_invoke_lookup_tables_arg = if (merged_program_invoke_lookup_tables_arg) |value|
+        value
+    else
+        effective_program_invoke_lookup_tables_arg;
 
     const invoke_context_args = buildCliInvokeContextArgs(
         effective_sender_keypair_path,
         sender_secret_key_arg,
-        effective_program_invoke_signer_keypair_paths_arg,
-        effective_program_invoke_lookup_tables_arg,
+        resolved_program_invoke_signer_keypair_paths_arg,
+        resolved_program_invoke_lookup_tables_arg,
         recent_blockhash_arg,
         program_invoke_nonce_account_arg,
         program_invoke_nonce_authority_secret_key_arg,
@@ -6451,6 +6733,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     );
     const invoke_payload_args = buildCliInvokePayloadArgs(
         instructions_spec_arg,
+        instruction_json_args,
         program_invoke_program_id_arg,
         program_invoke_accounts_arg,
         effective_program_invoke_data_arg,
@@ -6486,7 +6769,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         no_mode_fallback,
     );
 
-    if (lookupInvokeCommandSpec(command) != null) {
+    if (command_invoke.isGenericInvocationCommand(command)) {
         try runGenericInvocationCommand(
             allocator,
             rpc,
@@ -6498,96 +6781,15 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return;
     }
 
-    if (command == .spec_program_invoke) {
-        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
+    if (command_invoke.lookupCanonicalSpecCommand(command)) |spec_command| {
+        try buildAndEmitCanonicalInvocationSpecJsonForPayloadFamily(
             allocator,
-            command,
-            invoke_payload_args.program_id_arg,
-            invoke_payload_args.program_accounts_arg,
-            invoke_payload_args.program_data_arg,
-            invoke_payload_args.program_data_encoding_arg,
-            invoke_payload_args.program_data_schema_json_arg,
-            invoke_payload_args.program_args_json_arg,
-            invoke_payload_args.program_schema_encoding_arg,
-            invoke_context_args.payer_keypair_path_arg,
-            invoke_context_args.payer_secret_key_arg,
-            invoke_context_args.signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            invoke_context_args.recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
+            spec_command.payload_family,
+            spec_command.command,
+            invoke_payload_args,
+            invoke_context_args,
+            spec_command.invalid_error_message,
         );
-        defer owned_spec.deinit(allocator);
-
-        const invocation_spec_json = client.invoke.buildInvocationSpecJsonFromOwnedInvocationSpec(
-            allocator,
-            &owned_spec,
-        ) catch {
-            reportInvalidCliMessage("error: spec-program-invoke arguments are invalid\n", .{});
-            return error.InvalidCli;
-        };
-        defer allocator.free(invocation_spec_json);
-        try printInvocationSpecJson(invocation_spec_json);
-        return;
-    }
-
-    if (command == .spec_instructions) {
-        var owned_spec = try buildInstructionsOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            invoke_payload_args.instructions_spec_arg,
-            effective_sender_keypair_path,
-            sender_secret_key_arg,
-            program_invoke_additional_signer_secret_keys_arg,
-            recent_blockhash_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        const invocation_spec_json = client.invoke.buildInvocationSpecJsonFromOwnedInvocationSpec(
-            allocator,
-            &owned_spec,
-        ) catch {
-            reportInvalidCliMessage("error: spec-instructions spec is invalid\n", .{});
-            return error.InvalidCli;
-        };
-        defer allocator.free(invocation_spec_json);
-        try printInvocationSpecJson(invocation_spec_json);
-        return;
-    }
-
-    if (command == .spec_idl_invoke) {
-        var owned_spec = try buildAnchorIdlOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            idl_spec_arg,
-            idl_instruction_arg,
-            idl_program_id_arg,
-            idl_args_json_arg,
-            args.idl_accounts_json_arg,
-            idl_account_bindings.items,
-            idl_remaining_accounts.items,
-            args.idl_remaining_accounts_json_arg,
-            invoke_context_args.payer_keypair_path_arg,
-            invoke_context_args.payer_secret_key_arg,
-            invoke_context_args.signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            invoke_context_args.recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        const invocation_spec_json = client.invoke.buildInvocationSpecJsonFromOwnedInvocationSpec(
-            allocator,
-            &owned_spec,
-        ) catch {
-            reportInvalidCliMessage("error: spec-idl-invoke arguments are invalid\n", .{});
-            return error.InvalidCli;
-        };
-        defer allocator.free(invocation_spec_json);
-        try printInvocationSpecJson(invocation_spec_json);
         return;
     }
 
@@ -6596,6 +6798,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             allocator,
             command,
             instructions_spec_arg,
+            instruction_json_args,
+            effective_sender_keypair_path,
+            sender_secret_key_arg,
+            invoke_context_args.additional_signer_secret_keys_arg,
+            resolved_program_invoke_signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
+            recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
         );
         defer owned_spec.deinit(allocator);
 
@@ -6645,6 +6857,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             allocator,
             command,
             instructions_spec_arg,
+            instruction_json_args,
+            effective_sender_keypair_path,
+            sender_secret_key_arg,
+            invoke_context_args.additional_signer_secret_keys_arg,
+            resolved_program_invoke_signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
+            recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
         );
         defer owned_spec.deinit(allocator);
 
@@ -6672,6 +6894,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             allocator,
             command,
             instructions_spec_arg,
+            instruction_json_args,
+            effective_sender_keypair_path,
+            sender_secret_key_arg,
+            invoke_context_args.additional_signer_secret_keys_arg,
+            resolved_program_invoke_signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
+            recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
         );
         defer owned_spec.deinit(allocator);
 
@@ -6692,10 +6924,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             allocator,
             command,
             instructions_spec_arg,
+            instruction_json_args,
             effective_sender_keypair_path,
             sender_secret_key_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
+            resolved_program_invoke_signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
             recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
         );
         defer owned_spec.deinit(allocator);
 
@@ -6716,6 +6954,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             allocator,
             command,
             instructions_spec_arg,
+            instruction_json_args,
+            effective_sender_keypair_path,
+            sender_secret_key_arg,
+            invoke_context_args.additional_signer_secret_keys_arg,
+            resolved_program_invoke_signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
+            recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
         );
         defer owned_spec.deinit(allocator);
 
@@ -6742,6 +6990,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             allocator,
             command,
             instructions_spec_arg,
+            instruction_json_args,
+            effective_sender_keypair_path,
+            sender_secret_key_arg,
+            invoke_context_args.additional_signer_secret_keys_arg,
+            resolved_program_invoke_signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
+            recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
         );
         defer owned_spec.deinit(allocator);
 
@@ -6762,6 +7020,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             allocator,
             command,
             instructions_spec_arg,
+            instruction_json_args,
+            effective_sender_keypair_path,
+            sender_secret_key_arg,
+            invoke_context_args.additional_signer_secret_keys_arg,
+            resolved_program_invoke_signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
+            recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
         );
         defer owned_spec.deinit(allocator);
 
@@ -6799,6 +7067,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.lookup_tables_arg,
             invoke_context_args.recent_blockhash_arg,
             invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
@@ -6875,6 +7144,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.lookup_tables_arg,
             invoke_context_args.recent_blockhash_arg,
             invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
@@ -6922,6 +7192,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.lookup_tables_arg,
             invoke_context_args.recent_blockhash_arg,
             invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
@@ -6956,10 +7227,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             allocator,
             command,
             invoke_payload_args.instructions_spec_arg,
+            invoke_payload_args.instruction_json_args,
             effective_sender_keypair_path,
             sender_secret_key_arg,
             program_invoke_additional_signer_secret_keys_arg,
+            resolved_program_invoke_signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
             recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
         );
         defer owned_spec.deinit(allocator);
 
@@ -7016,10 +7293,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             allocator,
             command,
             invoke_payload_args.instructions_spec_arg,
+            invoke_payload_args.instruction_json_args,
             effective_sender_keypair_path,
             sender_secret_key_arg,
             program_invoke_additional_signer_secret_keys_arg,
+            resolved_program_invoke_signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
             recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
         );
         defer owned_spec.deinit(allocator);
 
@@ -7065,6 +7348,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.lookup_tables_arg,
             invoke_context_args.recent_blockhash_arg,
             invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
@@ -7102,6 +7386,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.lookup_tables_arg,
             invoke_context_args.recent_blockhash_arg,
             invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
@@ -7149,6 +7434,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.lookup_tables_arg,
             invoke_context_args.recent_blockhash_arg,
             invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
@@ -7174,10 +7460,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             allocator,
             command,
             instructions_spec_arg,
+            instruction_json_args,
             effective_sender_keypair_path,
             sender_secret_key_arg,
             program_invoke_additional_signer_secret_keys_arg,
+            resolved_program_invoke_signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
             recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
         );
         defer owned_spec.deinit(allocator);
 
@@ -7201,10 +7493,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             allocator,
             command,
             instructions_spec_arg,
+            instruction_json_args,
             effective_sender_keypair_path,
             sender_secret_key_arg,
             program_invoke_additional_signer_secret_keys_arg,
+            resolved_program_invoke_signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
             recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
         );
         defer owned_spec.deinit(allocator);
 
@@ -7237,10 +7535,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             allocator,
             command,
             instructions_spec_arg,
+            instruction_json_args,
             effective_sender_keypair_path,
             sender_secret_key_arg,
             program_invoke_additional_signer_secret_keys_arg,
+            resolved_program_invoke_signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
             recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
         );
         defer owned_spec.deinit(allocator);
 
@@ -7287,6 +7591,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.lookup_tables_arg,
             invoke_context_args.recent_blockhash_arg,
             invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
@@ -7364,6 +7669,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.lookup_tables_arg,
             invoke_context_args.recent_blockhash_arg,
             invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
@@ -7412,6 +7718,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.lookup_tables_arg,
             invoke_context_args.recent_blockhash_arg,
             invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
@@ -7450,6 +7757,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.lookup_tables_arg,
             invoke_context_args.recent_blockhash_arg,
             invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
@@ -7497,6 +7805,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.lookup_tables_arg,
             invoke_context_args.recent_blockhash_arg,
             invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
@@ -7545,6 +7854,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.lookup_tables_arg,
             invoke_context_args.recent_blockhash_arg,
             invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
@@ -14743,6 +15053,79 @@ test "runCommand spec-program-invoke emits invocation spec json for schema args"
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"schema_encoding\":") == null);
 }
 
+test "runCommand spec-idl-invoke emits canonical invocation spec json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://spec-idl-invoke-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{83} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const program_id = client.Pubkey.fromBytes(.{84} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const target = client.Pubkey.fromBytes(.{85} ** 32);
+    const target_base58 = try target.toBase58(allocator);
+    defer allocator.free(target_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"ping","discriminator":[1,2,3,4,5,6,7,8],"accounts":[{{"name":"target","address":"{s}"}}],"args":[]}}]}}
+    ,
+        .{ program_id_base58, target_base58 },
+    );
+    defer allocator.free(idl_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "spec-idl-invoke",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        idl_json,
+        "ping",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    const expected_program_id = try std.fmt.allocPrint(
+        allocator,
+        "\"program_id\":\"{s}\"",
+        .{program_id_base58},
+    );
+    defer allocator.free(expected_program_id);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"payer_secret_key\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"instructions\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, expected_program_id) != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"data_bytes\":[1,2,3,4,5,6,7,8]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"idl_json\":") == null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"instruction_name\":") == null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"account_bindings\":") == null);
+}
+
 test "runCommand explain-program-invoke emits json analysis for schema args" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
@@ -14966,6 +15349,272 @@ test "runCommand inspect-spec emits json inspection sections" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"accounts\":{") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostics\":{") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"can_execute\":true") != null);
+}
+
+test "runCommand inspect-spec emits lookup tables section json from cli override" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-spec-lookup-tables-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{120} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 121);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{22} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_pubkey = client.Pubkey.fromBytes(.{23} ** 32);
+    const account_pubkey_base58 = try account_pubkey.toBase58(allocator);
+    defer allocator.free(account_pubkey_base58);
+    const lookup_table_key = client.Pubkey.fromBytes(.{24} ** 32);
+    const lookup_table_key_base58 = try lookup_table_key.toBase58(allocator);
+    defer allocator.free(lookup_table_key_base58);
+    const lookup_address = client.Pubkey.fromBytes(.{25} ** 32);
+    const lookup_address_base58 = try lookup_address.toBase58(allocator);
+    defer allocator.free(lookup_address_base58);
+
+    const invocation_spec_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"payer_secret_key\":\"{s}\",\"recent_blockhash\":\"{s}\",\"instructions\":[{{\"program_id\":\"{s}\",\"accounts\":[{{\"pubkey\":\"{s}\",\"is_writable\":true}}],\"data_bytes\":[4,5,6]}}]}}",
+        .{ payer_secret_key_base58, recent_blockhash, program_id_base58, account_pubkey_base58 },
+    );
+    defer allocator.free(invocation_spec_json);
+
+    const lookup_table_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"account_key\":\"{s}\",\"addresses\":[\"{s}\"]}}",
+        .{ lookup_table_key_base58, lookup_address_base58 },
+    );
+    defer allocator.free(lookup_table_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-spec",
+        "--json",
+        "--inspect-section",
+        "lookup-tables",
+        "--invoke-mode",
+        "versioned",
+        "--address-lookup-table",
+        lookup_table_json,
+        invocation_spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"account_key\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, lookup_table_key_base58) != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, lookup_address_base58) != null);
+}
+
+test "runCommand inspect-spec merges spec and cli lookup tables" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-spec-lookup-tables-merge-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{121} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 140);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{26} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_pubkey = client.Pubkey.fromBytes(.{27} ** 32);
+    const account_pubkey_base58 = try account_pubkey.toBase58(allocator);
+    defer allocator.free(account_pubkey_base58);
+
+    const spec_lookup_table_key = client.Pubkey.fromBytes(.{28} ** 32);
+    const spec_lookup_table_key_base58 = try spec_lookup_table_key.toBase58(allocator);
+    defer allocator.free(spec_lookup_table_key_base58);
+    const spec_lookup_address = client.Pubkey.fromBytes(.{29} ** 32);
+    const spec_lookup_address_base58 = try spec_lookup_address.toBase58(allocator);
+    defer allocator.free(spec_lookup_address_base58);
+
+    const cli_lookup_table_key = client.Pubkey.fromBytes(.{30} ** 32);
+    const cli_lookup_table_key_base58 = try cli_lookup_table_key.toBase58(allocator);
+    defer allocator.free(cli_lookup_table_key_base58);
+    const cli_lookup_address = client.Pubkey.fromBytes(.{31} ** 32);
+    const cli_lookup_address_base58 = try cli_lookup_address.toBase58(allocator);
+    defer allocator.free(cli_lookup_address_base58);
+
+    const invocation_spec_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"payer_secret_key\":\"{s}\",\"recent_blockhash\":\"{s}\",\"address_lookup_tables\":[{{\"account_key\":\"{s}\",\"addresses\":[\"{s}\"]}}],\"instructions\":[{{\"program_id\":\"{s}\",\"accounts\":[{{\"pubkey\":\"{s}\",\"is_writable\":true}}],\"data_bytes\":[4,5,6]}}]}}",
+        .{
+            payer_secret_key_base58,
+            recent_blockhash,
+            spec_lookup_table_key_base58,
+            spec_lookup_address_base58,
+            program_id_base58,
+            account_pubkey_base58,
+        },
+    );
+    defer allocator.free(invocation_spec_json);
+
+    const cli_lookup_table_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"account_key\":\"{s}\",\"addresses\":[\"{s}\"]}}",
+        .{ cli_lookup_table_key_base58, cli_lookup_address_base58 },
+    );
+    defer allocator.free(cli_lookup_table_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-spec",
+        "--json",
+        "--inspect-section",
+        "lookup-tables",
+        "--invoke-mode",
+        "versioned",
+        "--address-lookup-table",
+        cli_lookup_table_json,
+        invocation_spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, spec_lookup_table_key_base58) != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, spec_lookup_address_base58) != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, cli_lookup_table_key_base58) != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, cli_lookup_address_base58) != null);
+}
+
+test "mergeCliAddressLookupTablesArg deduplicates duplicate account keys" {
+    const allocator = std.testing.allocator;
+
+    const base_lookup_tables = [_]CliAddressLookupTableSpec{
+        .{
+            .account_key = "lookup-a",
+            .addresses = &.{"addr-a"},
+        },
+    };
+
+    const merged = try mergeCliAddressLookupTablesArg(
+        allocator,
+        &base_lookup_tables,
+        \\[
+        \\  {"account_key":"lookup-a","addresses":["addr-a"]},
+        \\  {"account_key":"lookup-b","addresses":["addr-b"]}
+        \\]
+    ,
+        &.{
+            "{\"account_key\":\"lookup-a\",\"addresses\":[\"addr-a\"]}",
+            "{\"account_key\":\"lookup-c\",\"addresses\":[\"addr-c\"]}",
+        },
+    );
+    defer if (merged) |value| allocator.free(value);
+
+    try std.testing.expect(merged != null);
+
+    var parsed = try std.json.parseFromSlice([]CliAddressLookupTableSpec, allocator, merged.?, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(usize, 3), parsed.value.len);
+    try std.testing.expectEqualStrings("lookup-a", parsed.value[0].account_key);
+    try std.testing.expectEqualStrings("lookup-b", parsed.value[1].account_key);
+    try std.testing.expectEqualStrings("lookup-c", parsed.value[2].account_key);
+}
+
+test "buildInlineInstructionsSpecSource flattens mixed object and array inputs" {
+    const allocator = std.testing.allocator;
+
+    const merged = try buildInlineInstructionsSpecSource(allocator, &.{
+        "{\"program_id\":\"11111111111111111111111111111111\",\"accounts\":[],\"data_bytes\":[1]}",
+        \\[
+        \\  {"program_id":"11111111111111111111111111111111","accounts":[],"data_bytes":[2]},
+        \\  {"program_id":"11111111111111111111111111111111","accounts":[],"data_bytes":[3]}
+        \\]
+        ,
+    });
+    defer if (merged) |value| allocator.free(value);
+
+    try std.testing.expect(merged != null);
+
+    var parsed = try std.json.parseFromSlice(CliSimulateInstructionsSpec, allocator, merged.?, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(usize, 3), parsed.value.instructions.len);
+}
+
+test "mergeCliSignerKeypairPathsArg deduplicates duplicate path values" {
+    const allocator = std.testing.allocator;
+
+    const merged = try mergeCliSignerKeypairPathsArg(
+        allocator,
+        "[\"/tmp/signer-a.json\",\"/tmp/signer-a.json\",\"/tmp/signer-b.json\"]",
+        &.{
+            "/tmp/signer-b.json",
+            "/tmp/signer-c.json",
+        },
+    );
+    defer if (merged) |value| allocator.free(value);
+
+    try std.testing.expect(merged != null);
+
+    var parsed = try std.json.parseFromSlice([]const []const u8, allocator, merged.?, .{
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(usize, 3), parsed.value.len);
+    try std.testing.expectEqualStrings("/tmp/signer-a.json", parsed.value[0]);
+    try std.testing.expectEqualStrings("/tmp/signer-b.json", parsed.value[1]);
+    try std.testing.expectEqualStrings("/tmp/signer-c.json", parsed.value[2]);
 }
 
 test "runCommand inspect-spec emits simulation section json" {
@@ -16877,6 +17526,390 @@ test "runCommand validate-spec fails on missing required signer" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"none\"") != null);
 }
 
+test "runCommand validate-spec accepts additional-signer-keypair" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://validate-spec-additional-signer-keypair" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{95} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const additional_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{96} ** 32);
+    const additional_signer_secret_key = additional_signer_raw.secret_key.toBytes();
+    const additional_signer = try client.Keypair.fromSecretKeyBytes(additional_signer_secret_key);
+    const additional_signer_pubkey_base58 = try additional_signer.public_key.toBase58(allocator);
+    defer allocator.free(additional_signer_pubkey_base58);
+    const additional_signer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-validate-spec-additional-signer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(additional_signer_keypair_path);
+    defer std.fs.cwd().deleteFile(additional_signer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, additional_signer_keypair_path, &additional_signer_secret_key);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 56);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{14} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const invocation_spec_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"payer_secret_key\":\"{s}\",\"recent_blockhash\":\"{s}\",\"instructions\":[{{\"program_id\":\"{s}\",\"accounts\":[{{\"pubkey\":\"{s}\",\"is_signer\":true}}],\"data_bytes\":[1]}}]}}",
+        .{ payer_secret_key_base58, recent_blockhash, program_id_base58, additional_signer_pubkey_base58 },
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "validate-spec",
+        "--json",
+        "--additional-signer-keypair",
+        additional_signer_keypair_path,
+        invocation_spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 8 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"validation_passed\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostics\":[]") != null);
+}
+
+test "runCommand validate-spec merges spec and cli additional-signer-keypair paths" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://validate-spec-merged-additional-signer-keypair-paths" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{98} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const spec_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{99} ** 32);
+    const spec_signer_secret_key = spec_signer_raw.secret_key.toBytes();
+    const spec_signer = try client.Keypair.fromSecretKeyBytes(spec_signer_secret_key);
+    const spec_signer_pubkey_base58 = try spec_signer.public_key.toBase58(allocator);
+    defer allocator.free(spec_signer_pubkey_base58);
+    const spec_signer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-validate-spec-merged-spec-signer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(spec_signer_keypair_path);
+    defer std.fs.cwd().deleteFile(spec_signer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, spec_signer_keypair_path, &spec_signer_secret_key);
+
+    const cli_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{100} ** 32);
+    const cli_signer_secret_key = cli_signer_raw.secret_key.toBytes();
+    const cli_signer = try client.Keypair.fromSecretKeyBytes(cli_signer_secret_key);
+    const cli_signer_pubkey_base58 = try cli_signer.public_key.toBase58(allocator);
+    defer allocator.free(cli_signer_pubkey_base58);
+    const cli_signer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-validate-spec-merged-cli-signer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(cli_signer_keypair_path);
+    defer std.fs.cwd().deleteFile(cli_signer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, cli_signer_keypair_path, &cli_signer_secret_key);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 111);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{17} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const invocation_spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","additional_signer_keypair_paths":["{s}"],"recent_blockhash":"{s}","instructions":[{{"program_id":"{s}","accounts":[{{"pubkey":"{s}","is_signer":true}},{{"pubkey":"{s}","is_signer":true}}],"data_bytes":[1]}}]}}
+    ,
+        .{
+            payer_secret_key_base58,
+            spec_signer_keypair_path,
+            recent_blockhash,
+            program_id_base58,
+            spec_signer_pubkey_base58,
+            cli_signer_pubkey_base58,
+        },
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "validate-spec",
+        "--json",
+        "--additional-signer-keypair",
+        cli_signer_keypair_path,
+        invocation_spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 8 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"validation_passed\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostics\":[]") != null);
+}
+
+test "runCommand validate-spec accepts repeated instruction-json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://validate-spec-inline-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{97} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 101);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{16} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const instruction_one_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"program_id\":\"{s}\",\"accounts\":[],\"data_bytes\":[7]}}",
+        .{program_id_base58},
+    );
+    defer allocator.free(instruction_one_json);
+
+    const instruction_two_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"program_id\":\"{s}\",\"accounts\":[],\"data_bytes\":[8,9]}}",
+        .{program_id_base58},
+    );
+    defer allocator.free(instruction_two_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "validate-spec",
+        "--json",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--instruction-json",
+        instruction_one_json,
+        "--instruction-json",
+        instruction_two_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 8 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"instruction_count\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"validation_passed\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostics\":[]") != null);
+}
+
+test "runCommand validate-spec accepts instruction-json array" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://validate-spec-inline-json-array" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{101} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 121);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{18} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\[
+        \\  {{"program_id":"{s}","accounts":[],"data_bytes":[10]}},
+        \\  {{"program_id":"{s}","accounts":[],"data_bytes":[11,12]}}
+        \\]
+    ,
+        .{ program_id_base58, program_id_base58 },
+    );
+    defer allocator.free(instructions_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "validate-spec",
+        "--json",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--instruction-json",
+        instructions_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 8 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"instruction_count\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"validation_passed\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostics\":[]") != null);
+}
+
+test "runCommand validate-instructions accepts repeated instruction-json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://validate-instructions-inline-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{96} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 91);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{15} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const instruction_one_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"program_id\":\"{s}\",\"accounts\":[],\"data_bytes\":[1]}}",
+        .{program_id_base58},
+    );
+    defer allocator.free(instruction_one_json);
+
+    const instruction_two_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"program_id\":\"{s}\",\"accounts\":[],\"data_bytes\":[2,3]}}",
+        .{program_id_base58},
+    );
+    defer allocator.free(instruction_two_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "validate-instructions",
+        "--json",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        "--instruction-json",
+        instruction_one_json,
+        "--instruction-json",
+        instruction_two_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 8 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"instruction_count\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"validation_passed\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostics\":[]") != null);
+}
+
 test "runCommand invoke-spec-simulate emits json execution result" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
@@ -16941,6 +17974,137 @@ test "runCommand invoke-spec-simulate emits json execution result" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"legacy\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"units_consumed\":123") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"fee\":44") != null);
+}
+
+test "runCommand invoke-spec-simulate accepts sender-secret-key and nonce authority secret key" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{96} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{97} ** 32);
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const nonce_authority_secret_key_base58 = try client.encodeBase58(allocator, &nonce_authority_secret_key);
+    defer allocator.free(nonce_authority_secret_key_base58);
+    const nonce_authority = try client.Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+    const nonce_authority_pubkey_base58 = try nonce_authority.public_key.toBase58(allocator);
+    defer allocator.free(nonce_authority_pubkey_base58);
+
+    const writable_raw = try Ed25519.KeyPair.generateDeterministic(.{98} ** 32);
+    const writable = try client.Keypair.fromSecretKeyBytes(writable_raw.secret_key.toBytes());
+    const writable_pubkey_base58 = try writable.public_key.toBase58(allocator);
+    defer allocator.free(writable_pubkey_base58);
+
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{99} ** 32);
+    const nonce_account_pubkey = try client.encodeBase58(allocator, &nonce_account_raw.public_key.toBytes());
+    defer allocator.free(nonce_account_pubkey);
+
+    var nonce_blockhash_bytes: [32]u8 = undefined;
+    for (&nonce_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 141);
+    const nonce_blockhash = try client.encodeBase58(allocator, &nonce_blockhash_bytes);
+    defer allocator.free(nonce_blockhash);
+
+    const nonce_data_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"program":"system","parsed":{{"type":"nonce","info":{{"authority":"{s}","blockhash":"{s}"}}}}}}
+    ,
+        .{ nonce_authority_pubkey_base58, nonce_blockhash },
+    );
+    defer allocator.free(nonce_data_json);
+
+    try sender_context.sender.pushUiAccountResponse(81, .{
+        .data_json = nonce_data_json,
+        .executable = false,
+        .lamports = 1,
+        .owner = "11111111111111111111111111111111",
+        .rent_epoch = 0,
+        .space = 80,
+    });
+    try sender_context.sender.pushUiAccountResponse(81, .{
+        .data_json = nonce_data_json,
+        .executable = false,
+        .lamports = 1,
+        .owner = "11111111111111111111111111111111",
+        .rent_epoch = 0,
+        .space = 80,
+    });
+    try sender_context.sender.pushUiAccountResponse(81, .{
+        .data_json = nonce_data_json,
+        .executable = false,
+        .lamports = 1,
+        .owner = "11111111111111111111111111111111",
+        .rent_epoch = 0,
+        .space = 80,
+    });
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":88},"value":{"accounts":[],"err":null,"fee":55,"unitsConsumed":222,"logs":["Program log: spec-override-ok"]}}
+    );
+
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://invoke-spec-simulate-nonce-secret-key" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const program_id = client.Pubkey.fromBytes(.{16} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const invocation_spec_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"instructions\":[{{\"program_id\":\"{s}\",\"accounts\":[{{\"pubkey\":\"{s}\",\"is_signer\":true,\"is_writable\":true}},{{\"pubkey\":\"{s}\",\"is_writable\":true}}],\"data_bytes\":[4,5,6]}}]}}",
+        .{ program_id_base58, payer_pubkey_base58, writable_pubkey_base58 },
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "invoke-spec-simulate",
+        "--json",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--nonce-account",
+        nonce_account_pubkey,
+        "--nonce-authority-secret-key",
+        nonce_authority_secret_key_base58,
+        invocation_spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 8 * 1024);
+    defer allocator.free(captured);
+
+    try expectGetUiAccountRequest(
+        allocator,
+        commandCapturedRequestAt(&sender_context, 0),
+        nonce_account_pubkey,
+        null,
+        null,
+    );
+    try expectMockSenderRequestCount(&sender_context.sender, 4);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"legacy\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"units_consumed\":222") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"fee\":55") != null);
 }
 
 test "runCommand explain-program-invoke honors explicit versioned mode" {
@@ -28436,6 +29600,121 @@ test "runCommand send-versioned-instructions supports nonce account and nonce au
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature: Sig151515151515151515151515151515151515151515151515151515151515151515\n",
+        captured,
+    );
+}
+
+test "runCommand send-versioned-instructions supports nonce account and nonce authority secret key flags" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{38} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const nonce_authority_raw = try Ed25519.KeyPair.generateDeterministic(.{39} ** 32);
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const nonce_authority_secret_key_base58 = try client.encodeBase58(allocator, &nonce_authority_secret_key);
+    defer allocator.free(nonce_authority_secret_key_base58);
+    const nonce_authority = try client.Keypair.fromSecretKeyBytes(nonce_authority_secret_key);
+    const nonce_authority_pubkey_base58 = try nonce_authority.public_key.toBase58(allocator);
+    defer allocator.free(nonce_authority_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{40} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    const nonce_account_raw = try Ed25519.KeyPair.generateDeterministic(.{41} ** 32);
+    const nonce_account_pubkey_bytes = nonce_account_raw.public_key.toBytes();
+    const nonce_account_pubkey = try client.encodeBase58(allocator, &nonce_account_pubkey_bytes);
+    defer allocator.free(nonce_account_pubkey);
+
+    var nonce_blockhash_bytes: [32]u8 = undefined;
+    for (&nonce_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 161);
+    const nonce_blockhash = try client.encodeBase58(allocator, &nonce_blockhash_bytes);
+    defer allocator.free(nonce_blockhash);
+
+    const nonce_data_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"program":"system","parsed":{{"type":"nonce","info":{{"authority":"{s}","blockhash":"{s}"}}}}}}
+    ,
+        .{ nonce_authority_pubkey_base58, nonce_blockhash },
+    );
+    defer allocator.free(nonce_data_json);
+
+    try sender_context.sender.pushUiAccountResponse(73, .{
+        .data_json = nonce_data_json,
+        .executable = false,
+        .lamports = 1,
+        .owner = "11111111111111111111111111111111",
+        .rent_epoch = 0,
+        .space = 80,
+    });
+    try sender_context.sender.pushResultJson("\"Sig161616161616161616161616161616161616161616161616161616161616161616\"");
+
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-versioned-instructions-nonce-secret-key" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"70696e67","data_encoding":"hex"}}]}}
+    ,
+        .{ payer_secret_key_base58, payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-versioned-instructions",
+        "--nonce-account",
+        nonce_account_pubkey,
+        "--nonce-authority-secret-key",
+        nonce_authority_secret_key_base58,
+        spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectGetUiAccountRequest(
+        allocator,
+        commandCapturedRequestAt(&sender_context, 0),
+        nonce_account_pubkey,
+        null,
+        null,
+    );
+    try expectMockSenderRequestCount(&sender_context.sender, 2);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try expectSendVersionedTransactionRequestSignatureMetadata(
+        allocator,
+        commandCapturedRequestAt(&sender_context, 1),
+        2,
+        2,
+    );
+    try std.testing.expectEqualStrings(
+        "signature: Sig161616161616161616161616161616161616161616161616161616161616161616\n",
         captured,
     );
 }
