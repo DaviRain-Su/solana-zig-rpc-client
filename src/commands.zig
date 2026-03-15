@@ -15550,6 +15550,222 @@ test "runCommand inspect-program-invoke emits signer section json" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"signer_pubkeys\":[") != null);
 }
 
+test "runCommand inspect-program-invoke emits signer section with deduplicated payer and additional signers" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-program-invoke-signers-json-dedup" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{102} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{103} ** 32);
+    const extra_signer_secret = extra_signer_raw.secret_key.toBytes();
+    const extra_signer_secret_key_base58 = try client.encodeBase58(allocator, &extra_signer_secret);
+    defer allocator.free(extra_signer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 191);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{33} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_pubkey = client.Pubkey.fromBytes(.{34} ** 32);
+    const account_pubkey_base58 = try account_pubkey.toBase58(allocator);
+    defer allocator.free(account_pubkey_base58);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"is_writable\":true}}]",
+        .{account_pubkey_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-program-invoke",
+        "--json",
+        "--inspect-section",
+        "signers",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--additional-signer-secret-key",
+        payer_secret_key_base58,
+        "--additional-signer-secret-key",
+        extra_signer_secret_key_base58,
+        "--additional-signer-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        program_id_base58,
+        accounts_json,
+        "[]",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+
+    const SignersPayload = struct {
+        signer_count: usize,
+    };
+    var signer_payload = try std.json.parseFromSlice(SignersPayload, allocator, captured, .{
+        .ignore_unknown_fields = true,
+    });
+    defer signer_payload.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), signer_payload.value.signer_count);
+}
+
+test "runCommand inspect-program-invoke emits signer section with deduplicated sender-keypair path and additional signer keypair paths" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-program-invoke-signers-json-dedup-paths" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{106} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-program-invoke-inspect-dedup-signer-path-payer-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(payer_keypair_path);
+    defer std.fs.cwd().deleteFile(payer_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, payer_keypair_path, &payer_secret_key);
+    const payer_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, payer_keypair_path);
+    defer allocator.free(payer_keypair_realpath);
+
+    const extra_raw = try Ed25519.KeyPair.generateDeterministic(.{107} ** 32);
+    const extra_secret_key = extra_raw.secret_key.toBytes();
+    const extra_keypair_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-program-invoke-inspect-dedup-signer-path-extra-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(extra_keypair_path);
+    defer std.fs.cwd().deleteFile(extra_keypair_path) catch {};
+    try writeKeypairJsonFile(allocator, extra_keypair_path, &extra_secret_key);
+    const extra_keypair_realpath = try std.fs.cwd().realpathAlloc(allocator, extra_keypair_path);
+    defer allocator.free(extra_keypair_realpath);
+
+    const signer_paths = try std.fmt.allocPrint(
+        allocator,
+        "[\"{s}\",\"{s}\",\"{s}\"]",
+        .{ payer_keypair_realpath, extra_keypair_realpath, payer_keypair_realpath },
+    );
+    defer allocator.free(signer_paths);
+
+    const signer_paths_path = try std.fmt.allocPrint(
+        allocator,
+        ".zig-cache/test-program-invoke-inspect-dedup-signer-paths-{d}.json",
+        .{std.time.nanoTimestamp()},
+    );
+    defer allocator.free(signer_paths_path);
+    defer std.fs.cwd().deleteFile(signer_paths_path) catch {};
+    const signer_paths_file = try std.fs.cwd().createFile(
+        signer_paths_path,
+        .{},
+    );
+    defer signer_paths_file.close();
+    try signer_paths_file.writeAll(signer_paths);
+    const signer_paths_arg = try std.fmt.allocPrint(
+        allocator,
+        "@{s}",
+        .{signer_paths_path},
+    );
+    defer allocator.free(signer_paths_arg);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 191);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const program_id = client.Pubkey.fromBytes(.{33} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_pubkey = client.Pubkey.fromBytes(.{34} ** 32);
+    const account_pubkey_base58 = try account_pubkey.toBase58(allocator);
+    defer allocator.free(account_pubkey_base58);
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        "[{{\"pubkey\":\"{s}\",\"is_writable\":true}}]",
+        .{account_pubkey_base58},
+    );
+    defer allocator.free(accounts_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-program-invoke",
+        "--json",
+        "--inspect-section",
+        "signers",
+        "--sender-keypair",
+        payer_keypair_realpath,
+        "--recent-blockhash",
+        recent_blockhash,
+        program_id_base58,
+        accounts_json,
+        "[]",
+        "utf8",
+        signer_paths_arg,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+
+    const SignersPayload = struct {
+        signer_count: usize,
+    };
+    var signer_payload = try std.json.parseFromSlice(SignersPayload, allocator, captured, .{
+        .ignore_unknown_fields = true,
+    });
+    defer signer_payload.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), signer_payload.value.signer_count);
+}
+
 test "runCommand inspect-program-invoke emits mode resolution section json" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
