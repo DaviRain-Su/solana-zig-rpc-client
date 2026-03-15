@@ -3355,10 +3355,28 @@ fn appendUniqueSecretKeyValue(
     values: *std.ArrayListUnmanaged([]const u8),
     value: []const u8,
 ) !void {
+    const value_pubkey = pubkeyFromSecretKeyBase58OrNull(allocator, value);
+
     for (values.items) |item| {
+        if (value_pubkey) |value_resolved| {
+            if (pubkeyFromSecretKeyBase58OrNull(allocator, item)) |resolved| {
+                if (std.meta.eql(resolved, value_resolved)) {
+                    return;
+                }
+            }
+        }
+
         if (std.mem.eql(u8, item, value)) return;
     }
     try values.append(allocator, value);
+}
+
+fn pubkeyFromSecretKeyBase58OrNull(
+    allocator: Allocator,
+    secret_key: []const u8,
+) ?client.Pubkey {
+    const keypair = client.Keypair.fromBase58SecretKey(allocator, secret_key) catch return null;
+    return keypair.public_key;
 }
 
 fn loadCliInstructionSpecWithSenderAndAdditionalSigners(

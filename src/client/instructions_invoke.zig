@@ -629,6 +629,22 @@ fn parseAccountMetaFromJsonValue(
     }
 }
 
+fn appendOrUpgradeInstructionAccountMeta(
+    allocator: Allocator,
+    accounts: *std.ArrayListUnmanaged(sdk.AccountMeta),
+    account: sdk.AccountMeta,
+) !void {
+    for (accounts.items) |*existing| {
+        if (std.meta.eql(existing.pubkey, account.pubkey)) {
+            existing.is_signer = existing.is_signer or account.is_signer;
+            existing.is_writable = existing.is_writable or account.is_writable;
+            return;
+        }
+    }
+
+    try accounts.append(allocator, account);
+}
+
 fn parseInstructionFromJsonValue(
     allocator: Allocator,
     value: std.json.Value,
@@ -648,12 +664,16 @@ fn parseInstructionFromJsonValue(
             .array => |array| array.items,
             else => return error.InvalidInstructionSpec,
         };
-        const parsed_accounts = try allocator.alloc(sdk.AccountMeta, account_values.len);
-        errdefer allocator.free(parsed_accounts);
-        for (account_values, 0..) |account_value, index| {
-            parsed_accounts[index] = try parseAccountMetaFromJsonValue(allocator, account_value);
+        var parsed_accounts = std.ArrayListUnmanaged(sdk.AccountMeta){};
+        errdefer parsed_accounts.deinit(allocator);
+        for (account_values) |account_value| {
+            try appendOrUpgradeInstructionAccountMeta(
+                allocator,
+                &parsed_accounts,
+                try parseAccountMetaFromJsonValue(allocator, account_value),
+            );
         }
-        break :blk parsed_accounts;
+        break :blk try parsed_accounts.toOwnedSlice(allocator);
     } else try allocator.alloc(sdk.AccountMeta, 0);
     errdefer allocator.free(accounts);
 
@@ -856,6 +876,17 @@ fn stringifyJsonValue(
     return try allocator.dupe(u8, json_buffer.written());
 }
 
+fn appendUniqueSignerFromPubkey(
+    allocator: Allocator,
+    signers: *std.ArrayListUnmanaged(sdk.Keypair),
+    signer: sdk.Keypair,
+) !void {
+    for (signers.items) |existing| {
+        if (std.meta.eql(existing.public_key, signer.public_key)) return;
+    }
+    try signers.append(allocator, signer);
+}
+
 pub fn buildOwnedInvocationSpecFromJson(
     allocator: Allocator,
     instruction_spec_json: []const u8,
@@ -910,30 +941,30 @@ pub fn buildOwnedInvocationSpecFromJson(
     errdefer owned_lookup_tables.deinit(allocator);
 
     const additional_signers_value = jsonObjectField(&object, &.{ "additional_signer_secret_keys", "additionalSignerSecretKeys" });
-    const additional_signer_count = if (additional_signers_value) |value| blk: {
-        if (value != .array) return error.InvalidInvocationSpec;
-        break :blk value.array.items.len;
-    } else 0;
-
-    const signer_count = 1 + additional_signer_count + if (nonce_authority_keypair != null) @as(usize, 1) else 0;
-    const signers = try allocator.alloc(sdk.Keypair, signer_count);
-    errdefer allocator.free(signers);
-    signers[0] = payer_keypair;
     if (additional_signers_value) |value| {
-        for (value.array.items, 0..) |secret_key_value, index| {
+        if (value != .array) return error.InvalidInvocationSpec;
+    }
+
+    var signers = std.ArrayListUnmanaged(sdk.Keypair){};
+    defer signers.deinit(allocator);
+    try appendUniqueSignerFromPubkey(allocator, &signers, payer_keypair);
+    if (additional_signers_value) |value| {
+        for (value.array.items) |secret_key_value| {
             if (secret_key_value != .string) return error.InvalidInvocationSpec;
-            signers[index + 1] = sdk.Keypair.fromBase58SecretKey(allocator, secret_key_value.string) catch {
+            const signer = sdk.Keypair.fromBase58SecretKey(allocator, secret_key_value.string) catch {
                 return error.InvalidInvocationSpec;
             };
+            try appendUniqueSignerFromPubkey(allocator, &signers, signer);
         }
     }
     if (nonce_authority_keypair) |value| {
-        signers[1 + additional_signer_count] = value;
+        try appendUniqueSignerFromPubkey(allocator, &signers, value);
     }
+    const signer_slice = try signers.toOwnedSlice(allocator);
 
     return .{
         .payer = payer_keypair.public_key,
-        .signers = signers,
+        .signers = signer_slice,
         .owned_instructions = owned_instructions,
         .address_lookup_tables = owned_lookup_tables.tables,
         .recent_blockhash = recent_blockhash,
@@ -4360,6 +4391,43 @@ test "instructions_invoke.buildOwnedInstructionsFromJson parses flexible instruc
     try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3 }, owned.instructions[1].data);
 }
 
+test "instructions_invoke.buildOwnedInstructionsFromJson deduplicates duplicate account metas" {
+    const allocator = std.testing.allocator;
+    const program_id = sdk.Pubkey.fromBytes([_]u8{28} ** 32);
+    const account = sdk.Pubkey.fromBytes([_]u8{29} ** 32);
+
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const account_base58 = try account.toBase58(allocator);
+    defer allocator.free(account_base58);
+
+    const instructions_json = try std.fmt.allocPrint(
+        allocator,
+        \\[
+        \\  {{
+        \\    "programId": "{s}",
+        \\    "accounts": [
+        \\      "{s}",
+        \\      {{"address":"{s}","signer":true,"writable":false}}
+        \\    ],
+        \\    "dataBytes":[1,2]
+        \\  }}
+        \\]
+    ,
+        .{ program_id_base58, account_base58, account_base58 },
+    );
+    defer allocator.free(instructions_json);
+
+    var owned = try buildOwnedInstructionsFromJson(allocator, instructions_json);
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), owned.instructions.len);
+    try std.testing.expectEqual(@as(usize, 1), owned.instructions[0].accounts.len);
+    try std.testing.expectEqual(account, owned.instructions[0].accounts[0].pubkey);
+    try std.testing.expect(owned.instructions[0].accounts[0].is_signer);
+    try std.testing.expect(!owned.instructions[0].accounts[0].is_writable);
+}
+
 test "instructions_invoke.buildOwnedInstructionsFromJson encodes schema-driven instruction data" {
     const allocator = std.testing.allocator;
     const program_id = sdk.Pubkey.fromBytes([_]u8{31} ** 32);
@@ -4567,6 +4635,11 @@ test "instructions_invoke.buildOwnedInvocationSpecFromJson parses signers and lo
     try std.testing.expectEqual(recent_blockhash.?, owned.recent_blockhash.?);
     try std.testing.expectEqual(@as(?sdk.Pubkey, null), owned.nonce_account);
 
+    const nonce_account_base58_2 = try nonce_account.toBase58(allocator);
+    defer allocator.free(nonce_account_base58_2);
+    const nonce_authority_secret_key_base58_2 = try nonce_authority_secret_key.toBase58(allocator);
+    defer allocator.free(nonce_authority_secret_key_base58_2);
+
     const nonce_spec_json = try std.fmt.allocPrint(
         allocator,
         \\{{
@@ -4578,8 +4651,8 @@ test "instructions_invoke.buildOwnedInvocationSpecFromJson parses signers and lo
     ,
         .{
             payer_secret_key_base58,
-            nonce_account_base58,
-            nonce_authority_secret_key_base58,
+            nonce_account_base58_2,
+            nonce_authority_secret_key_base58_2,
             program_id_base58,
         },
     );
@@ -4591,6 +4664,52 @@ test "instructions_invoke.buildOwnedInvocationSpecFromJson parses signers and lo
     try std.testing.expectEqual(nonce_account, nonce_owned.nonce_account.?);
     try std.testing.expectEqual(nonce_authority_raw.public_key, nonce_owned.nonce_authority.?);
     try std.testing.expectEqual(@as(usize, 2), nonce_owned.signers.len);
+}
+
+test "instructions_invoke.buildOwnedInvocationSpecFromJson deduplicates signer keys by pubkey" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{76} ** 32);
+    const duplicate_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{77} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{78} ** 32);
+    const recent_blockhash = sdk.Hash.fromBytes([_]u8{79} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const duplicate_secret_key = duplicate_raw.secret_key.toBytes();
+    const duplicate_secret_key_base58 = try sdk.encodeBase58(allocator, &duplicate_secret_key);
+    defer allocator.free(duplicate_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const recent_blockhash_base58 = try recent_blockhash.toBase58(allocator);
+    defer allocator.free(recent_blockhash_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "additionalSignerSecretKeys":["{s}","{s}","{s}","{s}"],
+        \\  "recent_blockhash":"{s}",
+        \\  "instructions":[{{"program_id":"{s}","dataBytes":[1]}}]
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            duplicate_secret_key_base58,
+            payer_secret_key_base58,
+            duplicate_secret_key_base58,
+            recent_blockhash_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    var owned = try buildOwnedInvocationSpecFromJson(allocator, spec_json);
+    defer owned.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), owned.signers.len);
+    try std.testing.expectEqual(payer_raw.public_key, owned.signers[0].public_key);
+    try std.testing.expectEqual(duplicate_raw.public_key, owned.signers[1].public_key);
 }
 
 test "instructions_invoke.buildOwnedVersionedMessageFromJson uses address_lookup_tables_json" {
