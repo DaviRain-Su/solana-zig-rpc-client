@@ -4861,6 +4861,9 @@ fn buildProvidedOwnedInvocationSpecForCommand(
         .invoke_spec => "invoke-spec",
         .invoke_spec_and_confirm => "invoke-spec-and-confirm",
         .invoke_spec_simulate => "invoke-spec-simulate",
+        .invoke_instructions => "invoke-instructions",
+        .invoke_instructions_and_confirm => "invoke-instructions-and-confirm",
+        .invoke_instructions_simulate => "invoke-instructions-simulate",
         .preview_spec => "preview-spec",
         .explain_spec => "explain-spec",
         .validate_spec => "validate-spec",
@@ -5166,7 +5169,7 @@ fn buildProgramOwnedInvocationSpecForCommand(
 
     return client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
-        .instructions,
+        .program,
         invocation_spec_json,
     ) catch {
         const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
@@ -5221,7 +5224,7 @@ fn buildAnchorIdlOwnedInvocationSpecForCommand(
 
     return client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
         allocator,
-        .instructions,
+        .anchor_idl,
         invocation_spec_json,
     ) catch {
         const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
@@ -6007,6 +6010,215 @@ fn runGenericInvocationCommand(
         execution_args,
         command_invoke_callbacks,
     );
+}
+
+const InvocationReadCommandKind = enum {
+    analyze,
+    inspect,
+    prepare,
+    fee,
+};
+
+const InvocationReadCommandSpec = struct {
+    family: client.invoke.InvokeFamily,
+    kind: InvocationReadCommandKind,
+    validate: bool = false,
+};
+
+fn lookupInvocationReadCommandSpec(command: cli.Command) ?InvocationReadCommandSpec {
+    return switch (command) {
+        .preview_instructions,
+        .explain_instructions,
+        .validate_instructions,
+        .inspect_instructions,
+        .prepare_instructions,
+        .estimate_instructions_fee,
+        .preview_spec,
+        .explain_spec,
+        .validate_spec,
+        .inspect_spec,
+        .prepare_spec,
+        .estimate_spec_fee,
+        .preview_program_invoke,
+        .explain_program_invoke,
+        .validate_program_invoke,
+        .inspect_program_invoke,
+        .prepare_program_invoke,
+        .estimate_program_invoke_fee,
+        .preview_idl_invoke,
+        .explain_idl_invoke,
+        .validate_idl_invoke,
+        .inspect_idl_invoke,
+        .prepare_idl_invoke,
+        .estimate_idl_invoke_fee,
+        => .{
+            .family = switch (command) {
+                .preview_program_invoke,
+                .explain_program_invoke,
+                .validate_program_invoke,
+                .inspect_program_invoke,
+                .prepare_program_invoke,
+                .estimate_program_invoke_fee,
+                => .program,
+                .preview_idl_invoke,
+                .explain_idl_invoke,
+                .validate_idl_invoke,
+                .inspect_idl_invoke,
+                .prepare_idl_invoke,
+                .estimate_idl_invoke_fee,
+                => .anchor_idl,
+                else => .instructions,
+            },
+            .kind = switch (command) {
+                .prepare_instructions,
+                .prepare_program_invoke,
+                .prepare_idl_invoke,
+                .prepare_spec,
+                => .prepare,
+                .estimate_instructions_fee,
+                .estimate_program_invoke_fee,
+                .estimate_idl_invoke_fee,
+                .estimate_spec_fee,
+                => .fee,
+                .inspect_instructions,
+                .inspect_program_invoke,
+                .inspect_idl_invoke,
+                .inspect_spec,
+                => .inspect,
+                .preview_instructions,
+                .explain_instructions,
+                .validate_instructions,
+                .preview_program_invoke,
+                .explain_program_invoke,
+                .validate_program_invoke,
+                .preview_idl_invoke,
+                .explain_idl_invoke,
+                .validate_idl_invoke,
+                .preview_spec,
+                .explain_spec,
+                .validate_spec,
+                => .analyze,
+                else => unreachable,
+            },
+            .validate = switch (command) {
+                .validate_instructions,
+                .validate_program_invoke,
+                .validate_idl_invoke,
+                .validate_spec,
+                => true,
+                else => false,
+            },
+        },
+
+        else => null,
+    };
+}
+
+fn runInvocationReadOnlyCommand(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    command: cli.Command,
+    command_spec: InvocationReadCommandSpec,
+    payload_args: CliInvokePayloadArgs,
+    context_args: CliInvokeContextArgs,
+    execution_output_json: bool,
+    inspect_section: InspectSection,
+    commitment: ?client.Commitment,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+    prefer_preferred_path: bool,
+) !void {
+    const command_label = command_invoke.lookupInvokeCommandLabel(command) orelse {
+        reportInvalidCliMessage("error: invocation command arguments are invalid\n", .{});
+        return error.InvalidCli;
+    };
+
+    const invocation_spec_json = command_invoke.buildCanonicalInvocationSpecJsonForPayloadFamily(
+        allocator,
+        command_spec.family,
+        command,
+        payload_args,
+        context_args,
+        command_invoke_builders,
+    ) catch {
+        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+        return error.InvalidCli;
+    };
+    defer allocator.free(invocation_spec_json);
+
+    var owned_spec = client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        command_spec.family,
+        invocation_spec_json,
+    ) catch {
+        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+        return error.InvalidCli;
+    };
+    defer owned_spec.deinit(allocator);
+
+    switch (command_spec.kind) {
+        .analyze => {
+            var analysis = client.invoke.buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                &owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            ) catch {
+                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+                return error.InvalidCli;
+            };
+            defer analysis.deinit(allocator);
+
+            try emitPreferredInvocationAnalysis(
+                allocator,
+                &analysis,
+                execution_output_json,
+                command_spec.validate,
+            );
+        },
+        .inspect => try emitInvocationInspectSection(
+            allocator,
+            rpc,
+            &owned_spec,
+            execution_output_json,
+            inspect_section,
+            preferred_invocation_mode_options,
+            prefer_preferred_path,
+        ),
+        .prepare => {
+            var prepared = client.invoke.buildPreferredPreparedInvocationFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                &owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            ) catch {
+                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+                return error.InvalidCli;
+            };
+            defer prepared.deinit(allocator);
+
+            try emitPreferredPreparedInvocation(allocator, &prepared, execution_output_json);
+        },
+        .fee => {
+            var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                &owned_spec,
+                .{
+                    .mode = preferred_invocation_mode_options,
+                    .fee = .{
+                        .blockhash_commitment = if (context_args.recent_blockhash_arg == null) commitment else null,
+                        .commitment = commitment,
+                    },
+                },
+            ) catch {
+                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+                return error.InvalidCli;
+            };
+            defer result.deinit(allocator);
+
+            try emitPreferredFeeExecutionResult(allocator, &result, execution_output_json);
+        },
+    }
 }
 
 fn buildAndEmitCanonicalInvocationSpecJsonForPayloadFamily(
@@ -6966,6 +7178,226 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return;
     }
 
+    if (lookupInvocationReadCommandSpec(command)) |read_only_command| {
+        try runInvocationReadOnlyCommand(
+            allocator,
+            rpc,
+            command,
+            read_only_command,
+            invoke_payload_args,
+            invoke_context_args,
+            output_json,
+            inspect_section,
+            commitment,
+            preferred_invocation_mode_options,
+            invoke_mode_arg != null or no_mode_fallback,
+        );
+        return;
+    }
+
+    if (command == .invoke_instructions or
+        command == .invoke_instructions_and_confirm or
+        command == .invoke_instructions_simulate)
+    {
+        var owned_spec = try buildInstructionsOwnedInvocationSpecForCommand(
+            allocator,
+            command,
+            instructions_spec_arg,
+            instruction_json_args,
+            effective_sender_keypair_path,
+            sender_secret_key_arg,
+            invoke_context_args.additional_signer_secret_keys_arg,
+            resolved_program_invoke_signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
+            recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
+        );
+        defer owned_spec.deinit(allocator);
+
+        if (command == .invoke_instructions_simulate) {
+            const simulation_options = try buildCliSimulationOptionsFromExecutionArgs(invoke_execution_args);
+            const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
+            var result = client.invoke.simulatePreferredTransactionExecutionResultFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                &owned_spec,
+                .{
+                    .mode = preferred_invocation_mode_options,
+                    .simulate = .{
+                        .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
+                            commitment
+                        else
+                            null,
+                        .simulate_options = simulation_options,
+                    },
+                },
+            ) catch {
+                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+                return error.InvalidCli;
+            };
+            defer result.deinit(allocator);
+
+            try emitPreferredSimulationExecutionResult(allocator, &result, output_json);
+            return;
+        }
+
+        const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
+        var result = (if (command == .invoke_instructions_and_confirm)
+            client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                &owned_spec,
+                .{
+                    .mode = preferred_invocation_mode_options,
+                    .send_and_confirm = .{
+                        .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
+                            commitment orelse send_preflight_commitment
+                        else
+                            null,
+                        .send_transaction_options = send_transaction_options,
+                        .commitment = commitment,
+                        .search_transaction_history = search_transaction_history,
+                        .timeout_ms = effective_timeout_ms,
+                        .poll_interval_ms = effective_poll_ms,
+                    },
+                },
+            )
+        else
+            client.invoke.sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                &owned_spec,
+                .{
+                    .mode = preferred_invocation_mode_options,
+                    .send = .{
+                        .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
+                            commitment orelse send_preflight_commitment
+                        else
+                            null,
+                        .send_transaction_options = send_transaction_options,
+                    },
+                },
+            )) catch {
+            reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+            return error.InvalidCli;
+        };
+        defer result.deinit(allocator);
+
+        try emitPreferredSignatureExecutionResult(
+            allocator,
+            &result,
+            output_json,
+            command == .invoke_instructions_and_confirm,
+        );
+        return;
+    }
+
+    if (command == .invoke_program_invoke or
+        command == .invoke_program_invoke_and_confirm or
+        command == .invoke_program_invoke_simulate)
+    {
+        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
+            allocator,
+            command,
+            invoke_payload_args.program_id_arg,
+            invoke_payload_args.program_accounts_arg,
+            invoke_payload_args.program_data_arg,
+            invoke_payload_args.program_data_encoding_arg,
+            invoke_payload_args.program_data_schema_json_arg,
+            invoke_payload_args.program_args_json_arg,
+            invoke_payload_args.program_schema_encoding_arg,
+            invoke_context_args.payer_keypair_path_arg,
+            invoke_context_args.payer_secret_key_arg,
+            invoke_context_args.signer_keypair_paths_arg,
+            invoke_context_args.lookup_tables_arg,
+            invoke_context_args.recent_blockhash_arg,
+            invoke_context_args.nonce_account_arg,
+            invoke_context_args.nonce_authority_secret_key_arg,
+            invoke_context_args.nonce_authority_keypair_path_arg,
+            invoke_context_args.additional_signer_secret_keys_arg,
+        );
+        defer owned_spec.deinit(allocator);
+
+        if (command == .invoke_program_invoke_simulate) {
+            const simulation_options = try buildCliSimulationOptionsFromExecutionArgs(invoke_execution_args);
+            const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
+            var result = client.invoke.simulatePreferredTransactionExecutionResultFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                &owned_spec,
+                .{
+                    .mode = preferred_invocation_mode_options,
+                    .simulate = .{
+                        .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
+                            commitment
+                        else
+                            null,
+                        .simulate_options = simulation_options,
+                    },
+                },
+            ) catch {
+                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+                return error.InvalidCli;
+            };
+            defer result.deinit(allocator);
+
+            try emitPreferredSimulationExecutionResult(allocator, &result, output_json);
+            return;
+        }
+
+        const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
+        var result = (if (command == .invoke_program_invoke_and_confirm)
+            client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                &owned_spec,
+                .{
+                    .mode = preferred_invocation_mode_options,
+                    .send_and_confirm = .{
+                        .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
+                            commitment orelse send_preflight_commitment
+                        else
+                            null,
+                        .send_transaction_options = send_transaction_options,
+                        .commitment = commitment,
+                        .search_transaction_history = search_transaction_history,
+                        .timeout_ms = effective_timeout_ms,
+                        .poll_interval_ms = effective_poll_ms,
+                    },
+                },
+            )
+        else
+            client.invoke.sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                &owned_spec,
+                .{
+                    .mode = preferred_invocation_mode_options,
+                    .send = .{
+                        .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
+                            commitment orelse send_preflight_commitment
+                        else
+                            null,
+                        .send_transaction_options = send_transaction_options,
+                    },
+                },
+            )) catch {
+            reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+            return error.InvalidCli;
+        };
+        defer result.deinit(allocator);
+
+        try emitPreferredSignatureExecutionResult(
+            allocator,
+            &result,
+            output_json,
+            command == .invoke_program_invoke_and_confirm,
+        );
+        return;
+    }
+
     if (command == .invoke_spec or command == .invoke_spec_and_confirm) {
         var owned_spec = try buildProvidedOwnedInvocationSpecForCommand(
             allocator,
@@ -7059,690 +7491,6 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         defer result.deinit(allocator);
 
         try emitPreferredSimulationExecutionResult(allocator, &result, output_json);
-        return;
-    }
-
-    if (command == .prepare_spec) {
-        var owned_spec = try buildProvidedOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            instructions_spec_arg,
-            instruction_json_args,
-            effective_sender_keypair_path,
-            sender_secret_key_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-            resolved_program_invoke_signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        var prepared = client.invoke.buildPreferredPreparedInvocationFromOwnedInvocationSpec(
-            allocator,
-            rpc,
-            &owned_spec,
-            .{ .mode = preferred_invocation_mode_options },
-        ) catch return error.InvalidCli;
-        defer prepared.deinit(allocator);
-
-        try emitPreferredPreparedInvocation(allocator, &prepared, output_json);
-        return;
-    }
-
-    if (command == .inspect_instructions) {
-        var owned_spec = try buildInstructionsOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            instructions_spec_arg,
-            instruction_json_args,
-            effective_sender_keypair_path,
-            sender_secret_key_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-            resolved_program_invoke_signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        try emitInvocationInspectSection(
-            allocator,
-            rpc,
-            &owned_spec,
-            output_json,
-            inspect_section,
-            preferred_invocation_mode_options,
-            invoke_mode_arg != null or no_mode_fallback,
-        );
-        return;
-    }
-
-    if (command == .estimate_spec_fee) {
-        var owned_spec = try buildProvidedOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            instructions_spec_arg,
-            instruction_json_args,
-            effective_sender_keypair_path,
-            sender_secret_key_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-            resolved_program_invoke_signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
-            allocator,
-            rpc,
-            &owned_spec,
-            .{
-                .mode = preferred_invocation_mode_options,
-                .fee = .{
-                    .blockhash_commitment = commitment,
-                    .commitment = commitment,
-                },
-            },
-        ) catch return error.InvalidCli;
-        defer result.deinit(allocator);
-
-        try emitPreferredFeeExecutionResult(allocator, &result, output_json);
-        return;
-    }
-
-    if (command == .inspect_spec) {
-        var owned_spec = try buildProvidedOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            instructions_spec_arg,
-            instruction_json_args,
-            effective_sender_keypair_path,
-            sender_secret_key_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-            resolved_program_invoke_signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        try emitInvocationInspectSection(
-            allocator,
-            rpc,
-            &owned_spec,
-            output_json,
-            inspect_section,
-            preferred_invocation_mode_options,
-            invoke_mode_arg != null or no_mode_fallback,
-        );
-        return;
-    }
-
-    if (command == .preview_spec or command == .explain_spec or command == .validate_spec) {
-        var owned_spec = try buildProvidedOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            instructions_spec_arg,
-            instruction_json_args,
-            effective_sender_keypair_path,
-            sender_secret_key_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-            resolved_program_invoke_signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        var analysis = client.invoke.buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
-            allocator,
-            rpc,
-            &owned_spec,
-            .{ .mode = preferred_invocation_mode_options },
-        ) catch return error.InvalidCli;
-        defer analysis.deinit(allocator);
-
-        try emitPreferredInvocationAnalysis(
-            allocator,
-            &analysis,
-            output_json,
-            command == .validate_spec,
-        );
-        return;
-    }
-
-    if (command == .invoke_program_invoke or command == .invoke_program_invoke_and_confirm) {
-        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            invoke_payload_args.program_id_arg,
-            invoke_payload_args.program_accounts_arg,
-            invoke_payload_args.program_data_arg,
-            invoke_payload_args.program_data_encoding_arg,
-            invoke_payload_args.program_data_schema_json_arg,
-            invoke_payload_args.program_args_json_arg,
-            invoke_payload_args.program_schema_encoding_arg,
-            invoke_context_args.payer_keypair_path_arg,
-            invoke_context_args.payer_secret_key_arg,
-            invoke_context_args.signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            invoke_context_args.recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        var result = (if (command == .invoke_program_invoke_and_confirm)
-            client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
-                allocator,
-                rpc,
-                &owned_spec,
-                .{
-                    .mode = preferred_invocation_mode_options,
-                    .send_and_confirm = .{
-                        .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
-                            commitment orelse send_preflight_commitment
-                        else
-                            null,
-                        .send_transaction_options = send_transaction_options,
-                        .commitment = commitment,
-                        .search_transaction_history = search_transaction_history,
-                        .timeout_ms = effective_timeout_ms,
-                        .poll_interval_ms = effective_poll_ms,
-                    },
-                },
-            )
-        else
-            client.invoke.sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
-                allocator,
-                rpc,
-                &owned_spec,
-                .{
-                    .mode = preferred_invocation_mode_options,
-                    .send = .{
-                        .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
-                            commitment orelse send_preflight_commitment
-                        else
-                            null,
-                        .send_transaction_options = send_transaction_options,
-                    },
-                },
-            )) catch {
-            reportInvalidCliMessage("error: {s} arguments are invalid\n", .{switch (command) {
-                .invoke_program_invoke => "invoke-program-invoke",
-                .invoke_program_invoke_and_confirm => "invoke-program-invoke-and-confirm",
-                else => unreachable,
-            }});
-            return error.InvalidCli;
-        };
-        defer result.deinit(allocator);
-
-        try emitPreferredSignatureExecutionResult(
-            allocator,
-            &result,
-            output_json,
-            command == .invoke_program_invoke_and_confirm,
-        );
-        return;
-    }
-
-    if (command == .invoke_program_invoke_simulate) {
-        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            invoke_payload_args.program_id_arg,
-            invoke_payload_args.program_accounts_arg,
-            invoke_payload_args.program_data_arg,
-            invoke_payload_args.program_data_encoding_arg,
-            invoke_payload_args.program_data_schema_json_arg,
-            invoke_payload_args.program_args_json_arg,
-            invoke_payload_args.program_schema_encoding_arg,
-            invoke_context_args.payer_keypair_path_arg,
-            invoke_context_args.payer_secret_key_arg,
-            invoke_context_args.signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            invoke_context_args.recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        const simulation_options = try buildCliSimulationOptionsFromExecutionArgs(invoke_execution_args);
-        var result = client.invoke.simulatePreferredTransactionExecutionResultFromOwnedInvocationSpec(
-            allocator,
-            rpc,
-            &owned_spec,
-            .{
-                .mode = preferred_invocation_mode_options,
-                .simulate = .{
-                    .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
-                        commitment
-                    else
-                        null,
-                    .simulate_options = simulation_options,
-                },
-            },
-        ) catch {
-            reportInvalidCliMessage("error: invoke-program-invoke-simulate arguments are invalid\n", .{});
-            return error.InvalidCli;
-        };
-        defer result.deinit(allocator);
-
-        try emitPreferredSimulationExecutionResult(allocator, &result, output_json);
-        return;
-    }
-
-    if (command == .estimate_program_invoke_fee) {
-        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            invoke_payload_args.program_id_arg,
-            invoke_payload_args.program_accounts_arg,
-            invoke_payload_args.program_data_arg,
-            invoke_payload_args.program_data_encoding_arg,
-            invoke_payload_args.program_data_schema_json_arg,
-            invoke_payload_args.program_args_json_arg,
-            invoke_payload_args.program_schema_encoding_arg,
-            invoke_context_args.payer_keypair_path_arg,
-            invoke_context_args.payer_secret_key_arg,
-            invoke_context_args.signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            invoke_context_args.recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
-            allocator,
-            rpc,
-            &owned_spec,
-            .{
-                .mode = preferred_invocation_mode_options,
-                .fee = .{
-                    .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
-                        commitment
-                    else
-                        null,
-                    .commitment = commitment,
-                },
-            },
-        ) catch {
-            reportInvalidCliMessage("error: estimate-program-invoke arguments are invalid\n", .{});
-            return error.InvalidCli;
-        };
-        defer result.deinit(allocator);
-
-        try emitPreferredFeeExecutionResult(allocator, &result, output_json);
-        return;
-    }
-
-    if (command == .invoke_instructions or command == .invoke_instructions_and_confirm) {
-        var owned_spec = try buildInstructionsOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            invoke_payload_args.instructions_spec_arg,
-            invoke_payload_args.instruction_json_args,
-            effective_sender_keypair_path,
-            sender_secret_key_arg,
-            program_invoke_additional_signer_secret_keys_arg,
-            resolved_program_invoke_signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        var result = (if (command == .invoke_instructions_and_confirm)
-            client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
-                allocator,
-                rpc,
-                &owned_spec,
-                .{
-                    .mode = preferred_invocation_mode_options,
-                    .send_and_confirm = .{
-                        .blockhash_commitment = if (recent_blockhash_arg == null) commitment orelse send_preflight_commitment else null,
-                        .send_transaction_options = send_transaction_options,
-                        .commitment = commitment,
-                        .search_transaction_history = search_transaction_history,
-                        .timeout_ms = effective_timeout_ms,
-                        .poll_interval_ms = effective_poll_ms,
-                    },
-                },
-            )
-        else
-            client.invoke.sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
-                allocator,
-                rpc,
-                &owned_spec,
-                .{
-                    .mode = preferred_invocation_mode_options,
-                    .send = .{
-                        .blockhash_commitment = if (recent_blockhash_arg == null) commitment orelse send_preflight_commitment else null,
-                        .send_transaction_options = send_transaction_options,
-                    },
-                },
-            )) catch {
-            reportInvalidCliMessage("error: {s} spec is invalid\n", .{switch (command) {
-                .invoke_instructions => "invoke-instructions",
-                .invoke_instructions_and_confirm => "invoke-instructions-and-confirm",
-                else => unreachable,
-            }});
-            return error.InvalidCli;
-        };
-        defer result.deinit(allocator);
-
-        try emitPreferredSignatureExecutionResult(
-            allocator,
-            &result,
-            output_json,
-            command == .invoke_instructions_and_confirm,
-        );
-        return;
-    }
-
-    if (command == .invoke_instructions_simulate) {
-        var owned_spec = try buildInstructionsOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            invoke_payload_args.instructions_spec_arg,
-            invoke_payload_args.instruction_json_args,
-            effective_sender_keypair_path,
-            sender_secret_key_arg,
-            program_invoke_additional_signer_secret_keys_arg,
-            resolved_program_invoke_signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        const simulation_options = try buildCliSimulationOptionsFromExecutionArgs(invoke_execution_args);
-        var result = client.invoke.simulatePreferredTransactionExecutionResultFromOwnedInvocationSpec(
-            allocator,
-            rpc,
-            &owned_spec,
-            .{
-                .mode = preferred_invocation_mode_options,
-                .simulate = .{
-                    .blockhash_commitment = if (recent_blockhash_arg == null)
-                        commitment
-                    else
-                        null,
-                    .simulate_options = simulation_options,
-                },
-            },
-        ) catch {
-            reportInvalidCliMessage("error: invoke-instructions-simulate spec is invalid\n", .{});
-            return error.InvalidCli;
-        };
-        defer result.deinit(allocator);
-
-        try emitPreferredSimulationExecutionResult(allocator, &result, output_json);
-        return;
-    }
-
-    if (command == .prepare_program_invoke) {
-        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            invoke_payload_args.program_id_arg,
-            invoke_payload_args.program_accounts_arg,
-            invoke_payload_args.program_data_arg,
-            invoke_payload_args.program_data_encoding_arg,
-            invoke_payload_args.program_data_schema_json_arg,
-            invoke_payload_args.program_args_json_arg,
-            invoke_payload_args.program_schema_encoding_arg,
-            invoke_context_args.payer_keypair_path_arg,
-            invoke_context_args.payer_secret_key_arg,
-            invoke_context_args.signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            invoke_context_args.recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        var prepared = client.invoke.buildPreferredPreparedInvocationFromOwnedInvocationSpec(
-            allocator,
-            rpc,
-            &owned_spec,
-            .{ .mode = preferred_invocation_mode_options },
-        ) catch {
-            reportInvalidCliMessage("error: prepare-program-invoke arguments are invalid\n", .{});
-            return error.InvalidCli;
-        };
-        defer prepared.deinit(allocator);
-
-        try emitPreferredPreparedInvocation(allocator, &prepared, output_json);
-        return;
-    }
-
-    if (command == .preview_program_invoke or command == .explain_program_invoke or command == .validate_program_invoke) {
-        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            invoke_payload_args.program_id_arg,
-            invoke_payload_args.program_accounts_arg,
-            invoke_payload_args.program_data_arg,
-            invoke_payload_args.program_data_encoding_arg,
-            invoke_payload_args.program_data_schema_json_arg,
-            invoke_payload_args.program_args_json_arg,
-            invoke_payload_args.program_schema_encoding_arg,
-            invoke_context_args.payer_keypair_path_arg,
-            invoke_context_args.payer_secret_key_arg,
-            invoke_context_args.signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            invoke_context_args.recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        var analysis = client.invoke.buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
-            allocator,
-            rpc,
-            &owned_spec,
-            .{ .mode = preferred_invocation_mode_options },
-        ) catch {
-            reportInvalidCliMessage("error: {s} arguments are invalid\n", .{switch (command) {
-                .preview_program_invoke => "preview-program-invoke",
-                .explain_program_invoke => "explain-program-invoke",
-                .validate_program_invoke => "validate-program-invoke",
-                else => unreachable,
-            }});
-            return error.InvalidCli;
-        };
-        defer analysis.deinit(allocator);
-
-        try emitPreferredInvocationAnalysis(
-            allocator,
-            &analysis,
-            output_json,
-            command == .validate_program_invoke,
-        );
-        return;
-    }
-
-    if (command == .inspect_program_invoke) {
-        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            invoke_payload_args.program_id_arg,
-            invoke_payload_args.program_accounts_arg,
-            invoke_payload_args.program_data_arg,
-            invoke_payload_args.program_data_encoding_arg,
-            invoke_payload_args.program_data_schema_json_arg,
-            invoke_payload_args.program_args_json_arg,
-            invoke_payload_args.program_schema_encoding_arg,
-            invoke_context_args.payer_keypair_path_arg,
-            invoke_context_args.payer_secret_key_arg,
-            invoke_context_args.signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            invoke_context_args.recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        emitInvocationInspectSection(
-            allocator,
-            rpc,
-            &owned_spec,
-            output_json,
-            inspect_section,
-            preferred_invocation_mode_options,
-            invoke_mode_arg != null or no_mode_fallback,
-        ) catch {
-            reportInvalidCliMessage("error: inspect-program-invoke arguments are invalid\n", .{});
-            return error.InvalidCli;
-        };
-        return;
-    }
-
-    if (command == .prepare_instructions) {
-        var owned_spec = try buildInstructionsOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            instructions_spec_arg,
-            instruction_json_args,
-            effective_sender_keypair_path,
-            sender_secret_key_arg,
-            program_invoke_additional_signer_secret_keys_arg,
-            resolved_program_invoke_signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        var prepared = client.invoke.buildPreferredPreparedInvocationFromOwnedInvocationSpec(
-            allocator,
-            rpc,
-            &owned_spec,
-            .{ .mode = preferred_invocation_mode_options },
-        ) catch {
-            reportInvalidCliMessage("error: prepare-instructions spec is invalid\n", .{});
-            return error.InvalidCli;
-        };
-        defer prepared.deinit(allocator);
-
-        try emitPreferredPreparedInvocation(allocator, &prepared, output_json);
-        return;
-    }
-
-    if (command == .estimate_instructions_fee) {
-        var owned_spec = try buildInstructionsOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            instructions_spec_arg,
-            instruction_json_args,
-            effective_sender_keypair_path,
-            sender_secret_key_arg,
-            program_invoke_additional_signer_secret_keys_arg,
-            resolved_program_invoke_signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
-            allocator,
-            rpc,
-            &owned_spec,
-            .{
-                .mode = preferred_invocation_mode_options,
-                .fee = .{
-                    .blockhash_commitment = if (recent_blockhash_arg == null)
-                        commitment
-                    else
-                        null,
-                    .commitment = commitment,
-                },
-            },
-        ) catch {
-            reportInvalidCliMessage("error: estimate-instructions-fee spec is invalid\n", .{});
-            return error.InvalidCli;
-        };
-        defer result.deinit(allocator);
-
-        try emitPreferredFeeExecutionResult(allocator, &result, output_json);
-        return;
-    }
-
-    if (command == .preview_instructions or command == .explain_instructions or command == .validate_instructions) {
-        var owned_spec = try buildInstructionsOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            instructions_spec_arg,
-            instruction_json_args,
-            effective_sender_keypair_path,
-            sender_secret_key_arg,
-            program_invoke_additional_signer_secret_keys_arg,
-            resolved_program_invoke_signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        var analysis = client.invoke.buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
-            allocator,
-            rpc,
-            &owned_spec,
-            .{ .mode = preferred_invocation_mode_options },
-        ) catch {
-            reportInvalidCliMessage("error: {s} spec is invalid\n", .{switch (command) {
-                .preview_instructions => "preview-instructions",
-                .explain_instructions => "explain-instructions",
-                .validate_instructions => "validate-instructions",
-                else => unreachable,
-            }});
-            return error.InvalidCli;
-        };
-        defer analysis.deinit(allocator);
-
-        try emitPreferredInvocationAnalysis(
-            allocator,
-            &analysis,
-            output_json,
-            command == .validate_instructions,
-        );
         return;
     }
 
@@ -7873,221 +7621,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         return;
     }
 
-    if (command == .prepare_idl_invoke) {
-        var owned_spec = try buildAnchorIdlOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            idl_spec_arg,
-            idl_instruction_arg,
-            idl_program_id_arg,
-            idl_args_json_arg,
-            args.idl_accounts_json_arg,
-            idl_account_bindings.items,
-            idl_remaining_accounts.items,
-            args.idl_remaining_accounts_json_arg,
-            invoke_context_args.payer_keypair_path_arg,
-            invoke_context_args.payer_secret_key_arg,
-            invoke_context_args.signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            invoke_context_args.recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        var prepared = client.invoke.buildPreferredPreparedInvocationFromOwnedInvocationSpec(
-            allocator,
-            rpc,
-            &owned_spec,
-            .{ .mode = preferred_invocation_mode_options },
-        ) catch {
-            reportInvalidCliMessage("error: prepare-idl-invoke arguments are invalid\n", .{});
-            return error.InvalidCli;
-        };
-        defer prepared.deinit(allocator);
-
-        try emitPreferredPreparedInvocation(allocator, &prepared, output_json);
-        return;
-    }
-
-    if (command == .estimate_idl_invoke_fee) {
-        var owned_spec = try buildAnchorIdlOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            idl_spec_arg,
-            idl_instruction_arg,
-            idl_program_id_arg,
-            idl_args_json_arg,
-            args.idl_accounts_json_arg,
-            idl_account_bindings.items,
-            idl_remaining_accounts.items,
-            args.idl_remaining_accounts_json_arg,
-            invoke_context_args.payer_keypair_path_arg,
-            invoke_context_args.payer_secret_key_arg,
-            invoke_context_args.signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            invoke_context_args.recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
-            allocator,
-            rpc,
-            &owned_spec,
-            .{
-                .mode = preferred_invocation_mode_options,
-                .fee = .{
-                    .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
-                        commitment
-                    else
-                        null,
-                    .commitment = commitment,
-                },
-            },
-        ) catch {
-            reportInvalidCliMessage("error: estimate-idl-invoke arguments are invalid\n", .{});
-            return error.InvalidCli;
-        };
-        defer result.deinit(allocator);
-
-        try emitPreferredFeeExecutionResult(allocator, &result, output_json);
-        return;
-    }
-
-    if (command == .preview_idl_invoke or command == .explain_idl_invoke or command == .validate_idl_invoke) {
-        var owned_spec = try buildAnchorIdlOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            idl_spec_arg,
-            idl_instruction_arg,
-            idl_program_id_arg,
-            idl_args_json_arg,
-            args.idl_accounts_json_arg,
-            idl_account_bindings.items,
-            idl_remaining_accounts.items,
-            args.idl_remaining_accounts_json_arg,
-            invoke_context_args.payer_keypair_path_arg,
-            invoke_context_args.payer_secret_key_arg,
-            invoke_context_args.signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            invoke_context_args.recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        var analysis = client.invoke.buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
-            allocator,
-            rpc,
-            &owned_spec,
-            .{ .mode = preferred_invocation_mode_options },
-        ) catch {
-            reportInvalidCliMessage("error: {s} arguments are invalid\n", .{switch (command) {
-                .preview_idl_invoke => "preview-idl-invoke",
-                .explain_idl_invoke => "explain-idl-invoke",
-                .validate_idl_invoke => "validate-idl-invoke",
-                else => unreachable,
-            }});
-            return error.InvalidCli;
-        };
-        defer analysis.deinit(allocator);
-
-        try emitPreferredInvocationAnalysis(
-            allocator,
-            &analysis,
-            output_json,
-            command == .validate_idl_invoke,
-        );
-        return;
-    }
-
-    if (command == .inspect_idl_invoke) {
-        var owned_spec = try buildAnchorIdlOwnedInvocationSpecForCommand(
-            allocator,
-            command,
-            idl_spec_arg,
-            idl_instruction_arg,
-            idl_program_id_arg,
-            idl_args_json_arg,
-            args.idl_accounts_json_arg,
-            idl_account_bindings.items,
-            idl_remaining_accounts.items,
-            args.idl_remaining_accounts_json_arg,
-            invoke_context_args.payer_keypair_path_arg,
-            invoke_context_args.payer_secret_key_arg,
-            invoke_context_args.signer_keypair_paths_arg,
-            invoke_context_args.lookup_tables_arg,
-            invoke_context_args.recent_blockhash_arg,
-            invoke_context_args.nonce_account_arg,
-            invoke_context_args.nonce_authority_secret_key_arg,
-            invoke_context_args.nonce_authority_keypair_path_arg,
-            invoke_context_args.additional_signer_secret_keys_arg,
-        );
-        defer owned_spec.deinit(allocator);
-
-        emitInvocationInspectSection(
-            allocator,
-            rpc,
-            &owned_spec,
-            output_json,
-            inspect_section,
-            preferred_invocation_mode_options,
-            invoke_mode_arg != null or no_mode_fallback,
-        ) catch {
-            reportInvalidCliMessage("error: inspect-idl-invoke arguments are invalid\n", .{});
-            return error.InvalidCli;
-        };
-        return;
-    }
-
     switch (command) {
-        .invoke_instructions => unreachable,
-        .invoke_instructions_and_confirm => unreachable,
-        .invoke_instructions_simulate => unreachable,
-        .preview_instructions => unreachable,
-        .explain_instructions => unreachable,
-        .validate_instructions => unreachable,
-        .inspect_instructions => unreachable,
-        .prepare_instructions => unreachable,
-        .estimate_instructions_fee => unreachable,
-        .spec_instructions => unreachable,
-        .invoke_spec => unreachable,
-        .invoke_spec_and_confirm => unreachable,
-        .invoke_spec_simulate => unreachable,
-        .preview_spec => unreachable,
-        .explain_spec => unreachable,
-        .validate_spec => unreachable,
-        .inspect_spec => unreachable,
-        .prepare_spec => unreachable,
-        .estimate_spec_fee => unreachable,
-        .invoke_program_invoke => unreachable,
-        .invoke_program_invoke_and_confirm => unreachable,
-        .invoke_program_invoke_simulate => unreachable,
-        .preview_program_invoke => unreachable,
-        .explain_program_invoke => unreachable,
-        .validate_program_invoke => unreachable,
-        .inspect_program_invoke => unreachable,
-        .prepare_program_invoke => unreachable,
-        .estimate_program_invoke_fee => unreachable,
-        .spec_program_invoke => unreachable,
-        .invoke_idl_invoke => unreachable,
-        .invoke_idl_invoke_and_confirm => unreachable,
-        .invoke_idl_invoke_simulate => unreachable,
-        .preview_idl_invoke => unreachable,
-        .explain_idl_invoke => unreachable,
-        .validate_idl_invoke => unreachable,
-        .inspect_idl_invoke => unreachable,
-        .prepare_idl_invoke => unreachable,
-        .estimate_idl_invoke_fee => unreachable,
-        .spec_idl_invoke => unreachable,
         .latest_blockhash => {
             if (with_context) {
                 const blockhash_response = try rpc.getLatestBlockhashResponse(commitment);
@@ -9979,6 +9513,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             const minimum = try rpc.getStakeMinimumDelegation(commitment);
             std.debug.print("stake minimum delegation: {}\n", .{minimum});
         },
+        else => unreachable,
     }
 }
 
