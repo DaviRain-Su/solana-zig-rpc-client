@@ -12822,6 +12822,161 @@ test "runCommand simulate-instructions accepts additional-signer-secret-key" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: ok") != null);
 }
 
+test "runCommand simulate-instructions resolves preferred mode to versioned with --invoke-mode versioned" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        \\{"context":{"slot":181},"value":{"accounts":[],"err":null,"fee":130,"unitsConsumed":44,"logs":["Program log: simulate-ok"]}}
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://simulate-instructions-preferred-versioned" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{100} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const table_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const table = try client.Keypair.fromSecretKeyBytes(table_raw.secret_key.toBytes());
+    const table_pubkey_base58 = try table.public_key.toBase58(allocator);
+    defer allocator.free(table_pubkey_base58);
+
+    const lookup_address_raw = try Ed25519.KeyPair.generateDeterministic(.{2} ** 32);
+    const lookup_address = try client.Keypair.fromSecretKeyBytes(lookup_address_raw.secret_key.toBytes());
+    const lookup_address_pubkey_base58 = try lookup_address.public_key.toBase58(allocator);
+    defer allocator.free(lookup_address_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 131);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "recent_blockhash":"{s}",
+        \\  "instructions":[
+        \\    {{
+        \\      "program_id":"11111111111111111111111111111111",
+        \\      "accounts":[
+        \\        {{"pubkey":"{s}","is_signer":true,"is_writable":true}},
+        \\        {{"pubkey":"{s}","is_signer":false,"is_writable":true}}
+        \\      ],
+        \\      "data":"ping",
+        \\      "data_encoding":"utf8"
+        \\    }}
+        \\  ],
+        \\  "address_lookup_tables":[
+        \\    {{"account_key":"{s}","addresses":["{s}"]}}
+        \\  ]
+        \\}}
+    ,
+        .{
+            recent_blockhash,
+            payer_pubkey_base58,
+            lookup_address_pubkey_base58,
+            table_pubkey_base58,
+            lookup_address_pubkey_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-instructions",
+        "--invoke-mode",
+        "versioned",
+        "--no-mode-fallback",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "simulateTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "simulation: slot=181 err=null") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "Program log: simulate-ok") != null);
+}
+
+test "runCommand simulate-instructions with no-mode-fallback fails when requested mode is not buildable" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://simulate-instructions-no-mode-fallback" },
+    );
+    defer rpc.deinit();
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{101} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{102} ** 32);
+    const extra_signer_secret_key = extra_signer_raw.secret_key.toBytes();
+    const extra_signer_secret_key_base58 = try client.encodeBase58(allocator, &extra_signer_secret_key);
+    defer allocator.free(extra_signer_secret_key_base58);
+
+    const missing_signer_pubkey = client.Pubkey.fromBytes([_]u8{103} ** 32);
+    const missing_signer_pubkey_base58 = try missing_signer_pubkey.toBase58(allocator);
+    defer allocator.free(missing_signer_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 141);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","additional_signer_secret_keys":["{s}"],"recent_blockhash":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":false}}],"data":"ping","data_encoding":"utf8"}}]}}
+    ,
+        .{ payer_secret_key_base58, extra_signer_secret_key_base58, recent_blockhash, missing_signer_pubkey_base58 },
+    );
+    defer allocator.free(spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "simulate-instructions",
+        "--invoke-mode",
+        "legacy",
+        "--no-mode-fallback",
+        spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.NoBuildableInvocationMode, runCommand(allocator, &rpc, &parsed));
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+}
+
 test "runCommand send-instructions sends generic instruction spec" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);
