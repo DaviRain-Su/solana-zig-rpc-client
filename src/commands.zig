@@ -19070,6 +19070,74 @@ test "runCommand invoke-instructions with no-mode-fallback fails when requested 
     try expectMockSenderScriptSatisfied(&sender_context.sender);
 }
 
+test "runCommand invoke-spec with no-mode-fallback fails when requested mode is not buildable" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://invoke-spec-no-mode-fallback" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{101} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{102} ** 32);
+    const extra_signer_secret_key = extra_signer_raw.secret_key.toBytes();
+    const extra_signer_secret_key_base58 = try client.encodeBase58(allocator, &extra_signer_secret_key);
+    defer allocator.free(extra_signer_secret_key_base58);
+
+    const missing_signer = client.Pubkey.fromBytes([_]u8{103} ** 32);
+    const missing_signer_base58 = try missing_signer.toBase58(allocator);
+    defer allocator.free(missing_signer_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 141);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const invocation_spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","additional_signer_secret_keys":["{s}"],"recent_blockhash":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":false}}],"data":"ping","data_encoding":"utf8"}}]}}
+    ,
+        .{ payer_secret_key_base58, extra_signer_secret_key_base58, recent_blockhash, missing_signer_base58 },
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "invoke-spec",
+        "--invoke-mode",
+        "legacy",
+        "--no-mode-fallback",
+        invocation_spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.NoBuildableInvocationMode, runCommand(allocator, &rpc, &parsed));
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    try std.testing.expect(std.mem.indexOf(u8, captured, "error: no executable invocation mode was found for the requested preferences") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "requested mode: legacy") != null);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+}
+
 test "runCommand invoke-program-invoke emits json preferred send result" {
     const allocator = std.testing.allocator;
     var sender_context = CommandTestSender.init(allocator);

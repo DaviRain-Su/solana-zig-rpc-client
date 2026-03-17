@@ -457,6 +457,9 @@ pub fn lookupInvokeCommandLabel(command: cli.Command) ?[]const u8 {
         .invoke_instructions => "invoke-instructions",
         .invoke_instructions_and_confirm => "invoke-instructions-and-confirm",
         .invoke_instructions_simulate => "invoke-instructions-simulate",
+        .invoke_spec => "invoke-spec",
+        .invoke_spec_and_confirm => "invoke-spec-and-confirm",
+        .invoke_spec_simulate => "invoke-spec-simulate",
         .preview_spec => "preview-spec",
         .explain_spec => "explain-spec",
         .validate_spec => "validate-spec",
@@ -1540,6 +1543,12 @@ test "commands.invoke supportsSearchTransactionHistory covers confirmation-orien
     try std.testing.expect(supportsSearchTransactionHistory(.invoke_idl_invoke_and_confirm));
     try std.testing.expect(!supportsSearchTransactionHistory(.poll_balance));
     try std.testing.expect(!supportsSearchTransactionHistory(.preview_spec));
+}
+
+test "commands.invoke lookupInvokeCommandLabel covers direct spec invoke commands" {
+    try std.testing.expectEqualStrings("invoke-spec", lookupInvokeCommandLabel(.invoke_spec).?);
+    try std.testing.expectEqualStrings("invoke-spec-and-confirm", lookupInvokeCommandLabel(.invoke_spec_and_confirm).?);
+    try std.testing.expectEqualStrings("invoke-spec-simulate", lookupInvokeCommandLabel(.invoke_spec_simulate).?);
 }
 
 test "commands.invoke supportsInspectSection covers inspect commands only" {
