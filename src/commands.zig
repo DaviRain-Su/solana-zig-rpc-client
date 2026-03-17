@@ -12932,6 +12932,14 @@ test "runCommand simulate-instructions with no-mode-fallback fails when requeste
     );
     defer rpc.deinit();
 
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
     const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{101} ** 32);
     const payer_secret_key = payer_raw.secret_key.toBytes();
     const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
@@ -12972,6 +12980,14 @@ test "runCommand simulate-instructions with no-mode-fallback fails when requeste
     defer parsed.deinit(allocator);
 
     try std.testing.expectError(error.NoBuildableInvocationMode, runCommand(allocator, &rpc, &parsed));
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    try std.testing.expect(std.mem.indexOf(u8, captured, "error: no executable invocation mode was found for the requested preferences") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "requested mode: legacy") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "used fallback: false") != null);
 
     try expectMockSenderRequestCount(&sender_context.sender, 0);
     try expectMockSenderScriptSatisfied(&sender_context.sender);

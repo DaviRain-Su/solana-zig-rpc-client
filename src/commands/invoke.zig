@@ -1112,10 +1112,46 @@ pub fn runGenericInvocationCommand(
     const invocation_spec_json = try spec.buildInvocationSpecJson(allocator, payload_args, context_args, callbacks.builders);
     defer allocator.free(invocation_spec_json);
 
+    const reportNoBuildableMode = struct {
+        fn emit(
+            report_allocator: Allocator,
+            report_rpc: *client.RpcClient,
+            report_execution_family: InvokeFamily,
+            report_invocation_spec_json: []const u8,
+            report_preferred_mode_options: client.invoke.PreferredInvocationModeOptions,
+        ) !void {
+            var buf: [4096]u8 = undefined;
+            var stderr_writer = std.fs.File.stderr().writer(&buf);
+
+            try stderr_writer.interface.print(
+                "error: no executable invocation mode was found for the requested preferences\n",
+                .{},
+            );
+
+            try client.invoke.writePreferredInvocationModeResolutionTextFromInvocationSpecJson(
+                &stderr_writer.interface,
+                report_allocator,
+                report_rpc,
+                report_execution_family,
+                report_invocation_spec_json,
+                .{},
+                report_preferred_mode_options,
+            );
+
+            const hint = if (report_preferred_mode_options.allow_fallback)
+                "try adjusting --invoke-mode or invocation data"
+            else
+                "retry without --no-mode-fallback or adjust --invoke-mode";
+
+            try stderr_writer.interface.print("hint: {s}\n", .{hint});
+            try stderr_writer.interface.flush();
+        }
+    }.emit;
+
     if (behavior.simulate) {
         const options = try callbacks.buildSimulationOptions(execution_args);
         if (preferred_invocation_mode_options) |mode_options| {
-            var simulation_result = try client.invoke.simulatePreferredTransactionExecutionResultFromInvocationSpecJson(
+            var simulation_result = (client.invoke.simulatePreferredTransactionExecutionResultFromInvocationSpecJson(
                 allocator,
                 rpc,
                 execution_family,
@@ -1127,7 +1163,18 @@ pub fn runGenericInvocationCommand(
                         .simulate_options = options,
                     },
                 },
-            );
+            ) catch |err| {
+                if (err == error.NoBuildableInvocationMode) {
+                    try reportNoBuildableMode(
+                        allocator,
+                        rpc,
+                        execution_family,
+                        invocation_spec_json,
+                        mode_options,
+                    );
+                }
+                return err;
+            });
             defer simulation_result.deinit(allocator);
 
             callbacks.printSimulationResult(simulation_result.simulation);
@@ -1153,7 +1200,7 @@ pub fn runGenericInvocationCommand(
 
     if (behavior.confirm) {
         if (preferred_invocation_mode_options) |mode_options| {
-            var result = try client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromInvocationSpecJson(
+            var result = (client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromInvocationSpecJson(
                 allocator,
                 rpc,
                 execution_family,
@@ -1169,7 +1216,18 @@ pub fn runGenericInvocationCommand(
                         .poll_interval_ms = execution_args.status_poll_ms,
                     },
                 },
-            );
+            ) catch |err| {
+                if (err == error.NoBuildableInvocationMode) {
+                    try reportNoBuildableMode(
+                        allocator,
+                        rpc,
+                        execution_family,
+                        invocation_spec_json,
+                        mode_options,
+                    );
+                }
+                return err;
+            });
             defer result.deinit(allocator);
             std.debug.print("confirmed signature: {s}\n", .{result.signature});
         } else {
@@ -1195,7 +1253,7 @@ pub fn runGenericInvocationCommand(
     }
 
     if (preferred_invocation_mode_options) |mode_options| {
-        var result = try client.invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson(
+        var result = (client.invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson(
             allocator,
             rpc,
             execution_family,
@@ -1207,7 +1265,18 @@ pub fn runGenericInvocationCommand(
                     .send_transaction_options = execution_args.send_transaction_options,
                 },
             },
-        );
+        ) catch |err| {
+            if (err == error.NoBuildableInvocationMode) {
+                try reportNoBuildableMode(
+                    allocator,
+                    rpc,
+                    execution_family,
+                    invocation_spec_json,
+                    mode_options,
+                );
+            }
+            return err;
+        });
         defer result.deinit(allocator);
         std.debug.print("signature: {s}\n", .{result.signature});
         return;
