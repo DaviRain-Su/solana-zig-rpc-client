@@ -5856,6 +5856,38 @@ fn emitPreferredSignatureExecutionResult(
     }
 }
 
+fn reportNoBuildableModeForOwnedInvocationSpec(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    owned_spec: *const client.invoke.OwnedInvocationSpec,
+    build_options: client.invoke.BuildInvocationSpecOptions,
+    preferred_mode_options: client.invoke.PreferredInvocationModeOptions,
+) !void {
+    var buf: [4096]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&buf);
+
+    try stderr_writer.interface.print(
+        "error: no executable invocation mode was found for the requested preferences\n",
+        .{},
+    );
+
+    try client.invoke.writePreferredInvocationModeResolutionTextFromOwnedInvocationSpec(
+        &stderr_writer.interface,
+        allocator,
+        rpc,
+        owned_spec,
+        build_options,
+        preferred_mode_options,
+    );
+
+    const hint = if (preferred_mode_options.allow_fallback)
+        "try adjusting --invoke-mode or invocation data"
+    else
+        "retry without --no-mode-fallback or adjust --invoke-mode";
+    try stderr_writer.interface.print("hint: {s}\n", .{hint});
+    try stderr_writer.interface.flush();
+}
+
 fn printPreferredSimulationExecutionResult(
     result: *const client.invoke.PreferredSimulationExecutionResult,
 ) void {
@@ -6164,9 +6196,19 @@ fn runInvocationReadOnlyCommand(
                 rpc,
                 &owned_spec,
                 .{ .mode = preferred_invocation_mode_options },
-            ) catch {
-                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
-                return error.InvalidCli;
+            ) catch |err| {
+                if (err == error.NoBuildableInvocationMode) {
+                    try reportNoBuildableModeForOwnedInvocationSpec(
+                        allocator,
+                        rpc,
+                        &owned_spec,
+                        .{},
+                        preferred_invocation_mode_options,
+                    );
+                } else {
+                    reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+                }
+                return err;
             };
             defer analysis.deinit(allocator);
 
@@ -6192,9 +6234,19 @@ fn runInvocationReadOnlyCommand(
                 rpc,
                 &owned_spec,
                 .{ .mode = preferred_invocation_mode_options },
-            ) catch {
-                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
-                return error.InvalidCli;
+            ) catch |err| {
+                if (err == error.NoBuildableInvocationMode) {
+                    try reportNoBuildableModeForOwnedInvocationSpec(
+                        allocator,
+                        rpc,
+                        &owned_spec,
+                        .{},
+                        preferred_invocation_mode_options,
+                    );
+                } else {
+                    reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+                }
+                return err;
             };
             defer prepared.deinit(allocator);
 
@@ -6212,9 +6264,22 @@ fn runInvocationReadOnlyCommand(
                         .commitment = commitment,
                     },
                 },
-            ) catch {
-                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
-                return error.InvalidCli;
+            ) catch |err| {
+                if (err == error.NoBuildableInvocationMode) {
+                    const build_options: client.invoke.BuildInvocationSpecOptions = .{
+                        .blockhash_commitment = if (context_args.recent_blockhash_arg == null) commitment else null,
+                    };
+                    try reportNoBuildableModeForOwnedInvocationSpec(
+                        allocator,
+                        rpc,
+                        &owned_spec,
+                        build_options,
+                        preferred_invocation_mode_options,
+                    );
+                } else {
+                    reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+                }
+                return err;
             };
             defer result.deinit(allocator);
 
@@ -7241,9 +7306,25 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                         .simulate_options = simulation_options,
                     },
                 },
-            ) catch {
-                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
-                return error.InvalidCli;
+            ) catch |err| {
+                if (err == error.NoBuildableInvocationMode) {
+                    const build_options: client.invoke.BuildInvocationSpecOptions = .{
+                        .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
+                            commitment
+                        else
+                            null,
+                    };
+                    try reportNoBuildableModeForOwnedInvocationSpec(
+                        allocator,
+                        rpc,
+                        &owned_spec,
+                        build_options,
+                        preferred_invocation_mode_options,
+                    );
+                } else {
+                    reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+                }
+                return err;
             };
             defer result.deinit(allocator);
 
@@ -7287,9 +7368,25 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                         .send_transaction_options = send_transaction_options,
                     },
                 },
-            )) catch {
-            reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
-            return error.InvalidCli;
+            )) catch |err| {
+            if (err == error.NoBuildableInvocationMode) {
+                const build_options: client.invoke.BuildInvocationSpecOptions = .{
+                    .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
+                        (commitment orelse send_preflight_commitment)
+                    else
+                        null,
+                };
+                try reportNoBuildableModeForOwnedInvocationSpec(
+                    allocator,
+                    rpc,
+                    &owned_spec,
+                    build_options,
+                    preferred_invocation_mode_options,
+                );
+            } else {
+                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+            }
+            return err;
         };
         defer result.deinit(allocator);
 
@@ -7345,9 +7442,25 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                         .simulate_options = simulation_options,
                     },
                 },
-            ) catch {
-                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
-                return error.InvalidCli;
+            ) catch |err| {
+                if (err == error.NoBuildableInvocationMode) {
+                    const build_options: client.invoke.BuildInvocationSpecOptions = .{
+                        .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
+                            commitment
+                        else
+                            null,
+                    };
+                    try reportNoBuildableModeForOwnedInvocationSpec(
+                        allocator,
+                        rpc,
+                        &owned_spec,
+                        build_options,
+                        preferred_invocation_mode_options,
+                    );
+                } else {
+                    reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+                }
+                return err;
             };
             defer result.deinit(allocator);
 
@@ -7391,9 +7504,25 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                         .send_transaction_options = send_transaction_options,
                     },
                 },
-            )) catch {
-            reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
-            return error.InvalidCli;
+            )) catch |err| {
+            if (err == error.NoBuildableInvocationMode) {
+                const build_options: client.invoke.BuildInvocationSpecOptions = .{
+                    .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
+                        (commitment orelse send_preflight_commitment)
+                    else
+                        null,
+                };
+                try reportNoBuildableModeForOwnedInvocationSpec(
+                    allocator,
+                    rpc,
+                    &owned_spec,
+                    build_options,
+                    preferred_invocation_mode_options,
+                );
+            } else {
+                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+            }
+            return err;
         };
         defer result.deinit(allocator);
 
@@ -7424,6 +7553,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         );
         defer owned_spec.deinit(allocator);
 
+        const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
         var result = (if (command == .invoke_spec_and_confirm)
             client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
                 allocator,
@@ -7453,7 +7583,26 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                         .send_transaction_options = send_transaction_options,
                     },
                 },
-            )) catch return error.InvalidCli;
+            )) catch |err| {
+            if (err == error.NoBuildableInvocationMode) {
+                const build_options: client.invoke.BuildInvocationSpecOptions = .{
+                    .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
+                        (commitment orelse send_preflight_commitment)
+                    else
+                        null,
+                };
+                try reportNoBuildableModeForOwnedInvocationSpec(
+                    allocator,
+                    rpc,
+                    &owned_spec,
+                    build_options,
+                    preferred_invocation_mode_options,
+                );
+            } else {
+                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+            }
+            return err;
+        };
         defer result.deinit(allocator);
 
         try emitPreferredSignatureExecutionResult(
@@ -7495,7 +7644,24 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                     .simulate_options = simulation_options,
                 },
             },
-        ) catch return error.InvalidCli;
+        ) catch |err| {
+            if (err == error.NoBuildableInvocationMode) {
+                const build_options: client.invoke.BuildInvocationSpecOptions = .{
+                    .blockhash_commitment = commitment,
+                };
+                try reportNoBuildableModeForOwnedInvocationSpec(
+                    allocator,
+                    rpc,
+                    &owned_spec,
+                    build_options,
+                    preferred_invocation_mode_options,
+                );
+            } else {
+                const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
+                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+            }
+            return err;
+        };
         defer result.deinit(allocator);
 
         try emitPreferredSimulationExecutionResult(allocator, &result, output_json);
@@ -7526,6 +7692,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         );
         defer owned_spec.deinit(allocator);
 
+        const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
         var result = (if (command == .invoke_idl_invoke_and_confirm)
             client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
                 allocator,
@@ -7561,13 +7728,25 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                         .send_transaction_options = send_transaction_options,
                     },
                 },
-            )) catch {
-            reportInvalidCliMessage("error: {s} arguments are invalid\n", .{switch (command) {
-                .invoke_idl_invoke => "invoke-idl-invoke",
-                .invoke_idl_invoke_and_confirm => "invoke-idl-invoke-and-confirm",
-                else => unreachable,
-            }});
-            return error.InvalidCli;
+            )) catch |err| {
+            if (err == error.NoBuildableInvocationMode) {
+                const build_options: client.invoke.BuildInvocationSpecOptions = .{
+                    .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
+                        (commitment orelse send_preflight_commitment)
+                    else
+                        null,
+                };
+                try reportNoBuildableModeForOwnedInvocationSpec(
+                    allocator,
+                    rpc,
+                    &owned_spec,
+                    build_options,
+                    preferred_invocation_mode_options,
+                );
+            } else {
+                reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+            }
+            return err;
         };
         defer result.deinit(allocator);
 
@@ -7619,9 +7798,25 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                     .simulate_options = simulation_options,
                 },
             },
-        ) catch {
-            reportInvalidCliMessage("error: invoke-idl-invoke-simulate arguments are invalid\n", .{});
-            return error.InvalidCli;
+        ) catch |err| {
+            if (err == error.NoBuildableInvocationMode) {
+                const build_options: client.invoke.BuildInvocationSpecOptions = .{
+                    .blockhash_commitment = if (invoke_context_args.recent_blockhash_arg == null)
+                        commitment
+                    else
+                        null,
+                };
+                try reportNoBuildableModeForOwnedInvocationSpec(
+                    allocator,
+                    rpc,
+                    &owned_spec,
+                    build_options,
+                    preferred_invocation_mode_options,
+                );
+            } else {
+                reportInvalidCliMessage("error: invoke-idl-invoke-simulate arguments are invalid\n", .{});
+            }
+            return err;
         };
         defer result.deinit(allocator);
 
@@ -18798,6 +18993,81 @@ test "runCommand invoke-instructions-simulate emits json preferred simulation re
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"context_slot\":181") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"fee\":130") != null);
+}
+
+test "runCommand invoke-instructions with no-mode-fallback fails when requested mode is not buildable" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://invoke-instructions-no-mode-fallback" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{101} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const extra_signer_raw = try Ed25519.KeyPair.generateDeterministic(.{102} ** 32);
+    const extra_signer_secret_key = extra_signer_raw.secret_key.toBytes();
+    const extra_signer_secret_key_base58 = try client.encodeBase58(allocator, &extra_signer_secret_key);
+    defer allocator.free(extra_signer_secret_key_base58);
+
+    const missing_signer = client.Pubkey.fromBytes([_]u8{103} ** 32);
+    const missing_signer_base58 = try missing_signer.toBase58(allocator);
+    defer allocator.free(missing_signer_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 141);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","additional_signer_secret_keys":["{s}"],"recent_blockhash":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":false}}],"data":"ping","data_encoding":"utf8"}}]}}
+    ,
+        .{
+            payer_secret_key_base58,
+            extra_signer_secret_key_base58,
+            recent_blockhash,
+            missing_signer_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "invoke-instructions",
+        "--invoke-mode",
+        "legacy",
+        "--no-mode-fallback",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectError(error.NoBuildableInvocationMode, runCommand(allocator, &rpc, &parsed));
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 4096);
+    defer allocator.free(captured);
+
+    try std.testing.expect(std.mem.indexOf(u8, captured, "error: no executable invocation mode was found for the requested preferences") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "requested mode: legacy") != null);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
 }
 
 test "runCommand invoke-program-invoke emits json preferred send result" {
