@@ -6000,6 +6000,7 @@ fn runGenericInvocationCommand(
     payload_args: CliInvokePayloadArgs,
     context_args: CliInvokeContextArgs,
     execution_args: CliInvokeExecutionArgs,
+    preferred_invocation_mode_options: ?client.invoke.PreferredInvocationModeOptions,
 ) !void {
     return command_invoke.runGenericInvocationCommand(
         allocator,
@@ -6008,6 +6009,7 @@ fn runGenericInvocationCommand(
         payload_args,
         context_args,
         execution_args,
+        preferred_invocation_mode_options,
         command_invoke_callbacks,
     );
 }
@@ -6795,7 +6797,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if ((invoke_mode_arg != null or no_mode_fallback) and !command_invoke.supportsPreferredInvocationMode(command)) {
-        reportInvalidCliMessage("error: --invoke-mode/--no-mode-fallback require invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, inspect-instructions, prepare-instructions, estimate-instructions-fee, invoke-spec, invoke-spec-and-confirm, invoke-spec-simulate, preview-spec, explain-spec, validate-spec, inspect-spec, prepare-spec, estimate-spec-fee, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, inspect-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, inspect-idl-invoke, prepare-idl-invoke, or estimate-idl-invoke-fee\n", .{});
+        reportInvalidCliMessage("error: --invoke-mode/--no-mode-fallback require send-instructions, send-instructions-and-confirm, send-versioned-instructions, send-versioned-instructions-and-confirm, simulate-instructions, simulate-versioned-instructions, invoke-instructions, invoke-instructions-and-confirm, invoke-instructions-simulate, preview-instructions, explain-instructions, validate-instructions, inspect-instructions, prepare-instructions, estimate-instructions-fee, invoke-spec, invoke-spec-and-confirm, invoke-spec-simulate, preview-spec, explain-spec, validate-spec, inspect-spec, prepare-spec, estimate-spec-fee, invoke-program-invoke, invoke-program-invoke-and-confirm, invoke-program-invoke-simulate, preview-program-invoke, explain-program-invoke, validate-program-invoke, inspect-program-invoke, prepare-program-invoke, estimate-program-invoke-fee, invoke-idl-invoke, invoke-idl-invoke-and-confirm, invoke-idl-invoke-simulate, preview-idl-invoke, explain-idl-invoke, validate-idl-invoke, inspect-idl-invoke, prepare-idl-invoke, or estimate-idl-invoke-fee\n", .{});
         return error.InvalidCli;
     }
 
@@ -7154,6 +7156,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         no_mode_fallback,
     );
 
+    const generic_invocation_mode_options = if (invoke_mode_arg != null or no_mode_fallback)
+        preferred_invocation_mode_options
+    else
+        null;
+
     if (command_invoke.isGenericInvocationCommand(command)) {
         try runGenericInvocationCommand(
             allocator,
@@ -7162,6 +7169,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_payload_args,
             invoke_context_args,
             invoke_execution_args,
+            generic_invocation_mode_options,
         );
         return;
     }
@@ -13031,6 +13039,78 @@ test "runCommand send-instructions accepts additional-signer-secret-key" {
     try expectMockSenderScriptSatisfied(&sender_context.sender);
     try std.testing.expectEqualStrings(
         "signature: Sig151515151515151515151515151515151515151515151515151515151515151515\n",
+        captured,
+    );
+}
+
+test "runCommand send-instructions resolves preferred mode to versioned with --invoke-mode versioned" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    try sender_context.sender.pushResultJson(
+        \\"Sig171717171717171717171717171717171717171717171717171717171717171717"
+    );
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://send-instructions-preferred-versioned" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stderr = try std.posix.dup(std.posix.STDERR_FILENO);
+    defer std.posix.close(saved_stderr);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDERR_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{11} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer = try client.Keypair.fromSecretKeyBytes(payer_secret_key);
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_base58 = try payer.public_key.toBase58(allocator);
+    defer allocator.free(payer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{1} ** 32);
+    const destination = try client.Keypair.fromSecretKeyBytes(destination_raw.secret_key.toBytes());
+    const destination_pubkey_base58 = try destination.public_key.toBase58(allocator);
+    defer allocator.free(destination_pubkey_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 65);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"payer_secret_key":"{s}","recent_blockhash":"{s}","instructions":[{{"program_id":"11111111111111111111111111111111","accounts":[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}],"data":"70696e67","data_encoding":"hex"}}]}}
+    ,
+        .{ payer_secret_key_base58, recent_blockhash, payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(spec_json);
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "send-instructions",
+        "--invoke-mode",
+        "versioned",
+        spec_json,
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stderr, std.posix.STDERR_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 1);
+    try expectMockSenderLastCapturedRequestMethod(&sender_context.sender, "sendTransaction");
+    try expectMockSenderScriptSatisfied(&sender_context.sender);
+    try expectSendVersionedTransactionRequestSignatureMetadata(allocator, commandCapturedRequestAt(&sender_context, 0), 1, 1);
+    try std.testing.expectEqualStrings(
+        "signature: Sig171717171717171717171717171717171717171717171717171717171717171717\n",
         captured,
     );
 }

@@ -714,6 +714,12 @@ pub fn supportsSendOptions(command: cli.Command) bool {
 
 pub fn supportsPreferredInvocationMode(command: cli.Command) bool {
     return switch (command) {
+        .send_instructions,
+        .send_instructions_and_confirm,
+        .send_versioned_instructions,
+        .send_versioned_instructions_and_confirm,
+        .simulate_instructions,
+        .simulate_versioned_instructions,
         .invoke_instructions,
         .invoke_instructions_and_confirm,
         .invoke_instructions_simulate,
@@ -1097,6 +1103,7 @@ pub fn runGenericInvocationCommand(
     payload_args: CliInvokePayloadArgs,
     context_args: CliInvokeContextArgs,
     execution_args: CliInvokeExecutionArgs,
+    preferred_invocation_mode_options: ?client.invoke.PreferredInvocationModeOptions,
     callbacks: CliInvokeRuntimeCallbacks,
 ) !void {
     const spec = lookupInvokeCommandSpec(command) orelse unreachable;
@@ -1107,6 +1114,26 @@ pub fn runGenericInvocationCommand(
 
     if (behavior.simulate) {
         const options = try callbacks.buildSimulationOptions(execution_args);
+        if (preferred_invocation_mode_options) |mode_options| {
+            var simulation_result = try client.invoke.simulatePreferredTransactionExecutionResultFromInvocationSpecJson(
+                allocator,
+                rpc,
+                execution_family,
+                invocation_spec_json,
+                .{
+                    .mode = mode_options,
+                    .simulate = .{
+                        .blockhash_commitment = execution_args.commitment,
+                        .simulate_options = options,
+                    },
+                },
+            );
+            defer simulation_result.deinit(allocator);
+
+            callbacks.printSimulationResult(simulation_result.simulation);
+            return;
+        }
+
         const simulation = try client.invoke.simulateTransactionFromInvocationSpecJson(
             allocator,
             rpc,
@@ -1119,46 +1146,86 @@ pub fn runGenericInvocationCommand(
             },
         );
         defer callbacks.freeSimulation(allocator, simulation);
-
         callbacks.printSimulationResult(simulation);
+
         return;
     }
 
-    const tx_signature = if (behavior.confirm)
-        try client.invoke.sendAndConfirmInvocationSpecJson(
+    if (behavior.confirm) {
+        if (preferred_invocation_mode_options) |mode_options| {
+            var result = try client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromInvocationSpecJson(
+                allocator,
+                rpc,
+                execution_family,
+                invocation_spec_json,
+                .{
+                    .mode = mode_options,
+                    .send_and_confirm = .{
+                        .blockhash_commitment = execution_args.commitment orelse execution_args.send_preflight_commitment,
+                        .send_transaction_options = execution_args.send_transaction_options,
+                        .commitment = execution_args.commitment,
+                        .search_transaction_history = execution_args.search_transaction_history,
+                        .timeout_ms = execution_args.status_timeout_ms,
+                        .poll_interval_ms = execution_args.status_poll_ms,
+                    },
+                },
+            );
+            defer result.deinit(allocator);
+            std.debug.print("confirmed signature: {s}\n", .{result.signature});
+        } else {
+            const tx_signature = try client.invoke.sendAndConfirmInvocationSpecJson(
+                allocator,
+                rpc,
+                execution_family,
+                behavior.versioned,
+                invocation_spec_json,
+                .{
+                    .blockhash_commitment = execution_args.commitment orelse execution_args.send_preflight_commitment,
+                    .send_transaction_options = execution_args.send_transaction_options,
+                    .commitment = execution_args.commitment,
+                    .search_transaction_history = execution_args.search_transaction_history,
+                    .timeout_ms = execution_args.status_timeout_ms,
+                    .poll_interval_ms = execution_args.status_poll_ms,
+                },
+            );
+            defer allocator.free(tx_signature);
+            std.debug.print("confirmed signature: {s}\n", .{tx_signature});
+        }
+        return;
+    }
+
+    if (preferred_invocation_mode_options) |mode_options| {
+        var result = try client.invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson(
             allocator,
             rpc,
             execution_family,
-            behavior.versioned,
             invocation_spec_json,
             .{
-                .blockhash_commitment = execution_args.commitment orelse execution_args.send_preflight_commitment,
-                .send_transaction_options = execution_args.send_transaction_options,
-                .commitment = execution_args.commitment,
-                .search_transaction_history = execution_args.search_transaction_history,
-                .timeout_ms = execution_args.status_timeout_ms,
-                .poll_interval_ms = execution_args.status_poll_ms,
-            },
-        )
-    else
-        try client.invoke.sendTransactionFromInvocationSpecJson(
-            allocator,
-            rpc,
-            execution_family,
-            behavior.versioned,
-            invocation_spec_json,
-            .{
-                .blockhash_commitment = execution_args.commitment orelse execution_args.send_preflight_commitment,
-                .send_transaction_options = execution_args.send_transaction_options,
+                .mode = mode_options,
+                .send = .{
+                    .blockhash_commitment = execution_args.commitment orelse execution_args.send_preflight_commitment,
+                    .send_transaction_options = execution_args.send_transaction_options,
+                },
             },
         );
-    defer allocator.free(tx_signature);
-
-    if (behavior.confirm) {
-        std.debug.print("confirmed signature: {s}\n", .{tx_signature});
-    } else {
-        std.debug.print("signature: {s}\n", .{tx_signature});
+        defer result.deinit(allocator);
+        std.debug.print("signature: {s}\n", .{result.signature});
+        return;
     }
+
+    const tx_signature = try client.invoke.sendTransactionFromInvocationSpecJson(
+        allocator,
+        rpc,
+        execution_family,
+        behavior.versioned,
+        invocation_spec_json,
+        .{
+            .blockhash_commitment = execution_args.commitment orelse execution_args.send_preflight_commitment,
+            .send_transaction_options = execution_args.send_transaction_options,
+        },
+    );
+    defer allocator.free(tx_signature);
+    std.debug.print("signature: {s}\n", .{tx_signature});
 }
 
 test "commands.invoke CliInvokeCommandBehavior executionFamily defaults to instructions" {
@@ -1391,6 +1458,9 @@ test "commands.invoke supportsPreferredInvocationMode covers preferred execution
     try std.testing.expect(supportsPreferredInvocationMode(.invoke_spec_simulate));
     try std.testing.expect(supportsPreferredInvocationMode(.preview_program_invoke));
     try std.testing.expect(supportsPreferredInvocationMode(.estimate_idl_invoke_fee));
+    try std.testing.expect(supportsPreferredInvocationMode(.send_instructions));
+    try std.testing.expect(supportsPreferredInvocationMode(.send_versioned_instructions_and_confirm));
+    try std.testing.expect(supportsPreferredInvocationMode(.simulate_versioned_instructions));
     try std.testing.expect(!supportsPreferredInvocationMode(.spec_program_invoke));
     try std.testing.expect(!supportsPreferredInvocationMode(.send_program_invoke));
 }
