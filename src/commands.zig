@@ -4759,6 +4759,121 @@ test "buildAnchorIdlInvokeInvocationSpecJson emits canonical instructions spec" 
     try std.testing.expectEqual(@as(usize, 1), parsed.value.instructions[0].accounts.len);
 }
 
+test "buildProgramInvokePayloadSpecJson emits canonical program payload spec" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{18} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const payer_pubkey_base58 = try client.encodeBase58(allocator, &payer_raw.public_key.toBytes());
+    defer allocator.free(payer_pubkey_base58);
+
+    const destination_raw = try Ed25519.KeyPair.generateDeterministic(.{19} ** 32);
+    const destination_pubkey_base58 = try client.encodeBase58(allocator, &destination_raw.public_key.toBytes());
+    defer allocator.free(destination_pubkey_base58);
+
+    const accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\[{{"pubkey":"{s}","is_signer":true,"is_writable":true}},{{"pubkey":"{s}","is_signer":false,"is_writable":true}}]
+    ,
+        .{ payer_pubkey_base58, destination_pubkey_base58 },
+    );
+    defer allocator.free(accounts_json);
+
+    const invocation_spec_json = try buildProgramInvokePayloadSpecJson(
+        allocator,
+        "11111111111111111111111111111111",
+        accounts_json,
+        "ping",
+        "utf8",
+        null,
+        null,
+        null,
+        null,
+        payer_secret_key_base58,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        &.{},
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, invocation_spec_json, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expect(parsed.value == .object);
+    try std.testing.expect(parsed.value.object.get("instructions") == null);
+    try std.testing.expectEqualStrings(
+        "11111111111111111111111111111111",
+        parsed.value.object.get("program_id").?.string,
+    );
+    try std.testing.expectEqual(@as(usize, 2), parsed.value.object.get("accounts").?.array.items.len);
+    try std.testing.expectEqual(@as(usize, 4), parsed.value.object.get("data_bytes").?.array.items.len);
+}
+
+test "buildAnchorIdlInvokePayloadSpecJson emits canonical anchor payload spec" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{20} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const program_id = client.Pubkey.fromBytes(.{21} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+
+    const target = client.Pubkey.fromBytes(.{22} ** 32);
+    const target_base58 = try target.toBase58(allocator);
+    defer allocator.free(target_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"ping","discriminator":[1,2,3,4,5,6,7,8],"accounts":[{{"name":"target","address":"{s}"}}],"args":[]}}]}}
+    ,
+        .{ program_id_base58, target_base58 },
+    );
+    defer allocator.free(idl_json);
+
+    const invocation_spec_json = try buildAnchorIdlInvokePayloadSpecJson(
+        allocator,
+        idl_json,
+        "ping",
+        null,
+        null,
+        null,
+        &.{},
+        &.{},
+        null,
+        null,
+        payer_secret_key_base58,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        &.{},
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, invocation_spec_json, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expect(parsed.value == .object);
+    try std.testing.expect(parsed.value.object.get("instructions") == null);
+    try std.testing.expect(parsed.value.object.get("idl") != null);
+    try std.testing.expectEqualStrings("ping", parsed.value.object.get("instruction_name").?.string);
+}
+
 const InvokeFamily = command_invoke.InvokeFamily;
 
 fn buildCliSimulationOptions(
@@ -5016,8 +5131,60 @@ fn buildProgramInvokeInvocationSpecJsonForCommand(
         nonce_authority_keypair_path_arg,
         additional_signer_secret_keys_arg,
     ) catch {
-        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+        return failInvalidInvocationCommand(command_label);
+    };
+}
+
+fn buildProgramInvokePayloadSpecJsonForCommand(
+    allocator: Allocator,
+    command: cli.Command,
+    program_id_arg: ?[]const u8,
+    accounts_arg: ?[]const u8,
+    data_arg: ?[]const u8,
+    data_encoding_arg: ?[]const u8,
+    data_schema_json_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    schema_encoding_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+) ![]u8 {
+    const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
+    const program_id = program_id_arg orelse {
+        reportInvalidCliMessage("error: {s} requires <program-id> <accounts-json|@path>\n", .{command_label});
         return error.InvalidCli;
+    };
+    const accounts = accounts_arg orelse {
+        reportInvalidCliMessage("error: {s} requires <program-id> <accounts-json|@path>\n", .{command_label});
+        return error.InvalidCli;
+    };
+
+    return buildProgramInvokePayloadSpecJson(
+        allocator,
+        program_id,
+        accounts,
+        data_arg,
+        data_encoding_arg,
+        data_schema_json_arg,
+        args_json_arg,
+        schema_encoding_arg,
+        payer_keypair_path_arg,
+        payer_secret_key_arg,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+        recent_blockhash_arg,
+        nonce_account_arg,
+        nonce_authority_secret_key_arg,
+        nonce_authority_keypair_path_arg,
+        additional_signer_secret_keys_arg,
+    ) catch {
+        return failInvalidInvocationCommand(command_label);
     };
 }
 
@@ -5053,11 +5220,66 @@ fn buildAnchorIdlInvokeInvocationSpecJsonForCommand(
     };
 
     if (recent_blockhash_arg != null and nonce_account_arg != null) {
-        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
-        return error.InvalidCli;
+        return failInvalidInvocationCommand(command_label);
     }
 
     return buildAnchorIdlInvokeInvocationSpecJson(
+        allocator,
+        idl,
+        instruction_name,
+        program_id_arg,
+        args_json_arg,
+        accounts_json_arg,
+        account_bindings,
+        remaining_accounts,
+        remaining_accounts_json_arg,
+        payer_keypair_path_arg,
+        payer_secret_key_arg,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+        recent_blockhash_arg,
+        nonce_account_arg,
+        nonce_authority_secret_key_arg,
+        nonce_authority_keypair_path_arg,
+        additional_signer_secret_keys_arg,
+    ) catch {
+        reportInvalidCliMessage("error: {s} currently supports Anchor IDL accounts with supported PDA seeds and supported IDL arg types\n", .{command_label});
+        return error.InvalidCli;
+    };
+}
+
+fn buildAnchorIdlInvokePayloadSpecJsonForCommand(
+    allocator: Allocator,
+    command: cli.Command,
+    idl_arg: ?[]const u8,
+    instruction_name_arg: ?[]const u8,
+    program_id_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    accounts_json_arg: ?[]const u8,
+    account_bindings: []const []const u8,
+    remaining_accounts: []const []const u8,
+    remaining_accounts_json_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+) ![]u8 {
+    const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
+    const idl = idl_arg orelse {
+        reportInvalidCliMessage("error: {s} requires <idl-json|@path> <instruction-name>\n", .{command_label});
+        return error.InvalidCli;
+    };
+    const instruction_name = instruction_name_arg orelse {
+        reportInvalidCliMessage("error: {s} requires <idl-json|@path> <instruction-name>\n", .{command_label});
+        return error.InvalidCli;
+    };
+
+    return buildAnchorIdlInvokePayloadSpecJson(
         allocator,
         idl,
         instruction_name,
@@ -5145,7 +5367,7 @@ fn buildProgramOwnedInvocationSpecForCommand(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) !client.invoke.OwnedInvocationSpec {
-    const invocation_spec_json = try buildProgramInvokeInvocationSpecJsonForCommand(
+    const invocation_spec_json = try buildProgramInvokePayloadSpecJsonForCommand(
         allocator,
         command,
         program_id_arg,
@@ -5173,8 +5395,7 @@ fn buildProgramOwnedInvocationSpecForCommand(
         invocation_spec_json,
     ) catch {
         const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
-        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
-        return error.InvalidCli;
+        return failInvalidInvocationCommand(command_label);
     };
 }
 
@@ -5199,7 +5420,7 @@ fn buildAnchorIdlOwnedInvocationSpecForCommand(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) !client.invoke.OwnedInvocationSpec {
-    const invocation_spec_json = try buildAnchorIdlInvokeInvocationSpecJsonForCommand(
+    const invocation_spec_json = try buildAnchorIdlInvokePayloadSpecJsonForCommand(
         allocator,
         command,
         idl_arg,
@@ -5228,8 +5449,7 @@ fn buildAnchorIdlOwnedInvocationSpecForCommand(
         invocation_spec_json,
     ) catch {
         const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
-        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
-        return error.InvalidCli;
+        return failInvalidInvocationCommand(command_label);
     };
 }
 
@@ -5439,6 +5659,12 @@ fn inspectSectionUsesPreferred(
     return prefer_preferred_path or switch (section) {
         .mode_report, .mode_resolution, .analysis, .prepared, .message, .transaction, .simulation, .fee => true,
         else => false,
+    };
+}
+
+fn inspectSectionCanUsePayloadBridge(section: InspectSection) bool {
+    return switch (section) {
+        .inspection, .report, .accounts, .signers, .summary, .plan, .preflight, .validation, .lookup_coverage, .diagnostics, .mode_report, .mode_resolution, .analysis, .prepared, .message, .transaction, .simulation, .fee, .instructions, .resolved, .lookup_tables => true,
     };
 }
 
@@ -6012,10 +6238,1293 @@ fn emitPreferredPreparedInvocation(
     }
 }
 
+fn emitPreferredOwnedMessageExecutionResultFromResolvedInvocation(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    resolved: *const client.invoke.OwnedResolvedInvocation,
+    output_json: bool,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+) !void {
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+
+    if (output_json) {
+        const json = try client.invoke.allocPreferredOwnedMessageExecutionResultJsonFromOwnedResolvedInvocation(
+            allocator,
+            rpc,
+            resolved,
+            .{ .mode = preferred_invocation_mode_options },
+        );
+        defer allocator.free(json);
+        try stdout_writer.interface.print("{s}\n", .{json});
+    } else {
+        try client.invoke.writePreferredOwnedMessageExecutionResultTextFromOwnedResolvedInvocation(
+            &stdout_writer.interface,
+            allocator,
+            rpc,
+            resolved,
+            .{ .mode = preferred_invocation_mode_options },
+        );
+        try stdout_writer.interface.writeAll("\n");
+    }
+
+    try stdout_writer.interface.flush();
+}
+
+fn emitPreferredSignedTransactionExecutionResultFromPreparedSignedTransaction(
+    allocator: Allocator,
+    prepared: *const client.invoke.PreferredPreparedSignedTransaction,
+    output_json: bool,
+) !void {
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+
+    if (output_json) {
+        const json = try client.invoke.allocPreferredSignedTransactionExecutionResultJsonFromPreparedSignedTransaction(
+            allocator,
+            prepared,
+        );
+        defer allocator.free(json);
+        try stdout_writer.interface.print("{s}\n", .{json});
+    } else {
+        try client.invoke.writePreferredSignedTransactionExecutionResultTextFromPreparedSignedTransaction(
+            &stdout_writer.interface,
+            allocator,
+            prepared,
+        );
+        try stdout_writer.interface.writeAll("\n");
+    }
+
+    try stdout_writer.interface.flush();
+}
+
+fn emitStaticPayloadBridgeInspectSection(
+    allocator: Allocator,
+    family: anytype,
+    invocation_spec_json: []const u8,
+    output_json: bool,
+    section: InspectSection,
+    command_label: []const u8,
+) !void {
+    switch (family) {
+        .program => switch (section) {
+            .report => if (output_json) {
+                const json = client.program_invoke.allocInvocationReportJsonFromProgramInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.program_invoke.writeInvocationReportTextFromProgramInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .accounts => if (output_json) {
+                const json = client.program_invoke.allocInvocationAccountsJsonFromProgramInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.program_invoke.writeInvocationAccountsTextFromProgramInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .signers => if (output_json) {
+                const json = client.program_invoke.allocInvocationSignerPubkeysJsonFromProgramInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.program_invoke.writeInvocationSignerPubkeysTextFromProgramInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .summary => if (output_json) {
+                const json = client.program_invoke.allocInvocationSummaryJsonFromProgramInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.program_invoke.writeInvocationSummaryTextFromProgramInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .plan => if (output_json) {
+                const json = client.program_invoke.allocInvocationPlanJsonFromProgramInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.program_invoke.writeInvocationPlanTextFromProgramInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .preflight => if (output_json) {
+                const json = client.program_invoke.allocInvocationPreflightJsonFromProgramInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.program_invoke.writeInvocationPreflightTextFromProgramInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .validation => if (output_json) {
+                const json = client.program_invoke.allocInvocationValidationJsonFromProgramInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.program_invoke.writeInvocationValidationTextFromProgramInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .lookup_coverage => if (output_json) {
+                const json = client.program_invoke.allocInvocationLookupCoverageJsonFromProgramInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.program_invoke.writeInvocationLookupCoverageTextFromProgramInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            else => unreachable,
+        },
+        .anchor_idl => switch (section) {
+            .report => if (output_json) {
+                const json = client.anchor_idl_invoke.allocInvocationReportJsonFromAnchorIdlInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.anchor_idl_invoke.writeInvocationReportTextFromAnchorIdlInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .accounts => if (output_json) {
+                const json = client.anchor_idl_invoke.allocInvocationAccountsJsonFromAnchorIdlInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.anchor_idl_invoke.writeInvocationAccountsTextFromAnchorIdlInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .signers => if (output_json) {
+                const json = client.anchor_idl_invoke.allocInvocationSignerPubkeysJsonFromAnchorIdlInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.anchor_idl_invoke.writeInvocationSignerPubkeysTextFromAnchorIdlInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .summary => if (output_json) {
+                const json = client.anchor_idl_invoke.allocInvocationSummaryJsonFromAnchorIdlInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.anchor_idl_invoke.writeInvocationSummaryTextFromAnchorIdlInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .plan => if (output_json) {
+                const json = client.anchor_idl_invoke.allocInvocationPlanJsonFromAnchorIdlInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.anchor_idl_invoke.writeInvocationPlanTextFromAnchorIdlInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .preflight => if (output_json) {
+                const json = client.anchor_idl_invoke.allocInvocationPreflightJsonFromAnchorIdlInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.anchor_idl_invoke.writeInvocationPreflightTextFromAnchorIdlInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .validation => if (output_json) {
+                const json = client.anchor_idl_invoke.allocInvocationValidationJsonFromAnchorIdlInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.anchor_idl_invoke.writeInvocationValidationTextFromAnchorIdlInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .lookup_coverage => if (output_json) {
+                const json = client.anchor_idl_invoke.allocInvocationLookupCoverageJsonFromAnchorIdlInvokeSpecJson(allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.anchor_idl_invoke.writeInvocationLookupCoverageTextFromAnchorIdlInvokeSpecJson(&stdout_writer.interface, allocator, invocation_spec_json) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            else => unreachable,
+        },
+        else => unreachable,
+    }
+}
+
+fn emitPayloadBridgeExportInspectSection(
+    allocator: Allocator,
+    family: anytype,
+    invocation_spec_json: []const u8,
+    section: InspectSection,
+    command_label: []const u8,
+) !void {
+    switch (family) {
+        .program => switch (section) {
+            .instructions => {
+                const json = client.program_invoke.buildInstructionsJsonFromProgramInvokeSpecJson(
+                    allocator,
+                    invocation_spec_json,
+                ) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            },
+            .resolved => {
+                const json = client.program_invoke.buildResolvedInvocationJsonFromProgramInvokeSpecJson(
+                    allocator,
+                    invocation_spec_json,
+                ) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            },
+            .lookup_tables => {
+                const maybe_json = client.program_invoke.buildAddressLookupTablesJsonFromProgramInvokeSpecJson(
+                    allocator,
+                    invocation_spec_json,
+                ) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer if (maybe_json) |json| allocator.free(json);
+                try printInvocationSpecJson(maybe_json orelse "[]");
+            },
+            else => unreachable,
+        },
+        .anchor_idl => switch (section) {
+            .instructions => {
+                const json = client.anchor_idl_invoke.buildInstructionsJsonFromAnchorIdlInvokeSpecJson(
+                    allocator,
+                    invocation_spec_json,
+                ) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            },
+            .resolved => {
+                const json = client.anchor_idl_invoke.buildResolvedInvocationJsonFromAnchorIdlInvokeSpecJson(
+                    allocator,
+                    invocation_spec_json,
+                ) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            },
+            .lookup_tables => {
+                const maybe_json = client.anchor_idl_invoke.buildAddressLookupTablesJsonFromAnchorIdlInvokeSpecJson(
+                    allocator,
+                    invocation_spec_json,
+                ) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer if (maybe_json) |json| allocator.free(json);
+                try printInvocationSpecJson(maybe_json orelse "[]");
+            },
+            else => unreachable,
+        },
+        else => unreachable,
+    }
+}
+
+fn emitPreferredPayloadBridgeInspectSection(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    family: client.invoke.InvokeFamily,
+    invocation_spec_json: []const u8,
+    output_json: bool,
+    section: InspectSection,
+    blockhash_commitment: ?client.Commitment,
+    commitment: ?client.Commitment,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+    command_label: []const u8,
+) !void {
+    const mode_options: client.invoke.BuildPreferredInvocationSpecOptions = .{
+        .mode = preferred_invocation_mode_options,
+    };
+    const build_options: client.invoke.BuildInvocationSpecOptions = .{
+        .blockhash_commitment = blockhash_commitment,
+    };
+
+    switch (family) {
+        .program => switch (section) {
+            .analysis => {
+                var analysis = client.program_invoke.buildPreferredInvocationAnalysisFromProgramInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    mode_options,
+                ) catch |err| return failPayloadBridgeInvocationSpecCommand(
+                    allocator,
+                    rpc,
+                    err,
+                    .program,
+                    invocation_spec_json,
+                    .{},
+                    preferred_invocation_mode_options,
+                    command_label,
+                );
+                defer analysis.deinit(allocator);
+                try emitPreferredInvocationAnalysis(allocator, &analysis, output_json, false);
+            },
+            .prepared => {
+                var prepared = client.program_invoke.buildPreferredPreparedInvocationFromProgramInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    mode_options,
+                ) catch |err| return failPayloadBridgeInvocationSpecCommand(
+                    allocator,
+                    rpc,
+                    err,
+                    .program,
+                    invocation_spec_json,
+                    .{},
+                    preferred_invocation_mode_options,
+                    command_label,
+                );
+                defer prepared.deinit(allocator);
+                try emitPreferredPreparedInvocation(allocator, &prepared, output_json);
+            },
+            .message => {
+                var prepared = client.program_invoke.buildPreferredPreparedSignedTransactionFromProgramInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    mode_options,
+                ) catch |err| return failPayloadBridgeInvocationSpecCommand(
+                    allocator,
+                    rpc,
+                    err,
+                    .program,
+                    invocation_spec_json,
+                    .{},
+                    preferred_invocation_mode_options,
+                    command_label,
+                );
+                defer prepared.deinit(allocator);
+                try emitPreferredOwnedMessageExecutionResultFromResolvedInvocation(
+                    allocator,
+                    rpc,
+                    &prepared.resolved_invocation,
+                    output_json,
+                    preferred_invocation_mode_options,
+                );
+            },
+            .transaction => {
+                var prepared = client.program_invoke.buildPreferredPreparedSignedTransactionFromProgramInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    mode_options,
+                ) catch |err| return failPayloadBridgeInvocationSpecCommand(
+                    allocator,
+                    rpc,
+                    err,
+                    .program,
+                    invocation_spec_json,
+                    .{},
+                    preferred_invocation_mode_options,
+                    command_label,
+                );
+                defer prepared.deinit(allocator);
+                try emitPreferredSignedTransactionExecutionResultFromPreparedSignedTransaction(
+                    allocator,
+                    &prepared,
+                    output_json,
+                );
+            },
+            .simulation => {
+                var result = client.program_invoke.simulatePreferredTransactionExecutionResultFromProgramInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    .{
+                        .mode = preferred_invocation_mode_options,
+                        .simulate = .{
+                            .blockhash_commitment = blockhash_commitment,
+                            .simulate_options = null,
+                        },
+                    },
+                ) catch |err| return failPayloadBridgeInvocationSpecCommand(
+                    allocator,
+                    rpc,
+                    err,
+                    .program,
+                    invocation_spec_json,
+                    build_options,
+                    preferred_invocation_mode_options,
+                    command_label,
+                );
+                defer result.deinit(allocator);
+                try emitPreferredSimulationExecutionResult(allocator, &result, output_json);
+            },
+            .fee => {
+                var result = client.program_invoke.getFeeForPreferredInvocationExecutionResultFromProgramInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    .{
+                        .mode = preferred_invocation_mode_options,
+                        .fee = .{
+                            .blockhash_commitment = blockhash_commitment,
+                            .commitment = commitment,
+                        },
+                    },
+                ) catch |err| return failPayloadBridgeInvocationSpecCommand(
+                    allocator,
+                    rpc,
+                    err,
+                    .program,
+                    invocation_spec_json,
+                    build_options,
+                    preferred_invocation_mode_options,
+                    command_label,
+                );
+                defer result.deinit(allocator);
+                try emitPreferredFeeExecutionResult(allocator, &result, output_json);
+            },
+            else => unreachable,
+        },
+        .anchor_idl => switch (section) {
+            .analysis => {
+                var analysis = client.anchor_idl_invoke.buildPreferredInvocationAnalysisFromAnchorIdlInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    mode_options,
+                ) catch |err| return failPayloadBridgeInvocationSpecCommand(
+                    allocator,
+                    rpc,
+                    err,
+                    .anchor_idl,
+                    invocation_spec_json,
+                    .{},
+                    preferred_invocation_mode_options,
+                    command_label,
+                );
+                defer analysis.deinit(allocator);
+                try emitPreferredInvocationAnalysis(allocator, &analysis, output_json, false);
+            },
+            .prepared => {
+                var prepared = client.anchor_idl_invoke.buildPreferredPreparedInvocationFromAnchorIdlInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    mode_options,
+                ) catch |err| return failPayloadBridgeInvocationSpecCommand(
+                    allocator,
+                    rpc,
+                    err,
+                    .anchor_idl,
+                    invocation_spec_json,
+                    .{},
+                    preferred_invocation_mode_options,
+                    command_label,
+                );
+                defer prepared.deinit(allocator);
+                try emitPreferredPreparedInvocation(allocator, &prepared, output_json);
+            },
+            .message => {
+                var prepared = client.anchor_idl_invoke.buildPreferredPreparedSignedTransactionFromAnchorIdlInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    mode_options,
+                ) catch |err| return failPayloadBridgeInvocationSpecCommand(
+                    allocator,
+                    rpc,
+                    err,
+                    .anchor_idl,
+                    invocation_spec_json,
+                    .{},
+                    preferred_invocation_mode_options,
+                    command_label,
+                );
+                defer prepared.deinit(allocator);
+                try emitPreferredOwnedMessageExecutionResultFromResolvedInvocation(
+                    allocator,
+                    rpc,
+                    &prepared.resolved_invocation,
+                    output_json,
+                    preferred_invocation_mode_options,
+                );
+            },
+            .transaction => {
+                var prepared = client.anchor_idl_invoke.buildPreferredPreparedSignedTransactionFromAnchorIdlInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    mode_options,
+                ) catch |err| return failPayloadBridgeInvocationSpecCommand(
+                    allocator,
+                    rpc,
+                    err,
+                    .anchor_idl,
+                    invocation_spec_json,
+                    .{},
+                    preferred_invocation_mode_options,
+                    command_label,
+                );
+                defer prepared.deinit(allocator);
+                try emitPreferredSignedTransactionExecutionResultFromPreparedSignedTransaction(
+                    allocator,
+                    &prepared,
+                    output_json,
+                );
+            },
+            .simulation => {
+                var result = client.anchor_idl_invoke.simulatePreferredTransactionExecutionResultFromAnchorIdlInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    .{
+                        .mode = preferred_invocation_mode_options,
+                        .simulate = .{
+                            .blockhash_commitment = blockhash_commitment,
+                            .simulate_options = null,
+                        },
+                    },
+                ) catch |err| return failPayloadBridgeInvocationSpecCommand(
+                    allocator,
+                    rpc,
+                    err,
+                    .anchor_idl,
+                    invocation_spec_json,
+                    build_options,
+                    preferred_invocation_mode_options,
+                    command_label,
+                );
+                defer result.deinit(allocator);
+                try emitPreferredSimulationExecutionResult(allocator, &result, output_json);
+            },
+            .fee => {
+                var result = client.anchor_idl_invoke.getFeeForPreferredInvocationExecutionResultFromAnchorIdlInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    .{
+                        .mode = preferred_invocation_mode_options,
+                        .fee = .{
+                            .blockhash_commitment = blockhash_commitment,
+                            .commitment = commitment,
+                        },
+                    },
+                ) catch |err| return failPayloadBridgeInvocationSpecCommand(
+                    allocator,
+                    rpc,
+                    err,
+                    .anchor_idl,
+                    invocation_spec_json,
+                    build_options,
+                    preferred_invocation_mode_options,
+                    command_label,
+                );
+                defer result.deinit(allocator);
+                try emitPreferredFeeExecutionResult(allocator, &result, output_json);
+            },
+            else => unreachable,
+        },
+        else => unreachable,
+    }
+}
+
+fn emitPayloadBridgeModeInspectSection(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    family: client.invoke.InvokeFamily,
+    invocation_spec_json: []const u8,
+    output_json: bool,
+    section: InspectSection,
+    prefer_preferred_path: bool,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+    command_label: []const u8,
+) !void {
+    switch (family) {
+        .program => switch (section) {
+            .inspection => if (prefer_preferred_path) {
+                if (output_json) {
+                    const json = client.program_invoke.allocPreferredInvocationInspectionJsonFromProgramInvokeSpecJson(
+                        allocator,
+                        rpc,
+                        invocation_spec_json,
+                        .{ .mode = preferred_invocation_mode_options },
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    defer allocator.free(json);
+                    try printInvocationSpecJson(json);
+                } else {
+                    var stdout_buffer: [4096]u8 = undefined;
+                    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                    client.program_invoke.writePreferredInvocationInspectionTextFromProgramInvokeSpecJson(
+                        &stdout_writer.interface,
+                        allocator,
+                        rpc,
+                        invocation_spec_json,
+                        .{ .mode = preferred_invocation_mode_options },
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    try stdout_writer.interface.writeAll("\n");
+                    try stdout_writer.interface.flush();
+                }
+            } else {
+                if (output_json) {
+                    const json = client.program_invoke.allocInvocationInspectionJsonFromProgramInvokeSpecJson(
+                        allocator,
+                        invocation_spec_json,
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    defer allocator.free(json);
+                    try printInvocationSpecJson(json);
+                } else {
+                    var stdout_buffer: [4096]u8 = undefined;
+                    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                    client.program_invoke.writeInvocationInspectionTextFromProgramInvokeSpecJson(
+                        &stdout_writer.interface,
+                        allocator,
+                        invocation_spec_json,
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    try stdout_writer.interface.writeAll("\n");
+                    try stdout_writer.interface.flush();
+                }
+            },
+            .diagnostics => if (prefer_preferred_path) {
+                if (output_json) {
+                    const json = client.program_invoke.allocPreferredInvocationDiagnosticsJsonFromProgramInvokeSpecJson(
+                        allocator,
+                        rpc,
+                        invocation_spec_json,
+                        .{ .mode = preferred_invocation_mode_options },
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    defer allocator.free(json);
+                    try printInvocationSpecJson(json);
+                } else {
+                    var stdout_buffer: [4096]u8 = undefined;
+                    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                    client.program_invoke.writePreferredInvocationDiagnosticsTextFromProgramInvokeSpecJson(
+                        &stdout_writer.interface,
+                        allocator,
+                        rpc,
+                        invocation_spec_json,
+                        .{ .mode = preferred_invocation_mode_options },
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    try stdout_writer.interface.writeAll("\n");
+                    try stdout_writer.interface.flush();
+                }
+            } else {
+                if (output_json) {
+                    const json = client.program_invoke.allocInvocationDiagnosticsJsonFromProgramInvokeSpecJson(
+                        allocator,
+                        invocation_spec_json,
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    defer allocator.free(json);
+                    try printInvocationSpecJson(json);
+                } else {
+                    var stdout_buffer: [4096]u8 = undefined;
+                    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                    client.program_invoke.writeInvocationDiagnosticsTextFromProgramInvokeSpecJson(
+                        &stdout_writer.interface,
+                        allocator,
+                        invocation_spec_json,
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    try stdout_writer.interface.writeAll("\n");
+                    try stdout_writer.interface.flush();
+                }
+            },
+            .mode_report => if (output_json) {
+                const json = client.program_invoke.allocInvocationModeReportJsonFromProgramInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    .{},
+                ) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.program_invoke.writeInvocationModeReportTextFromProgramInvokeSpecJson(
+                    &stdout_writer.interface,
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    .{},
+                ) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .mode_resolution => if (output_json) {
+                const json = client.program_invoke.allocPreferredInvocationModeResolutionJsonFromProgramInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    .{},
+                    preferred_invocation_mode_options,
+                ) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.program_invoke.writePreferredInvocationModeResolutionTextFromProgramInvokeSpecJson(
+                    &stdout_writer.interface,
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    .{},
+                    preferred_invocation_mode_options,
+                ) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            else => unreachable,
+        },
+        .anchor_idl => switch (section) {
+            .inspection => if (prefer_preferred_path) {
+                if (output_json) {
+                    const json = client.anchor_idl_invoke.allocPreferredInvocationInspectionJsonFromAnchorIdlInvokeSpecJson(
+                        allocator,
+                        rpc,
+                        invocation_spec_json,
+                        .{ .mode = preferred_invocation_mode_options },
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    defer allocator.free(json);
+                    try printInvocationSpecJson(json);
+                } else {
+                    var stdout_buffer: [4096]u8 = undefined;
+                    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                    client.anchor_idl_invoke.writePreferredInvocationInspectionTextFromAnchorIdlInvokeSpecJson(
+                        &stdout_writer.interface,
+                        allocator,
+                        rpc,
+                        invocation_spec_json,
+                        .{ .mode = preferred_invocation_mode_options },
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    try stdout_writer.interface.writeAll("\n");
+                    try stdout_writer.interface.flush();
+                }
+            } else {
+                if (output_json) {
+                    const json = client.anchor_idl_invoke.allocInvocationInspectionJsonFromAnchorIdlInvokeSpecJson(
+                        allocator,
+                        invocation_spec_json,
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    defer allocator.free(json);
+                    try printInvocationSpecJson(json);
+                } else {
+                    var stdout_buffer: [4096]u8 = undefined;
+                    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                    client.anchor_idl_invoke.writeInvocationInspectionTextFromAnchorIdlInvokeSpecJson(
+                        &stdout_writer.interface,
+                        allocator,
+                        invocation_spec_json,
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    try stdout_writer.interface.writeAll("\n");
+                    try stdout_writer.interface.flush();
+                }
+            },
+            .diagnostics => if (prefer_preferred_path) {
+                if (output_json) {
+                    const json = client.anchor_idl_invoke.allocPreferredInvocationDiagnosticsJsonFromAnchorIdlInvokeSpecJson(
+                        allocator,
+                        rpc,
+                        invocation_spec_json,
+                        .{ .mode = preferred_invocation_mode_options },
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    defer allocator.free(json);
+                    try printInvocationSpecJson(json);
+                } else {
+                    var stdout_buffer: [4096]u8 = undefined;
+                    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                    client.anchor_idl_invoke.writePreferredInvocationDiagnosticsTextFromAnchorIdlInvokeSpecJson(
+                        &stdout_writer.interface,
+                        allocator,
+                        rpc,
+                        invocation_spec_json,
+                        .{ .mode = preferred_invocation_mode_options },
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    try stdout_writer.interface.writeAll("\n");
+                    try stdout_writer.interface.flush();
+                }
+            } else {
+                if (output_json) {
+                    const json = client.anchor_idl_invoke.allocInvocationDiagnosticsJsonFromAnchorIdlInvokeSpecJson(
+                        allocator,
+                        invocation_spec_json,
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    defer allocator.free(json);
+                    try printInvocationSpecJson(json);
+                } else {
+                    var stdout_buffer: [4096]u8 = undefined;
+                    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                    client.anchor_idl_invoke.writeInvocationDiagnosticsTextFromAnchorIdlInvokeSpecJson(
+                        &stdout_writer.interface,
+                        allocator,
+                        invocation_spec_json,
+                    ) catch {
+                        return failInvalidInvocationCommand(command_label);
+                    };
+                    try stdout_writer.interface.writeAll("\n");
+                    try stdout_writer.interface.flush();
+                }
+            },
+            .mode_report => if (output_json) {
+                const json = client.anchor_idl_invoke.allocInvocationModeReportJsonFromAnchorIdlInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    .{},
+                ) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.anchor_idl_invoke.writeInvocationModeReportTextFromAnchorIdlInvokeSpecJson(
+                    &stdout_writer.interface,
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    .{},
+                ) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            .mode_resolution => if (output_json) {
+                const json = client.anchor_idl_invoke.allocPreferredInvocationModeResolutionJsonFromAnchorIdlInvokeSpecJson(
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    .{},
+                    preferred_invocation_mode_options,
+                ) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                defer allocator.free(json);
+                try printInvocationSpecJson(json);
+            } else {
+                var stdout_buffer: [4096]u8 = undefined;
+                var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                client.anchor_idl_invoke.writePreferredInvocationModeResolutionTextFromAnchorIdlInvokeSpecJson(
+                    &stdout_writer.interface,
+                    allocator,
+                    rpc,
+                    invocation_spec_json,
+                    .{},
+                    preferred_invocation_mode_options,
+                ) catch {
+                    return failInvalidInvocationCommand(command_label);
+                };
+                try stdout_writer.interface.writeAll("\n");
+                try stdout_writer.interface.flush();
+            },
+            else => unreachable,
+        },
+        else => unreachable,
+    }
+}
+
+fn emitPayloadBridgeInspectSection(
+    adapter: PayloadBridgeAdapter,
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    invocation_spec_json: []const u8,
+    output_json: bool,
+    section: InspectSection,
+    blockhash_commitment: ?client.Commitment,
+    commitment: ?client.Commitment,
+    prefer_preferred_path: bool,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+    command_label: []const u8,
+) !void {
+    switch (section) {
+        .inspection, .diagnostics, .mode_report, .mode_resolution => try adapter.emitModeInspectSection(
+            allocator,
+            rpc,
+            invocation_spec_json,
+            output_json,
+            section,
+            prefer_preferred_path,
+            preferred_invocation_mode_options,
+            command_label,
+        ),
+        .instructions, .resolved, .lookup_tables => try adapter.emitExportInspectSection(
+            allocator,
+            invocation_spec_json,
+            section,
+            command_label,
+        ),
+        .report, .accounts, .signers, .summary, .plan, .preflight, .validation, .lookup_coverage => try adapter.emitStaticInspectSection(
+            allocator,
+            invocation_spec_json,
+            output_json,
+            section,
+            command_label,
+        ),
+        .analysis, .prepared, .message, .transaction, .simulation, .fee => try adapter.emitPreferredInspectSection(
+            allocator,
+            rpc,
+            invocation_spec_json,
+            output_json,
+            section,
+            blockhash_commitment,
+            commitment,
+            preferred_invocation_mode_options,
+            command_label,
+        ),
+    }
+}
+
+fn emitPayloadBridgeAnalyzeResultForFamily(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    family: client.invoke.InvokeFamily,
+    invocation_spec_json: []const u8,
+    output_json: bool,
+    validate: bool,
+    blockhash_commitment: ?client.Commitment,
+    commitment: ?client.Commitment,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+    command_label: []const u8,
+) !void {
+    var analysis = switch (family) {
+        .program => client.program_invoke.buildPreferredInvocationAnalysisFromProgramInvokeSpecJson(
+            allocator,
+            rpc,
+            invocation_spec_json,
+            .{ .mode = preferred_invocation_mode_options },
+        ),
+        .anchor_idl => client.anchor_idl_invoke.buildPreferredInvocationAnalysisFromAnchorIdlInvokeSpecJson(
+            allocator,
+            rpc,
+            invocation_spec_json,
+            .{ .mode = preferred_invocation_mode_options },
+        ),
+        .instructions => unreachable,
+    } catch |err| return failPayloadBridgeReadOnlyCommand(
+        allocator,
+        rpc,
+        err,
+        family,
+        invocation_spec_json,
+        .{},
+        preferred_invocation_mode_options,
+        command_label,
+    );
+    defer analysis.deinit(allocator);
+
+    _ = blockhash_commitment;
+    _ = commitment;
+    try emitPreferredInvocationAnalysis(
+        allocator,
+        &analysis,
+        output_json,
+        validate,
+    );
+}
+
+fn emitPayloadBridgePrepareResultForFamily(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    family: client.invoke.InvokeFamily,
+    invocation_spec_json: []const u8,
+    output_json: bool,
+    validate: bool,
+    blockhash_commitment: ?client.Commitment,
+    commitment: ?client.Commitment,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+    command_label: []const u8,
+) !void {
+    var prepared = switch (family) {
+        .program => client.program_invoke.buildPreferredPreparedInvocationFromProgramInvokeSpecJson(
+            allocator,
+            rpc,
+            invocation_spec_json,
+            .{ .mode = preferred_invocation_mode_options },
+        ),
+        .anchor_idl => client.anchor_idl_invoke.buildPreferredPreparedInvocationFromAnchorIdlInvokeSpecJson(
+            allocator,
+            rpc,
+            invocation_spec_json,
+            .{ .mode = preferred_invocation_mode_options },
+        ),
+        .instructions => unreachable,
+    } catch |err| return failPayloadBridgeReadOnlyCommand(
+        allocator,
+        rpc,
+        err,
+        family,
+        invocation_spec_json,
+        .{},
+        preferred_invocation_mode_options,
+        command_label,
+    );
+    defer prepared.deinit(allocator);
+
+    _ = validate;
+    _ = blockhash_commitment;
+    _ = commitment;
+    try emitPreferredPreparedInvocation(allocator, &prepared, output_json);
+}
+
+fn emitPayloadBridgeFeeResultForFamily(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    family: client.invoke.InvokeFamily,
+    invocation_spec_json: []const u8,
+    output_json: bool,
+    validate: bool,
+    blockhash_commitment: ?client.Commitment,
+    commitment: ?client.Commitment,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+    command_label: []const u8,
+) !void {
+    var result = switch (family) {
+        .program => client.program_invoke.getFeeForPreferredInvocationExecutionResultFromProgramInvokeSpecJson(
+            allocator,
+            rpc,
+            invocation_spec_json,
+            .{
+                .mode = preferred_invocation_mode_options,
+                .fee = .{
+                    .blockhash_commitment = blockhash_commitment,
+                    .commitment = commitment,
+                },
+            },
+        ),
+        .anchor_idl => client.anchor_idl_invoke.getFeeForPreferredInvocationExecutionResultFromAnchorIdlInvokeSpecJson(
+            allocator,
+            rpc,
+            invocation_spec_json,
+            .{
+                .mode = preferred_invocation_mode_options,
+                .fee = .{
+                    .blockhash_commitment = blockhash_commitment,
+                    .commitment = commitment,
+                },
+            },
+        ),
+        .instructions => unreachable,
+    } catch |err| return failPayloadBridgeReadOnlyCommand(
+        allocator,
+        rpc,
+        err,
+        family,
+        invocation_spec_json,
+        .{ .blockhash_commitment = blockhash_commitment },
+        preferred_invocation_mode_options,
+        command_label,
+    );
+    defer result.deinit(allocator);
+
+    _ = validate;
+    try emitPreferredFeeExecutionResult(allocator, &result, output_json);
+}
+
+fn emitPayloadBridgeReadOnlyCommandResult(
+    adapter: PayloadBridgeAdapter,
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    kind: InvocationReadCommandKind,
+    invocation_spec_json: []const u8,
+    output_json: bool,
+    validate: bool,
+    blockhash_commitment: ?client.Commitment,
+    commitment: ?client.Commitment,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+    command_label: []const u8,
+) !void {
+    switch (kind) {
+        .analyze => try adapter.emitAnalyzeResult(
+            allocator,
+            rpc,
+            invocation_spec_json,
+            output_json,
+            validate,
+            blockhash_commitment,
+            commitment,
+            preferred_invocation_mode_options,
+            command_label,
+        ),
+        .prepare => try adapter.emitPrepareResult(
+            allocator,
+            rpc,
+            invocation_spec_json,
+            output_json,
+            validate,
+            blockhash_commitment,
+            commitment,
+            preferred_invocation_mode_options,
+            command_label,
+        ),
+        .fee => try adapter.emitFeeResult(
+            allocator,
+            rpc,
+            invocation_spec_json,
+            output_json,
+            validate,
+            blockhash_commitment,
+            commitment,
+            preferred_invocation_mode_options,
+            command_label,
+        ),
+        .inspect => unreachable,
+    }
+}
+
 const command_invoke_builders: command_invoke.CliInvokeBuilderCallbacks = .{
     .buildInstructions = buildInstructionsInvocationSpecJsonForCommand,
     .buildProgram = buildProgramInvokeInvocationSpecJsonForCommand,
+    .buildProgramPayload = buildProgramInvokePayloadSpecJsonForCommand,
     .buildAnchorIdl = buildAnchorIdlInvokeInvocationSpecJsonForCommand,
+    .buildAnchorIdlPayload = buildAnchorIdlInvokePayloadSpecJsonForCommand,
 };
 
 const command_invoke_callbacks: command_invoke.CliInvokeRuntimeCallbacks = .{
@@ -6052,6 +7561,256 @@ const InvocationReadCommandKind = enum {
     prepare,
     fee,
 };
+
+const PayloadBridgeAdapter = struct {
+    emitModeInspectSection: *const fn (
+        allocator: Allocator,
+        rpc: *client.RpcClient,
+        invocation_spec_json: []const u8,
+        output_json: bool,
+        inspect_section: InspectSection,
+        prefer_preferred_path: bool,
+        preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+        command_label: []const u8,
+    ) anyerror!void,
+    emitExportInspectSection: *const fn (
+        allocator: Allocator,
+        invocation_spec_json: []const u8,
+        inspect_section: InspectSection,
+        command_label: []const u8,
+    ) anyerror!void,
+    emitStaticInspectSection: *const fn (
+        allocator: Allocator,
+        invocation_spec_json: []const u8,
+        output_json: bool,
+        inspect_section: InspectSection,
+        command_label: []const u8,
+    ) anyerror!void,
+    emitPreferredInspectSection: *const fn (
+        allocator: Allocator,
+        rpc: *client.RpcClient,
+        invocation_spec_json: []const u8,
+        output_json: bool,
+        inspect_section: InspectSection,
+        blockhash_commitment: ?client.Commitment,
+        commitment: ?client.Commitment,
+        preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+        command_label: []const u8,
+    ) anyerror!void,
+    emitAnalyzeResult: *const fn (
+        allocator: Allocator,
+        rpc: *client.RpcClient,
+        invocation_spec_json: []const u8,
+        output_json: bool,
+        validate: bool,
+        blockhash_commitment: ?client.Commitment,
+        commitment: ?client.Commitment,
+        preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+        command_label: []const u8,
+    ) anyerror!void,
+    emitPrepareResult: *const fn (
+        allocator: Allocator,
+        rpc: *client.RpcClient,
+        invocation_spec_json: []const u8,
+        output_json: bool,
+        validate: bool,
+        blockhash_commitment: ?client.Commitment,
+        commitment: ?client.Commitment,
+        preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+        command_label: []const u8,
+    ) anyerror!void,
+    emitFeeResult: *const fn (
+        allocator: Allocator,
+        rpc: *client.RpcClient,
+        invocation_spec_json: []const u8,
+        output_json: bool,
+        validate: bool,
+        blockhash_commitment: ?client.Commitment,
+        commitment: ?client.Commitment,
+        preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+        command_label: []const u8,
+    ) anyerror!void,
+};
+
+fn PayloadBridgeAdapterFns(comptime family: client.invoke.InvokeFamily) type {
+    return struct {
+        fn emitModeInspectSection(
+            allocator: Allocator,
+            rpc: *client.RpcClient,
+            invocation_spec_json: []const u8,
+            output_json: bool,
+            inspect_section: InspectSection,
+            prefer_preferred_path: bool,
+            preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+            command_label: []const u8,
+        ) !void {
+            try emitPayloadBridgeModeInspectSection(
+                allocator,
+                rpc,
+                family,
+                invocation_spec_json,
+                output_json,
+                inspect_section,
+                prefer_preferred_path,
+                preferred_invocation_mode_options,
+                command_label,
+            );
+        }
+
+        fn emitExportInspectSection(
+            allocator: Allocator,
+            invocation_spec_json: []const u8,
+            inspect_section: InspectSection,
+            command_label: []const u8,
+        ) !void {
+            try emitPayloadBridgeExportInspectSection(
+                allocator,
+                family,
+                invocation_spec_json,
+                inspect_section,
+                command_label,
+            );
+        }
+
+        fn emitStaticInspectSection(
+            allocator: Allocator,
+            invocation_spec_json: []const u8,
+            output_json: bool,
+            inspect_section: InspectSection,
+            command_label: []const u8,
+        ) !void {
+            try emitStaticPayloadBridgeInspectSection(
+                allocator,
+                family,
+                invocation_spec_json,
+                output_json,
+                inspect_section,
+                command_label,
+            );
+        }
+
+        fn emitPreferredInspectSection(
+            allocator: Allocator,
+            rpc: *client.RpcClient,
+            invocation_spec_json: []const u8,
+            output_json: bool,
+            inspect_section: InspectSection,
+            blockhash_commitment: ?client.Commitment,
+            commitment: ?client.Commitment,
+            preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+            command_label: []const u8,
+        ) !void {
+            try emitPreferredPayloadBridgeInspectSection(
+                allocator,
+                rpc,
+                family,
+                invocation_spec_json,
+                output_json,
+                inspect_section,
+                blockhash_commitment,
+                commitment,
+                preferred_invocation_mode_options,
+                command_label,
+            );
+        }
+
+        fn emitAnalyzeResult(
+            allocator: Allocator,
+            rpc: *client.RpcClient,
+            invocation_spec_json: []const u8,
+            output_json: bool,
+            validate: bool,
+            blockhash_commitment: ?client.Commitment,
+            commitment: ?client.Commitment,
+            preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+            command_label: []const u8,
+        ) !void {
+            try emitPayloadBridgeAnalyzeResultForFamily(
+                allocator,
+                rpc,
+                family,
+                invocation_spec_json,
+                output_json,
+                validate,
+                blockhash_commitment,
+                commitment,
+                preferred_invocation_mode_options,
+                command_label,
+            );
+        }
+
+        fn emitPrepareResult(
+            allocator: Allocator,
+            rpc: *client.RpcClient,
+            invocation_spec_json: []const u8,
+            output_json: bool,
+            validate: bool,
+            blockhash_commitment: ?client.Commitment,
+            commitment: ?client.Commitment,
+            preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+            command_label: []const u8,
+        ) !void {
+            try emitPayloadBridgePrepareResultForFamily(
+                allocator,
+                rpc,
+                family,
+                invocation_spec_json,
+                output_json,
+                validate,
+                blockhash_commitment,
+                commitment,
+                preferred_invocation_mode_options,
+                command_label,
+            );
+        }
+
+        fn emitFeeResult(
+            allocator: Allocator,
+            rpc: *client.RpcClient,
+            invocation_spec_json: []const u8,
+            output_json: bool,
+            validate: bool,
+            blockhash_commitment: ?client.Commitment,
+            commitment: ?client.Commitment,
+            preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+            command_label: []const u8,
+        ) !void {
+            try emitPayloadBridgeFeeResultForFamily(
+                allocator,
+                rpc,
+                family,
+                invocation_spec_json,
+                output_json,
+                validate,
+                blockhash_commitment,
+                commitment,
+                preferred_invocation_mode_options,
+                command_label,
+            );
+        }
+    };
+}
+
+fn buildPayloadBridgeAdapter(comptime family: client.invoke.InvokeFamily) PayloadBridgeAdapter {
+    const Fns = PayloadBridgeAdapterFns(family);
+    return .{
+        .emitModeInspectSection = Fns.emitModeInspectSection,
+        .emitExportInspectSection = Fns.emitExportInspectSection,
+        .emitStaticInspectSection = Fns.emitStaticInspectSection,
+        .emitPreferredInspectSection = Fns.emitPreferredInspectSection,
+        .emitAnalyzeResult = Fns.emitAnalyzeResult,
+        .emitPrepareResult = Fns.emitPrepareResult,
+        .emitFeeResult = Fns.emitFeeResult,
+    };
+}
+
+fn lookupPayloadBridgeAdapter(family: client.invoke.InvokeFamily) ?PayloadBridgeAdapter {
+    return switch (family) {
+        .program => buildPayloadBridgeAdapter(.program),
+        .anchor_idl => buildPayloadBridgeAdapter(.anchor_idl),
+        .instructions => null,
+    };
+}
 
 const InvocationReadCommandSpec = struct {
     family: client.invoke.InvokeFamily,
@@ -6148,6 +7907,245 @@ fn lookupInvocationReadCommandSpec(command: cli.Command) ?InvocationReadCommandS
     };
 }
 
+fn reportInvalidInvocationCommandArgs(command_label: []const u8) void {
+    reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+}
+
+fn failInvalidInvocationCommand(command_label: []const u8) error{InvalidCli} {
+    reportInvalidInvocationCommandArgs(command_label);
+    return error.InvalidCli;
+}
+
+fn failPayloadBridgeReadOnlyCommand(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    err: anyerror,
+    family: client.invoke.InvokeFamily,
+    invocation_spec_json: []const u8,
+    build_options: client.invoke.BuildInvocationSpecOptions,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+    command_label: []const u8,
+) anyerror!void {
+    return failPayloadBridgeInvocationSpecCommand(
+        allocator,
+        rpc,
+        err,
+        family,
+        invocation_spec_json,
+        build_options,
+        preferred_invocation_mode_options,
+        command_label,
+    );
+}
+
+fn failPayloadBridgeInvocationSpecCommand(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    err: anyerror,
+    family: client.invoke.InvokeFamily,
+    invocation_spec_json: []const u8,
+    build_options: client.invoke.BuildInvocationSpecOptions,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+    command_label: []const u8,
+) anyerror!void {
+    if (err == error.NoBuildableInvocationMode) {
+        try reportNoBuildableModeForInvocationSpecJsonFamily(
+            allocator,
+            rpc,
+            family,
+            invocation_spec_json,
+            build_options,
+            preferred_invocation_mode_options,
+        );
+    } else {
+        reportInvalidInvocationCommandArgs(command_label);
+    }
+    return err;
+}
+
+fn failOwnedInvocationReadOnlyCommand(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    err: anyerror,
+    owned_spec: *client.invoke.OwnedInvocationSpec,
+    build_options: client.invoke.BuildInvocationSpecOptions,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+    command_label: []const u8,
+) anyerror!void {
+    if (err == error.NoBuildableInvocationMode) {
+        try reportNoBuildableModeForOwnedInvocationSpec(
+            allocator,
+            rpc,
+            owned_spec,
+            build_options,
+            preferred_invocation_mode_options,
+        );
+    } else {
+        reportInvalidInvocationCommandArgs(command_label);
+    }
+    return err;
+}
+
+fn tryRunPayloadBridgeReadOnlyCommand(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    command: cli.Command,
+    command_spec: InvocationReadCommandSpec,
+    payload_args: CliInvokePayloadArgs,
+    context_args: CliInvokeContextArgs,
+    execution_output_json: bool,
+    inspect_section: InspectSection,
+    blockhash_commitment: ?client.Commitment,
+    commitment: ?client.Commitment,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+    prefer_preferred_path: bool,
+    command_label: []const u8,
+) !bool {
+    const payload_bridge_adapter = lookupPayloadBridgeAdapter(command_spec.family) orelse return false;
+    if (command_spec.kind == .inspect and !inspectSectionCanUsePayloadBridge(inspect_section)) {
+        return false;
+    }
+
+    const invocation_spec_json = command_invoke.buildPayloadInvocationSpecJsonForPayloadFamily(
+        allocator,
+        command_spec.family,
+        command,
+        payload_args,
+        context_args,
+        command_invoke_builders,
+    ) catch {
+        reportInvalidInvocationCommandArgs(command_label);
+        return error.InvalidCli;
+    };
+    defer allocator.free(invocation_spec_json);
+
+    if (command_spec.kind == .inspect) {
+        try emitPayloadBridgeInspectSection(
+            payload_bridge_adapter,
+            allocator,
+            rpc,
+            invocation_spec_json,
+            execution_output_json,
+            inspect_section,
+            blockhash_commitment,
+            commitment,
+            prefer_preferred_path,
+            preferred_invocation_mode_options,
+            command_label,
+        );
+    } else {
+        try emitPayloadBridgeReadOnlyCommandResult(
+            payload_bridge_adapter,
+            allocator,
+            rpc,
+            command_spec.kind,
+            invocation_spec_json,
+            execution_output_json,
+            command_spec.validate,
+            blockhash_commitment,
+            commitment,
+            preferred_invocation_mode_options,
+            command_label,
+        );
+    }
+
+    return true;
+}
+
+fn emitOwnedInvocationReadOnlyCommandResult(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    command_spec: InvocationReadCommandSpec,
+    owned_spec: *client.invoke.OwnedInvocationSpec,
+    execution_output_json: bool,
+    inspect_section: InspectSection,
+    blockhash_commitment: ?client.Commitment,
+    commitment: ?client.Commitment,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+    prefer_preferred_path: bool,
+    command_label: []const u8,
+) !void {
+    switch (command_spec.kind) {
+        .analyze => {
+            var analysis = client.invoke.buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            ) catch |err| return failOwnedInvocationReadOnlyCommand(
+                allocator,
+                rpc,
+                err,
+                owned_spec,
+                .{},
+                preferred_invocation_mode_options,
+                command_label,
+            );
+            defer analysis.deinit(allocator);
+
+            try emitPreferredInvocationAnalysis(
+                allocator,
+                &analysis,
+                execution_output_json,
+                command_spec.validate,
+            );
+        },
+        .inspect => try emitInvocationInspectSection(
+            allocator,
+            rpc,
+            owned_spec,
+            execution_output_json,
+            inspect_section,
+            preferred_invocation_mode_options,
+            prefer_preferred_path,
+        ),
+        .prepare => {
+            var prepared = client.invoke.buildPreferredPreparedInvocationFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                owned_spec,
+                .{ .mode = preferred_invocation_mode_options },
+            ) catch |err| return failOwnedInvocationReadOnlyCommand(
+                allocator,
+                rpc,
+                err,
+                owned_spec,
+                .{},
+                preferred_invocation_mode_options,
+                command_label,
+            );
+            defer prepared.deinit(allocator);
+
+            try emitPreferredPreparedInvocation(allocator, &prepared, execution_output_json);
+        },
+        .fee => {
+            var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
+                allocator,
+                rpc,
+                owned_spec,
+                .{
+                    .mode = preferred_invocation_mode_options,
+                    .fee = .{
+                        .blockhash_commitment = blockhash_commitment,
+                        .commitment = commitment,
+                    },
+                },
+            ) catch |err| return failOwnedInvocationReadOnlyCommand(
+                allocator,
+                rpc,
+                err,
+                owned_spec,
+                .{ .blockhash_commitment = blockhash_commitment },
+                preferred_invocation_mode_options,
+                command_label,
+            );
+            defer result.deinit(allocator);
+
+            try emitPreferredFeeExecutionResult(allocator, &result, execution_output_json);
+        },
+    }
+}
+
 fn runInvocationReadOnlyCommand(
     allocator: Allocator,
     rpc: *client.RpcClient,
@@ -6165,6 +8163,24 @@ fn runInvocationReadOnlyCommand(
         reportInvalidCliMessage("error: invocation command arguments are invalid\n", .{});
         return error.InvalidCli;
     };
+    const blockhash_commitment = if (context_args.recent_blockhash_arg == null) commitment else null;
+    if (try tryRunPayloadBridgeReadOnlyCommand(
+        allocator,
+        rpc,
+        command,
+        command_spec,
+        payload_args,
+        context_args,
+        execution_output_json,
+        inspect_section,
+        blockhash_commitment,
+        commitment,
+        preferred_invocation_mode_options,
+        prefer_preferred_path,
+        command_label,
+    )) {
+        return;
+    }
 
     const invocation_spec_json = command_invoke.buildCanonicalInvocationSpecJsonForPayloadFamily(
         allocator,
@@ -6174,7 +8190,7 @@ fn runInvocationReadOnlyCommand(
         context_args,
         command_invoke_builders,
     ) catch {
-        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+        reportInvalidInvocationCommandArgs(command_label);
         return error.InvalidCli;
     };
     defer allocator.free(invocation_spec_json);
@@ -6184,108 +8200,48 @@ fn runInvocationReadOnlyCommand(
         command_spec.family,
         invocation_spec_json,
     ) catch {
-        reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
+        reportInvalidInvocationCommandArgs(command_label);
         return error.InvalidCli;
     };
     defer owned_spec.deinit(allocator);
 
-    switch (command_spec.kind) {
-        .analyze => {
-            var analysis = client.invoke.buildPreferredInvocationAnalysisFromOwnedInvocationSpec(
-                allocator,
-                rpc,
-                &owned_spec,
-                .{ .mode = preferred_invocation_mode_options },
-            ) catch |err| {
-                if (err == error.NoBuildableInvocationMode) {
-                    try reportNoBuildableModeForOwnedInvocationSpec(
-                        allocator,
-                        rpc,
-                        &owned_spec,
-                        .{},
-                        preferred_invocation_mode_options,
-                    );
-                } else {
-                    reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
-                }
-                return err;
-            };
-            defer analysis.deinit(allocator);
+    try emitOwnedInvocationReadOnlyCommandResult(
+        allocator,
+        rpc,
+        command_spec,
+        &owned_spec,
+        execution_output_json,
+        inspect_section,
+        blockhash_commitment,
+        commitment,
+        preferred_invocation_mode_options,
+        prefer_preferred_path,
+        command_label,
+    );
+}
 
-            try emitPreferredInvocationAnalysis(
-                allocator,
-                &analysis,
-                execution_output_json,
-                command_spec.validate,
-            );
-        },
-        .inspect => try emitInvocationInspectSection(
-            allocator,
-            rpc,
-            &owned_spec,
-            execution_output_json,
-            inspect_section,
-            preferred_invocation_mode_options,
-            prefer_preferred_path,
-        ),
-        .prepare => {
-            var prepared = client.invoke.buildPreferredPreparedInvocationFromOwnedInvocationSpec(
-                allocator,
-                rpc,
-                &owned_spec,
-                .{ .mode = preferred_invocation_mode_options },
-            ) catch |err| {
-                if (err == error.NoBuildableInvocationMode) {
-                    try reportNoBuildableModeForOwnedInvocationSpec(
-                        allocator,
-                        rpc,
-                        &owned_spec,
-                        .{},
-                        preferred_invocation_mode_options,
-                    );
-                } else {
-                    reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
-                }
-                return err;
-            };
-            defer prepared.deinit(allocator);
+fn reportNoBuildableModeForInvocationSpecJsonFamily(
+    allocator: Allocator,
+    rpc: *client.RpcClient,
+    family: client.invoke.InvokeFamily,
+    invocation_spec_json: []const u8,
+    build_options: client.invoke.BuildInvocationSpecOptions,
+    preferred_invocation_mode_options: client.invoke.PreferredInvocationModeOptions,
+) !void {
+    var owned_spec = client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    ) catch return error.InvalidCli;
+    defer owned_spec.deinit(allocator);
 
-            try emitPreferredPreparedInvocation(allocator, &prepared, execution_output_json);
-        },
-        .fee => {
-            var result = client.invoke.getFeeForPreferredInvocationExecutionResultFromOwnedInvocationSpec(
-                allocator,
-                rpc,
-                &owned_spec,
-                .{
-                    .mode = preferred_invocation_mode_options,
-                    .fee = .{
-                        .blockhash_commitment = if (context_args.recent_blockhash_arg == null) commitment else null,
-                        .commitment = commitment,
-                    },
-                },
-            ) catch |err| {
-                if (err == error.NoBuildableInvocationMode) {
-                    const build_options: client.invoke.BuildInvocationSpecOptions = .{
-                        .blockhash_commitment = if (context_args.recent_blockhash_arg == null) commitment else null,
-                    };
-                    try reportNoBuildableModeForOwnedInvocationSpec(
-                        allocator,
-                        rpc,
-                        &owned_spec,
-                        build_options,
-                        preferred_invocation_mode_options,
-                    );
-                } else {
-                    reportInvalidCliMessage("error: {s} arguments are invalid\n", .{command_label});
-                }
-                return err;
-            };
-            defer result.deinit(allocator);
-
-            try emitPreferredFeeExecutionResult(allocator, &result, execution_output_json);
-        },
-    }
+    try reportNoBuildableModeForOwnedInvocationSpec(
+        allocator,
+        rpc,
+        &owned_spec,
+        build_options,
+        preferred_invocation_mode_options,
+    );
 }
 
 fn buildAndEmitCanonicalInvocationSpecJsonForPayloadFamily(
@@ -6331,6 +8287,68 @@ fn buildProgramInvokeInvocationSpecJson(
     nonce_authority_keypair_path_arg: ?[]const u8,
     additional_signer_secret_keys_arg: []const []const u8,
 ) ![]u8 {
+    const invocation_spec_json = try buildProgramInvokePayloadSpecJson(
+        allocator,
+        program_id,
+        accounts_arg,
+        data_arg,
+        data_encoding_arg,
+        data_schema_json_arg,
+        args_json_arg,
+        schema_encoding_arg,
+        payer_keypair_path_arg,
+        payer_secret_key_arg,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+        recent_blockhash_arg,
+        nonce_account_arg,
+        nonce_authority_secret_key_arg,
+        nonce_authority_keypair_path_arg,
+        additional_signer_secret_keys_arg,
+    );
+    defer allocator.free(invocation_spec_json);
+
+    return command_invoke.canonicalizeInvocationSpecJsonForPayloadFamily(
+        allocator,
+        .program,
+        invocation_spec_json,
+    );
+}
+
+fn encodeInstructionDataBytesJson(
+    allocator: Allocator,
+    instruction_data: []const u8,
+) ![]u8 {
+    var buffer: std.io.Writer.Allocating = .init(allocator);
+    defer buffer.deinit();
+    try buffer.writer.writeByte('[');
+    for (instruction_data, 0..) |byte, index| {
+        if (index != 0) try buffer.writer.writeByte(',');
+        try buffer.writer.print("{}", .{byte});
+    }
+    try buffer.writer.writeByte(']');
+    return try allocator.dupe(u8, buffer.written());
+}
+
+fn buildProgramInvokePayloadSpecJson(
+    allocator: Allocator,
+    program_id: []const u8,
+    accounts_arg: []const u8,
+    data_arg: ?[]const u8,
+    data_encoding_arg: ?[]const u8,
+    data_schema_json_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    schema_encoding_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+) ![]u8 {
     if (recent_blockhash_arg != null and nonce_account_arg != null) return error.InvalidCli;
     if ((data_arg != null or data_encoding_arg != null) and
         (data_schema_json_arg != null or args_json_arg != null or schema_encoding_arg != null))
@@ -6338,7 +8356,7 @@ fn buildProgramInvokeInvocationSpecJson(
         return error.InvalidCli;
     }
 
-    const context_args: CliInvocationContextArgs = .{
+    var context_args: CliInvocationContextArgs = .{
         .payer_keypair_path_arg = payer_keypair_path_arg,
         .payer_secret_key_arg = payer_secret_key_arg,
         .signer_keypair_paths_arg = signer_keypair_paths_arg,
@@ -6349,6 +8367,14 @@ fn buildProgramInvokeInvocationSpecJson(
         .nonce_authority_keypair_path_arg = nonce_authority_keypair_path_arg,
         .additional_signer_secret_keys_arg = additional_signer_secret_keys_arg,
     };
+
+    var payer_inputs = try loadRequiredCliInvokePayerInputs(
+        allocator,
+        context_args.payer_secret_key_arg,
+        context_args.payer_keypair_path_arg,
+    );
+    defer payer_inputs.deinit(allocator);
+    context_args.payer_secret_key = payer_inputs.secret_key;
 
     const accounts_source = try loadInstructionSpecSource(allocator, accounts_arg);
     defer allocator.free(accounts_source);
@@ -6369,29 +8395,87 @@ fn buildProgramInvokeInvocationSpecJson(
         null;
     defer if (instruction_data) |value| allocator.free(value);
 
-    const program_id_pubkey = client.Pubkey.fromBase58(allocator, program_id) catch return error.InvalidCli;
-    const schema_encoding = client.instruction_schema.parseSchemaEncoding(schema_encoding_arg orelse "borsh") catch return error.InvalidCli;
-    var owned_instruction = client.program_invoke.buildOwnedInstruction(
+    var context_json_inputs = try loadCliInvocationContextJsonInputs(allocator, context_args);
+    defer context_json_inputs.deinit(allocator);
+
+    const data_bytes_json = if (instruction_data) |value|
+        try encodeInstructionDataBytesJson(allocator, value)
+    else
+        null;
+    defer if (data_bytes_json) |value| allocator.free(value);
+
+    return client.invocation_spec_json.buildProgramInvocationSpecJson(
         allocator,
-        program_id_pubkey,
         .{
+            .payer_secret_key = payer_inputs.secret_key,
+            .additional_signer_secret_keys_json = context_json_inputs.additional_signer_secret_keys_json,
+            .address_lookup_tables_json = context_json_inputs.lookup_tables_source,
+            .recent_blockhash = context_args.recent_blockhash_arg,
+            .nonce_account = context_args.nonce_account_arg,
+            .nonce_authority_secret_key = context_json_inputs.nonce_authority_secret_key,
+            .program_id = program_id,
             .accounts_json = accounts_source,
-            .data_bytes = instruction_data,
+            .data_bytes_json = data_bytes_json,
             .data_schema_json = data_schema_json_source,
             .args_json = args_json_source,
-            .schema_encoding = schema_encoding,
+            .schema_encoding = if (data_schema_json_source != null or args_json_source != null)
+                (schema_encoding_arg orelse "borsh")
+            else
+                null,
         },
     ) catch return error.InvalidCli;
-    defer owned_instruction.deinit(allocator);
-
-    return try buildInvocationSpecJsonFromSingleInstructionWithContext(
-        allocator,
-        owned_instruction.instruction,
-        context_args,
-    );
 }
 
 fn buildAnchorIdlInvokeInvocationSpecJson(
+    allocator: Allocator,
+    idl_arg: []const u8,
+    instruction_name: []const u8,
+    program_id_override_arg: ?[]const u8,
+    args_json_arg: ?[]const u8,
+    accounts_json_arg: ?[]const u8,
+    account_bindings: []const []const u8,
+    remaining_accounts: []const []const u8,
+    remaining_accounts_json_arg: ?[]const u8,
+    payer_keypair_path_arg: ?[]const u8,
+    payer_secret_key_arg: ?[]const u8,
+    signer_keypair_paths_arg: ?[]const u8,
+    lookup_tables_arg: ?[]const u8,
+    recent_blockhash_arg: ?[]const u8,
+    nonce_account_arg: ?[]const u8,
+    nonce_authority_secret_key_arg: ?[]const u8,
+    nonce_authority_keypair_path_arg: ?[]const u8,
+    additional_signer_secret_keys_arg: []const []const u8,
+) ![]u8 {
+    const invocation_spec_json = try buildAnchorIdlInvokePayloadSpecJson(
+        allocator,
+        idl_arg,
+        instruction_name,
+        program_id_override_arg,
+        args_json_arg,
+        accounts_json_arg,
+        account_bindings,
+        remaining_accounts,
+        remaining_accounts_json_arg,
+        payer_keypair_path_arg,
+        payer_secret_key_arg,
+        signer_keypair_paths_arg,
+        lookup_tables_arg,
+        recent_blockhash_arg,
+        nonce_account_arg,
+        nonce_authority_secret_key_arg,
+        nonce_authority_keypair_path_arg,
+        additional_signer_secret_keys_arg,
+    );
+    defer allocator.free(invocation_spec_json);
+
+    return command_invoke.canonicalizeInvocationSpecJsonForPayloadFamily(
+        allocator,
+        .anchor_idl,
+        invocation_spec_json,
+    );
+}
+
+fn buildAnchorIdlInvokePayloadSpecJson(
     allocator: Allocator,
     idl_arg: []const u8,
     instruction_name: []const u8,
@@ -6455,31 +8539,34 @@ fn buildAnchorIdlInvokeInvocationSpecJson(
     );
     defer account_inputs.deinit(allocator);
 
-    const program_id_override = if (program_id_override_arg) |value|
-        client.Pubkey.fromBase58(allocator, value) catch return error.InvalidCli
-    else
-        null;
+    var context_json_inputs = try loadCliInvocationContextJsonInputs(allocator, context_args);
+    defer context_json_inputs.deinit(allocator);
 
-    var owned_instruction = client.anchor_idl_invoke.buildOwnedInstructionFromJson(
+    return client.invocation_spec_json.buildAnchorIdlInvocationSpecJson(
         allocator,
-        idl_source,
-        instruction_name,
         .{
-            .program_id = program_id_override,
+            .payer_secret_key = payer_inputs.secret_key,
+            .additional_signer_secret_keys_json = context_json_inputs.additional_signer_secret_keys_json,
+            .address_lookup_tables_json = context_json_inputs.lookup_tables_source,
+            .recent_blockhash = context_args.recent_blockhash_arg,
+            .nonce_account = context_args.nonce_account_arg,
+            .nonce_authority_secret_key = context_json_inputs.nonce_authority_secret_key,
+            .idl_json = idl_source,
+            .instruction_name = instruction_name,
+            .program_id = program_id_override_arg,
             .args_json = args_json_source,
-            .account_bindings = parsed_cli_account_bindings.typed_bindings,
-            .account_bindings_json = if (account_inputs.merged_account_bindings_json_source) |value| value else accounts_json_source,
-            .remaining_accounts = account_inputs.typed_remaining_accounts,
-            .default_signer = payer_inputs.keypair.public_key,
+            .account_bindings_json = if (account_inputs.combined_account_bindings_json_source) |value|
+                value
+            else if (account_inputs.merged_account_bindings_json_source) |value|
+                value
+            else
+                accounts_json_source,
+            .remaining_accounts_json = if (account_inputs.canonical_remaining_accounts_json) |value|
+                value
+            else
+                remaining_accounts_json_source,
         },
     ) catch return error.InvalidCli;
-    defer owned_instruction.deinit(allocator);
-
-    return try buildInvocationSpecJsonFromSingleInstructionWithContext(
-        allocator,
-        owned_instruction.instruction,
-        context_args,
-    );
 }
 
 fn loadProgramInvokeInstructionSpec(
@@ -7403,7 +9490,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
         command == .invoke_program_invoke_and_confirm or
         command == .invoke_program_invoke_simulate)
     {
-        var owned_spec = try buildProgramOwnedInvocationSpecForCommand(
+        const invocation_spec_json = try buildProgramInvokePayloadSpecJsonForCommand(
             allocator,
             command,
             invoke_payload_args.program_id_arg,
@@ -7423,15 +9510,16 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
-        defer owned_spec.deinit(allocator);
+        defer allocator.free(invocation_spec_json);
+
+        const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
 
         if (command == .invoke_program_invoke_simulate) {
             const simulation_options = try buildCliSimulationOptionsFromExecutionArgs(invoke_execution_args);
-            const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
-            var result = client.invoke.simulatePreferredTransactionExecutionResultFromOwnedInvocationSpec(
+            var result = client.program_invoke.simulatePreferredTransactionExecutionResultFromProgramInvokeSpecJson(
                 allocator,
                 rpc,
-                &owned_spec,
+                invocation_spec_json,
                 .{
                     .mode = preferred_invocation_mode_options,
                     .simulate = .{
@@ -7450,10 +9538,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                         else
                             null,
                     };
-                    try reportNoBuildableModeForOwnedInvocationSpec(
+                    try reportNoBuildableModeForInvocationSpecJsonFamily(
                         allocator,
                         rpc,
-                        &owned_spec,
+                        .program,
+                        invocation_spec_json,
                         build_options,
                         preferred_invocation_mode_options,
                     );
@@ -7468,12 +9557,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             return;
         }
 
-        const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
         var result = (if (command == .invoke_program_invoke_and_confirm)
-            client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
+            client.program_invoke.sendAndConfirmPreferredTransactionExecutionResultFromProgramInvokeSpecJson(
                 allocator,
                 rpc,
-                &owned_spec,
+                invocation_spec_json,
                 .{
                     .mode = preferred_invocation_mode_options,
                     .send_and_confirm = .{
@@ -7490,10 +9578,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 },
             )
         else
-            client.invoke.sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
+            client.program_invoke.sendPreferredTransactionExecutionResultFromProgramInvokeSpecJson(
                 allocator,
                 rpc,
-                &owned_spec,
+                invocation_spec_json,
                 .{
                     .mode = preferred_invocation_mode_options,
                     .send = .{
@@ -7512,10 +9600,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                     else
                         null,
                 };
-                try reportNoBuildableModeForOwnedInvocationSpec(
+                try reportNoBuildableModeForInvocationSpecJsonFamily(
                     allocator,
                     rpc,
-                    &owned_spec,
+                    .program,
+                    invocation_spec_json,
                     build_options,
                     preferred_invocation_mode_options,
                 );
@@ -7669,7 +9758,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .invoke_idl_invoke or command == .invoke_idl_invoke_and_confirm) {
-        var owned_spec = try buildAnchorIdlOwnedInvocationSpecForCommand(
+        const invocation_spec_json = try buildAnchorIdlInvokePayloadSpecJsonForCommand(
             allocator,
             command,
             invoke_payload_args.idl_arg,
@@ -7690,14 +9779,14 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
-        defer owned_spec.deinit(allocator);
+        defer allocator.free(invocation_spec_json);
 
         const command_label = (command_invoke.lookupInvokeCommandLabel(command) orelse unreachable);
         var result = (if (command == .invoke_idl_invoke_and_confirm)
-            client.invoke.sendAndConfirmPreferredTransactionExecutionResultFromOwnedInvocationSpec(
+            client.anchor_idl_invoke.sendAndConfirmPreferredTransactionExecutionResultFromAnchorIdlInvokeSpecJson(
                 allocator,
                 rpc,
-                &owned_spec,
+                invocation_spec_json,
                 .{
                     .mode = preferred_invocation_mode_options,
                     .send_and_confirm = .{
@@ -7714,10 +9803,10 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                 },
             )
         else
-            client.invoke.sendPreferredTransactionExecutionResultFromOwnedInvocationSpec(
+            client.anchor_idl_invoke.sendPreferredTransactionExecutionResultFromAnchorIdlInvokeSpecJson(
                 allocator,
                 rpc,
-                &owned_spec,
+                invocation_spec_json,
                 .{
                     .mode = preferred_invocation_mode_options,
                     .send = .{
@@ -7736,10 +9825,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                     else
                         null,
                 };
-                try reportNoBuildableModeForOwnedInvocationSpec(
+                try reportNoBuildableModeForInvocationSpecJsonFamily(
                     allocator,
                     rpc,
-                    &owned_spec,
+                    .anchor_idl,
+                    invocation_spec_json,
                     build_options,
                     preferred_invocation_mode_options,
                 );
@@ -7760,7 +9850,7 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
     }
 
     if (command == .invoke_idl_invoke_simulate) {
-        var owned_spec = try buildAnchorIdlOwnedInvocationSpecForCommand(
+        const invocation_spec_json = try buildAnchorIdlInvokePayloadSpecJsonForCommand(
             allocator,
             command,
             invoke_payload_args.idl_arg,
@@ -7781,13 +9871,13 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
             invoke_context_args.nonce_authority_keypair_path_arg,
             invoke_context_args.additional_signer_secret_keys_arg,
         );
-        defer owned_spec.deinit(allocator);
+        defer allocator.free(invocation_spec_json);
 
         const simulation_options = try buildCliSimulationOptionsFromExecutionArgs(invoke_execution_args);
-        var result = client.invoke.simulatePreferredTransactionExecutionResultFromOwnedInvocationSpec(
+        var result = client.anchor_idl_invoke.simulatePreferredTransactionExecutionResultFromAnchorIdlInvokeSpecJson(
             allocator,
             rpc,
-            &owned_spec,
+            invocation_spec_json,
             .{
                 .mode = preferred_invocation_mode_options,
                 .simulate = .{
@@ -7806,10 +9896,11 @@ pub fn runCommand(allocator: Allocator, rpc: *client.RpcClient, args: *const cli
                     else
                         null,
                 };
-                try reportNoBuildableModeForOwnedInvocationSpec(
+                try reportNoBuildableModeForInvocationSpecJsonFamily(
                     allocator,
                     rpc,
-                    &owned_spec,
+                    .anchor_idl,
+                    invocation_spec_json,
                     build_options,
                     preferred_invocation_mode_options,
                 );
@@ -16355,6 +18446,476 @@ test "runCommand inspect-idl-invoke emits simulation section json" {
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"used_fallback\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, captured, "\"context_slot\":901") != null);
+}
+
+test "runCommand inspect-idl-invoke emits message section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-idl-invoke-message-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{113} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 158);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-idl-invoke",
+        "--json",
+        "--inspect-section",
+        "message",
+        "--invoke-mode",
+        "versioned",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"message_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"message_base64\":\"") != null);
+}
+
+test "runCommand inspect-idl-invoke emits transaction section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-idl-invoke-transaction-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{114} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 159);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-idl-invoke",
+        "--json",
+        "--inspect-section",
+        "transaction",
+        "--invoke-mode",
+        "versioned",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"selected_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"transaction_mode\":\"versioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"transaction_base64\":\"") != null);
+}
+
+test "runCommand inspect-idl-invoke emits instructions section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-idl-invoke-instructions-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{115} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 160);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-idl-invoke",
+        "--json",
+        "--inspect-section",
+        "instructions",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"program_id\":\"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"data_bytes\":[175,175,109,31,13,152,155,237]") != null);
+}
+
+test "runCommand inspect-idl-invoke emits resolved section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-idl-invoke-resolved-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{116} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 161);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-idl-invoke",
+        "--json",
+        "--inspect-section",
+        "resolved",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"payer\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"instructions\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"recent_blockhash\":\"") != null);
+}
+
+test "runCommand inspect-idl-invoke emits lookup tables section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-idl-invoke-lookup-tables-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{117} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 162);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-idl-invoke",
+        "--json",
+        "--inspect-section",
+        "lookup-tables",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expectEqualStrings("[]\n", captured);
+}
+
+test "runCommand inspect-idl-invoke emits json inspection section" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-idl-invoke-inspection-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{118} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 163);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-idl-invoke",
+        "--json",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"report\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"accounts\":{") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostics\":{") != null);
+}
+
+test "runCommand inspect-idl-invoke emits diagnostics section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-idl-invoke-diagnostics-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{119} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 164);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-idl-invoke",
+        "--json",
+        "--inspect-section",
+        "diagnostics",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostic_error_count\":0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"diagnostic_warning_count\":0") != null);
+}
+
+test "runCommand inspect-idl-invoke emits mode report section json" {
+    const allocator = std.testing.allocator;
+    var sender_context = CommandTestSender.init(allocator);
+    defer sender_context.deinit();
+    var rpc = try client.RpcClient.newWithRequestSenderAndOptions(
+        allocator,
+        client.RequestSender.fromMockSender(&sender_context.sender),
+        .{ .endpoint = "command-test://inspect-idl-invoke-mode-report-json" },
+    );
+    defer rpc.deinit();
+
+    const pipe_fds = try std.posix.pipe();
+    defer std.posix.close(pipe_fds[0]);
+    const saved_stdout = try std.posix.dup(std.posix.STDOUT_FILENO);
+    defer std.posix.close(saved_stdout);
+    try std.posix.dup2(pipe_fds[1], std.posix.STDOUT_FILENO);
+    std.posix.close(pipe_fds[1]);
+    defer std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO) catch {};
+
+    const payer_raw = try Ed25519.KeyPair.generateDeterministic(.{120} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    var recent_blockhash_bytes: [32]u8 = undefined;
+    for (&recent_blockhash_bytes, 0..) |*byte, index| byte.* = @intCast(index + 165);
+    const recent_blockhash = try client.encodeBase58(allocator, &recent_blockhash_bytes);
+    defer allocator.free(recent_blockhash);
+
+    const idl_json =
+        \\{"address":"Ev2cTB1BH9fNNdVbNg55CKu51tP7UTf8MGghRFmYvGvt","instructions":[{"name":"initialize","discriminator":[175,175,109,31,13,152,155,237],"accounts":[],"args":[]}]}
+    ;
+
+    var parsed = try cli.parseCliArgs(allocator, &.{
+        "inspect-idl-invoke",
+        "--json",
+        "--inspect-section",
+        "mode-report",
+        "--sender-secret-key",
+        payer_secret_key_base58,
+        "--recent-blockhash",
+        recent_blockhash,
+        idl_json,
+        "initialize",
+    });
+    defer parsed.deinit(allocator);
+
+    try runCommand(allocator, &rpc, &parsed);
+
+    try std.posix.dup2(saved_stdout, std.posix.STDOUT_FILENO);
+    const captured = try (std.fs.File{ .handle = pipe_fds[0] }).readToEndAlloc(allocator, 16 * 1024);
+    defer allocator.free(captured);
+
+    try expectMockSenderRequestCount(&sender_context.sender, 0);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"legacy_buildable\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"versioned_buildable\":") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured, "\"preferred_mode\":\"") != null);
 }
 
 test "runCommand inspect-idl-invoke emits fee section json" {

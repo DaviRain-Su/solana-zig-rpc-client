@@ -13,40 +13,57 @@ pub const EncodeError = Allocator.Error || error{
     InvalidBase64Data,
 };
 
-fn isBuiltinSchemaType(name: []const u8) bool {
-    return std.mem.eql(u8, name, "bool") or
-        std.mem.eql(u8, name, "u8") or
-        std.mem.eql(u8, name, "u16") or
-        std.mem.eql(u8, name, "u32") or
-        std.mem.eql(u8, name, "u64") or
-        std.mem.eql(u8, name, "u128") or
-        std.mem.eql(u8, name, "i8") or
-        std.mem.eql(u8, name, "i16") or
-        std.mem.eql(u8, name, "i32") or
-        std.mem.eql(u8, name, "i64") or
-        std.mem.eql(u8, name, "i128") or
-        std.mem.eql(u8, name, "f32") or
-        std.mem.eql(u8, name, "f64") or
-        std.mem.eql(u8, name, "string") or
-        std.mem.eql(u8, name, "bytes") or
-        std.mem.eql(u8, name, "pubkey") or
-        std.mem.eql(u8, name, "option") or
-        std.mem.eql(u8, name, "result") or
-        std.mem.eql(u8, name, "array") or
-        std.mem.eql(u8, name, "vec") or
-        std.mem.eql(u8, name, "set") or
+fn canonicalBuiltinSchemaTypeName(name: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, name, "bool") or std.mem.eql(u8, name, "boolean")) return "bool";
+    if (std.mem.eql(u8, name, "u8") or std.mem.eql(u8, name, "uint8")) return "u8";
+    if (std.mem.eql(u8, name, "u16") or std.mem.eql(u8, name, "uint16")) return "u16";
+    if (std.mem.eql(u8, name, "u32") or std.mem.eql(u8, name, "uint32")) return "u32";
+    if (std.mem.eql(u8, name, "u64") or std.mem.eql(u8, name, "uint64")) return "u64";
+    if (std.mem.eql(u8, name, "u128") or std.mem.eql(u8, name, "uint128")) return "u128";
+    if (std.mem.eql(u8, name, "i8") or std.mem.eql(u8, name, "int8")) return "i8";
+    if (std.mem.eql(u8, name, "i16") or std.mem.eql(u8, name, "int16")) return "i16";
+    if (std.mem.eql(u8, name, "i32") or std.mem.eql(u8, name, "int32")) return "i32";
+    if (std.mem.eql(u8, name, "i64") or std.mem.eql(u8, name, "int64")) return "i64";
+    if (std.mem.eql(u8, name, "i128") or std.mem.eql(u8, name, "int128")) return "i128";
+    if (std.mem.eql(u8, name, "f32") or std.mem.eql(u8, name, "float32")) return "f32";
+    if (std.mem.eql(u8, name, "f64") or std.mem.eql(u8, name, "float64")) return "f64";
+    if (std.mem.eql(u8, name, "string")) return "string";
+    if (std.mem.eql(u8, name, "bytes")) return "bytes";
+    if (std.mem.eql(u8, name, "pubkey") or
+        std.mem.eql(u8, name, "publicKey") or
+        std.mem.eql(u8, name, "public_key") or
+        std.mem.eql(u8, name, "PublicKey"))
+    {
+        return "pubkey";
+    }
+    if (std.mem.eql(u8, name, "option")) return "option";
+    if (std.mem.eql(u8, name, "result")) return "result";
+    if (std.mem.eql(u8, name, "array")) return "array";
+    if (std.mem.eql(u8, name, "vec")) return "vec";
+    if (std.mem.eql(u8, name, "set") or
         std.mem.eql(u8, name, "hashSet") or
         std.mem.eql(u8, name, "hash_set") or
         std.mem.eql(u8, name, "bTreeSet") or
-        std.mem.eql(u8, name, "btree_set") or
-        std.mem.eql(u8, name, "map") or
+        std.mem.eql(u8, name, "btree_set"))
+    {
+        return "set";
+    }
+    if (std.mem.eql(u8, name, "map") or
         std.mem.eql(u8, name, "hashMap") or
         std.mem.eql(u8, name, "hash_map") or
         std.mem.eql(u8, name, "bTreeMap") or
-        std.mem.eql(u8, name, "btree_map") or
-        std.mem.eql(u8, name, "tuple") or
-        std.mem.eql(u8, name, "struct") or
-        std.mem.eql(u8, name, "enum");
+        std.mem.eql(u8, name, "btree_map"))
+    {
+        return "map";
+    }
+    if (std.mem.eql(u8, name, "tuple")) return "tuple";
+    if (std.mem.eql(u8, name, "struct")) return "struct";
+    if (std.mem.eql(u8, name, "enum")) return "enum";
+    return null;
+}
+
+fn isBuiltinSchemaType(name: []const u8) bool {
+    return canonicalBuiltinSchemaTypeName(name) != null;
 }
 
 fn findJsonObjectField(object: std.json.ObjectMap, comptime names: []const []const u8) ?std.json.Value {
@@ -299,10 +316,10 @@ fn decodeSchemaBytesValue(
 
 fn schemaTypeName(schema: std.json.Value) ?[]const u8 {
     return switch (schema) {
-        .string => schema.string,
+        .string => canonicalBuiltinSchemaTypeName(schema.string) orelse schema.string,
         .object => if (findJsonObjectField(schema.object, &.{ "type", "kind" })) |value|
             switch (value) {
-                .string => value.string,
+                .string => canonicalBuiltinSchemaTypeName(value.string) orelse value.string,
                 else => null,
             }
         else if (findJsonObjectField(schema.object, &.{"option"})) |_|
@@ -1660,6 +1677,38 @@ test "instruction_schema accepts ergonomic scalar inputs" {
         \\    { "name": "owner", "type": "pubkey" },
         \\    { "name": "threshold", "type": "u16" },
         \\    { "name": "delta", "type": "i32" }
+        \\  ]
+        \\}
+    ;
+    const args_json =
+        \\{
+        \\  "enabled": "true",
+        \\  "owner": { "address": "11111111111111111111111111111111" },
+        \\  "threshold": "0x0201",
+        \\  "delta": "-0x2"
+        \\}
+    ;
+
+    const encoded = try encodeInstructionDataFromSchemaJson(allocator, schema_json, args_json, .borsh);
+    defer allocator.free(encoded);
+
+    try std.testing.expectEqual(@as(usize, 39), encoded.len);
+    try std.testing.expectEqual(@as(u8, 1), encoded[0]);
+    try std.testing.expect(std.mem.allEqual(u8, encoded[1..33], 0));
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x02 }, encoded[33..35]);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xfe, 0xff, 0xff, 0xff }, encoded[35..39]);
+}
+
+test "instruction_schema accepts builtin type aliases" {
+    const allocator = std.testing.allocator;
+    const schema_json =
+        \\{
+        \\  "type": "struct",
+        \\  "fields": [
+        \\    { "name": "enabled", "type": "boolean" },
+        \\    { "name": "owner", "type": "publicKey" },
+        \\    { "name": "threshold", "type": "uint16" },
+        \\    { "name": "delta", "type": "int32" }
         \\  ]
         \\}
     ;

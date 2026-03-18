@@ -56,7 +56,9 @@ pub const CliInvokeExecutionArgs = struct {
 pub const CliInvokeBuilderCallbacks = struct {
     buildInstructions: *const fn (Allocator, cli.Command, ?[]const u8, []const []const u8, ?[]const u8, ?[]const u8, []const []const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8) anyerror![]u8,
     buildProgram: *const fn (Allocator, cli.Command, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, []const []const u8) anyerror![]u8,
+    buildProgramPayload: ?*const fn (Allocator, cli.Command, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, []const []const u8) anyerror![]u8 = null,
     buildAnchorIdl: *const fn (Allocator, cli.Command, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, []const []const u8, []const []const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, []const []const u8) anyerror![]u8,
+    buildAnchorIdlPayload: ?*const fn (Allocator, cli.Command, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, []const []const u8, []const []const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, ?[]const u8, []const []const u8) anyerror![]u8 = null,
 };
 
 pub const CliInvokeRuntimeCallbacks = struct {
@@ -886,7 +888,7 @@ pub fn hasMissingNonceAccountForNonceAuthority(
     return (nonce_authority_secret_key_arg != null or nonce_authority_keypair_path_arg != null) and nonce_account_arg == null;
 }
 
-fn buildInvocationSpecJsonForPayloadFamily(
+pub fn buildInvocationSpecJsonForPayloadFamily(
     allocator: Allocator,
     payload_family: InvokeFamily,
     inputs: CliInvokePayloadBuilderInputs,
@@ -1015,9 +1017,21 @@ pub fn canonicalizeInvocationSpecJson(
     allocator: Allocator,
     invocation_spec_json: []const u8,
 ) ![]u8 {
-    var owned_spec = client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
+    return canonicalizeInvocationSpecJsonForPayloadFamily(
         allocator,
         .instructions,
+        invocation_spec_json,
+    );
+}
+
+pub fn canonicalizeInvocationSpecJsonForPayloadFamily(
+    allocator: Allocator,
+    payload_family: InvokeFamily,
+    invocation_spec_json: []const u8,
+) ![]u8 {
+    var owned_spec = client.invoke.buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        payload_family,
         invocation_spec_json,
     ) catch return error.InvalidCli;
     defer owned_spec.deinit(allocator);
@@ -1036,7 +1050,32 @@ pub fn buildCanonicalInvocationSpecJsonForPayloadFamily(
     context_args: CliInvokeContextArgs,
     builders: anytype,
 ) ![]u8 {
-    const invocation_spec_json = switch (payload_family) {
+    const invocation_spec_json = try buildPayloadInvocationSpecJsonForPayloadFamily(
+        allocator,
+        payload_family,
+        command,
+        payload_args,
+        context_args,
+        builders,
+    );
+    defer allocator.free(invocation_spec_json);
+
+    return canonicalizeInvocationSpecJsonForPayloadFamily(
+        allocator,
+        payload_family,
+        invocation_spec_json,
+    );
+}
+
+pub fn buildPayloadInvocationSpecJsonForPayloadFamily(
+    allocator: Allocator,
+    payload_family: InvokeFamily,
+    command: cli.Command,
+    payload_args: CliInvokePayloadArgs,
+    context_args: CliInvokeContextArgs,
+    builders: anytype,
+) ![]u8 {
+    return switch (payload_family) {
         .instructions => try builders.buildInstructions(
             allocator,
             command,
@@ -1052,51 +1091,148 @@ pub fn buildCanonicalInvocationSpecJsonForPayloadFamily(
             context_args.nonce_authority_secret_key_arg,
             context_args.nonce_authority_keypair_path_arg,
         ),
-        .program => try builders.buildProgram(
-            allocator,
-            command,
-            payload_args.program_id_arg,
-            payload_args.program_accounts_arg,
-            payload_args.program_data_arg,
-            payload_args.program_data_encoding_arg,
-            payload_args.program_data_schema_json_arg,
-            payload_args.program_args_json_arg,
-            payload_args.program_schema_encoding_arg,
-            context_args.payer_keypair_path_arg,
-            context_args.payer_secret_key_arg,
-            context_args.signer_keypair_paths_arg,
-            context_args.lookup_tables_arg,
-            context_args.recent_blockhash_arg,
-            context_args.nonce_account_arg,
-            context_args.nonce_authority_secret_key_arg,
-            context_args.nonce_authority_keypair_path_arg,
-            context_args.additional_signer_secret_keys_arg,
-        ),
-        .anchor_idl => try builders.buildAnchorIdl(
-            allocator,
-            command,
-            payload_args.idl_arg,
-            payload_args.idl_instruction_arg,
-            payload_args.idl_program_id_arg,
-            payload_args.idl_args_json_arg,
-            payload_args.idl_accounts_json_arg,
-            payload_args.idl_account_bindings,
-            payload_args.idl_remaining_accounts,
-            payload_args.idl_remaining_accounts_json_arg,
-            context_args.payer_keypair_path_arg,
-            context_args.payer_secret_key_arg,
-            context_args.signer_keypair_paths_arg,
-            context_args.lookup_tables_arg,
-            context_args.recent_blockhash_arg,
-            context_args.nonce_account_arg,
-            context_args.nonce_authority_secret_key_arg,
-            context_args.nonce_authority_keypair_path_arg,
-            context_args.additional_signer_secret_keys_arg,
-        ),
+        .program => blk: {
+            if (@hasField(@TypeOf(builders), "buildProgramPayload")) {
+                if (@typeInfo(@TypeOf(builders.buildProgramPayload)) == .optional) {
+                    if (builders.buildProgramPayload) |builder| {
+                        break :blk try builder(
+                            allocator,
+                            command,
+                            payload_args.program_id_arg,
+                            payload_args.program_accounts_arg,
+                            payload_args.program_data_arg,
+                            payload_args.program_data_encoding_arg,
+                            payload_args.program_data_schema_json_arg,
+                            payload_args.program_args_json_arg,
+                            payload_args.program_schema_encoding_arg,
+                            context_args.payer_keypair_path_arg,
+                            context_args.payer_secret_key_arg,
+                            context_args.signer_keypair_paths_arg,
+                            context_args.lookup_tables_arg,
+                            context_args.recent_blockhash_arg,
+                            context_args.nonce_account_arg,
+                            context_args.nonce_authority_secret_key_arg,
+                            context_args.nonce_authority_keypair_path_arg,
+                            context_args.additional_signer_secret_keys_arg,
+                        );
+                    }
+                } else {
+                    break :blk try builders.buildProgramPayload(
+                        allocator,
+                        command,
+                        payload_args.program_id_arg,
+                        payload_args.program_accounts_arg,
+                        payload_args.program_data_arg,
+                        payload_args.program_data_encoding_arg,
+                        payload_args.program_data_schema_json_arg,
+                        payload_args.program_args_json_arg,
+                        payload_args.program_schema_encoding_arg,
+                        context_args.payer_keypair_path_arg,
+                        context_args.payer_secret_key_arg,
+                        context_args.signer_keypair_paths_arg,
+                        context_args.lookup_tables_arg,
+                        context_args.recent_blockhash_arg,
+                        context_args.nonce_account_arg,
+                        context_args.nonce_authority_secret_key_arg,
+                        context_args.nonce_authority_keypair_path_arg,
+                        context_args.additional_signer_secret_keys_arg,
+                    );
+                }
+            }
+            break :blk try builders.buildProgram(
+                allocator,
+                command,
+                payload_args.program_id_arg,
+                payload_args.program_accounts_arg,
+                payload_args.program_data_arg,
+                payload_args.program_data_encoding_arg,
+                payload_args.program_data_schema_json_arg,
+                payload_args.program_args_json_arg,
+                payload_args.program_schema_encoding_arg,
+                context_args.payer_keypair_path_arg,
+                context_args.payer_secret_key_arg,
+                context_args.signer_keypair_paths_arg,
+                context_args.lookup_tables_arg,
+                context_args.recent_blockhash_arg,
+                context_args.nonce_account_arg,
+                context_args.nonce_authority_secret_key_arg,
+                context_args.nonce_authority_keypair_path_arg,
+                context_args.additional_signer_secret_keys_arg,
+            );
+        },
+        .anchor_idl => blk: {
+            if (@hasField(@TypeOf(builders), "buildAnchorIdlPayload")) {
+                if (@typeInfo(@TypeOf(builders.buildAnchorIdlPayload)) == .optional) {
+                    if (builders.buildAnchorIdlPayload) |builder| {
+                        break :blk try builder(
+                            allocator,
+                            command,
+                            payload_args.idl_arg,
+                            payload_args.idl_instruction_arg,
+                            payload_args.idl_program_id_arg,
+                            payload_args.idl_args_json_arg,
+                            payload_args.idl_accounts_json_arg,
+                            payload_args.idl_account_bindings,
+                            payload_args.idl_remaining_accounts,
+                            payload_args.idl_remaining_accounts_json_arg,
+                            context_args.payer_keypair_path_arg,
+                            context_args.payer_secret_key_arg,
+                            context_args.signer_keypair_paths_arg,
+                            context_args.lookup_tables_arg,
+                            context_args.recent_blockhash_arg,
+                            context_args.nonce_account_arg,
+                            context_args.nonce_authority_secret_key_arg,
+                            context_args.nonce_authority_keypair_path_arg,
+                            context_args.additional_signer_secret_keys_arg,
+                        );
+                    }
+                } else {
+                    break :blk try builders.buildAnchorIdlPayload(
+                        allocator,
+                        command,
+                        payload_args.idl_arg,
+                        payload_args.idl_instruction_arg,
+                        payload_args.idl_program_id_arg,
+                        payload_args.idl_args_json_arg,
+                        payload_args.idl_accounts_json_arg,
+                        payload_args.idl_account_bindings,
+                        payload_args.idl_remaining_accounts,
+                        payload_args.idl_remaining_accounts_json_arg,
+                        context_args.payer_keypair_path_arg,
+                        context_args.payer_secret_key_arg,
+                        context_args.signer_keypair_paths_arg,
+                        context_args.lookup_tables_arg,
+                        context_args.recent_blockhash_arg,
+                        context_args.nonce_account_arg,
+                        context_args.nonce_authority_secret_key_arg,
+                        context_args.nonce_authority_keypair_path_arg,
+                        context_args.additional_signer_secret_keys_arg,
+                    );
+                }
+            }
+            break :blk try builders.buildAnchorIdl(
+                allocator,
+                command,
+                payload_args.idl_arg,
+                payload_args.idl_instruction_arg,
+                payload_args.idl_program_id_arg,
+                payload_args.idl_args_json_arg,
+                payload_args.idl_accounts_json_arg,
+                payload_args.idl_account_bindings,
+                payload_args.idl_remaining_accounts,
+                payload_args.idl_remaining_accounts_json_arg,
+                context_args.payer_keypair_path_arg,
+                context_args.payer_secret_key_arg,
+                context_args.signer_keypair_paths_arg,
+                context_args.lookup_tables_arg,
+                context_args.recent_blockhash_arg,
+                context_args.nonce_account_arg,
+                context_args.nonce_authority_secret_key_arg,
+                context_args.nonce_authority_keypair_path_arg,
+                context_args.additional_signer_secret_keys_arg,
+            );
+        },
     };
-    defer allocator.free(invocation_spec_json);
-
-    return canonicalizeInvocationSpecJson(allocator, invocation_spec_json);
 }
 
 pub fn runGenericInvocationCommand(
@@ -1472,6 +1608,167 @@ test "commands.invoke buildCanonicalInvocationSpecJsonForPayloadFamily forwards 
             },
         ),
     );
+}
+
+test "commands.invoke buildCanonicalInvocationSpecJsonForPayloadFamily canonicalizes raw program payload json" {
+    const allocator = std.testing.allocator;
+    const payer_raw = try std.crypto.sign.Ed25519.KeyPair.generateDeterministic(.{23} ** 32);
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try client.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+
+    const FakeBuilders = struct {
+        fn buildInstructions(
+            _: Allocator,
+            _: cli.Command,
+            _: ?[]const u8,
+            _: []const []const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: []const []const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+        ) ![]u8 {
+            return error.Unexpected;
+        }
+
+        fn buildProgram(
+            _: Allocator,
+            _: cli.Command,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: []const []const u8,
+        ) ![]u8 {
+            return error.Unexpected;
+        }
+
+        fn buildProgramPayload(
+            alloc: Allocator,
+            command: cli.Command,
+            program_id_arg: ?[]const u8,
+            accounts_arg: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            payer_secret_key_arg: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: []const []const u8,
+        ) ![]u8 {
+            try std.testing.expectEqual(cli.Command.spec_program_invoke, command);
+            try std.testing.expectEqualStrings("11111111111111111111111111111111", program_id_arg.?);
+            try std.testing.expectEqualStrings(
+                "[{\"pubkey\":\"11111111111111111111111111111111\",\"is_signer\":false,\"is_writable\":false}]",
+                accounts_arg.?,
+            );
+            try std.testing.expect(payer_secret_key_arg != null);
+            return try std.fmt.allocPrint(
+                alloc,
+                "{{\"payer_secret_key\":\"{s}\",\"program_id\":\"11111111111111111111111111111111\",\"accounts\":[{{\"pubkey\":\"11111111111111111111111111111111\",\"is_signer\":false,\"is_writable\":false}}],\"data_bytes\":[1,2,3]}}",
+                .{payer_secret_key_arg.?},
+            );
+        }
+
+        fn buildAnchorIdl(
+            _: Allocator,
+            _: cli.Command,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: []const []const u8,
+            _: []const []const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: ?[]const u8,
+            _: []const []const u8,
+        ) ![]u8 {
+            return error.Unexpected;
+        }
+    };
+
+    const invocation_spec_json = try buildCanonicalInvocationSpecJsonForPayloadFamily(
+        allocator,
+        .program,
+        .spec_program_invoke,
+        .{
+            .instructions_spec_arg = null,
+            .instruction_json_args = &.{},
+            .program_id_arg = "11111111111111111111111111111111",
+            .program_accounts_arg = "[{\"pubkey\":\"11111111111111111111111111111111\",\"is_signer\":false,\"is_writable\":false}]",
+            .program_data_arg = null,
+            .program_data_encoding_arg = null,
+            .program_data_schema_json_arg = null,
+            .program_args_json_arg = null,
+            .program_schema_encoding_arg = null,
+            .idl_arg = null,
+            .idl_instruction_arg = null,
+            .idl_program_id_arg = null,
+            .idl_args_json_arg = null,
+            .idl_accounts_json_arg = null,
+            .idl_account_bindings = &.{},
+            .idl_remaining_accounts = &.{},
+            .idl_remaining_accounts_json_arg = null,
+        },
+        .{
+            .payer_keypair_path_arg = null,
+            .payer_secret_key_arg = payer_secret_key_base58,
+            .signer_keypair_paths_arg = null,
+            .lookup_tables_arg = null,
+            .recent_blockhash_arg = null,
+            .nonce_account_arg = null,
+            .nonce_authority_secret_key_arg = null,
+            .nonce_authority_keypair_path_arg = null,
+            .additional_signer_secret_keys_arg = &.{},
+        },
+        .{
+            .buildInstructions = FakeBuilders.buildInstructions,
+            .buildProgram = FakeBuilders.buildProgram,
+            .buildProgramPayload = FakeBuilders.buildProgramPayload,
+            .buildAnchorIdl = FakeBuilders.buildAnchorIdl,
+        },
+    );
+    defer allocator.free(invocation_spec_json);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, invocation_spec_json, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expect(parsed.value == .object);
+    try std.testing.expect(parsed.value.object.get("instructions") != null);
+    try std.testing.expect(parsed.value.object.get("program_id") == null);
 }
 
 test "commands.invoke isInvocationSendCommand covers direct and generic invocation sends" {

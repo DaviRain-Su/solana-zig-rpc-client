@@ -807,6 +807,104 @@ pub const PreferredResolvedInvocationExecutionResult = struct {
         self.resolved_invocation.deinit(allocator);
         self.* = undefined;
     }
+
+    pub fn allocResolvedInvocationJson(self: *const PreferredResolvedInvocationExecutionResult, allocator: Allocator) ![]u8 {
+        return try buildResolvedInvocationJsonFromOwnedResolvedInvocationRef(
+            allocator,
+            &self.resolved_invocation,
+        );
+    }
+
+    pub fn allocInstructionsJson(self: *const PreferredResolvedInvocationExecutionResult, allocator: Allocator) ![]u8 {
+        return try buildInstructionsJsonFromOwnedResolvedInvocationRef(
+            allocator,
+            &self.resolved_invocation,
+        );
+    }
+
+    pub fn allocAddressLookupTablesJson(self: *const PreferredResolvedInvocationExecutionResult, allocator: Allocator) !?[]u8 {
+        return try buildAddressLookupTablesJsonFromOwnedResolvedInvocationRef(
+            allocator,
+            &self.resolved_invocation,
+        );
+    }
+
+    pub fn allocAccountsJson(self: *const PreferredResolvedInvocationExecutionResult, allocator: Allocator) ![]u8 {
+        var accounts = try buildInvocationAccountsFromOwnedResolvedInvocationRef(
+            allocator,
+            &self.resolved_invocation,
+        );
+        defer accounts.deinit(allocator);
+        return try allocInvocationAccountsJson(allocator, accounts);
+    }
+
+    pub fn payer(self: PreferredResolvedInvocationExecutionResult) sdk.Pubkey {
+        return self.resolved_invocation.payer;
+    }
+
+    pub fn containsSigner(self: PreferredResolvedInvocationExecutionResult, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.resolved_invocation.signer_pubkeys, pubkey);
+    }
+
+    pub fn providesSigner(self: PreferredResolvedInvocationExecutionResult, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.preflight.providesSigner(pubkey);
+    }
+
+    pub fn requiresSigner(self: PreferredResolvedInvocationExecutionResult, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.preflight.requiresSigner(pubkey);
+    }
+
+    pub fn containsProgram(self: PreferredResolvedInvocationExecutionResult, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.execution_report.report.summary.program_ids, pubkey);
+    }
+
+    pub fn containsLookupTable(self: PreferredResolvedInvocationExecutionResult, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.lookup_coverage.containsLookupTable(pubkey);
+    }
+
+    pub fn usesLookupTables(self: PreferredResolvedInvocationExecutionResult) bool {
+        return self.execution_report.report.usesLookupTables();
+    }
+
+    pub fn isLookupCandidate(self: PreferredResolvedInvocationExecutionResult, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.lookup_coverage.isCandidate(pubkey);
+    }
+
+    pub fn hasLookupCoverageFor(self: PreferredResolvedInvocationExecutionResult, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.lookupCoverageIncludes(pubkey);
+    }
+
+    pub fn isLookupUncovered(self: PreferredResolvedInvocationExecutionResult, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.lookup_coverage.isUncoveredPubkey(pubkey);
+    }
+
+    pub fn usesDurableNonce(self: PreferredResolvedInvocationExecutionResult) bool {
+        return self.execution_report.report.uses_durable_nonce;
+    }
+
+    pub fn blockhashMode(self: PreferredResolvedInvocationExecutionResult) InvocationBlockhashMode {
+        return self.execution_report.report.plan.blockhash_mode;
+    }
+
+    pub fn canExecute(self: PreferredResolvedInvocationExecutionResult) bool {
+        return self.execution_report.can_execute_selected_mode;
+    }
+
+    pub fn hasMissingRequiredSigner(self: PreferredResolvedInvocationExecutionResult, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.hasMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: PreferredResolvedInvocationExecutionResult, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.hasExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: PreferredResolvedInvocationExecutionResult, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.hasDuplicateSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: PreferredResolvedInvocationExecutionResult, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.hasDuplicateLookupTable(pubkey);
+    }
 };
 
 pub const PreferredInvocationAnalysis = struct {
@@ -820,7 +918,217 @@ pub const PreferredInvocationAnalysis = struct {
         self.accounts.deinit(allocator);
         self.* = undefined;
     }
+
+    pub fn allocResolvedInvocationJson(self: *const PreferredInvocationAnalysis, allocator: Allocator) ![]u8 {
+        return try buildResolvedInvocationJsonFromOwnedResolvedInvocationRef(
+            allocator,
+            &self.resolved_invocation,
+        );
+    }
+
+    pub fn allocInstructionsJson(self: *const PreferredInvocationAnalysis, allocator: Allocator) ![]u8 {
+        return try buildInstructionsJsonFromOwnedResolvedInvocationRef(
+            allocator,
+            &self.resolved_invocation,
+        );
+    }
+
+    pub fn allocAddressLookupTablesJson(self: *const PreferredInvocationAnalysis, allocator: Allocator) !?[]u8 {
+        return try buildAddressLookupTablesJsonFromOwnedResolvedInvocationRef(
+            allocator,
+            &self.resolved_invocation,
+        );
+    }
+
+    pub fn allocAccountsJson(self: *const PreferredInvocationAnalysis, allocator: Allocator) ![]u8 {
+        return try allocInvocationAccountsJson(allocator, self.accounts);
+    }
+
+    pub fn payer(self: PreferredInvocationAnalysis) sdk.Pubkey {
+        return self.resolved_invocation.payer;
+    }
+
+    pub fn findAccountInfo(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) ?InvocationAccountInfo {
+        return self.accounts.find(pubkey);
+    }
+
+    pub fn containsAccount(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.accounts.contains(pubkey);
+    }
+
+    pub fn containsSigner(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.resolved_invocation.signer_pubkeys, pubkey);
+    }
+
+    pub fn providesSigner(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.preflight.providesSigner(pubkey);
+    }
+
+    pub fn requiresSigner(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.preflight.requiresSigner(pubkey);
+    }
+
+    pub fn containsProgram(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.execution_report.report.summary.program_ids, pubkey);
+    }
+
+    pub fn containsLookupTable(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.lookup_coverage.containsLookupTable(pubkey);
+    }
+
+    pub fn usesLookupTables(self: PreferredInvocationAnalysis) bool {
+        return self.execution_report.report.usesLookupTables();
+    }
+
+    pub fn isSignerAccount(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isSigner(pubkey);
+    }
+
+    pub fn isWritableAccount(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isWritable(pubkey);
+    }
+
+    pub fn isReadonlyAccount(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.preflight.isReadonly(pubkey);
+    }
+
+    pub fn isPayerAccount(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isPayer(pubkey);
+    }
+
+    pub fn isProgramAccount(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isProgram(pubkey);
+    }
+
+    pub fn isNonceAccount(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isNonceAccount(pubkey);
+    }
+
+    pub fn isLookupCandidate(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.lookup_coverage.isCandidate(pubkey);
+    }
+
+    pub fn hasLookupCoverageFor(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.lookupCoverageIncludes(pubkey);
+    }
+
+    pub fn isLookupUncovered(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.lookup_coverage.isUncoveredPubkey(pubkey);
+    }
+
+    pub fn usesDurableNonce(self: PreferredInvocationAnalysis) bool {
+        return self.execution_report.report.uses_durable_nonce;
+    }
+
+    pub fn blockhashMode(self: PreferredInvocationAnalysis) InvocationBlockhashMode {
+        return self.execution_report.report.plan.blockhash_mode;
+    }
+
+    pub fn canExecute(self: PreferredInvocationAnalysis) bool {
+        return self.execution_report.can_execute_selected_mode;
+    }
+
+    pub fn hasMissingRequiredSigner(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.hasMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.hasExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.hasDuplicateSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: PreferredInvocationAnalysis, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.hasDuplicateLookupTable(pubkey);
+    }
 };
+
+test "invoke.PreferredResolvedInvocationExecutionResult query helpers expose signer and lookup state" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{129} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{130} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{132} ** 32);
+    const lookup_address = sdk.Pubkey.fromBytes([_]u8{133} ** 32);
+    const missing_pubkey = sdk.Pubkey.fromBytes([_]u8{134} ** 32);
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(
+        allocator,
+        129,
+        130,
+        131,
+        132,
+        133,
+    );
+    defer allocator.free(spec_json);
+
+    var result = try buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer result.deinit(allocator);
+
+    try std.testing.expectEqual(payer_raw.public_key, result.payer());
+    try std.testing.expect(result.canExecute());
+    try std.testing.expect(result.containsSigner(payer_raw.public_key));
+    try std.testing.expect(result.providesSigner(payer_raw.public_key));
+    try std.testing.expect(result.requiresSigner(payer_raw.public_key));
+    try std.testing.expect(result.containsProgram(program_id));
+    try std.testing.expect(result.usesLookupTables());
+    try std.testing.expect(result.containsLookupTable(lookup_table));
+    try std.testing.expect(result.isLookupCandidate(lookup_address));
+    try std.testing.expect(result.hasLookupCoverageFor(lookup_address));
+    try std.testing.expect(!result.isLookupUncovered(lookup_address));
+    try std.testing.expect(!result.usesDurableNonce());
+    try std.testing.expectEqual(InvocationBlockhashMode.explicit_recent_blockhash, result.blockhashMode());
+    try std.testing.expect(!result.containsSigner(missing_pubkey));
+    try std.testing.expect(!result.providesSigner(missing_pubkey));
+    try std.testing.expect(!result.requiresSigner(missing_pubkey));
+    try std.testing.expect(!result.containsProgram(missing_pubkey));
+    try std.testing.expect(!result.containsLookupTable(missing_pubkey));
+    try std.testing.expect(!result.isLookupCandidate(missing_pubkey));
+    try std.testing.expect(!result.hasLookupCoverageFor(missing_pubkey));
+    try std.testing.expect(!result.isLookupUncovered(missing_pubkey));
+    try std.testing.expect(!result.hasMissingRequiredSigner(missing_pubkey));
+    try std.testing.expect(!result.hasExtraSigner(missing_pubkey));
+    try std.testing.expect(!result.hasDuplicateSigner(missing_pubkey));
+    try std.testing.expect(!result.hasDuplicateLookupTable(missing_pubkey));
+}
+
+test "invoke.PreferredResolvedInvocationExecutionResult allocAccountsJson emits canonical account roles" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocRichInstructionsInvocationSpecJson(allocator, 135, 136, 137, 138, 139, 140);
+    defer allocator.free(spec_json);
+
+    var result = try buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        spec_json,
+        .{},
+    );
+    defer result.deinit(allocator);
+
+    const accounts_json = try result.allocAccountsJson(allocator);
+    defer allocator.free(accounts_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"accounts\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"is_payer\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"is_nonce_account\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"is_signer\":true") != null);
+}
 
 fn invocationModeJsonLabel(mode: ?InvocationMode) []const u8 {
     return if (mode) |value| switch (value) {
@@ -4087,6 +4395,17 @@ pub const PreparedInvocation = struct {
         return try buildInstructionsJsonFromOwnedResolvedInvocation(allocator, &self.resolved_invocation);
     }
 
+    pub fn allocAddressLookupTablesJson(self: *const PreparedInvocation, allocator: Allocator) !?[]u8 {
+        return try buildAddressLookupTablesJsonFromOwnedResolvedInvocationRef(
+            allocator,
+            &self.resolved_invocation,
+        );
+    }
+
+    pub fn allocAccountsJson(self: *const PreparedInvocation, allocator: Allocator) ![]u8 {
+        return try allocInvocationAccountsJson(allocator, self.accounts);
+    }
+
     pub fn send(
         self: *const PreparedInvocation,
         rpc: anytype,
@@ -4155,8 +4474,24 @@ pub const PreparedInvocation = struct {
         return self.resolved_invocation.payer;
     }
 
+    pub fn findAccountInfo(self: PreparedInvocation, pubkey: sdk.Pubkey) ?InvocationAccountInfo {
+        return self.accounts.find(pubkey);
+    }
+
+    pub fn containsAccount(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.accounts.contains(pubkey);
+    }
+
     pub fn containsSigner(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
         return pubkeySliceContains(self.resolved_invocation.signer_pubkeys, pubkey);
+    }
+
+    pub fn providesSigner(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.report.preflight.providesSigner(pubkey);
+    }
+
+    pub fn requiresSigner(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.report.preflight.requiresSigner(pubkey);
     }
 
     pub fn containsProgram(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
@@ -4167,12 +4502,44 @@ pub const PreparedInvocation = struct {
         return self.report.lookup_coverage.containsLookupTable(pubkey);
     }
 
+    pub fn usesLookupTables(self: PreparedInvocation) bool {
+        return self.report.usesLookupTables();
+    }
+
+    pub fn isSignerAccount(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isSigner(pubkey);
+    }
+
     pub fn isWritableAccount(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
         return self.accounts.isWritable(pubkey);
     }
 
+    pub fn isReadonlyAccount(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.report.preflight.isReadonly(pubkey);
+    }
+
+    pub fn isPayerAccount(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isPayer(pubkey);
+    }
+
     pub fn isProgramAccount(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
         return self.accounts.isProgram(pubkey);
+    }
+
+    pub fn isNonceAccount(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isNonceAccount(pubkey);
+    }
+
+    pub fn isLookupCandidate(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.report.lookup_coverage.isCandidate(pubkey);
+    }
+
+    pub fn hasLookupCoverageFor(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.report.lookupCoverageIncludes(pubkey);
+    }
+
+    pub fn isLookupUncovered(self: PreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.report.lookup_coverage.isUncoveredPubkey(pubkey);
     }
 
     pub fn usesDurableNonce(self: PreparedInvocation) bool {
@@ -4317,6 +4684,14 @@ pub const PreferredPreparedInvocation = struct {
         return try self.prepared.allocInstructionsJson(allocator);
     }
 
+    pub fn allocAddressLookupTablesJson(self: *const PreferredPreparedInvocation, allocator: Allocator) !?[]u8 {
+        return try self.prepared.allocAddressLookupTablesJson(allocator);
+    }
+
+    pub fn allocAccountsJson(self: *const PreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocAccountsJson(allocator);
+    }
+
     pub fn send(
         self: *const PreferredPreparedInvocation,
         rpc: anytype,
@@ -4383,8 +4758,24 @@ pub const PreferredPreparedInvocation = struct {
         return self.prepared.payer();
     }
 
+    pub fn findAccountInfo(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) ?InvocationAccountInfo {
+        return self.prepared.findAccountInfo(pubkey);
+    }
+
+    pub fn containsAccount(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsAccount(pubkey);
+    }
+
     pub fn containsSigner(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
         return self.prepared.containsSigner(pubkey);
+    }
+
+    pub fn providesSigner(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.providesSigner(pubkey);
+    }
+
+    pub fn requiresSigner(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.requiresSigner(pubkey);
     }
 
     pub fn containsProgram(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
@@ -4395,12 +4786,44 @@ pub const PreferredPreparedInvocation = struct {
         return self.prepared.containsLookupTable(pubkey);
     }
 
+    pub fn usesLookupTables(self: PreferredPreparedInvocation) bool {
+        return self.prepared.usesLookupTables();
+    }
+
+    pub fn isSignerAccount(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isSignerAccount(pubkey);
+    }
+
     pub fn isWritableAccount(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
         return self.prepared.isWritableAccount(pubkey);
     }
 
+    pub fn isReadonlyAccount(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isReadonlyAccount(pubkey);
+    }
+
+    pub fn isPayerAccount(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isPayerAccount(pubkey);
+    }
+
     pub fn isProgramAccount(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
         return self.prepared.isProgramAccount(pubkey);
+    }
+
+    pub fn isNonceAccount(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isNonceAccount(pubkey);
+    }
+
+    pub fn isLookupCandidate(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupCandidate(pubkey);
+    }
+
+    pub fn hasLookupCoverageFor(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasLookupCoverageFor(pubkey);
+    }
+
+    pub fn isLookupUncovered(self: PreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupUncovered(pubkey);
     }
 
     pub fn usesDurableNonce(self: PreferredPreparedInvocation) bool {
@@ -4540,6 +4963,114 @@ pub const SentPreparedInvocation = struct {
     pub fn allocInstructionsJson(self: *const SentPreparedInvocation, allocator: Allocator) ![]u8 {
         return try self.prepared.allocInstructionsJson(allocator);
     }
+
+    pub fn allocAddressLookupTablesJson(self: *const SentPreparedInvocation, allocator: Allocator) !?[]u8 {
+        return try self.prepared.allocAddressLookupTablesJson(allocator);
+    }
+
+    pub fn allocAccountsJson(self: *const SentPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocAccountsJson(allocator);
+    }
+
+    pub fn payer(self: SentPreparedInvocation) sdk.Pubkey {
+        return self.prepared.payer();
+    }
+
+    pub fn findAccountInfo(self: SentPreparedInvocation, pubkey: sdk.Pubkey) ?InvocationAccountInfo {
+        return self.prepared.findAccountInfo(pubkey);
+    }
+
+    pub fn containsAccount(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsAccount(pubkey);
+    }
+
+    pub fn containsSigner(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsSigner(pubkey);
+    }
+
+    pub fn providesSigner(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.providesSigner(pubkey);
+    }
+
+    pub fn requiresSigner(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.requiresSigner(pubkey);
+    }
+
+    pub fn containsProgram(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsProgram(pubkey);
+    }
+
+    pub fn containsLookupTable(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsLookupTable(pubkey);
+    }
+
+    pub fn usesLookupTables(self: SentPreparedInvocation) bool {
+        return self.prepared.usesLookupTables();
+    }
+
+    pub fn isSignerAccount(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isSignerAccount(pubkey);
+    }
+
+    pub fn isWritableAccount(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isWritableAccount(pubkey);
+    }
+
+    pub fn isReadonlyAccount(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isReadonlyAccount(pubkey);
+    }
+
+    pub fn isPayerAccount(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isPayerAccount(pubkey);
+    }
+
+    pub fn isProgramAccount(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isProgramAccount(pubkey);
+    }
+
+    pub fn isNonceAccount(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isNonceAccount(pubkey);
+    }
+
+    pub fn isLookupCandidate(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupCandidate(pubkey);
+    }
+
+    pub fn hasLookupCoverageFor(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasLookupCoverageFor(pubkey);
+    }
+
+    pub fn isLookupUncovered(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupUncovered(pubkey);
+    }
+
+    pub fn usesDurableNonce(self: SentPreparedInvocation) bool {
+        return self.prepared.usesDurableNonce();
+    }
+
+    pub fn blockhashMode(self: SentPreparedInvocation) InvocationBlockhashMode {
+        return self.prepared.blockhashMode();
+    }
+
+    pub fn canExecute(self: SentPreparedInvocation) bool {
+        return self.prepared.canExecute();
+    }
+
+    pub fn hasMissingRequiredSigner(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: SentPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateLookupTable(pubkey);
+    }
 };
 
 pub const SimulatedPreparedInvocation = struct {
@@ -4578,6 +5109,114 @@ pub const SimulatedPreparedInvocation = struct {
     pub fn allocInstructionsJson(self: *const SimulatedPreparedInvocation, allocator: Allocator) ![]u8 {
         return try self.prepared.allocInstructionsJson(allocator);
     }
+
+    pub fn allocAddressLookupTablesJson(self: *const SimulatedPreparedInvocation, allocator: Allocator) !?[]u8 {
+        return try self.prepared.allocAddressLookupTablesJson(allocator);
+    }
+
+    pub fn allocAccountsJson(self: *const SimulatedPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocAccountsJson(allocator);
+    }
+
+    pub fn payer(self: SimulatedPreparedInvocation) sdk.Pubkey {
+        return self.prepared.payer();
+    }
+
+    pub fn findAccountInfo(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) ?InvocationAccountInfo {
+        return self.prepared.findAccountInfo(pubkey);
+    }
+
+    pub fn containsAccount(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsAccount(pubkey);
+    }
+
+    pub fn containsSigner(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsSigner(pubkey);
+    }
+
+    pub fn providesSigner(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.providesSigner(pubkey);
+    }
+
+    pub fn requiresSigner(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.requiresSigner(pubkey);
+    }
+
+    pub fn containsProgram(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsProgram(pubkey);
+    }
+
+    pub fn containsLookupTable(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsLookupTable(pubkey);
+    }
+
+    pub fn usesLookupTables(self: SimulatedPreparedInvocation) bool {
+        return self.prepared.usesLookupTables();
+    }
+
+    pub fn isSignerAccount(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isSignerAccount(pubkey);
+    }
+
+    pub fn isWritableAccount(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isWritableAccount(pubkey);
+    }
+
+    pub fn isReadonlyAccount(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isReadonlyAccount(pubkey);
+    }
+
+    pub fn isPayerAccount(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isPayerAccount(pubkey);
+    }
+
+    pub fn isProgramAccount(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isProgramAccount(pubkey);
+    }
+
+    pub fn isNonceAccount(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isNonceAccount(pubkey);
+    }
+
+    pub fn isLookupCandidate(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupCandidate(pubkey);
+    }
+
+    pub fn hasLookupCoverageFor(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasLookupCoverageFor(pubkey);
+    }
+
+    pub fn isLookupUncovered(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupUncovered(pubkey);
+    }
+
+    pub fn usesDurableNonce(self: SimulatedPreparedInvocation) bool {
+        return self.prepared.usesDurableNonce();
+    }
+
+    pub fn blockhashMode(self: SimulatedPreparedInvocation) InvocationBlockhashMode {
+        return self.prepared.blockhashMode();
+    }
+
+    pub fn canExecute(self: SimulatedPreparedInvocation) bool {
+        return self.prepared.canExecute();
+    }
+
+    pub fn hasMissingRequiredSigner(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: SimulatedPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateLookupTable(pubkey);
+    }
 };
 
 pub const PreparedInvocationFee = struct {
@@ -4615,6 +5254,114 @@ pub const PreparedInvocationFee = struct {
 
     pub fn allocInstructionsJson(self: *const PreparedInvocationFee, allocator: Allocator) ![]u8 {
         return try self.prepared.allocInstructionsJson(allocator);
+    }
+
+    pub fn allocAddressLookupTablesJson(self: *const PreparedInvocationFee, allocator: Allocator) !?[]u8 {
+        return try self.prepared.allocAddressLookupTablesJson(allocator);
+    }
+
+    pub fn allocAccountsJson(self: *const PreparedInvocationFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocAccountsJson(allocator);
+    }
+
+    pub fn payer(self: PreparedInvocationFee) sdk.Pubkey {
+        return self.prepared.payer();
+    }
+
+    pub fn findAccountInfo(self: PreparedInvocationFee, pubkey: sdk.Pubkey) ?InvocationAccountInfo {
+        return self.prepared.findAccountInfo(pubkey);
+    }
+
+    pub fn containsAccount(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsAccount(pubkey);
+    }
+
+    pub fn containsSigner(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsSigner(pubkey);
+    }
+
+    pub fn providesSigner(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.providesSigner(pubkey);
+    }
+
+    pub fn requiresSigner(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.requiresSigner(pubkey);
+    }
+
+    pub fn containsProgram(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsProgram(pubkey);
+    }
+
+    pub fn containsLookupTable(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsLookupTable(pubkey);
+    }
+
+    pub fn usesLookupTables(self: PreparedInvocationFee) bool {
+        return self.prepared.usesLookupTables();
+    }
+
+    pub fn isSignerAccount(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isSignerAccount(pubkey);
+    }
+
+    pub fn isWritableAccount(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isWritableAccount(pubkey);
+    }
+
+    pub fn isReadonlyAccount(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isReadonlyAccount(pubkey);
+    }
+
+    pub fn isPayerAccount(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isPayerAccount(pubkey);
+    }
+
+    pub fn isProgramAccount(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isProgramAccount(pubkey);
+    }
+
+    pub fn isNonceAccount(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isNonceAccount(pubkey);
+    }
+
+    pub fn isLookupCandidate(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupCandidate(pubkey);
+    }
+
+    pub fn hasLookupCoverageFor(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasLookupCoverageFor(pubkey);
+    }
+
+    pub fn isLookupUncovered(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupUncovered(pubkey);
+    }
+
+    pub fn usesDurableNonce(self: PreparedInvocationFee) bool {
+        return self.prepared.usesDurableNonce();
+    }
+
+    pub fn blockhashMode(self: PreparedInvocationFee) InvocationBlockhashMode {
+        return self.prepared.blockhashMode();
+    }
+
+    pub fn canExecute(self: PreparedInvocationFee) bool {
+        return self.prepared.canExecute();
+    }
+
+    pub fn hasMissingRequiredSigner(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: PreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateLookupTable(pubkey);
     }
 };
 
@@ -4655,6 +5402,114 @@ pub const SentPreferredPreparedExecution = struct {
     pub fn allocInstructionsJson(self: *const SentPreferredPreparedExecution, allocator: Allocator) ![]u8 {
         return try self.prepared.allocInstructionsJson(allocator);
     }
+
+    pub fn allocAddressLookupTablesJson(self: *const SentPreferredPreparedExecution, allocator: Allocator) !?[]u8 {
+        return try self.prepared.allocAddressLookupTablesJson(allocator);
+    }
+
+    pub fn allocAccountsJson(self: *const SentPreferredPreparedExecution, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocAccountsJson(allocator);
+    }
+
+    pub fn payer(self: SentPreferredPreparedExecution) sdk.Pubkey {
+        return self.prepared.payer();
+    }
+
+    pub fn findAccountInfo(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) ?InvocationAccountInfo {
+        return self.prepared.findAccountInfo(pubkey);
+    }
+
+    pub fn containsAccount(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsAccount(pubkey);
+    }
+
+    pub fn containsSigner(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsSigner(pubkey);
+    }
+
+    pub fn providesSigner(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.providesSigner(pubkey);
+    }
+
+    pub fn requiresSigner(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.requiresSigner(pubkey);
+    }
+
+    pub fn containsProgram(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsProgram(pubkey);
+    }
+
+    pub fn containsLookupTable(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsLookupTable(pubkey);
+    }
+
+    pub fn usesLookupTables(self: SentPreferredPreparedExecution) bool {
+        return self.prepared.usesLookupTables();
+    }
+
+    pub fn isSignerAccount(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isSignerAccount(pubkey);
+    }
+
+    pub fn isWritableAccount(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isWritableAccount(pubkey);
+    }
+
+    pub fn isReadonlyAccount(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isReadonlyAccount(pubkey);
+    }
+
+    pub fn isPayerAccount(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isPayerAccount(pubkey);
+    }
+
+    pub fn isProgramAccount(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isProgramAccount(pubkey);
+    }
+
+    pub fn isNonceAccount(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isNonceAccount(pubkey);
+    }
+
+    pub fn isLookupCandidate(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupCandidate(pubkey);
+    }
+
+    pub fn hasLookupCoverageFor(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasLookupCoverageFor(pubkey);
+    }
+
+    pub fn isLookupUncovered(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupUncovered(pubkey);
+    }
+
+    pub fn usesDurableNonce(self: SentPreferredPreparedExecution) bool {
+        return self.prepared.usesDurableNonce();
+    }
+
+    pub fn blockhashMode(self: SentPreferredPreparedExecution) InvocationBlockhashMode {
+        return self.prepared.blockhashMode();
+    }
+
+    pub fn canExecute(self: SentPreferredPreparedExecution) bool {
+        return self.prepared.canExecute();
+    }
+
+    pub fn hasMissingRequiredSigner(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: SentPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateLookupTable(pubkey);
+    }
 };
 
 pub const SimulatedPreferredPreparedExecution = struct {
@@ -4693,6 +5548,114 @@ pub const SimulatedPreferredPreparedExecution = struct {
     pub fn allocInstructionsJson(self: *const SimulatedPreferredPreparedExecution, allocator: Allocator) ![]u8 {
         return try self.prepared.allocInstructionsJson(allocator);
     }
+
+    pub fn allocAddressLookupTablesJson(self: *const SimulatedPreferredPreparedExecution, allocator: Allocator) !?[]u8 {
+        return try self.prepared.allocAddressLookupTablesJson(allocator);
+    }
+
+    pub fn allocAccountsJson(self: *const SimulatedPreferredPreparedExecution, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocAccountsJson(allocator);
+    }
+
+    pub fn payer(self: SimulatedPreferredPreparedExecution) sdk.Pubkey {
+        return self.prepared.payer();
+    }
+
+    pub fn findAccountInfo(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) ?InvocationAccountInfo {
+        return self.prepared.findAccountInfo(pubkey);
+    }
+
+    pub fn containsAccount(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsAccount(pubkey);
+    }
+
+    pub fn containsSigner(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsSigner(pubkey);
+    }
+
+    pub fn providesSigner(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.providesSigner(pubkey);
+    }
+
+    pub fn requiresSigner(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.requiresSigner(pubkey);
+    }
+
+    pub fn containsProgram(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsProgram(pubkey);
+    }
+
+    pub fn containsLookupTable(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsLookupTable(pubkey);
+    }
+
+    pub fn usesLookupTables(self: SimulatedPreferredPreparedExecution) bool {
+        return self.prepared.usesLookupTables();
+    }
+
+    pub fn isSignerAccount(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isSignerAccount(pubkey);
+    }
+
+    pub fn isWritableAccount(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isWritableAccount(pubkey);
+    }
+
+    pub fn isReadonlyAccount(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isReadonlyAccount(pubkey);
+    }
+
+    pub fn isPayerAccount(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isPayerAccount(pubkey);
+    }
+
+    pub fn isProgramAccount(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isProgramAccount(pubkey);
+    }
+
+    pub fn isNonceAccount(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isNonceAccount(pubkey);
+    }
+
+    pub fn isLookupCandidate(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupCandidate(pubkey);
+    }
+
+    pub fn hasLookupCoverageFor(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasLookupCoverageFor(pubkey);
+    }
+
+    pub fn isLookupUncovered(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupUncovered(pubkey);
+    }
+
+    pub fn usesDurableNonce(self: SimulatedPreferredPreparedExecution) bool {
+        return self.prepared.usesDurableNonce();
+    }
+
+    pub fn blockhashMode(self: SimulatedPreferredPreparedExecution) InvocationBlockhashMode {
+        return self.prepared.blockhashMode();
+    }
+
+    pub fn canExecute(self: SimulatedPreferredPreparedExecution) bool {
+        return self.prepared.canExecute();
+    }
+
+    pub fn hasMissingRequiredSigner(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: SimulatedPreferredPreparedExecution, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateLookupTable(pubkey);
+    }
 };
 
 pub const PreferredPreparedExecutionFee = struct {
@@ -4730,6 +5693,114 @@ pub const PreferredPreparedExecutionFee = struct {
 
     pub fn allocInstructionsJson(self: *const PreferredPreparedExecutionFee, allocator: Allocator) ![]u8 {
         return try self.prepared.allocInstructionsJson(allocator);
+    }
+
+    pub fn allocAddressLookupTablesJson(self: *const PreferredPreparedExecutionFee, allocator: Allocator) !?[]u8 {
+        return try self.prepared.allocAddressLookupTablesJson(allocator);
+    }
+
+    pub fn allocAccountsJson(self: *const PreferredPreparedExecutionFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocAccountsJson(allocator);
+    }
+
+    pub fn payer(self: PreferredPreparedExecutionFee) sdk.Pubkey {
+        return self.prepared.payer();
+    }
+
+    pub fn findAccountInfo(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) ?InvocationAccountInfo {
+        return self.prepared.findAccountInfo(pubkey);
+    }
+
+    pub fn containsAccount(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsAccount(pubkey);
+    }
+
+    pub fn containsSigner(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsSigner(pubkey);
+    }
+
+    pub fn providesSigner(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.providesSigner(pubkey);
+    }
+
+    pub fn requiresSigner(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.requiresSigner(pubkey);
+    }
+
+    pub fn containsProgram(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsProgram(pubkey);
+    }
+
+    pub fn containsLookupTable(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsLookupTable(pubkey);
+    }
+
+    pub fn usesLookupTables(self: PreferredPreparedExecutionFee) bool {
+        return self.prepared.usesLookupTables();
+    }
+
+    pub fn isSignerAccount(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isSignerAccount(pubkey);
+    }
+
+    pub fn isWritableAccount(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isWritableAccount(pubkey);
+    }
+
+    pub fn isReadonlyAccount(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isReadonlyAccount(pubkey);
+    }
+
+    pub fn isPayerAccount(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isPayerAccount(pubkey);
+    }
+
+    pub fn isProgramAccount(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isProgramAccount(pubkey);
+    }
+
+    pub fn isNonceAccount(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isNonceAccount(pubkey);
+    }
+
+    pub fn isLookupCandidate(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupCandidate(pubkey);
+    }
+
+    pub fn hasLookupCoverageFor(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasLookupCoverageFor(pubkey);
+    }
+
+    pub fn isLookupUncovered(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupUncovered(pubkey);
+    }
+
+    pub fn usesDurableNonce(self: PreferredPreparedExecutionFee) bool {
+        return self.prepared.usesDurableNonce();
+    }
+
+    pub fn blockhashMode(self: PreferredPreparedExecutionFee) InvocationBlockhashMode {
+        return self.prepared.blockhashMode();
+    }
+
+    pub fn canExecute(self: PreferredPreparedExecutionFee) bool {
+        return self.prepared.canExecute();
+    }
+
+    pub fn hasMissingRequiredSigner(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: PreferredPreparedExecutionFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateLookupTable(pubkey);
     }
 };
 
@@ -4773,6 +5844,117 @@ pub const PreferredPreparedSignedTransaction = struct {
 
     pub fn allocInstructionsJson(self: *const PreferredPreparedSignedTransaction, allocator: Allocator) ![]u8 {
         return try buildInstructionsJsonFromOwnedResolvedInvocation(allocator, &self.resolved_invocation);
+    }
+
+    pub fn allocAddressLookupTablesJson(self: *const PreferredPreparedSignedTransaction, allocator: Allocator) !?[]u8 {
+        return try buildAddressLookupTablesJsonFromOwnedResolvedInvocationRef(
+            allocator,
+            &self.resolved_invocation,
+        );
+    }
+
+    pub fn allocAccountsJson(self: *const PreferredPreparedSignedTransaction, allocator: Allocator) ![]u8 {
+        return try allocInvocationAccountsJson(allocator, self.accounts);
+    }
+
+    pub fn payer(self: PreferredPreparedSignedTransaction) sdk.Pubkey {
+        return self.resolved_invocation.payer;
+    }
+
+    pub fn findAccountInfo(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) ?InvocationAccountInfo {
+        return self.accounts.find(pubkey);
+    }
+
+    pub fn containsAccount(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.accounts.contains(pubkey);
+    }
+
+    pub fn containsSigner(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.resolved_invocation.signer_pubkeys, pubkey);
+    }
+
+    pub fn providesSigner(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.preflight.providesSigner(pubkey);
+    }
+
+    pub fn requiresSigner(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.preflight.requiresSigner(pubkey);
+    }
+
+    pub fn containsProgram(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return pubkeySliceContains(self.execution_report.report.summary.program_ids, pubkey);
+    }
+
+    pub fn containsLookupTable(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.lookup_coverage.containsLookupTable(pubkey);
+    }
+
+    pub fn usesLookupTables(self: PreferredPreparedSignedTransaction) bool {
+        return self.execution_report.report.usesLookupTables();
+    }
+
+    pub fn isSignerAccount(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isSigner(pubkey);
+    }
+
+    pub fn isWritableAccount(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isWritable(pubkey);
+    }
+
+    pub fn isReadonlyAccount(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.preflight.isReadonly(pubkey);
+    }
+
+    pub fn isPayerAccount(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isPayer(pubkey);
+    }
+
+    pub fn isProgramAccount(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isProgram(pubkey);
+    }
+
+    pub fn isNonceAccount(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.accounts.isNonceAccount(pubkey);
+    }
+
+    pub fn isLookupCandidate(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.lookup_coverage.isCandidate(pubkey);
+    }
+
+    pub fn hasLookupCoverageFor(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.lookupCoverageIncludes(pubkey);
+    }
+
+    pub fn isLookupUncovered(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.lookup_coverage.isUncoveredPubkey(pubkey);
+    }
+
+    pub fn usesDurableNonce(self: PreferredPreparedSignedTransaction) bool {
+        return self.execution_report.report.uses_durable_nonce;
+    }
+
+    pub fn blockhashMode(self: PreferredPreparedSignedTransaction) InvocationBlockhashMode {
+        return self.execution_report.report.plan.blockhash_mode;
+    }
+
+    pub fn canExecute(self: PreferredPreparedSignedTransaction) bool {
+        return self.execution_report.can_execute_selected_mode;
+    }
+
+    pub fn hasMissingRequiredSigner(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.hasMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.hasExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.hasDuplicateSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: PreferredPreparedSignedTransaction, pubkey: sdk.Pubkey) bool {
+        return self.execution_report.report.hasDuplicateLookupTable(pubkey);
     }
 
     pub fn send(
@@ -4948,6 +6130,114 @@ pub const SentPreferredPreparedInvocation = struct {
     pub fn allocInstructionsJson(self: *const SentPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
         return try self.prepared.allocInstructionsJson(allocator);
     }
+
+    pub fn allocAddressLookupTablesJson(self: *const SentPreferredPreparedInvocation, allocator: Allocator) !?[]u8 {
+        return try self.prepared.allocAddressLookupTablesJson(allocator);
+    }
+
+    pub fn allocAccountsJson(self: *const SentPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocAccountsJson(allocator);
+    }
+
+    pub fn payer(self: SentPreferredPreparedInvocation) sdk.Pubkey {
+        return self.prepared.payer();
+    }
+
+    pub fn findAccountInfo(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) ?InvocationAccountInfo {
+        return self.prepared.findAccountInfo(pubkey);
+    }
+
+    pub fn containsAccount(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsAccount(pubkey);
+    }
+
+    pub fn containsSigner(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsSigner(pubkey);
+    }
+
+    pub fn providesSigner(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.providesSigner(pubkey);
+    }
+
+    pub fn requiresSigner(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.requiresSigner(pubkey);
+    }
+
+    pub fn containsProgram(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsProgram(pubkey);
+    }
+
+    pub fn containsLookupTable(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsLookupTable(pubkey);
+    }
+
+    pub fn usesLookupTables(self: SentPreferredPreparedInvocation) bool {
+        return self.prepared.usesLookupTables();
+    }
+
+    pub fn isSignerAccount(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isSignerAccount(pubkey);
+    }
+
+    pub fn isWritableAccount(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isWritableAccount(pubkey);
+    }
+
+    pub fn isReadonlyAccount(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isReadonlyAccount(pubkey);
+    }
+
+    pub fn isPayerAccount(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isPayerAccount(pubkey);
+    }
+
+    pub fn isProgramAccount(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isProgramAccount(pubkey);
+    }
+
+    pub fn isNonceAccount(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isNonceAccount(pubkey);
+    }
+
+    pub fn isLookupCandidate(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupCandidate(pubkey);
+    }
+
+    pub fn hasLookupCoverageFor(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasLookupCoverageFor(pubkey);
+    }
+
+    pub fn isLookupUncovered(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupUncovered(pubkey);
+    }
+
+    pub fn usesDurableNonce(self: SentPreferredPreparedInvocation) bool {
+        return self.prepared.usesDurableNonce();
+    }
+
+    pub fn blockhashMode(self: SentPreferredPreparedInvocation) InvocationBlockhashMode {
+        return self.prepared.blockhashMode();
+    }
+
+    pub fn canExecute(self: SentPreferredPreparedInvocation) bool {
+        return self.prepared.canExecute();
+    }
+
+    pub fn hasMissingRequiredSigner(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: SentPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateLookupTable(pubkey);
+    }
 };
 
 pub const SimulatedPreferredPreparedInvocation = struct {
@@ -4986,6 +6276,114 @@ pub const SimulatedPreferredPreparedInvocation = struct {
     pub fn allocInstructionsJson(self: *const SimulatedPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
         return try self.prepared.allocInstructionsJson(allocator);
     }
+
+    pub fn allocAddressLookupTablesJson(self: *const SimulatedPreferredPreparedInvocation, allocator: Allocator) !?[]u8 {
+        return try self.prepared.allocAddressLookupTablesJson(allocator);
+    }
+
+    pub fn allocAccountsJson(self: *const SimulatedPreferredPreparedInvocation, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocAccountsJson(allocator);
+    }
+
+    pub fn payer(self: SimulatedPreferredPreparedInvocation) sdk.Pubkey {
+        return self.prepared.payer();
+    }
+
+    pub fn findAccountInfo(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) ?InvocationAccountInfo {
+        return self.prepared.findAccountInfo(pubkey);
+    }
+
+    pub fn containsAccount(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsAccount(pubkey);
+    }
+
+    pub fn containsSigner(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsSigner(pubkey);
+    }
+
+    pub fn providesSigner(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.providesSigner(pubkey);
+    }
+
+    pub fn requiresSigner(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.requiresSigner(pubkey);
+    }
+
+    pub fn containsProgram(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsProgram(pubkey);
+    }
+
+    pub fn containsLookupTable(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsLookupTable(pubkey);
+    }
+
+    pub fn usesLookupTables(self: SimulatedPreferredPreparedInvocation) bool {
+        return self.prepared.usesLookupTables();
+    }
+
+    pub fn isSignerAccount(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isSignerAccount(pubkey);
+    }
+
+    pub fn isWritableAccount(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isWritableAccount(pubkey);
+    }
+
+    pub fn isReadonlyAccount(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isReadonlyAccount(pubkey);
+    }
+
+    pub fn isPayerAccount(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isPayerAccount(pubkey);
+    }
+
+    pub fn isProgramAccount(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isProgramAccount(pubkey);
+    }
+
+    pub fn isNonceAccount(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isNonceAccount(pubkey);
+    }
+
+    pub fn isLookupCandidate(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupCandidate(pubkey);
+    }
+
+    pub fn hasLookupCoverageFor(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasLookupCoverageFor(pubkey);
+    }
+
+    pub fn isLookupUncovered(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupUncovered(pubkey);
+    }
+
+    pub fn usesDurableNonce(self: SimulatedPreferredPreparedInvocation) bool {
+        return self.prepared.usesDurableNonce();
+    }
+
+    pub fn blockhashMode(self: SimulatedPreferredPreparedInvocation) InvocationBlockhashMode {
+        return self.prepared.blockhashMode();
+    }
+
+    pub fn canExecute(self: SimulatedPreferredPreparedInvocation) bool {
+        return self.prepared.canExecute();
+    }
+
+    pub fn hasMissingRequiredSigner(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: SimulatedPreferredPreparedInvocation, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateLookupTable(pubkey);
+    }
 };
 
 pub const PreferredPreparedInvocationFee = struct {
@@ -5023,6 +6421,114 @@ pub const PreferredPreparedInvocationFee = struct {
 
     pub fn allocInstructionsJson(self: *const PreferredPreparedInvocationFee, allocator: Allocator) ![]u8 {
         return try self.prepared.allocInstructionsJson(allocator);
+    }
+
+    pub fn allocAddressLookupTablesJson(self: *const PreferredPreparedInvocationFee, allocator: Allocator) !?[]u8 {
+        return try self.prepared.allocAddressLookupTablesJson(allocator);
+    }
+
+    pub fn allocAccountsJson(self: *const PreferredPreparedInvocationFee, allocator: Allocator) ![]u8 {
+        return try self.prepared.allocAccountsJson(allocator);
+    }
+
+    pub fn payer(self: PreferredPreparedInvocationFee) sdk.Pubkey {
+        return self.prepared.payer();
+    }
+
+    pub fn findAccountInfo(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) ?InvocationAccountInfo {
+        return self.prepared.findAccountInfo(pubkey);
+    }
+
+    pub fn containsAccount(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsAccount(pubkey);
+    }
+
+    pub fn containsSigner(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsSigner(pubkey);
+    }
+
+    pub fn providesSigner(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.providesSigner(pubkey);
+    }
+
+    pub fn requiresSigner(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.requiresSigner(pubkey);
+    }
+
+    pub fn containsProgram(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsProgram(pubkey);
+    }
+
+    pub fn containsLookupTable(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.containsLookupTable(pubkey);
+    }
+
+    pub fn usesLookupTables(self: PreferredPreparedInvocationFee) bool {
+        return self.prepared.usesLookupTables();
+    }
+
+    pub fn isSignerAccount(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isSignerAccount(pubkey);
+    }
+
+    pub fn isWritableAccount(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isWritableAccount(pubkey);
+    }
+
+    pub fn isReadonlyAccount(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isReadonlyAccount(pubkey);
+    }
+
+    pub fn isPayerAccount(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isPayerAccount(pubkey);
+    }
+
+    pub fn isProgramAccount(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isProgramAccount(pubkey);
+    }
+
+    pub fn isNonceAccount(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isNonceAccount(pubkey);
+    }
+
+    pub fn isLookupCandidate(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupCandidate(pubkey);
+    }
+
+    pub fn hasLookupCoverageFor(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasLookupCoverageFor(pubkey);
+    }
+
+    pub fn isLookupUncovered(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.isLookupUncovered(pubkey);
+    }
+
+    pub fn usesDurableNonce(self: PreferredPreparedInvocationFee) bool {
+        return self.prepared.usesDurableNonce();
+    }
+
+    pub fn blockhashMode(self: PreferredPreparedInvocationFee) InvocationBlockhashMode {
+        return self.prepared.blockhashMode();
+    }
+
+    pub fn canExecute(self: PreferredPreparedInvocationFee) bool {
+        return self.prepared.canExecute();
+    }
+
+    pub fn hasMissingRequiredSigner(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasMissingRequiredSigner(pubkey);
+    }
+
+    pub fn hasExtraSigner(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasExtraSigner(pubkey);
+    }
+
+    pub fn hasDuplicateSigner(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateSigner(pubkey);
+    }
+
+    pub fn hasDuplicateLookupTable(self: PreferredPreparedInvocationFee, pubkey: sdk.Pubkey) bool {
+        return self.prepared.hasDuplicateLookupTable(pubkey);
     }
 };
 
@@ -5341,13 +6847,23 @@ pub fn buildAddressLookupTablesJsonFromInvocationSpecJson(
     );
 }
 
-pub fn buildAddressLookupTablesJsonFromOwnedResolvedInvocation(
+pub fn buildAddressLookupTablesJsonFromOwnedResolvedInvocationRef(
     allocator: Allocator,
     resolved: *const OwnedResolvedInvocation,
 ) !?[]u8 {
     return try buildAddressLookupTablesJsonFromLookupTableSlice(
         allocator,
         resolved.address_lookup_tables,
+    );
+}
+
+pub fn buildAddressLookupTablesJsonFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) !?[]u8 {
+    return try buildAddressLookupTablesJsonFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
     );
 }
 
@@ -5406,13 +6922,23 @@ pub fn buildInstructionsJsonFromOwnedInvocationSpec(
     );
 }
 
-pub fn buildInstructionsJsonFromOwnedResolvedInvocation(
+pub fn buildInstructionsJsonFromOwnedResolvedInvocationRef(
     allocator: Allocator,
     resolved: *const OwnedResolvedInvocation,
 ) ![]u8 {
     return try buildInstructionsJsonFromInstructionSlice(
         allocator,
         resolved.owned_instructions.instructions,
+    );
+}
+
+pub fn buildInstructionsJsonFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) ![]u8 {
+    return try buildInstructionsJsonFromOwnedResolvedInvocationRef(
+        allocator,
+        resolved,
     );
 }
 
@@ -5425,13 +6951,13 @@ pub fn writeOwnedResolvedInvocationJson(
     const payer_base58 = try resolved.payer.toBase58(allocator);
     defer allocator.free(payer_base58);
 
-    const instructions_json = try buildInstructionsJsonFromOwnedResolvedInvocation(
+    const instructions_json = try buildInstructionsJsonFromOwnedResolvedInvocationRef(
         allocator,
         resolved,
     );
     defer allocator.free(instructions_json);
 
-    const address_lookup_tables_json = try buildAddressLookupTablesJsonFromOwnedResolvedInvocation(
+    const address_lookup_tables_json = try buildAddressLookupTablesJsonFromOwnedResolvedInvocationRef(
         allocator,
         resolved,
     );
@@ -5486,13 +7012,29 @@ pub fn allocOwnedResolvedInvocationJson(
     return try aw.toOwnedSlice();
 }
 
+pub fn buildResolvedInvocationJsonFromOwnedResolvedInvocationRef(
+    allocator: Allocator,
+    resolved: *const OwnedResolvedInvocation,
+) ![]u8 {
+    return try allocOwnedResolvedInvocationJson(allocator, resolved);
+}
+
+pub fn buildResolvedInvocationJsonFromOwnedResolvedInvocation(
+    allocator: Allocator,
+    resolved: OwnedResolvedInvocation,
+) ![]u8 {
+    var owned = resolved;
+    defer owned.deinit(allocator);
+    return try buildResolvedInvocationJsonFromOwnedResolvedInvocationRef(allocator, &owned);
+}
+
 pub fn buildResolvedInvocationJsonFromOwnedInvocationSpec(
     allocator: Allocator,
     owned_spec: OwnedInvocationSpec,
 ) ![]u8 {
     var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(allocator, owned_spec);
     defer resolved.deinit(allocator);
-    return try allocOwnedResolvedInvocationJson(allocator, &resolved);
+    return try buildResolvedInvocationJsonFromOwnedResolvedInvocationRef(allocator, &resolved);
 }
 
 pub fn buildResolvedInvocationJsonFromOwnedInvocationSpecRef(
@@ -5504,7 +7046,7 @@ pub fn buildResolvedInvocationJsonFromOwnedInvocationSpecRef(
         owned_spec,
     );
     defer resolved.deinit(allocator);
-    return try allocOwnedResolvedInvocationJson(allocator, &resolved);
+    return try buildResolvedInvocationJsonFromOwnedResolvedInvocationRef(allocator, &resolved);
 }
 
 pub fn buildInvocationSpecJsonFromOwnedInvocationSpec(
@@ -8173,13 +9715,15 @@ pub fn buildInstructionsJsonFromInvocationSpecJson(
     family: InvokeFamily,
     invocation_spec_json: []const u8,
 ) ![]u8 {
+    var owned_spec = try buildOwnedInvocationSpecFromInvocationSpecJson(
+        allocator,
+        family,
+        invocation_spec_json,
+    );
+    defer owned_spec.deinit(allocator);
     return try buildInstructionsJsonFromOwnedInvocationSpec(
         allocator,
-        try buildOwnedInvocationSpecFromInvocationSpecJson(
-            allocator,
-            family,
-            invocation_spec_json,
-        ),
+        &owned_spec,
     );
 }
 
@@ -8252,9 +9796,8 @@ pub fn buildPreparedInvocationFromOwnedInvocationSpecWithOptions(
     owned_spec: OwnedInvocationSpec,
     options: BuildInvocationSpecOptions,
 ) !PreparedInvocation {
-    var mutable = owned_spec;
-    const signers = mutable.signers;
-    mutable.signers = &.{};
+    const mutable = owned_spec;
+    const signers = try allocator.dupe(sdk.Keypair, mutable.signers);
     errdefer allocator.free(signers);
     const nonce_authority = mutable.nonce_authority;
 
@@ -10545,6 +12088,32 @@ pub fn allocPreferredSignedTransactionExecutionResultJsonFromOwnedInvocationSpec
         options,
     );
     defer result.deinit(allocator);
+    return try allocPreferredSignedTransactionExecutionResultJson(allocator, &result);
+}
+
+fn preferredSignedTransactionExecutionResultView(
+    prepared: *const PreferredPreparedSignedTransaction,
+) PreferredSignedTransactionExecutionResult {
+    return .{
+        .execution_report = prepared.execution_report,
+        .transaction = prepared.transaction,
+    };
+}
+
+pub fn writePreferredSignedTransactionExecutionResultTextFromPreparedSignedTransaction(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    prepared: *const PreferredPreparedSignedTransaction,
+) !void {
+    const result = preferredSignedTransactionExecutionResultView(prepared);
+    try writePreferredSignedTransactionExecutionResultText(writer, allocator, &result);
+}
+
+pub fn allocPreferredSignedTransactionExecutionResultJsonFromPreparedSignedTransaction(
+    allocator: Allocator,
+    prepared: *const PreferredPreparedSignedTransaction,
+) ![]u8 {
+    const result = preferredSignedTransactionExecutionResultView(prepared);
     return try allocPreferredSignedTransactionExecutionResultJson(allocator, &result);
 }
 
@@ -14365,6 +15934,59 @@ test "invoke.allocResolvedInvocationJson emits canonical resolved fields" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"recent_blockhash\":\"") != null);
 }
 
+test "invoke.buildResolvedInvocationJsonFromOwnedResolvedInvocationRef matches alloc export" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 187, 188, 189, 190, 191);
+    defer allocator.free(spec_json);
+
+    var resolved = try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+        allocator,
+        try buildOwnedInvocationSpecFromInvocationSpecJson(
+            allocator,
+            .program,
+            spec_json,
+        ),
+    );
+    defer resolved.deinit(allocator);
+
+    const alloc_json = try allocOwnedResolvedInvocationJson(allocator, &resolved);
+    defer allocator.free(alloc_json);
+
+    const helper_json = try buildResolvedInvocationJsonFromOwnedResolvedInvocationRef(allocator, &resolved);
+    defer allocator.free(helper_json);
+
+    try std.testing.expectEqualStrings(alloc_json, helper_json);
+    try std.testing.expect(std.mem.indexOf(u8, helper_json, "\"address_lookup_tables\":[{\"account_key\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, helper_json, "\"data_bytes\":[4,5,6]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, helper_json, "\"accountKey\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, helper_json, "\"dataBytes\"") == null);
+}
+
+test "invoke.buildResolvedInvocationJsonFromOwnedResolvedInvocation consumes resolved invocation" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 192, 193, 194);
+    defer allocator.free(spec_json);
+
+    const json = try buildResolvedInvocationJsonFromOwnedResolvedInvocation(
+        allocator,
+        try buildOwnedResolvedInvocationFromOwnedInvocationSpec(
+            allocator,
+            try buildOwnedInvocationSpecFromInvocationSpecJson(
+                allocator,
+                .instructions,
+                spec_json,
+            ),
+        ),
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"payer\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"instructions\":[{\"program_id\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"data_bytes\":[1,2,3]") != null);
+}
+
 test "invoke.buildResolvedInvocationJsonFromOwnedInvocationSpecRef exports canonical resolved json" {
     const allocator = std.testing.allocator;
 
@@ -14514,7 +16136,8 @@ test "invoke.buildAddressLookupTablesJsonFromInvocationSpecJson exports lookup t
     defer if (json) |value| allocator.free(value);
 
     try std.testing.expect(json != null);
-    try std.testing.expect(std.mem.indexOf(u8, json.?, "\"accountKey\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json.?, "\"account_key\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json.?, "\"accountKey\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json.?, "\"addresses\":[") != null);
 }
 
@@ -17551,6 +19174,18 @@ test "invoke.buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJs
     try std.testing.expectEqual(@as(?InvocationMode, .versioned), result.execution_report.selected_mode);
     try std.testing.expect(result.execution_report.used_fallback);
     try std.testing.expectEqual(@as(usize, 1), result.resolved_invocation.address_lookup_tables.len);
+
+    const resolved_json = try result.allocResolvedInvocationJson(allocator);
+    defer allocator.free(resolved_json);
+    const instructions_json = try result.allocInstructionsJson(allocator);
+    defer allocator.free(instructions_json);
+    const lookup_tables_json = try result.allocAddressLookupTablesJson(allocator);
+    defer if (lookup_tables_json) |value| allocator.free(value);
+
+    try std.testing.expect(std.mem.indexOf(u8, resolved_json, "\"address_lookup_tables\":[{\"account_key\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"data_bytes\":[4,5,6]") != null);
+    try std.testing.expect(lookup_tables_json != null);
+    try std.testing.expect(std.mem.indexOf(u8, lookup_tables_json.?, "\"account_key\":\"") != null);
 }
 
 test "invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson combines execution and account introspection" {
@@ -17561,7 +19196,12 @@ test "invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson combines exe
     defer allocator.free(spec_json);
 
     const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{66} ** 32);
+    const additional_signer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{67} ** 32);
+    const nonce_authority_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{68} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{69} ** 32);
     const nonce_account = sdk.Pubkey.fromBytes([_]u8{70} ** 32);
+    const writable_account = sdk.Pubkey.fromBytes([_]u8{71} ** 32);
+    const missing_pubkey = sdk.Pubkey.fromBytes([_]u8{72} ** 32);
 
     var analysis = try buildPreferredInvocationAnalysisFromInvocationSpecJson(
         allocator,
@@ -17573,19 +19213,59 @@ test "invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson combines exe
     defer analysis.deinit(allocator);
 
     try std.testing.expectEqual(@as(?InvocationMode, .legacy), analysis.execution_report.selected_mode);
-    try std.testing.expect(analysis.execution_report.can_execute_selected_mode);
+    try std.testing.expect(analysis.canExecute());
     try std.testing.expectEqual(@as(usize, 1), analysis.resolved_invocation.owned_instructions.instructions.len);
+    try std.testing.expectEqual(payer_raw.public_key, analysis.payer());
+    try std.testing.expect(analysis.containsAccount(payer_raw.public_key));
+    try std.testing.expect(analysis.findAccountInfo(payer_raw.public_key) != null);
+    try std.testing.expect(analysis.isPayerAccount(payer_raw.public_key));
+    try std.testing.expect(analysis.isSignerAccount(payer_raw.public_key));
+    try std.testing.expect(analysis.containsSigner(payer_raw.public_key));
+    try std.testing.expect(analysis.providesSigner(payer_raw.public_key));
+    try std.testing.expect(analysis.requiresSigner(payer_raw.public_key));
+    try std.testing.expect(analysis.containsAccount(additional_signer_raw.public_key));
+    try std.testing.expect(analysis.isSignerAccount(additional_signer_raw.public_key));
+    try std.testing.expect(analysis.containsSigner(additional_signer_raw.public_key));
+    try std.testing.expect(analysis.providesSigner(additional_signer_raw.public_key));
+    try std.testing.expect(analysis.requiresSigner(additional_signer_raw.public_key));
+    try std.testing.expect(analysis.containsAccount(nonce_authority_raw.public_key));
+    try std.testing.expect(analysis.isSignerAccount(nonce_authority_raw.public_key));
+    try std.testing.expect(analysis.containsSigner(nonce_authority_raw.public_key));
+    try std.testing.expect(analysis.providesSigner(nonce_authority_raw.public_key));
+    try std.testing.expect(analysis.requiresSigner(nonce_authority_raw.public_key));
+    try std.testing.expect(analysis.containsAccount(program_id));
+    try std.testing.expect(analysis.containsProgram(program_id));
+    try std.testing.expect(analysis.isProgramAccount(program_id));
+    try std.testing.expect(analysis.isReadonlyAccount(program_id));
+    try std.testing.expect(analysis.containsAccount(writable_account));
+    try std.testing.expect(analysis.isWritableAccount(writable_account));
+    try std.testing.expect(!analysis.isReadonlyAccount(writable_account));
+    try std.testing.expect(!analysis.usesLookupTables());
+    try std.testing.expect(analysis.usesDurableNonce());
+    try std.testing.expectEqual(InvocationBlockhashMode.durable_nonce, analysis.blockhashMode());
+    try std.testing.expect(!analysis.containsAccount(missing_pubkey));
+    try std.testing.expect(analysis.findAccountInfo(missing_pubkey) == null);
+    try std.testing.expect(!analysis.providesSigner(missing_pubkey));
+    try std.testing.expect(!analysis.requiresSigner(missing_pubkey));
+    try std.testing.expect(!analysis.isPayerAccount(missing_pubkey));
+    try std.testing.expect(!analysis.isNonceAccount(missing_pubkey));
 
     const payer_info = findInvocationAccountInfo(analysis.accounts.accounts, payer_raw.public_key).?;
     try std.testing.expect(payer_info.is_payer);
     const nonce_account_info = findInvocationAccountInfo(analysis.accounts.accounts, nonce_account).?;
     try std.testing.expect(nonce_account_info.is_nonce_account);
+    try std.testing.expect(analysis.containsAccount(nonce_account));
+    try std.testing.expect(analysis.isNonceAccount(nonce_account));
+    try std.testing.expect(analysis.isWritableAccount(nonce_account));
 }
 
 test "invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson preserves fallback and lookup analysis" {
     const allocator = std.testing.allocator;
     const DummyRpc = struct {};
     const program_id = sdk.Pubkey.fromBytes([_]u8{72} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{74} ** 32);
+    const lookup_address = sdk.Pubkey.fromBytes([_]u8{75} ** 32);
+    const missing_pubkey = sdk.Pubkey.fromBytes([_]u8{76} ** 32);
 
     const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 71, 72, 73, 74, 75);
     defer allocator.free(spec_json);
@@ -17607,9 +19287,23 @@ test "invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson preserves fa
     try std.testing.expectEqual(@as(?InvocationMode, .versioned), analysis.execution_report.selected_mode);
     try std.testing.expect(analysis.execution_report.used_fallback);
     try std.testing.expectEqual(@as(usize, 1), analysis.resolved_invocation.address_lookup_tables.len);
+    try std.testing.expect(analysis.usesLookupTables());
+    try std.testing.expect(analysis.containsLookupTable(lookup_table));
+    try std.testing.expect(analysis.containsAccount(lookup_address));
+    try std.testing.expect(analysis.findAccountInfo(lookup_address) != null);
+    try std.testing.expect(analysis.isLookupCandidate(lookup_address));
+    try std.testing.expect(analysis.hasLookupCoverageFor(lookup_address));
+    try std.testing.expect(!analysis.isLookupUncovered(lookup_address));
+    try std.testing.expect(!analysis.containsAccount(missing_pubkey));
+    try std.testing.expect(!analysis.containsLookupTable(missing_pubkey));
+    try std.testing.expect(!analysis.isLookupCandidate(missing_pubkey));
+    try std.testing.expect(!analysis.hasLookupCoverageFor(missing_pubkey));
+    try std.testing.expect(!analysis.isLookupUncovered(missing_pubkey));
 
     const program_info = findInvocationAccountInfo(analysis.accounts.accounts, program_id).?;
     try std.testing.expect(program_info.is_program);
+    try std.testing.expect(analysis.containsProgram(program_id));
+    try std.testing.expect(analysis.isProgramAccount(program_id));
 }
 
 test "invoke.allocPreferredInvocationAnalysisJsonFromInvocationSpecJson emits reusable analysis fields" {
@@ -19970,6 +21664,25 @@ test "invoke.buildResolvedInvocationJsonFromInvocationSpecJson exports canonical
 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"payer\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"instructions\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"data_bytes\":[1,2,3]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"dataBytes\"") == null);
+}
+
+test "invoke.buildResolvedInvocationJsonFromInvocationSpecJson exports canonical lookup tables" {
+    const allocator = std.testing.allocator;
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 437, 438, 439, 440, 441);
+    defer allocator.free(spec_json);
+
+    const json = try buildResolvedInvocationJsonFromInvocationSpecJson(
+        allocator,
+        .program,
+        spec_json,
+    );
+    defer allocator.free(json);
+
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"address_lookup_tables\":[{\"account_key\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"accountKey\"") == null);
 }
 
 test "invoke.buildInvocationModeReportFromOwnedInvocationSpec prefers versioned with lookup tables" {
@@ -20363,6 +22076,21 @@ test "invoke.buildPreferredInvocationAnalysisFromOwnedResolvedInvocationRef comb
     try std.testing.expectEqual(resolved.payer, analysis.resolved_invocation.payer);
     try std.testing.expect(analysis.accounts.contains(resolved.payer));
     try std.testing.expect(analysis.accounts.isPayer(resolved.payer));
+
+    const resolved_json = try analysis.allocResolvedInvocationJson(allocator);
+    defer allocator.free(resolved_json);
+    const instructions_json = try analysis.allocInstructionsJson(allocator);
+    defer allocator.free(instructions_json);
+    const lookup_tables_json = try analysis.allocAddressLookupTablesJson(allocator);
+    defer if (lookup_tables_json) |value| allocator.free(value);
+    const accounts_json = try analysis.allocAccountsJson(allocator);
+    defer allocator.free(accounts_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, resolved_json, "\"payer\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"program_id\":\"") != null);
+    try std.testing.expect(lookup_tables_json == null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"accounts\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"is_payer\":true") != null);
 }
 
 test "invoke.allocPreferredInvocationAnalysisJsonFromOwnedResolvedInvocation emits analysis json" {
@@ -21266,6 +22994,57 @@ test "invoke.PreparedInvocation allocInstructionsJson emits canonical instructio
     );
 }
 
+test "invoke.PreparedInvocation allocAddressLookupTablesJson emits canonical lookup tables" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 259, 260, 261, 262, 263);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .program,
+        false,
+        spec_json,
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    const lookup_tables_json = try prepared.allocAddressLookupTablesJson(allocator);
+    defer if (lookup_tables_json) |value| allocator.free(value);
+
+    try std.testing.expect(lookup_tables_json != null);
+    try std.testing.expect(std.mem.indexOf(u8, lookup_tables_json.?, "\"account_key\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, lookup_tables_json.?, "\"accountKey\"") == null);
+}
+
+test "invoke.PreparedInvocation allocAccountsJson emits canonical account roles" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 264, 265, 266, 267, 268);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .program,
+        true,
+        spec_json,
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    const accounts_json = try prepared.allocAccountsJson(allocator);
+    defer allocator.free(accounts_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"accounts\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"is_payer\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"is_program\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"is_signer\":true") != null);
+}
+
 test "invoke.SentPreparedInvocation exports canonical resolved and instruction json" {
     const allocator = std.testing.allocator;
     const DummyRpc = struct {
@@ -21315,10 +23094,18 @@ test "invoke.SentPreparedInvocation exports canonical resolved and instruction j
     defer allocator.free(resolved_json);
     const instructions_json = try sent.allocInstructionsJson(allocator);
     defer allocator.free(instructions_json);
+    const lookup_tables_json = try sent.allocAddressLookupTablesJson(allocator);
+    defer if (lookup_tables_json) |value| allocator.free(value);
+    const accounts_json = try sent.allocAccountsJson(allocator);
+    defer allocator.free(accounts_json);
 
     try std.testing.expect(std.mem.indexOf(u8, resolved_json, "\"nonce_account\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"program_id\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"data_bytes\":[4,5,6]") != null);
+    try std.testing.expect(lookup_tables_json != null);
+    try std.testing.expect(std.mem.indexOf(u8, lookup_tables_json.?, "\"account_key\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"accounts\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"is_payer\":true") != null);
 }
 
 test "invoke.writePreparedInvocationText emits generic prepared summary" {
@@ -22087,6 +23874,349 @@ test "invoke.PreferredPreparedSignedTransaction methods delegate execution helpe
     try std.testing.expectEqual(@as(?InvocationMode, .versioned), prepared.execution_report.selected_mode);
 }
 
+test "invoke.PreferredPreparedSignedTransaction query helpers expose signer and lookup state" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{117} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{118} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{120} ** 32);
+    const lookup_address = sdk.Pubkey.fromBytes([_]u8{121} ** 32);
+    const missing_pubkey = sdk.Pubkey.fromBytes([_]u8{122} ** 32);
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 117, 118, 119, 120, 121);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer prepared.deinit(allocator);
+
+    try std.testing.expectEqual(payer_raw.public_key, prepared.payer());
+    try std.testing.expect(prepared.canExecute());
+    try std.testing.expect(prepared.containsAccount(payer_raw.public_key));
+    try std.testing.expect(prepared.findAccountInfo(payer_raw.public_key) != null);
+    try std.testing.expect(prepared.isPayerAccount(payer_raw.public_key));
+    try std.testing.expect(prepared.isSignerAccount(payer_raw.public_key));
+    try std.testing.expect(prepared.containsSigner(payer_raw.public_key));
+    try std.testing.expect(prepared.providesSigner(payer_raw.public_key));
+    try std.testing.expect(prepared.requiresSigner(payer_raw.public_key));
+    try std.testing.expect(prepared.containsAccount(program_id));
+    try std.testing.expect(prepared.containsProgram(program_id));
+    try std.testing.expect(prepared.isProgramAccount(program_id));
+    try std.testing.expect(prepared.isReadonlyAccount(program_id));
+    try std.testing.expect(prepared.usesLookupTables());
+    try std.testing.expect(prepared.containsLookupTable(lookup_table));
+    try std.testing.expect(prepared.containsAccount(lookup_address));
+    try std.testing.expect(prepared.isLookupCandidate(lookup_address));
+    try std.testing.expect(prepared.hasLookupCoverageFor(lookup_address));
+    try std.testing.expect(!prepared.isLookupUncovered(lookup_address));
+    try std.testing.expect(!prepared.usesDurableNonce());
+    try std.testing.expectEqual(InvocationBlockhashMode.explicit_recent_blockhash, prepared.blockhashMode());
+    try std.testing.expect(!prepared.containsAccount(missing_pubkey));
+    try std.testing.expect(prepared.findAccountInfo(missing_pubkey) == null);
+    try std.testing.expect(!prepared.containsSigner(missing_pubkey));
+    try std.testing.expect(!prepared.providesSigner(missing_pubkey));
+    try std.testing.expect(!prepared.requiresSigner(missing_pubkey));
+    try std.testing.expect(!prepared.containsProgram(missing_pubkey));
+    try std.testing.expect(!prepared.containsLookupTable(missing_pubkey));
+    try std.testing.expect(!prepared.isLookupCandidate(missing_pubkey));
+    try std.testing.expect(!prepared.hasLookupCoverageFor(missing_pubkey));
+    try std.testing.expect(!prepared.isLookupUncovered(missing_pubkey));
+    try std.testing.expect(!prepared.hasMissingRequiredSigner(missing_pubkey));
+    try std.testing.expect(!prepared.hasExtraSigner(missing_pubkey));
+    try std.testing.expect(!prepared.hasDuplicateSigner(missing_pubkey));
+    try std.testing.expect(!prepared.hasDuplicateLookupTable(missing_pubkey));
+}
+
+test "invoke.PreferredPreparedSignedTransaction allocAccountsJson emits canonical account roles" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 123, 124, 125, 126, 127);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    const accounts_json = try prepared.allocAccountsJson(allocator);
+    defer allocator.free(accounts_json);
+
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"accounts\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"is_payer\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"is_program\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"is_signer\":true") != null);
+}
+
+test "invoke.SentPreparedInvocation query helpers delegate prepared state" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn sendTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return "sent-wrapper-query";
+        }
+
+        pub fn sendVersionedTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return error.UnexpectedVersionedCall;
+        }
+    };
+
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{141} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{143} ** 32);
+    const missing_pubkey = sdk.Pubkey.fromBytes([_]u8{144} ** 32);
+    const spec_json = try allocMinimalInstructionsInvocationSpecJson(allocator, 141, 142, 143);
+    defer allocator.free(spec_json);
+
+    var rpc = DummyRpc{};
+    var sent = try sendOwnedPreparedInvocation(
+        allocator,
+        &rpc,
+        try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+            allocator,
+            DummyRpc{},
+            .instructions,
+            false,
+            spec_json,
+            .{},
+        ),
+        null,
+    );
+    defer sent.deinit(allocator);
+
+    try std.testing.expectEqual(payer_raw.public_key, sent.payer());
+    try std.testing.expect(sent.canExecute());
+    try std.testing.expect(sent.containsAccount(payer_raw.public_key));
+    try std.testing.expect(sent.findAccountInfo(payer_raw.public_key) != null);
+    try std.testing.expect(sent.isPayerAccount(payer_raw.public_key));
+    try std.testing.expect(sent.isSignerAccount(payer_raw.public_key));
+    try std.testing.expect(sent.containsSigner(payer_raw.public_key));
+    try std.testing.expect(sent.providesSigner(payer_raw.public_key));
+    try std.testing.expect(sent.requiresSigner(payer_raw.public_key));
+    try std.testing.expect(sent.containsProgram(program_id));
+    try std.testing.expect(sent.isProgramAccount(program_id));
+    try std.testing.expect(sent.isReadonlyAccount(program_id));
+    try std.testing.expect(!sent.usesLookupTables());
+    try std.testing.expect(!sent.usesDurableNonce());
+    try std.testing.expectEqual(InvocationBlockhashMode.latest_blockhash, sent.blockhashMode());
+    try std.testing.expect(!sent.containsAccount(missing_pubkey));
+    try std.testing.expect(sent.findAccountInfo(missing_pubkey) == null);
+    try std.testing.expect(!sent.containsSigner(missing_pubkey));
+    try std.testing.expect(!sent.providesSigner(missing_pubkey));
+    try std.testing.expect(!sent.requiresSigner(missing_pubkey));
+    try std.testing.expect(!sent.containsProgram(missing_pubkey));
+    try std.testing.expect(!sent.containsLookupTable(missing_pubkey));
+    try std.testing.expect(!sent.isLookupCandidate(missing_pubkey));
+    try std.testing.expect(!sent.hasLookupCoverageFor(missing_pubkey));
+    try std.testing.expect(!sent.isLookupUncovered(missing_pubkey));
+    try std.testing.expect(!sent.hasMissingRequiredSigner(missing_pubkey));
+    try std.testing.expect(!sent.hasExtraSigner(missing_pubkey));
+    try std.testing.expect(!sent.hasDuplicateSigner(missing_pubkey));
+    try std.testing.expect(!sent.hasDuplicateLookupTable(missing_pubkey));
+}
+
+test "invoke.PreferredPreparedExecutionFee query helpers delegate preferred state" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn getFeeForMessageTyped(
+            self: *@This(),
+            message: sdk.LegacyMessage,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = message;
+            _ = commitment;
+            return error.UnexpectedLegacyCall;
+        }
+
+        pub fn getFeeForVersionedMessageTyped(
+            self: *@This(),
+            message: sdk.VersionedMessageV0,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = message;
+            _ = commitment;
+            return @as(rpc_types.FeeForMessage, 777);
+        }
+    };
+
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{145} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{146} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{148} ** 32);
+    const lookup_address = sdk.Pubkey.fromBytes([_]u8{149} ** 32);
+    const missing_pubkey = sdk.Pubkey.fromBytes([_]u8{150} ** 32);
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 145, 146, 147, 148, 149);
+    defer allocator.free(spec_json);
+
+    var rpc = DummyRpc{};
+    var fee_result = try getFeeForOwnedPreferredPreparedExecution(
+        allocator,
+        &rpc,
+        try buildPreferredPreparedInvocationFromInvocationSpecJson(
+            allocator,
+            DummyRpc{},
+            .program,
+            spec_json,
+            .{
+                .mode = .{
+                    .preferred_mode = .legacy,
+                    .allow_fallback = true,
+                },
+            },
+        ),
+        .confirmed,
+    );
+    defer fee_result.deinit(allocator);
+
+    try std.testing.expectEqual(payer_raw.public_key, fee_result.payer());
+    try std.testing.expect(fee_result.canExecute());
+    try std.testing.expect(fee_result.containsAccount(payer_raw.public_key));
+    try std.testing.expect(fee_result.findAccountInfo(payer_raw.public_key) != null);
+    try std.testing.expect(fee_result.isPayerAccount(payer_raw.public_key));
+    try std.testing.expect(fee_result.isSignerAccount(payer_raw.public_key));
+    try std.testing.expect(fee_result.containsSigner(payer_raw.public_key));
+    try std.testing.expect(fee_result.providesSigner(payer_raw.public_key));
+    try std.testing.expect(fee_result.requiresSigner(payer_raw.public_key));
+    try std.testing.expect(fee_result.containsProgram(program_id));
+    try std.testing.expect(fee_result.isProgramAccount(program_id));
+    try std.testing.expect(fee_result.usesLookupTables());
+    try std.testing.expect(fee_result.containsLookupTable(lookup_table));
+    try std.testing.expect(fee_result.isLookupCandidate(lookup_address));
+    try std.testing.expect(fee_result.hasLookupCoverageFor(lookup_address));
+    try std.testing.expect(!fee_result.isLookupUncovered(lookup_address));
+    try std.testing.expect(!fee_result.usesDurableNonce());
+    try std.testing.expectEqual(InvocationBlockhashMode.explicit_recent_blockhash, fee_result.blockhashMode());
+    try std.testing.expect(!fee_result.containsAccount(missing_pubkey));
+    try std.testing.expect(fee_result.findAccountInfo(missing_pubkey) == null);
+    try std.testing.expect(!fee_result.containsSigner(missing_pubkey));
+    try std.testing.expect(!fee_result.providesSigner(missing_pubkey));
+    try std.testing.expect(!fee_result.requiresSigner(missing_pubkey));
+    try std.testing.expect(!fee_result.containsProgram(missing_pubkey));
+    try std.testing.expect(!fee_result.containsLookupTable(missing_pubkey));
+    try std.testing.expect(!fee_result.isLookupCandidate(missing_pubkey));
+    try std.testing.expect(!fee_result.hasLookupCoverageFor(missing_pubkey));
+    try std.testing.expect(!fee_result.isLookupUncovered(missing_pubkey));
+    try std.testing.expect(!fee_result.hasMissingRequiredSigner(missing_pubkey));
+    try std.testing.expect(!fee_result.hasExtraSigner(missing_pubkey));
+    try std.testing.expect(!fee_result.hasDuplicateSigner(missing_pubkey));
+    try std.testing.expect(!fee_result.hasDuplicateLookupTable(missing_pubkey));
+}
+
+test "invoke.SentPreferredPreparedInvocation query helpers delegate preferred signed state" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {
+        pub fn sendTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedLegacyTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return error.UnexpectedLegacyCall;
+        }
+
+        pub fn sendVersionedTransactionTyped(
+            self: *@This(),
+            transaction: sdk.SignedVersionedTransaction,
+            options: ?rpc_types.SendTransactionOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = transaction;
+            _ = options;
+            return "sent-preferred-wrapper-query";
+        }
+    };
+
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{151} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{152} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{154} ** 32);
+    const lookup_address = sdk.Pubkey.fromBytes([_]u8{155} ** 32);
+    const missing_pubkey = sdk.Pubkey.fromBytes([_]u8{156} ** 32);
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 151, 152, 153, 154, 155);
+    defer allocator.free(spec_json);
+
+    var rpc = DummyRpc{};
+    var sent = try sendOwnedPreferredPreparedInvocation(
+        allocator,
+        &rpc,
+        try buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
+            allocator,
+            DummyRpc{},
+            .program,
+            spec_json,
+            .{
+                .mode = .{
+                    .preferred_mode = .legacy,
+                    .allow_fallback = true,
+                },
+            },
+        ),
+        null,
+    );
+    defer sent.deinit(allocator);
+
+    try std.testing.expectEqual(payer_raw.public_key, sent.payer());
+    try std.testing.expect(sent.canExecute());
+    try std.testing.expect(sent.containsAccount(payer_raw.public_key));
+    try std.testing.expect(sent.findAccountInfo(payer_raw.public_key) != null);
+    try std.testing.expect(sent.isPayerAccount(payer_raw.public_key));
+    try std.testing.expect(sent.isSignerAccount(payer_raw.public_key));
+    try std.testing.expect(sent.containsSigner(payer_raw.public_key));
+    try std.testing.expect(sent.providesSigner(payer_raw.public_key));
+    try std.testing.expect(sent.requiresSigner(payer_raw.public_key));
+    try std.testing.expect(sent.containsProgram(program_id));
+    try std.testing.expect(sent.isProgramAccount(program_id));
+    try std.testing.expect(sent.usesLookupTables());
+    try std.testing.expect(sent.containsLookupTable(lookup_table));
+    try std.testing.expect(sent.isLookupCandidate(lookup_address));
+    try std.testing.expect(sent.hasLookupCoverageFor(lookup_address));
+    try std.testing.expect(!sent.isLookupUncovered(lookup_address));
+    try std.testing.expect(!sent.usesDurableNonce());
+    try std.testing.expectEqual(InvocationBlockhashMode.explicit_recent_blockhash, sent.blockhashMode());
+    try std.testing.expect(!sent.containsAccount(missing_pubkey));
+    try std.testing.expect(sent.findAccountInfo(missing_pubkey) == null);
+    try std.testing.expect(!sent.containsSigner(missing_pubkey));
+    try std.testing.expect(!sent.providesSigner(missing_pubkey));
+    try std.testing.expect(!sent.requiresSigner(missing_pubkey));
+    try std.testing.expect(!sent.containsProgram(missing_pubkey));
+    try std.testing.expect(!sent.containsLookupTable(missing_pubkey));
+    try std.testing.expect(!sent.isLookupCandidate(missing_pubkey));
+    try std.testing.expect(!sent.hasLookupCoverageFor(missing_pubkey));
+    try std.testing.expect(!sent.isLookupUncovered(missing_pubkey));
+    try std.testing.expect(!sent.hasMissingRequiredSigner(missing_pubkey));
+    try std.testing.expect(!sent.hasExtraSigner(missing_pubkey));
+    try std.testing.expect(!sent.hasDuplicateSigner(missing_pubkey));
+    try std.testing.expect(!sent.hasDuplicateLookupTable(missing_pubkey));
+}
+
 test "invoke.PreferredPreparedSignedTransaction owned methods delegate execution helpers" {
     const allocator = std.testing.allocator;
     const DummyRpc = struct {
@@ -22310,10 +24440,14 @@ test "invoke.SentPreferredPreparedExecution exports canonical resolved and instr
     defer allocator.free(resolved_json);
     const instructions_json = try sent.allocInstructionsJson(allocator);
     defer allocator.free(instructions_json);
+    const accounts_json = try sent.allocAccountsJson(allocator);
+    defer allocator.free(accounts_json);
 
     try std.testing.expect(std.mem.indexOf(u8, resolved_json, "\"address_lookup_tables\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"program_id\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"data_bytes\":[1]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"accounts\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"is_payer\":true") != null);
 }
 
 test "invoke.PreferredPreparedExecutionFee exports canonical resolved and instruction json" {
@@ -22555,10 +24689,14 @@ test "invoke.PreferredPreparedSignedTransaction exports canonical json helpers" 
     defer allocator.free(resolved_json);
     const instructions_json = try prepared.allocInstructionsJson(allocator);
     defer allocator.free(instructions_json);
+    const lookup_tables_json = try prepared.allocAddressLookupTablesJson(allocator);
+    defer if (lookup_tables_json) |value| allocator.free(value);
 
     try std.testing.expect(std.mem.indexOf(u8, resolved_json, "\"address_lookup_tables\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, resolved_json, "\"instructions\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"program_id\":\"") != null);
+    try std.testing.expect(lookup_tables_json != null);
+    try std.testing.expect(std.mem.indexOf(u8, lookup_tables_json.?, "\"account_key\":\"") != null);
 }
 
 test "invoke.SentPreferredPreparedInvocation exports canonical json helpers" {
@@ -22614,10 +24752,18 @@ test "invoke.SentPreferredPreparedInvocation exports canonical json helpers" {
     defer allocator.free(resolved_json);
     const instructions_json = try sent.allocInstructionsJson(allocator);
     defer allocator.free(instructions_json);
+    const lookup_tables_json = try sent.allocAddressLookupTablesJson(allocator);
+    defer if (lookup_tables_json) |value| allocator.free(value);
+    const accounts_json = try sent.allocAccountsJson(allocator);
+    defer allocator.free(accounts_json);
 
     try std.testing.expectEqualStrings("sent-preferred-export", sent.signature);
     try std.testing.expect(std.mem.indexOf(u8, resolved_json, "\"payer\":\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, instructions_json, "\"accounts\":[") != null);
+    try std.testing.expect(lookup_tables_json != null);
+    try std.testing.expect(std.mem.indexOf(u8, lookup_tables_json.?, "\"account_key\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"accounts\":[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, accounts_json, "\"is_payer\":true") != null);
 }
 
 test "invoke.PreparedInvocation query helpers expose signer and program state" {
@@ -22652,6 +24798,73 @@ test "invoke.PreparedInvocation query helpers expose signer and program state" {
     try std.testing.expect(!prepared.hasExtraSigner(missing_pubkey));
     try std.testing.expect(!prepared.hasDuplicateSigner(missing_pubkey));
     try std.testing.expect(!prepared.hasDuplicateLookupTable(missing_pubkey));
+}
+
+test "invoke.PreparedInvocation query helpers expose account, signer requirement, and nonce roles" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{82} ** 32);
+    const additional_signer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{83} ** 32);
+    const nonce_authority_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{84} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{85} ** 32);
+    const nonce_account = sdk.Pubkey.fromBytes([_]u8{86} ** 32);
+    const writable_account = sdk.Pubkey.fromBytes([_]u8{87} ** 32);
+    const missing_pubkey = sdk.Pubkey.fromBytes([_]u8{88} ** 32);
+
+    const spec_json = try allocRichInstructionsInvocationSpecJson(
+        allocator,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+    );
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        false,
+        spec_json,
+        .{},
+    );
+    defer prepared.deinit(allocator);
+
+    try std.testing.expectEqual(payer_raw.public_key, prepared.payer());
+    try std.testing.expect(prepared.containsAccount(payer_raw.public_key));
+    try std.testing.expect(prepared.findAccountInfo(payer_raw.public_key) != null);
+    try std.testing.expect(prepared.isPayerAccount(payer_raw.public_key));
+    try std.testing.expect(prepared.isSignerAccount(payer_raw.public_key));
+    try std.testing.expect(prepared.providesSigner(payer_raw.public_key));
+    try std.testing.expect(prepared.requiresSigner(payer_raw.public_key));
+    try std.testing.expect(prepared.containsAccount(additional_signer_raw.public_key));
+    try std.testing.expect(prepared.isSignerAccount(additional_signer_raw.public_key));
+    try std.testing.expect(prepared.providesSigner(additional_signer_raw.public_key));
+    try std.testing.expect(prepared.requiresSigner(additional_signer_raw.public_key));
+    try std.testing.expect(prepared.containsAccount(nonce_authority_raw.public_key));
+    try std.testing.expect(prepared.isSignerAccount(nonce_authority_raw.public_key));
+    try std.testing.expect(prepared.providesSigner(nonce_authority_raw.public_key));
+    try std.testing.expect(prepared.requiresSigner(nonce_authority_raw.public_key));
+    try std.testing.expect(prepared.containsAccount(program_id));
+    try std.testing.expect(prepared.isProgramAccount(program_id));
+    try std.testing.expect(prepared.isReadonlyAccount(program_id));
+    try std.testing.expect(prepared.containsAccount(nonce_account));
+    try std.testing.expect(prepared.isNonceAccount(nonce_account));
+    try std.testing.expect(prepared.isWritableAccount(nonce_account));
+    try std.testing.expect(prepared.containsAccount(writable_account));
+    try std.testing.expect(prepared.isWritableAccount(writable_account));
+    try std.testing.expect(!prepared.isReadonlyAccount(writable_account));
+    try std.testing.expect(!prepared.usesLookupTables());
+    try std.testing.expect(prepared.usesDurableNonce());
+    try std.testing.expectEqual(InvocationBlockhashMode.durable_nonce, prepared.blockhashMode());
+    try std.testing.expect(!prepared.containsAccount(missing_pubkey));
+    try std.testing.expect(prepared.findAccountInfo(missing_pubkey) == null);
+    try std.testing.expect(!prepared.isPayerAccount(missing_pubkey));
+    try std.testing.expect(!prepared.isNonceAccount(missing_pubkey));
+    try std.testing.expect(!prepared.providesSigner(missing_pubkey));
+    try std.testing.expect(!prepared.requiresSigner(missing_pubkey));
 }
 
 test "invoke.PreferredPreparedInvocation query helpers expose fallback and lookup state" {
@@ -22695,6 +24908,56 @@ test "invoke.PreferredPreparedInvocation query helpers expose fallback and looku
     try std.testing.expect(prepared.hasDuplicateLookupTable(lookup_table));
     try std.testing.expect(!prepared.hasMissingRequiredSigner(missing_pubkey));
     try std.testing.expect(!prepared.hasExtraSigner(missing_pubkey));
+}
+
+test "invoke.PreferredPreparedInvocation query helpers expose account lookup coverage" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes([_]u8{89} ** 32);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{90} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes([_]u8{92} ** 32);
+    const lookup_address = sdk.Pubkey.fromBytes([_]u8{93} ** 32);
+    const missing_pubkey = sdk.Pubkey.fromBytes([_]u8{94} ** 32);
+
+    const spec_json = try allocProgramInvocationSpecJsonWithLookupTable(allocator, 89, 90, 91, 92, 93);
+    defer allocator.free(spec_json);
+
+    var prepared = try buildPreferredPreparedInvocationFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .program,
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer prepared.deinit(allocator);
+
+    try std.testing.expectEqual(payer_raw.public_key, prepared.payer());
+    try std.testing.expect(prepared.containsAccount(payer_raw.public_key));
+    try std.testing.expect(prepared.isPayerAccount(payer_raw.public_key));
+    try std.testing.expect(prepared.isSignerAccount(payer_raw.public_key));
+    try std.testing.expect(prepared.providesSigner(payer_raw.public_key));
+    try std.testing.expect(prepared.requiresSigner(payer_raw.public_key));
+    try std.testing.expect(prepared.containsAccount(program_id));
+    try std.testing.expect(prepared.findAccountInfo(program_id) != null);
+    try std.testing.expect(prepared.isProgramAccount(program_id));
+    try std.testing.expect(prepared.isReadonlyAccount(program_id));
+    try std.testing.expect(prepared.usesLookupTables());
+    try std.testing.expect(prepared.containsLookupTable(lookup_table));
+    try std.testing.expect(prepared.containsAccount(lookup_address));
+    try std.testing.expect(prepared.findAccountInfo(lookup_address) != null);
+    try std.testing.expect(prepared.isLookupCandidate(lookup_address));
+    try std.testing.expect(prepared.hasLookupCoverageFor(lookup_address));
+    try std.testing.expect(!prepared.isLookupUncovered(lookup_address));
+    try std.testing.expect(!prepared.containsAccount(missing_pubkey));
+    try std.testing.expect(prepared.findAccountInfo(missing_pubkey) == null);
+    try std.testing.expect(!prepared.isLookupCandidate(missing_pubkey));
+    try std.testing.expect(!prepared.hasLookupCoverageFor(missing_pubkey));
+    try std.testing.expect(!prepared.isLookupUncovered(missing_pubkey));
 }
 
 test "invoke.OwnedInvocationAccounts query helpers expose payer and program roles" {

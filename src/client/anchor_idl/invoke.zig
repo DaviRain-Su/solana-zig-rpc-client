@@ -1,4 +1,5 @@
 const std = @import("std");
+const invoke = @import("../invoke.zig");
 const instructions_invoke = @import("../instructions_invoke.zig");
 const invocation_spec_json = @import("../invocation_spec_json.zig");
 const sdk = @import("../sdk.zig");
@@ -172,6 +173,106 @@ fn stringifyJsonValue(
     return try allocator.dupe(u8, json_buffer.written());
 }
 
+fn stringifyByteArrayJson(
+    allocator: Allocator,
+    bytes: []const u8,
+) Allocator.Error![]u8 {
+    var json_buffer: std.io.Writer.Allocating = .init(allocator);
+    defer json_buffer.deinit();
+
+    try json_buffer.writer.writeByte('[');
+    for (bytes, 0..) |byte, index| {
+        if (index != 0) try json_buffer.writer.writeByte(',');
+        try json_buffer.writer.print("{d}", .{byte});
+    }
+    try json_buffer.writer.writeByte(']');
+    return try allocator.dupe(u8, json_buffer.written());
+}
+
+fn parseJsonSecretKeyBytes(
+    allocator: Allocator,
+    value: std.json.Value,
+) BuildError![]u8 {
+    return switch (value) {
+        .array => |array| blk: {
+            const bytes = try allocator.alloc(u8, array.items.len);
+            errdefer allocator.free(bytes);
+
+            for (array.items, 0..) |item, index| {
+                if (item != .integer or item.integer < 0 or item.integer > 255) {
+                    return error.InvalidInvocationSpec;
+                }
+                bytes[index] = @intCast(item.integer);
+            }
+
+            break :blk bytes;
+        },
+        .object => |object| blk: {
+            if (jsonObjectField(object, &.{ "bytes", "secretKeyBytes", "secret_key_bytes" })) |field| {
+                break :blk try parseJsonSecretKeyBytes(allocator, field);
+            }
+            return error.InvalidInvocationSpec;
+        },
+        else => error.InvalidInvocationSpec,
+    };
+}
+
+fn parseJsonSecretKeypair(
+    allocator: Allocator,
+    value: std.json.Value,
+) BuildError!sdk.Keypair {
+    return switch (value) {
+        .string => sdk.Keypair.fromBase58SecretKey(allocator, value.string) catch return error.InvalidInvocationSpec,
+        .array => blk: {
+            const bytes = try parseJsonSecretKeyBytes(allocator, value);
+            defer allocator.free(bytes);
+            break :blk sdk.Keypair.fromSecretKeySlice(bytes) catch return error.InvalidInvocationSpec;
+        },
+        .object => |object| blk: {
+            if (jsonObjectField(object, &.{
+                "base58",
+                "secretKey",
+                "secret_key",
+                "privateKey",
+                "private_key",
+            })) |field| {
+                break :blk try parseJsonSecretKeypair(allocator, field);
+            }
+            if (jsonObjectField(object, &.{ "bytes", "secretKeyBytes", "secret_key_bytes" })) |field| {
+                break :blk try parseJsonSecretKeypair(allocator, field);
+            }
+            return error.InvalidInvocationSpec;
+        },
+        else => error.InvalidInvocationSpec,
+    };
+}
+
+fn parseInvocationSpecPubkeyString(
+    value: std.json.Value,
+) BuildError![]const u8 {
+    return switch (value) {
+        .string => value.string,
+        .object => blk: {
+            if (jsonObjectField(value.object, &.{
+                "address",
+                "publicKey",
+                "public_key",
+                "pubkey",
+                "key",
+                "programId",
+                "program_id",
+                "accountKey",
+                "account_key",
+            })) |field| {
+                if (field != .string) return error.InvalidInvocationSpec;
+                break :blk field.string;
+            }
+            return error.InvalidInvocationSpec;
+        },
+        else => error.InvalidInvocationSpec,
+    };
+}
+
 fn findJsonValue(value: *const std.json.Value, path: []const u8) ?std.json.Value {
     switch (value.*) {
         .object => {
@@ -265,12 +366,38 @@ fn parseBoolField(value: std.json.Value) BuildError!bool {
     };
 }
 
+const ParsedAccountMetaString = struct {
+    pubkey: []const u8,
+    is_signer: bool = false,
+    is_writable: bool = false,
+};
+
+fn parseAccountMetaString(value: []const u8) BuildError!ParsedAccountMetaString {
+    const colon_index = std.mem.lastIndexOfScalar(u8, value, ':') orelse return .{ .pubkey = value };
+    if (colon_index == 0 or colon_index + 1 >= value.len) return error.InvalidAnchorIdlAccountSpec;
+
+    var parsed: ParsedAccountMetaString = .{
+        .pubkey = value[0..colon_index],
+    };
+    for (value[colon_index + 1 ..]) |flag| {
+        switch (std.ascii.toLower(flag)) {
+            's' => parsed.is_signer = true,
+            'w' => parsed.is_writable = true,
+            else => return error.InvalidAnchorIdlAccountSpec,
+        }
+    }
+    return parsed;
+}
+
 fn parseRemainingAccountMeta(allocator: Allocator, value: std.json.Value) BuildError!sdk.AccountMeta {
     return switch (value) {
-        .string => .{
-            .pubkey = sdk.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidAnchorIdlAccountSpec,
-            .is_signer = false,
-            .is_writable = false,
+        .string => blk: {
+            const parsed = try parseAccountMetaString(value.string);
+            break :blk .{
+                .pubkey = sdk.Pubkey.fromBase58(allocator, parsed.pubkey) catch return error.InvalidAnchorIdlAccountSpec,
+                .is_signer = parsed.is_signer,
+                .is_writable = parsed.is_writable,
+            };
         },
         .object => blk: {
             const pubkey = if (try parseAccountBindingPubkeyValue(allocator, value)) |resolved|
@@ -2281,17 +2408,20 @@ pub fn buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
 
     const payer_secret_key_value = jsonObjectField(object, &.{ "payer_secret_key", "payerSecretKey" }) orelse
         return error.InvalidInvocationSpec;
-    if (payer_secret_key_value != .string) return error.InvalidInvocationSpec;
-    const payer_keypair = sdk.Keypair.fromBase58SecretKey(allocator, payer_secret_key_value.string) catch {
-        return error.InvalidInvocationSpec;
-    };
+    const payer_keypair = try parseJsonSecretKeypair(allocator, payer_secret_key_value);
+    const payer_secret_key = try sdk.encodeBase58(allocator, &payer_keypair.secret_key);
+    defer allocator.free(payer_secret_key);
 
     const default_signer_secret_key_value = jsonObjectField(object, &.{ "default_signer_secret_key", "defaultSignerSecretKey" });
     const default_signer_keypair = if (default_signer_secret_key_value) |value| blk: {
-        if (value != .string) return error.InvalidInvocationSpec;
-        break :blk sdk.Keypair.fromBase58SecretKey(allocator, value.string) catch return error.InvalidInvocationSpec;
+        break :blk try parseJsonSecretKeypair(allocator, value);
     } else payer_keypair;
-    const default_signer_secret_key = if (default_signer_secret_key_value) |value| value.string else payer_secret_key_value.string;
+    const owned_default_signer_secret_key = if (default_signer_secret_key_value != null)
+        try sdk.encodeBase58(allocator, &default_signer_keypair.secret_key)
+    else
+        null;
+    defer if (owned_default_signer_secret_key) |value| allocator.free(value);
+    const default_signer_secret_key = if (owned_default_signer_secret_key) |value| value else payer_secret_key;
 
     const idl_value = jsonObjectField(object, &.{ "idl", "idl_json", "idlJson" }) orelse
         return error.InvalidInvocationSpec;
@@ -2311,8 +2441,10 @@ pub fn buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
     if (instruction_name_value != .string) return error.InvalidInvocationSpec;
 
     const program_id = if (jsonObjectField(object, &.{ "program_id", "programId" })) |value| blk: {
-        if (value != .string) return error.InvalidInvocationSpec;
-        break :blk sdk.Pubkey.fromBase58(allocator, value.string) catch return error.InvalidInvocationSpec;
+        break :blk sdk.Pubkey.fromBase58(
+            allocator,
+            try parseInvocationSpecPubkeyString(value),
+        ) catch return error.InvalidInvocationSpec;
     } else null;
 
     var owned_args_json: ?[]u8 = null;
@@ -2386,7 +2518,7 @@ pub fn buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
     defer allocator.free(instruction_data_base64);
 
     const additional_signers_value = jsonObjectField(object, &.{ "additional_signer_secret_keys", "additionalSignerSecretKeys" });
-    const include_default_signer = !std.mem.eql(u8, default_signer_secret_key, payer_secret_key_value.string);
+    const include_default_signer = !std.mem.eql(u8, default_signer_secret_key, payer_secret_key);
 
     var additional_signers = std.ArrayListUnmanaged(sdk.Keypair){};
     defer additional_signers.deinit(allocator);
@@ -2396,10 +2528,7 @@ pub fn buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
     if (additional_signers_value) |value| {
         if (value != .array) return error.InvalidInvocationSpec;
         for (value.array.items) |secret_key_value| {
-            if (secret_key_value != .string) return error.InvalidInvocationSpec;
-            const signer = sdk.Keypair.fromBase58SecretKey(allocator, secret_key_value.string) catch {
-                return error.InvalidInvocationSpec;
-            };
+            const signer = try parseJsonSecretKeypair(allocator, secret_key_value);
             try appendUniqueSignerFromPubkey(allocator, &additional_signers, signer);
         }
     }
@@ -2440,13 +2569,24 @@ pub fn buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
         if (value != .string) return error.InvalidInvocationSpec;
         break :blk value.string;
     } else null;
+    var owned_nonce_account: ?[]u8 = null;
+    defer if (owned_nonce_account) |value| allocator.free(value);
     const nonce_account = if (jsonObjectField(object, &.{ "nonce_account", "nonceAccount" })) |value| blk: {
-        if (value != .string) return error.InvalidInvocationSpec;
-        break :blk value.string;
+        const pubkey = sdk.Pubkey.fromBase58(
+            allocator,
+            try parseInvocationSpecPubkeyString(value),
+        ) catch return error.InvalidInvocationSpec;
+        const encoded = try pubkey.toBase58(allocator);
+        owned_nonce_account = encoded;
+        break :blk encoded;
     } else null;
+    var owned_nonce_authority_secret_key: ?[]u8 = null;
+    defer if (owned_nonce_authority_secret_key) |value| allocator.free(value);
     const nonce_authority_secret_key = if (jsonObjectField(object, &.{ "nonce_authority_secret_key", "nonceAuthoritySecretKey" })) |value| blk: {
-        if (value != .string) return error.InvalidInvocationSpec;
-        break :blk value.string;
+        const keypair = try parseJsonSecretKeypair(allocator, value);
+        const encoded = try sdk.encodeBase58(allocator, &keypair.secret_key);
+        owned_nonce_authority_secret_key = encoded;
+        break :blk encoded;
     } else null;
 
     var accounts_json_buffer: std.io.Writer.Allocating = .init(allocator);
@@ -2472,7 +2612,7 @@ pub fn buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
     defer allocator.free(accounts_json);
 
     return try invocation_spec_json.buildInstructionInvocationSpecJson(allocator, .{
-        .payer_secret_key = payer_secret_key_value.string,
+        .payer_secret_key = payer_secret_key,
         .additional_signer_secret_keys_json = additional_signer_secret_keys_json,
         .address_lookup_tables_json = address_lookup_tables_json,
         .recent_blockhash = recent_blockhash,
@@ -2485,6 +2625,902 @@ pub fn buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
             .data_encoding = "base64",
         },
     });
+}
+
+pub fn buildPreparedInvocationFromAnchorIdlInvokeSpecJsonWithOptions(
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.BuildInvocationSpecOptions,
+) !invoke.PreparedInvocation {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        rpc,
+        .instructions,
+        versioned,
+        instruction_spec_json,
+        options,
+    );
+}
+
+pub fn buildPreferredPreparedInvocationFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.BuildPreferredInvocationSpecOptions,
+) !invoke.PreferredPreparedInvocation {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.buildPreferredPreparedInvocationFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        instruction_spec_json,
+        options,
+    );
+}
+
+pub fn buildPreferredPreparedSignedTransactionFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.BuildPreferredInvocationSpecOptions,
+) !invoke.PreferredPreparedSignedTransaction {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.buildPreferredPreparedSignedTransactionFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        instruction_spec_json,
+        options,
+    );
+}
+
+pub fn buildPreferredInvocationAnalysisFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.BuildPreferredInvocationSpecOptions,
+) !invoke.PreferredInvocationAnalysis {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        instruction_spec_json,
+        options,
+    );
+}
+
+pub fn buildPreferredResolvedInvocationExecutionResultFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.BuildPreferredInvocationSpecOptions,
+) !invoke.PreferredResolvedInvocationExecutionResult {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        instruction_spec_json,
+        options,
+    );
+}
+
+pub fn buildOwnedResolvedInvocationFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) !invoke.OwnedResolvedInvocation {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.buildOwnedResolvedInvocationFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        instruction_spec_json,
+    );
+}
+
+pub fn writeInvocationInspectionTextFromAnchorIdlInvokeSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) !void {
+    var resolved = try buildOwnedResolvedInvocationFromAnchorIdlInvokeSpecJson(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer resolved.deinit(allocator);
+    try invoke.writeInvocationInspectionTextFromOwnedResolvedInvocationRef(
+        writer,
+        allocator,
+        &resolved,
+    );
+}
+
+pub fn allocInvocationInspectionJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) ![]u8 {
+    var resolved = try buildOwnedResolvedInvocationFromAnchorIdlInvokeSpecJson(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer resolved.deinit(allocator);
+    return try invoke.allocInvocationInspectionJsonFromOwnedResolvedInvocationRef(
+        allocator,
+        &resolved,
+    );
+}
+
+pub fn writePreferredInvocationInspectionTextFromAnchorIdlInvokeSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.BuildPreferredInvocationSpecOptions,
+) !void {
+    var resolved = try buildOwnedResolvedInvocationFromAnchorIdlInvokeSpecJson(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer resolved.deinit(allocator);
+    try invoke.writePreferredInvocationInspectionTextFromOwnedResolvedInvocationRef(
+        writer,
+        allocator,
+        rpc,
+        &resolved,
+        options,
+    );
+}
+
+pub fn allocPreferredInvocationInspectionJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var resolved = try buildOwnedResolvedInvocationFromAnchorIdlInvokeSpecJson(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer resolved.deinit(allocator);
+    return try invoke.allocPreferredInvocationInspectionJsonFromOwnedResolvedInvocationRef(
+        allocator,
+        rpc,
+        &resolved,
+        options,
+    );
+}
+
+pub fn writeInvocationDiagnosticsTextFromAnchorIdlInvokeSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) !void {
+    var resolved = try buildOwnedResolvedInvocationFromAnchorIdlInvokeSpecJson(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer resolved.deinit(allocator);
+    try invoke.writeInvocationDiagnosticsTextFromOwnedResolvedInvocationRef(
+        writer,
+        allocator,
+        &resolved,
+    );
+}
+
+pub fn allocInvocationDiagnosticsJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) ![]u8 {
+    var resolved = try buildOwnedResolvedInvocationFromAnchorIdlInvokeSpecJson(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer resolved.deinit(allocator);
+    return try invoke.allocInvocationDiagnosticsJsonFromOwnedResolvedInvocationRef(
+        allocator,
+        &resolved,
+    );
+}
+
+pub fn writePreferredInvocationDiagnosticsTextFromAnchorIdlInvokeSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.BuildPreferredInvocationSpecOptions,
+) !void {
+    var resolved = try buildOwnedResolvedInvocationFromAnchorIdlInvokeSpecJson(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer resolved.deinit(allocator);
+    try invoke.writePreferredInvocationDiagnosticsTextFromOwnedResolvedInvocation(
+        writer,
+        allocator,
+        rpc,
+        &resolved,
+        options,
+    );
+}
+
+pub fn allocPreferredInvocationDiagnosticsJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    var resolved = try buildOwnedResolvedInvocationFromAnchorIdlInvokeSpecJson(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer resolved.deinit(allocator);
+    return try invoke.allocPreferredInvocationDiagnosticsJsonFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        &resolved,
+        options,
+    );
+}
+
+pub fn writeInvocationModeReportTextFromAnchorIdlInvokeSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    build_options: invoke.BuildInvocationSpecOptions,
+) !void {
+    var resolved = try buildOwnedResolvedInvocationFromAnchorIdlInvokeSpecJson(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer resolved.deinit(allocator);
+    try invoke.writeInvocationModeReportTextFromOwnedResolvedInvocation(
+        writer,
+        allocator,
+        rpc,
+        &resolved,
+        build_options,
+    );
+}
+
+pub fn allocInvocationModeReportJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    build_options: invoke.BuildInvocationSpecOptions,
+) ![]u8 {
+    var resolved = try buildOwnedResolvedInvocationFromAnchorIdlInvokeSpecJson(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer resolved.deinit(allocator);
+    return try invoke.allocInvocationModeReportJsonFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        &resolved,
+        build_options,
+    );
+}
+
+pub fn writePreferredInvocationModeResolutionTextFromAnchorIdlInvokeSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    build_options: invoke.BuildInvocationSpecOptions,
+    mode_options: invoke.PreferredInvocationModeOptions,
+) !void {
+    var resolved = try buildOwnedResolvedInvocationFromAnchorIdlInvokeSpecJson(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer resolved.deinit(allocator);
+    try invoke.writePreferredInvocationModeResolutionTextFromOwnedResolvedInvocation(
+        writer,
+        allocator,
+        rpc,
+        &resolved,
+        build_options,
+        mode_options,
+    );
+}
+
+pub fn allocPreferredInvocationModeResolutionJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    build_options: invoke.BuildInvocationSpecOptions,
+    mode_options: invoke.PreferredInvocationModeOptions,
+) ![]u8 {
+    var resolved = try buildOwnedResolvedInvocationFromAnchorIdlInvokeSpecJson(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer resolved.deinit(allocator);
+    return try invoke.allocPreferredInvocationModeResolutionJsonFromOwnedResolvedInvocation(
+        allocator,
+        rpc,
+        &resolved,
+        build_options,
+        mode_options,
+    );
+}
+
+pub fn writeInvocationReportTextFromAnchorIdlInvokeSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) !void {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    try instructions_invoke.writeInvocationReportTextFromInvocationSpecJson(
+        writer,
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn allocInvocationReportJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try instructions_invoke.allocInvocationReportJsonFromInvocationSpecJson(
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn writeInvocationAccountsTextFromAnchorIdlInvokeSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) !void {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    try instructions_invoke.writeInvocationAccountsTextFromInvocationSpecJson(
+        writer,
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn allocInvocationAccountsJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try instructions_invoke.allocInvocationAccountsJsonFromInvocationSpecJson(
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn writeInvocationSignerPubkeysTextFromAnchorIdlInvokeSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) !void {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    try instructions_invoke.writeInvocationSignerPubkeysTextFromInvocationSpecJson(
+        writer,
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn allocInvocationSignerPubkeysJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try instructions_invoke.allocInvocationSignerPubkeysJsonFromInvocationSpecJson(
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn writeInvocationSummaryTextFromAnchorIdlInvokeSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) !void {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    try instructions_invoke.writeInvocationSummaryTextFromInvocationSpecJson(
+        writer,
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn allocInvocationSummaryJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try instructions_invoke.allocInvocationSummaryJsonFromInvocationSpecJson(
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn writeInvocationPlanTextFromAnchorIdlInvokeSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) !void {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    try instructions_invoke.writeInvocationPlanTextFromInvocationSpecJson(
+        writer,
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn allocInvocationPlanJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try instructions_invoke.allocInvocationPlanJsonFromInvocationSpecJson(
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn writeInvocationPreflightTextFromAnchorIdlInvokeSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) !void {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    try instructions_invoke.writeInvocationPreflightTextFromInvocationSpecJson(
+        writer,
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn allocInvocationPreflightJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try instructions_invoke.allocInvocationPreflightJsonFromInvocationSpecJson(
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn writeInvocationValidationTextFromAnchorIdlInvokeSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) !void {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    try instructions_invoke.writeInvocationValidationTextFromInvocationSpecJson(
+        writer,
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn allocInvocationValidationJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try instructions_invoke.allocInvocationValidationJsonFromInvocationSpecJson(
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn writeInvocationLookupCoverageTextFromAnchorIdlInvokeSpecJson(
+    writer: *std.Io.Writer,
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) !void {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    try instructions_invoke.writeInvocationLookupCoverageTextFromInvocationSpecJson(
+        writer,
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn allocInvocationLookupCoverageJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try instructions_invoke.allocInvocationLookupCoverageJsonFromInvocationSpecJson(
+        allocator,
+        instruction_spec_json,
+    );
+}
+
+pub fn allocPreparedInvocationJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    versioned: bool,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.BuildInvocationSpecOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.allocPreparedInvocationJsonFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        versioned,
+        instruction_spec_json,
+        options,
+    );
+}
+
+pub fn allocPreferredPreparedInvocationJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.allocPreferredPreparedInvocationJsonFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        instruction_spec_json,
+        options,
+    );
+}
+
+pub fn allocPreferredPreparedSignedTransactionJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.allocPreferredPreparedSignedTransactionJsonFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        instruction_spec_json,
+        options,
+    );
+}
+
+pub fn allocPreferredInvocationAnalysisJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.allocPreferredInvocationAnalysisJsonFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        instruction_spec_json,
+        options,
+    );
+}
+
+pub fn allocPreferredResolvedInvocationExecutionResultJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.BuildPreferredInvocationSpecOptions,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.allocPreferredResolvedInvocationExecutionResultJsonFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        instruction_spec_json,
+        options,
+    );
+}
+
+pub fn buildInstructionsJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.buildInstructionsJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        instruction_spec_json,
+    );
+}
+
+pub fn buildResolvedInvocationJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) ![]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.buildResolvedInvocationJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        instruction_spec_json,
+    );
+}
+
+pub fn buildAddressLookupTablesJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    anchor_idl_invocation_spec_json: []const u8,
+) !?[]u8 {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.buildAddressLookupTablesJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        instruction_spec_json,
+    );
+}
+
+pub fn sendPreferredTransactionExecutionResultFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.SendPreferredInvocationSpecOptions,
+) !invoke.PreferredSignatureExecutionResult {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        instruction_spec_json,
+        options,
+    );
+}
+
+pub fn simulatePreferredTransactionExecutionResultFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.SimulatePreferredInvocationSpecOptions,
+) !invoke.PreferredSimulationExecutionResult {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.simulatePreferredTransactionExecutionResultFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        instruction_spec_json,
+        options,
+    );
+}
+
+pub fn sendAndConfirmPreferredTransactionExecutionResultFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.SendAndConfirmPreferredInvocationSpecOptions,
+) !invoke.PreferredSignatureExecutionResult {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.sendAndConfirmPreferredTransactionExecutionResultFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        instruction_spec_json,
+        options,
+    );
+}
+
+pub fn getFeeForPreferredInvocationExecutionResultFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.GetFeeForPreferredInvocationSpecOptions,
+) !invoke.PreferredFeeExecutionResult {
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        anchor_idl_invocation_spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+    return try invoke.getFeeForPreferredInvocationExecutionResultFromInvocationSpecJson(
+        allocator,
+        rpc,
+        .instructions,
+        instruction_spec_json,
+        options,
+    );
+}
+
+pub fn allocPreferredSendExecutionResultJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.SendPreferredInvocationSpecOptions,
+) ![]u8 {
+    var result = try sendPreferredTransactionExecutionResultFromAnchorIdlInvokeSpecJson(
+        allocator,
+        rpc,
+        anchor_idl_invocation_spec_json,
+        options,
+    );
+    defer result.deinit(allocator);
+    return try invoke.allocPreferredSignatureExecutionResultJson(allocator, &result);
+}
+
+pub fn allocPreferredSendAndConfirmExecutionResultJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.SendAndConfirmPreferredInvocationSpecOptions,
+) ![]u8 {
+    var result = try sendAndConfirmPreferredTransactionExecutionResultFromAnchorIdlInvokeSpecJson(
+        allocator,
+        rpc,
+        anchor_idl_invocation_spec_json,
+        options,
+    );
+    defer result.deinit(allocator);
+    return try invoke.allocPreferredSignatureExecutionResultJson(allocator, &result);
+}
+
+pub fn allocPreferredSimulationExecutionResultJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.SimulatePreferredInvocationSpecOptions,
+) ![]u8 {
+    var result = try simulatePreferredTransactionExecutionResultFromAnchorIdlInvokeSpecJson(
+        allocator,
+        rpc,
+        anchor_idl_invocation_spec_json,
+        options,
+    );
+    defer result.deinit(allocator);
+    return try invoke.allocPreferredSimulationExecutionResultJson(allocator, &result);
+}
+
+pub fn allocPreferredFeeExecutionResultJsonFromAnchorIdlInvokeSpecJson(
+    allocator: Allocator,
+    rpc: anytype,
+    anchor_idl_invocation_spec_json: []const u8,
+    options: invoke.GetFeeForPreferredInvocationSpecOptions,
+) ![]u8 {
+    var result = try getFeeForPreferredInvocationExecutionResultFromAnchorIdlInvokeSpecJson(
+        allocator,
+        rpc,
+        anchor_idl_invocation_spec_json,
+        options,
+    );
+    defer result.deinit(allocator);
+    return try invoke.allocPreferredFeeExecutionResultJson(allocator, &result);
 }
 
 pub fn sendLegacyTransactionFromInvocationSpecJson(
@@ -4749,6 +5785,45 @@ test "anchor_idl_invoke.buildOwnedInstructionFromJson keeps structured account b
     try std.testing.expect(owned_instruction.instruction.accounts[0].is_writable);
 }
 
+test "anchor_idl_invoke.buildOwnedInstructionFromJson accepts account binding path pubkey aliases" {
+    const allocator = std.testing.allocator;
+
+    const program_id = sdk.Pubkey.fromBytes(.{83} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const authority = sdk.Pubkey.fromBytes(.{6} ** 32);
+    const authority_base58 = try authority.toBase58(allocator);
+    defer allocator.free(authority_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"setAuthority","discriminator":[7,7,7,7,7,7,7,7],"accounts":[{{"name":"authority","writable":true,"signer":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const account_bindings_json = try std.fmt.allocPrint(
+        allocator,
+        "{{\"authority.publicKey\":\"{s}\"}}",
+        .{authority_base58},
+    );
+    defer allocator.free(account_bindings_json);
+
+    var owned_instruction = try buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "setAuthority",
+        .{ .account_bindings_json = account_bindings_json },
+    );
+    defer owned_instruction.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), owned_instruction.instruction.accounts.len);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].pubkey.eql(authority));
+    try std.testing.expect(owned_instruction.instruction.accounts[0].is_signer);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].is_writable);
+}
+
 test "anchor_idl_invoke.buildOwnedInstructionFromJson upgrades matching remaining account metas by pubkey" {
     const allocator = std.testing.allocator;
 
@@ -4796,6 +5871,929 @@ test "anchor_idl_invoke.buildOwnedInstructionFromJson upgrades matching remainin
     try std.testing.expect(owned_instruction.instruction.accounts[0].is_writable);
 }
 
+test "anchor_idl_invoke.buildOwnedInstructionFromJson accepts remaining account string shorthands" {
+    const allocator = std.testing.allocator;
+
+    const program_id = sdk.Pubkey.fromBytes(.{82} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const authority = sdk.Pubkey.fromBytes(.{4} ** 32);
+    const remaining = sdk.Pubkey.fromBytes(.{5} ** 32);
+    const remaining_base58 = try remaining.toBase58(allocator);
+    defer allocator.free(remaining_base58);
+
+    const idl_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{"address":"{s}","instructions":[{{"name":"setAuthority","discriminator":[8,8,8,8,8,8,8,8],"accounts":[{{"name":"authority","writable":true,"signer":true}}],"args":[]}}]}}
+    ,
+        .{program_id_base58},
+    );
+    defer allocator.free(idl_json);
+
+    const remaining_accounts_json = try std.fmt.allocPrint(
+        allocator,
+        \\["{s}:Ws"]
+    ,
+        .{remaining_base58},
+    );
+    defer allocator.free(remaining_accounts_json);
+
+    const structured_bindings = [_]AccountBinding{.{ .path = "authority", .pubkey = authority }};
+
+    var owned_instruction = try buildOwnedInstructionFromJson(
+        allocator,
+        idl_json,
+        "setAuthority",
+        .{
+            .account_bindings = &structured_bindings,
+            .remaining_accounts_json = remaining_accounts_json,
+        },
+    );
+    defer owned_instruction.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), owned_instruction.instruction.accounts.len);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].pubkey.eql(authority));
+    try std.testing.expect(owned_instruction.instruction.accounts[0].is_signer);
+    try std.testing.expect(owned_instruction.instruction.accounts[0].is_writable);
+    try std.testing.expect(owned_instruction.instruction.accounts[1].pubkey.eql(remaining));
+    try std.testing.expect(owned_instruction.instruction.accounts[1].is_signer);
+    try std.testing.expect(owned_instruction.instruction.accounts[1].is_writable);
+}
+
+test "anchor_idl_invoke.buildPreparedInvocationFromAnchorIdlInvokeSpecJsonWithOptions matches invoke bridge" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{179} ** 32);
+    const extra_raw = try sdk.Keypair.fromSecretKeyBytes(.{180} ** 32);
+    const program_id = sdk.Pubkey.fromBytes(.{181} ** 32);
+    const recent_blockhash = sdk.Hash.fromBytes(.{182} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const extra_secret_key = extra_raw.secret_key.toBytes();
+    const extra_secret_key_base58 = try sdk.encodeBase58(allocator, &extra_secret_key);
+    defer allocator.free(extra_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const recent_blockhash_base58 = try recent_blockhash.toBase58(allocator);
+    defer allocator.free(recent_blockhash_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "additional_signer_secret_keys":["{s}"],
+        \\  "program_id":"{s}",
+        \\  "recent_blockhash":"{s}",
+        \\  "idl":{{
+        \\    "address":"{s}",
+        \\    "instructions":[{{"name":"setValue","discriminator":[1,1,1,1,1,1,1,1],"accounts":[]}}]
+        \\  }},
+        \\  "instruction_name":"setValue"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            extra_secret_key_base58,
+            program_id_base58,
+            recent_blockhash_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    var via_anchor = try buildPreparedInvocationFromAnchorIdlInvokeSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        false,
+        spec_json,
+        .{},
+    );
+    defer via_anchor.deinit(allocator);
+
+    var via_invoke = try invoke.buildPreparedInvocationFromInvocationSpecJsonWithOptions(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        false,
+        instruction_spec_json,
+        .{},
+    );
+    defer via_invoke.deinit(allocator);
+
+    const anchor_json = try via_anchor.allocResolvedInvocationJson(allocator);
+    defer allocator.free(anchor_json);
+    const invoke_json = try via_invoke.allocResolvedInvocationJson(allocator);
+    defer allocator.free(invoke_json);
+
+    try std.testing.expectEqualStrings(invoke_json, anchor_json);
+}
+
+test "anchor_idl_invoke.buildPreferredInvocationAnalysisFromAnchorIdlInvokeSpecJson matches invoke bridge" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{183} ** 32);
+    const program_id = sdk.Pubkey.fromBytes(.{184} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes(.{185} ** 32);
+    const lookup_address = sdk.Pubkey.fromBytes(.{186} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const lookup_table_base58 = try lookup_table.toBase58(allocator);
+    defer allocator.free(lookup_table_base58);
+    const lookup_address_base58 = try lookup_address.toBase58(allocator);
+    defer allocator.free(lookup_address_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "address_lookup_tables":[{{"account_key":"{s}","addresses":["{s}"]}}],
+        \\  "idl":{{
+        \\    "address":"{s}",
+        \\    "instructions":[{{"name":"setValue","discriminator":[1,1,1,1,1,1,1,1],"accounts":[]}}]
+        \\  }},
+        \\  "instruction_name":"setValue"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+            lookup_table_base58,
+            lookup_address_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    var via_anchor = try buildPreferredInvocationAnalysisFromAnchorIdlInvokeSpecJson(
+        allocator,
+        DummyRpc{},
+        spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer via_anchor.deinit(allocator);
+
+    var via_invoke = try invoke.buildPreferredInvocationAnalysisFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        instruction_spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .legacy,
+                .allow_fallback = true,
+            },
+        },
+    );
+    defer via_invoke.deinit(allocator);
+
+    const anchor_accounts_json = try via_anchor.allocAccountsJson(allocator);
+    defer allocator.free(anchor_accounts_json);
+    const invoke_accounts_json = try via_invoke.allocAccountsJson(allocator);
+    defer allocator.free(invoke_accounts_json);
+
+    try std.testing.expectEqualStrings(invoke_accounts_json, anchor_accounts_json);
+    try std.testing.expectEqual(via_invoke.execution_report.selected_mode, via_anchor.execution_report.selected_mode);
+}
+
+test "anchor_idl_invoke.buildPreferredResolvedInvocationExecutionResultFromAnchorIdlInvokeSpecJson matches invoke bridge" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{187} ** 32);
+    const nonce_authority_raw = try sdk.Keypair.fromSecretKeyBytes(.{188} ** 32);
+    const program_id = sdk.Pubkey.fromBytes(.{189} ** 32);
+    const nonce_account = sdk.Pubkey.fromBytes(.{190} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const nonce_authority_secret_key = nonce_authority_raw.secret_key.toBytes();
+    const nonce_authority_secret_key_base58 = try sdk.encodeBase58(allocator, &nonce_authority_secret_key);
+    defer allocator.free(nonce_authority_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const nonce_account_base58 = try nonce_account.toBase58(allocator);
+    defer allocator.free(nonce_account_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "nonce_account":"{s}",
+        \\  "nonce_authority_secret_key":"{s}",
+        \\  "idl":{{
+        \\    "address":"{s}",
+        \\    "instructions":[{{"name":"setValue","discriminator":[1,1,1,1,1,1,1,1],"accounts":[]}}]
+        \\  }},
+        \\  "instruction_name":"setValue"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+            nonce_account_base58,
+            nonce_authority_secret_key_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    var via_anchor = try buildPreferredResolvedInvocationExecutionResultFromAnchorIdlInvokeSpecJson(
+        allocator,
+        DummyRpc{},
+        spec_json,
+        .{},
+    );
+    defer via_anchor.deinit(allocator);
+
+    var via_invoke = try invoke.buildPreferredResolvedInvocationExecutionResultFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        instruction_spec_json,
+        .{},
+    );
+    defer via_invoke.deinit(allocator);
+
+    const anchor_json = try via_anchor.allocResolvedInvocationJson(allocator);
+    defer allocator.free(anchor_json);
+    const invoke_json = try via_invoke.allocResolvedInvocationJson(allocator);
+    defer allocator.free(invoke_json);
+
+    try std.testing.expectEqualStrings(invoke_json, anchor_json);
+    try std.testing.expectEqual(via_invoke.execution_report.selected_mode, via_anchor.execution_report.selected_mode);
+}
+
+test "anchor_idl_invoke alloc json helpers match invoke bridge" {
+    const allocator = std.testing.allocator;
+    const DummyRpc = struct {};
+
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{211} ** 32);
+    const extra_raw = try sdk.Keypair.fromSecretKeyBytes(.{212} ** 32);
+    const program_id = sdk.Pubkey.fromBytes(.{213} ** 32);
+    const recent_blockhash = sdk.Hash.fromBytes(.{214} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const extra_secret_key = extra_raw.secret_key.toBytes();
+    const extra_secret_key_base58 = try sdk.encodeBase58(allocator, &extra_secret_key);
+    defer allocator.free(extra_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const recent_blockhash_base58 = try recent_blockhash.toBase58(allocator);
+    defer allocator.free(recent_blockhash_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "additional_signer_secret_keys":["{s}"],
+        \\  "program_id":"{s}",
+        \\  "recent_blockhash":"{s}",
+        \\  "idl":{{
+        \\    "address":"{s}",
+        \\    "instructions":[{{"name":"setValue","discriminator":[1,1,1,1,1,1,1,1],"accounts":[]}}]
+        \\  }},
+        \\  "instruction_name":"setValue"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            extra_secret_key_base58,
+            program_id_base58,
+            recent_blockhash_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    const preferred_options = invoke.BuildPreferredInvocationSpecOptions{
+        .mode = .{
+            .preferred_mode = .legacy,
+            .allow_fallback = true,
+        },
+    };
+
+    const prepared_json = try allocPreparedInvocationJsonFromAnchorIdlInvokeSpecJson(
+        allocator,
+        DummyRpc{},
+        false,
+        spec_json,
+        .{},
+    );
+    defer allocator.free(prepared_json);
+    const expected_prepared_json = try invoke.allocPreparedInvocationJsonFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        false,
+        instruction_spec_json,
+        .{},
+    );
+    defer allocator.free(expected_prepared_json);
+
+    const preferred_prepared_json = try allocPreferredPreparedInvocationJsonFromAnchorIdlInvokeSpecJson(
+        allocator,
+        DummyRpc{},
+        spec_json,
+        preferred_options,
+    );
+    defer allocator.free(preferred_prepared_json);
+    const expected_preferred_prepared_json = try invoke.allocPreferredPreparedInvocationJsonFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        instruction_spec_json,
+        preferred_options,
+    );
+    defer allocator.free(expected_preferred_prepared_json);
+
+    const preferred_signed_json = try allocPreferredPreparedSignedTransactionJsonFromAnchorIdlInvokeSpecJson(
+        allocator,
+        DummyRpc{},
+        spec_json,
+        preferred_options,
+    );
+    defer allocator.free(preferred_signed_json);
+    const expected_preferred_signed_json = try invoke.allocPreferredPreparedSignedTransactionJsonFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        instruction_spec_json,
+        preferred_options,
+    );
+    defer allocator.free(expected_preferred_signed_json);
+
+    const analysis_json = try allocPreferredInvocationAnalysisJsonFromAnchorIdlInvokeSpecJson(
+        allocator,
+        DummyRpc{},
+        spec_json,
+        preferred_options,
+    );
+    defer allocator.free(analysis_json);
+    const expected_analysis_json = try invoke.allocPreferredInvocationAnalysisJsonFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        instruction_spec_json,
+        preferred_options,
+    );
+    defer allocator.free(expected_analysis_json);
+
+    const resolved_json = try allocPreferredResolvedInvocationExecutionResultJsonFromAnchorIdlInvokeSpecJson(
+        allocator,
+        DummyRpc{},
+        spec_json,
+        preferred_options,
+    );
+    defer allocator.free(resolved_json);
+    const expected_resolved_json = try invoke.allocPreferredResolvedInvocationExecutionResultJsonFromInvocationSpecJson(
+        allocator,
+        DummyRpc{},
+        .instructions,
+        instruction_spec_json,
+        preferred_options,
+    );
+    defer allocator.free(expected_resolved_json);
+
+    try std.testing.expectEqualStrings(expected_prepared_json, prepared_json);
+    try std.testing.expectEqualStrings(expected_preferred_prepared_json, preferred_prepared_json);
+    try std.testing.expectEqualStrings(expected_preferred_signed_json, preferred_signed_json);
+    try std.testing.expectEqualStrings(expected_analysis_json, analysis_json);
+    try std.testing.expectEqualStrings(expected_resolved_json, resolved_json);
+}
+
+test "anchor_idl_invoke preferred execution result helpers match invoke bridge" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{223} ** 32);
+    const program_id = sdk.Pubkey.fromBytes(.{224} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes(.{225} ** 32);
+    const lookup_address = sdk.Pubkey.fromBytes(.{226} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const lookup_table_base58 = try lookup_table.toBase58(allocator);
+    defer allocator.free(lookup_table_base58);
+    const lookup_address_base58 = try lookup_address.toBase58(allocator);
+    defer allocator.free(lookup_address_base58);
+
+    const send_spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "idl":{{
+        \\    "address":"{s}",
+        \\    "instructions":[{{"name":"setValue","discriminator":[1,1,1,1,1,1,1,1],"accounts":[]}}]
+        \\  }},
+        \\  "instruction_name":"setValue"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(send_spec_json);
+
+    const fee_spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "address_lookup_tables":[{{"account_key":"{s}","addresses":["{s}"]}}],
+        \\  "idl":{{
+        \\    "address":"{s}",
+        \\    "instructions":[{{"name":"setValue","discriminator":[1,1,1,1,1,1,1,1],"accounts":[]}}]
+        \\  }},
+        \\  "instruction_name":"setValue"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+            lookup_table_base58,
+            lookup_address_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(fee_spec_json);
+
+    const send_instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        send_spec_json,
+    );
+    defer allocator.free(send_instruction_spec_json);
+    const fee_instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        fee_spec_json,
+    );
+    defer allocator.free(fee_instruction_spec_json);
+
+    const MockSendRpc = struct {
+        fn sendLegacyInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            options: ?rpc_types.SendLegacyInstructionsOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = payer;
+            _ = instructions;
+            _ = signers;
+            _ = options;
+            return "idl-send";
+        }
+    };
+
+    const MockSimRpc = struct {
+        fn simulateLegacyInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            build: ?rpc_types.LegacyInstructionsBuildOptions,
+            options: ?rpc_types.SimulateTransactionOptions,
+        ) !rpc_types.SimulatedTransaction {
+            _ = self;
+            _ = payer;
+            _ = instructions;
+            _ = signers;
+            _ = build;
+            _ = options;
+            return .{ .context = .{ .slot = 35 }, .value = .{ .units_consumed = 46, .fee = 57 } };
+        }
+    };
+
+    const MockConfirmRpc = struct {
+        allocator: Allocator,
+
+        fn sendAndConfirmLegacyInstructionsWithSpinnerAndOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            options: ?rpc_types.LegacyInstructionsOptions,
+        ) ![]const u8 {
+            _ = payer;
+            _ = instructions;
+            _ = signers;
+            _ = options;
+            return try self.allocator.dupe(u8, "idl-confirm");
+        }
+    };
+
+    const MockFeeRpc = struct {
+        fn getFeeForVersionedInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            address_lookup_tables: []const sdk.AddressLookupTableAccount,
+            build: ?rpc_types.VersionedInstructionsBuildOptions,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = payer;
+            _ = instructions;
+            _ = address_lookup_tables;
+            _ = build;
+            _ = commitment;
+            return .{ .value = 7654 };
+        }
+    };
+
+    var send_rpc_a = MockSendRpc{};
+    var send_result_a = try sendPreferredTransactionExecutionResultFromAnchorIdlInvokeSpecJson(
+        allocator,
+        &send_rpc_a,
+        send_spec_json,
+        .{},
+    );
+    defer send_result_a.deinit(allocator);
+    var send_rpc_b = MockSendRpc{};
+    var send_result_b = try invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson(
+        allocator,
+        &send_rpc_b,
+        .instructions,
+        send_instruction_spec_json,
+        .{},
+    );
+    defer send_result_b.deinit(allocator);
+
+    var sim_rpc_a = MockSimRpc{};
+    var sim_result_a = try simulatePreferredTransactionExecutionResultFromAnchorIdlInvokeSpecJson(
+        allocator,
+        &sim_rpc_a,
+        send_spec_json,
+        .{},
+    );
+    defer sim_result_a.deinit(allocator);
+    var sim_rpc_b = MockSimRpc{};
+    var sim_result_b = try invoke.simulatePreferredTransactionExecutionResultFromInvocationSpecJson(
+        allocator,
+        &sim_rpc_b,
+        .instructions,
+        send_instruction_spec_json,
+        .{},
+    );
+    defer sim_result_b.deinit(allocator);
+
+    var confirm_rpc_a = MockConfirmRpc{ .allocator = allocator };
+    var confirm_result_a = try sendAndConfirmPreferredTransactionExecutionResultFromAnchorIdlInvokeSpecJson(
+        allocator,
+        &confirm_rpc_a,
+        send_spec_json,
+        .{},
+    );
+    defer confirm_result_a.deinit(allocator);
+    var confirm_rpc_b = MockConfirmRpc{ .allocator = allocator };
+    var confirm_result_b = try invoke.sendAndConfirmPreferredTransactionExecutionResultFromInvocationSpecJson(
+        allocator,
+        &confirm_rpc_b,
+        .instructions,
+        send_instruction_spec_json,
+        .{},
+    );
+    defer confirm_result_b.deinit(allocator);
+
+    var fee_rpc_a = MockFeeRpc{};
+    var fee_result_a = try getFeeForPreferredInvocationExecutionResultFromAnchorIdlInvokeSpecJson(
+        allocator,
+        &fee_rpc_a,
+        fee_spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .versioned,
+                .allow_fallback = false,
+            },
+        },
+    );
+    defer fee_result_a.deinit(allocator);
+    var fee_rpc_b = MockFeeRpc{};
+    var fee_result_b = try invoke.getFeeForPreferredInvocationExecutionResultFromInvocationSpecJson(
+        allocator,
+        &fee_rpc_b,
+        .instructions,
+        fee_instruction_spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .versioned,
+                .allow_fallback = false,
+            },
+        },
+    );
+    defer fee_result_b.deinit(allocator);
+
+    const send_json_a = try invoke.allocPreferredSignatureExecutionResultJson(allocator, &send_result_a);
+    defer allocator.free(send_json_a);
+    const send_json_b = try invoke.allocPreferredSignatureExecutionResultJson(allocator, &send_result_b);
+    defer allocator.free(send_json_b);
+    const sim_json_a = try invoke.allocPreferredSimulationExecutionResultJson(allocator, &sim_result_a);
+    defer allocator.free(sim_json_a);
+    const sim_json_b = try invoke.allocPreferredSimulationExecutionResultJson(allocator, &sim_result_b);
+    defer allocator.free(sim_json_b);
+    const confirm_json_a = try invoke.allocPreferredSignatureExecutionResultJson(allocator, &confirm_result_a);
+    defer allocator.free(confirm_json_a);
+    const confirm_json_b = try invoke.allocPreferredSignatureExecutionResultJson(allocator, &confirm_result_b);
+    defer allocator.free(confirm_json_b);
+    const fee_json_a = try invoke.allocPreferredFeeExecutionResultJson(allocator, &fee_result_a);
+    defer allocator.free(fee_json_a);
+    const fee_json_b = try invoke.allocPreferredFeeExecutionResultJson(allocator, &fee_result_b);
+    defer allocator.free(fee_json_b);
+
+    try std.testing.expectEqualStrings(send_json_b, send_json_a);
+    try std.testing.expectEqualStrings(sim_json_b, sim_json_a);
+    try std.testing.expectEqualStrings(confirm_json_b, confirm_json_a);
+    try std.testing.expectEqualStrings(fee_json_b, fee_json_a);
+}
+
+test "anchor_idl_invoke alloc preferred execution result json helpers match invoke bridge" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{235} ** 32);
+    const program_id = sdk.Pubkey.fromBytes(.{236} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes(.{237} ** 32);
+    const lookup_address = sdk.Pubkey.fromBytes(.{238} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const lookup_table_base58 = try lookup_table.toBase58(allocator);
+    defer allocator.free(lookup_table_base58);
+    const lookup_address_base58 = try lookup_address.toBase58(allocator);
+    defer allocator.free(lookup_address_base58);
+
+    const send_spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "idl":{{
+        \\    "address":"{s}",
+        \\    "instructions":[{{"name":"setValue","discriminator":[1,1,1,1,1,1,1,1],"accounts":[]}}]
+        \\  }},
+        \\  "instruction_name":"setValue"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(send_spec_json);
+
+    const fee_spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":"{s}",
+        \\  "address_lookup_tables":[{{"account_key":"{s}","addresses":["{s}"]}}],
+        \\  "idl":{{
+        \\    "address":"{s}",
+        \\    "instructions":[{{"name":"setValue","discriminator":[1,1,1,1,1,1,1,1],"accounts":[]}}]
+        \\  }},
+        \\  "instruction_name":"setValue"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            program_id_base58,
+            lookup_table_base58,
+            lookup_address_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(fee_spec_json);
+
+    const send_instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        send_spec_json,
+    );
+    defer allocator.free(send_instruction_spec_json);
+    const fee_instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        fee_spec_json,
+    );
+    defer allocator.free(fee_instruction_spec_json);
+
+    const MockSendRpc = struct {
+        fn sendLegacyInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            options: ?rpc_types.SendLegacyInstructionsOptions,
+        ) ![]const u8 {
+            _ = self;
+            _ = payer;
+            _ = instructions;
+            _ = signers;
+            _ = options;
+            return "idl-send-json";
+        }
+    };
+
+    const MockSimRpc = struct {
+        fn simulateLegacyInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            build: ?rpc_types.LegacyInstructionsBuildOptions,
+            options: ?rpc_types.SimulateTransactionOptions,
+        ) !rpc_types.SimulatedTransaction {
+            _ = self;
+            _ = payer;
+            _ = instructions;
+            _ = signers;
+            _ = build;
+            _ = options;
+            return .{ .context = .{ .slot = 38 }, .value = .{ .units_consumed = 49, .fee = 60 } };
+        }
+    };
+
+    const MockConfirmRpc = struct {
+        allocator: Allocator,
+
+        fn sendAndConfirmLegacyInstructionsWithSpinnerAndOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            signers: []const sdk.Keypair,
+            options: ?rpc_types.LegacyInstructionsOptions,
+        ) ![]const u8 {
+            _ = payer;
+            _ = instructions;
+            _ = signers;
+            _ = options;
+            return try self.allocator.dupe(u8, "idl-confirm-json");
+        }
+    };
+
+    const MockFeeRpc = struct {
+        fn getFeeForVersionedInstructionsWithOptions(
+            self: *@This(),
+            payer: sdk.Pubkey,
+            instructions: []const sdk.Instruction,
+            address_lookup_tables: []const sdk.AddressLookupTableAccount,
+            build: ?rpc_types.VersionedInstructionsBuildOptions,
+            commitment: ?rpc_types.Commitment,
+        ) !rpc_types.FeeForMessage {
+            _ = self;
+            _ = payer;
+            _ = instructions;
+            _ = address_lookup_tables;
+            _ = build;
+            _ = commitment;
+            return .{ .value = 4321 };
+        }
+    };
+
+    var send_rpc_a = MockSendRpc{};
+    const send_json_a = try allocPreferredSendExecutionResultJsonFromAnchorIdlInvokeSpecJson(
+        allocator,
+        &send_rpc_a,
+        send_spec_json,
+        .{},
+    );
+    defer allocator.free(send_json_a);
+    var send_rpc_b = MockSendRpc{};
+    var send_result_b = try invoke.sendPreferredTransactionExecutionResultFromInvocationSpecJson(
+        allocator,
+        &send_rpc_b,
+        .instructions,
+        send_instruction_spec_json,
+        .{},
+    );
+    defer send_result_b.deinit(allocator);
+    const send_json_b = try invoke.allocPreferredSignatureExecutionResultJson(allocator, &send_result_b);
+    defer allocator.free(send_json_b);
+
+    var sim_rpc_a = MockSimRpc{};
+    const sim_json_a = try allocPreferredSimulationExecutionResultJsonFromAnchorIdlInvokeSpecJson(
+        allocator,
+        &sim_rpc_a,
+        send_spec_json,
+        .{},
+    );
+    defer allocator.free(sim_json_a);
+    var sim_rpc_b = MockSimRpc{};
+    var sim_result_b = try invoke.simulatePreferredTransactionExecutionResultFromInvocationSpecJson(
+        allocator,
+        &sim_rpc_b,
+        .instructions,
+        send_instruction_spec_json,
+        .{},
+    );
+    defer sim_result_b.deinit(allocator);
+    const sim_json_b = try invoke.allocPreferredSimulationExecutionResultJson(allocator, &sim_result_b);
+    defer allocator.free(sim_json_b);
+
+    var confirm_rpc_a = MockConfirmRpc{ .allocator = allocator };
+    const confirm_json_a = try allocPreferredSendAndConfirmExecutionResultJsonFromAnchorIdlInvokeSpecJson(
+        allocator,
+        &confirm_rpc_a,
+        send_spec_json,
+        .{},
+    );
+    defer allocator.free(confirm_json_a);
+    var confirm_rpc_b = MockConfirmRpc{ .allocator = allocator };
+    var confirm_result_b = try invoke.sendAndConfirmPreferredTransactionExecutionResultFromInvocationSpecJson(
+        allocator,
+        &confirm_rpc_b,
+        .instructions,
+        send_instruction_spec_json,
+        .{},
+    );
+    defer confirm_result_b.deinit(allocator);
+    const confirm_json_b = try invoke.allocPreferredSignatureExecutionResultJson(allocator, &confirm_result_b);
+    defer allocator.free(confirm_json_b);
+
+    var fee_rpc_a = MockFeeRpc{};
+    const fee_json_a = try allocPreferredFeeExecutionResultJsonFromAnchorIdlInvokeSpecJson(
+        allocator,
+        &fee_rpc_a,
+        fee_spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .versioned,
+                .allow_fallback = false,
+            },
+        },
+    );
+    defer allocator.free(fee_json_a);
+    var fee_rpc_b = MockFeeRpc{};
+    var fee_result_b = try invoke.getFeeForPreferredInvocationExecutionResultFromInvocationSpecJson(
+        allocator,
+        &fee_rpc_b,
+        .instructions,
+        fee_instruction_spec_json,
+        .{
+            .mode = .{
+                .preferred_mode = .versioned,
+                .allow_fallback = false,
+            },
+        },
+    );
+    defer fee_result_b.deinit(allocator);
+    const fee_json_b = try invoke.allocPreferredFeeExecutionResultJson(allocator, &fee_result_b);
+    defer allocator.free(fee_json_b);
+
+    try std.testing.expectEqualStrings(send_json_b, send_json_a);
+    try std.testing.expectEqualStrings(sim_json_b, sim_json_a);
+    try std.testing.expectEqualStrings(confirm_json_b, confirm_json_a);
+    try std.testing.expectEqualStrings(fee_json_b, fee_json_a);
+}
+
 test "anchor_idl_invoke.buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec deduplicates additional signers" {
     const allocator = std.testing.allocator;
 
@@ -4807,15 +6805,17 @@ test "anchor_idl_invoke.buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpe
     defer allocator.free(payer_secret_key);
     const default_signer_secret_key = try sdk.encodeBase58(allocator, &default_signer.secret_key);
     defer allocator.free(default_signer_secret_key);
+    const default_signer_secret_key_bytes_json = try stringifyByteArrayJson(allocator, &default_signer.secret_key);
+    defer allocator.free(default_signer_secret_key_bytes_json);
     const duplicate_signer_secret_key = try sdk.encodeBase58(allocator, &duplicate_signer.secret_key);
     defer allocator.free(duplicate_signer_secret_key);
 
     const invocation_spec_json_str = try std.fmt.allocPrint(
         allocator,
         \\{{
-        \\  "payer_secret_key":"{s}",
-        \\  "default_signer_secret_key":"{s}",
-        \\  "additional_signer_secret_keys":["{s}","{s}","{s}","{s}"],
+        \\  "payer_secret_key":{{"base58":"{s}"}},
+        \\  "default_signer_secret_key":{{"bytes":{s}}},
+        \\  "additional_signer_secret_keys":[{{"secretKey":"{s}"}},{{"base58":"{s}"}},{{"private_key":"{s}"}},{{"secret_key":"{s}"}}],
         \\  "idl":{{
         \\    "address":"11111111111111111111111111111111",
         \\    "instructions":[{{"name":"setValue","discriminator":[1,1,1,1,1,1,1,1],"accounts":[]}}]
@@ -4825,7 +6825,7 @@ test "anchor_idl_invoke.buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpe
     ,
         .{
             payer_secret_key,
-            default_signer_secret_key,
+            default_signer_secret_key_bytes_json,
             default_signer_secret_key,
             payer_secret_key,
             duplicate_signer_secret_key,
@@ -4857,4 +6857,258 @@ test "anchor_idl_invoke.buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpe
     try std.testing.expectEqual(@as(usize, 2), additional_signers.array.items.len);
     try std.testing.expectEqualStrings(default_signer_secret_key, additional_signers.array.items[0].string);
     try std.testing.expectEqualStrings(duplicate_signer_secret_key, additional_signers.array.items[1].string);
+}
+
+test "anchor_idl_invoke.buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec canonicalizes wrapped signer inputs" {
+    const allocator = std.testing.allocator;
+
+    const payer = try sdk.Keypair.fromSecretKeySlice([_]u8{13} ** 32);
+    const nonce_authority = try sdk.Keypair.fromSecretKeySlice([_]u8{14} ** 32);
+    const payer_secret_key = try sdk.encodeBase58(allocator, &payer.secret_key);
+    defer allocator.free(payer_secret_key);
+    const nonce_authority_secret_key = try sdk.encodeBase58(allocator, &nonce_authority.secret_key);
+    defer allocator.free(nonce_authority_secret_key);
+    const nonce_authority_secret_key_bytes_json = try stringifyByteArrayJson(allocator, &nonce_authority.secret_key);
+    defer allocator.free(nonce_authority_secret_key_bytes_json);
+
+    const invocation_spec_json_str = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":{{"secret_key":"{s}"}},
+        \\  "nonce_account":"11111111111111111111111111111111",
+        \\  "nonce_authority_secret_key":{{"bytes":{s}}},
+        \\  "idl":{{
+        \\    "address":"11111111111111111111111111111111",
+        \\    "instructions":[{{"name":"setValue","discriminator":[1,1,1,1,1,1,1,1],"accounts":[]}}]
+        \\  }},
+        \\  "instruction_name":"setValue"
+        \\}}
+    ,
+        .{
+            payer_secret_key,
+            nonce_authority_secret_key_bytes_json,
+        },
+    );
+    defer allocator.free(invocation_spec_json_str);
+
+    const exported_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        invocation_spec_json_str,
+    );
+    defer allocator.free(exported_json);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, exported_json, .{});
+    defer parsed.deinit();
+
+    const invocation_spec = switch (parsed.value) {
+        .object => |value| value,
+        else => unreachable,
+    };
+
+    const payer_secret_key_value = jsonObjectField(invocation_spec, &.{ "payer_secret_key", "payerSecretKey" }) orelse unreachable;
+    const nonce_authority_secret_key_value = jsonObjectField(invocation_spec, &.{ "nonce_authority_secret_key", "nonceAuthoritySecretKey" }) orelse unreachable;
+
+    try std.testing.expectEqualStrings(payer_secret_key, payer_secret_key_value.string);
+    try std.testing.expectEqualStrings(nonce_authority_secret_key, nonce_authority_secret_key_value.string);
+    try std.testing.expect(std.mem.indexOf(u8, exported_json, "\"bytes\"") == null);
+}
+
+test "anchor_idl_invoke.buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec canonicalizes wrapped pubkey inputs" {
+    const allocator = std.testing.allocator;
+
+    const payer = try sdk.Keypair.fromSecretKeySlice([_]u8{15} ** 32);
+    const payer_secret_key = try sdk.encodeBase58(allocator, &payer.secret_key);
+    defer allocator.free(payer_secret_key);
+    const program_id = sdk.Pubkey.fromBytes([_]u8{16} ** 32);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const nonce_account = sdk.Pubkey.fromBytes([_]u8{17} ** 32);
+    const nonce_account_base58 = try nonce_account.toBase58(allocator);
+    defer allocator.free(nonce_account_base58);
+
+    const invocation_spec_json_str = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "program_id":{{"address":"{s}"}},
+        \\  "nonce_account":{{"publicKey":"{s}"}},
+        \\  "idl":{{
+        \\    "address":"11111111111111111111111111111111",
+        \\    "instructions":[{{"name":"setValue","discriminator":[1,1,1,1,1,1,1,1],"accounts":[]}}]
+        \\  }},
+        \\  "instruction_name":"setValue"
+        \\}}
+    ,
+        .{
+            payer_secret_key,
+            program_id_base58,
+            nonce_account_base58,
+        },
+    );
+    defer allocator.free(invocation_spec_json_str);
+
+    const exported_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        invocation_spec_json_str,
+    );
+    defer allocator.free(exported_json);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, exported_json, .{});
+    defer parsed.deinit();
+
+    const invocation_spec = switch (parsed.value) {
+        .object => |value| value,
+        else => unreachable,
+    };
+    const nonce_account_value = jsonObjectField(invocation_spec, &.{ "nonce_account", "nonceAccount" }) orelse unreachable;
+    const instructions_value = jsonObjectField(invocation_spec, &.{"instructions"}) orelse unreachable;
+    const first_instruction = instructions_value.array.items[0].object;
+    const program_id_value = jsonObjectField(first_instruction, &.{ "program_id", "programId" }) orelse unreachable;
+
+    try std.testing.expectEqualStrings(nonce_account_base58, nonce_account_value.string);
+    try std.testing.expectEqualStrings(program_id_base58, program_id_value.string);
+    try std.testing.expect(std.mem.indexOf(u8, exported_json, "\"publicKey\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, exported_json, "\"programId\"") == null);
+}
+
+test "anchor_idl_invoke alloc inspect export helpers match invoke bridge" {
+    const allocator = std.testing.allocator;
+
+    const payer_raw = try sdk.Keypair.fromSecretKeyBytes(.{233} ** 32);
+    const extra_raw = try sdk.Keypair.fromSecretKeyBytes(.{234} ** 32);
+    const program_id = sdk.Pubkey.fromBytes(.{235} ** 32);
+    const lookup_table = sdk.Pubkey.fromBytes(.{236} ** 32);
+    const lookup_address = sdk.Pubkey.fromBytes(.{237} ** 32);
+    const recent_blockhash = sdk.Hash.fromBytes(.{238} ** 32);
+
+    const payer_secret_key = payer_raw.secret_key.toBytes();
+    const payer_secret_key_base58 = try sdk.encodeBase58(allocator, &payer_secret_key);
+    defer allocator.free(payer_secret_key_base58);
+    const extra_secret_key = extra_raw.secret_key.toBytes();
+    const extra_secret_key_base58 = try sdk.encodeBase58(allocator, &extra_secret_key);
+    defer allocator.free(extra_secret_key_base58);
+    const program_id_base58 = try program_id.toBase58(allocator);
+    defer allocator.free(program_id_base58);
+    const lookup_table_base58 = try lookup_table.toBase58(allocator);
+    defer allocator.free(lookup_table_base58);
+    const lookup_address_base58 = try lookup_address.toBase58(allocator);
+    defer allocator.free(lookup_address_base58);
+    const recent_blockhash_base58 = try recent_blockhash.toBase58(allocator);
+    defer allocator.free(recent_blockhash_base58);
+
+    const spec_json = try std.fmt.allocPrint(
+        allocator,
+        \\{{
+        \\  "payer_secret_key":"{s}",
+        \\  "additional_signer_secret_keys":["{s}"],
+        \\  "program_id":"{s}",
+        \\  "address_lookup_tables":[{{"account_key":"{s}","addresses":["{s}"]}}],
+        \\  "remaining_accounts":[{{"pubkey":"{s}","is_writable":true}}],
+        \\  "recent_blockhash":"{s}",
+        \\  "idl":{{
+        \\    "address":"{s}",
+        \\    "instructions":[{{"name":"setValue","discriminator":[1,1,1,1,1,1,1,1],"accounts":[]}}]
+        \\  }},
+        \\  "instruction_name":"setValue"
+        \\}}
+    ,
+        .{
+            payer_secret_key_base58,
+            extra_secret_key_base58,
+            program_id_base58,
+            lookup_table_base58,
+            lookup_address_base58,
+            lookup_address_base58,
+            recent_blockhash_base58,
+            program_id_base58,
+        },
+    );
+    defer allocator.free(spec_json);
+
+    const instruction_spec_json = try buildInstructionInvocationSpecJsonFromAnchorIdlInvokeSpec(
+        allocator,
+        spec_json,
+    );
+    defer allocator.free(instruction_spec_json);
+
+    const report_json = try allocInvocationReportJsonFromAnchorIdlInvokeSpecJson(allocator, spec_json);
+    defer allocator.free(report_json);
+    const expected_report_json = try invoke.allocInvocationReportJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        instruction_spec_json,
+    );
+    defer allocator.free(expected_report_json);
+
+    const accounts_json = try allocInvocationAccountsJsonFromAnchorIdlInvokeSpecJson(allocator, spec_json);
+    defer allocator.free(accounts_json);
+    const expected_accounts_json = try invoke.allocInvocationAccountsJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        instruction_spec_json,
+    );
+    defer allocator.free(expected_accounts_json);
+
+    const signers_json = try allocInvocationSignerPubkeysJsonFromAnchorIdlInvokeSpecJson(allocator, spec_json);
+    defer allocator.free(signers_json);
+    const expected_signers_json = try invoke.allocInvocationSignerPubkeysJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        instruction_spec_json,
+    );
+    defer allocator.free(expected_signers_json);
+
+    const summary_json = try allocInvocationSummaryJsonFromAnchorIdlInvokeSpecJson(allocator, spec_json);
+    defer allocator.free(summary_json);
+    const expected_summary_json = try invoke.allocInvocationSummaryJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        instruction_spec_json,
+    );
+    defer allocator.free(expected_summary_json);
+
+    const plan_json = try allocInvocationPlanJsonFromAnchorIdlInvokeSpecJson(allocator, spec_json);
+    defer allocator.free(plan_json);
+    const expected_plan_json = try invoke.allocInvocationPlanJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        instruction_spec_json,
+    );
+    defer allocator.free(expected_plan_json);
+
+    const preflight_json = try allocInvocationPreflightJsonFromAnchorIdlInvokeSpecJson(allocator, spec_json);
+    defer allocator.free(preflight_json);
+    const expected_preflight_json = try invoke.allocInvocationPreflightJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        instruction_spec_json,
+    );
+    defer allocator.free(expected_preflight_json);
+
+    const validation_json = try allocInvocationValidationJsonFromAnchorIdlInvokeSpecJson(allocator, spec_json);
+    defer allocator.free(validation_json);
+    const expected_validation_json = try invoke.allocInvocationValidationJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        instruction_spec_json,
+    );
+    defer allocator.free(expected_validation_json);
+
+    const lookup_coverage_json = try allocInvocationLookupCoverageJsonFromAnchorIdlInvokeSpecJson(allocator, spec_json);
+    defer allocator.free(lookup_coverage_json);
+    const expected_lookup_coverage_json = try invoke.allocInvocationLookupCoverageJsonFromInvocationSpecJson(
+        allocator,
+        .instructions,
+        instruction_spec_json,
+    );
+    defer allocator.free(expected_lookup_coverage_json);
+
+    try std.testing.expectEqualStrings(expected_report_json, report_json);
+    try std.testing.expectEqualStrings(expected_accounts_json, accounts_json);
+    try std.testing.expectEqualStrings(expected_signers_json, signers_json);
+    try std.testing.expectEqualStrings(expected_summary_json, summary_json);
+    try std.testing.expectEqualStrings(expected_plan_json, plan_json);
+    try std.testing.expectEqualStrings(expected_preflight_json, preflight_json);
+    try std.testing.expectEqualStrings(expected_validation_json, validation_json);
+    try std.testing.expectEqualStrings(expected_lookup_coverage_json, lookup_coverage_json);
 }

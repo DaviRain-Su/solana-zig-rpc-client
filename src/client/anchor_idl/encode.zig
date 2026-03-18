@@ -27,7 +27,11 @@ fn appendIntLittle(
 fn parseUnsignedAnchorIdlIntValue(comptime T: type, value: std.json.Value) !T {
     switch (value) {
         .integer => return std.math.cast(T, value.integer) orelse error.InvalidAnchorIdlArgValue,
-        .string => return std.fmt.parseInt(T, value.string, 10) catch return error.InvalidAnchorIdlArgValue,
+        .string => {
+            const base: u8 = if (std.mem.startsWith(u8, value.string, "0x") or std.mem.startsWith(u8, value.string, "0X")) 16 else 10;
+            const digits = if (base == 16) value.string[2..] else value.string;
+            return std.fmt.parseInt(T, digits, base) catch return error.InvalidAnchorIdlArgValue;
+        },
         else => return error.InvalidAnchorIdlArgValue,
     }
 }
@@ -35,7 +39,19 @@ fn parseUnsignedAnchorIdlIntValue(comptime T: type, value: std.json.Value) !T {
 fn parseSignedAnchorIdlIntValue(comptime T: type, value: std.json.Value) !T {
     switch (value) {
         .integer => return std.math.cast(T, value.integer) orelse error.InvalidAnchorIdlArgValue,
-        .string => return std.fmt.parseInt(T, value.string, 10) catch return error.InvalidAnchorIdlArgValue,
+        .string => {
+            const negative_hex = std.mem.startsWith(u8, value.string, "-0x") or std.mem.startsWith(u8, value.string, "-0X");
+            const positive_hex = std.mem.startsWith(u8, value.string, "0x") or std.mem.startsWith(u8, value.string, "0X");
+            const base: u8 = if (negative_hex or positive_hex) 16 else 10;
+            const digits = if (negative_hex)
+                value.string[3..]
+            else if (positive_hex)
+                value.string[2..]
+            else
+                value.string;
+            const parsed = std.fmt.parseInt(T, digits, base) catch return error.InvalidAnchorIdlArgValue;
+            return if (negative_hex) -parsed else parsed;
+        },
         else => return error.InvalidAnchorIdlArgValue,
     }
 }
@@ -47,6 +63,18 @@ fn parseAnchorIdlFloatValue(comptime T: type, value: std.json.Value) !T {
         .string => return std.fmt.parseFloat(T, value.string) catch return error.InvalidAnchorIdlArgValue,
         else => return error.InvalidAnchorIdlArgValue,
     }
+}
+
+fn parseAnchorIdlBoolValue(value: std.json.Value) !bool {
+    return switch (value) {
+        .bool => value.bool,
+        .string => {
+            if (std.ascii.eqlIgnoreCase(value.string, "true")) return true;
+            if (std.ascii.eqlIgnoreCase(value.string, "false")) return false;
+            return error.InvalidAnchorIdlArgValue;
+        },
+        else => error.InvalidAnchorIdlArgValue,
+    };
 }
 
 fn parseAnchorIdlPubkeyValue(value: std.json.Value) ![]const u8 {
@@ -178,11 +206,40 @@ fn decodeAnchorIdlBytesValue(allocator: Allocator, value: std.json.Value) !?[]u8
     }
 }
 
+fn decodeAnchorIdlByteSequenceValue(allocator: Allocator, value: std.json.Value) !?[]u8 {
+    if (try decodeAnchorIdlBytesValue(allocator, value)) |decoded| return decoded;
+
+    return switch (value) {
+        .string => blk: {
+            if (std.mem.startsWith(u8, value.string, "utf8:")) {
+                break :blk try allocator.dupe(u8, value.string["utf8:".len..]);
+            }
+            break :blk try allocator.dupe(u8, value.string);
+        },
+        else => null,
+    };
+}
+
 fn resolveAnchorIdlFieldType(field_value: std.json.Value) !std.json.Value {
     if (field_value == .object) {
         if (field_value.object.get("type")) |field_type| return field_type;
     }
     return field_value;
+}
+
+fn anchorIdlTypeIsU8(type_spec: std.json.Value) bool {
+    const resolved = resolveAnchorIdlFieldType(type_spec) catch return false;
+    return resolved == .string and std.mem.eql(u8, resolved.string, "u8");
+}
+
+fn maybeDecodeAnchorIdlByteSequence(
+    allocator: Allocator,
+    type_spec: std.json.Value,
+    value: std.json.Value,
+) !?[]u8 {
+    if (!anchorIdlTypeIsU8(type_spec)) return null;
+    if (value == .array) return null;
+    return try decodeAnchorIdlByteSequenceValue(allocator, value);
 }
 
 fn anchorEnumVariantNameMatches(idl_variant_name: []const u8, selected_variant_name: []const u8) bool {
@@ -218,6 +275,75 @@ fn anchorEnumVariantNameMatches(idl_variant_name: []const u8, selected_variant_n
     return idl_index == idl_variant_name.len and selected_index == selected_variant_name.len;
 }
 
+const AnchorOptionInput = struct {
+    is_some: bool,
+    payload: ?std.json.Value,
+};
+
+fn parseAnchorIdlOptionInput(value: std.json.Value) !AnchorOptionInput {
+    return switch (value) {
+        .null => .{ .is_some = false, .payload = null },
+        .object => {
+            if (findAnchorJsonObjectField(value.object, "none")) |none_value| {
+                if (!(try parseAnchorIdlBoolValue(none_value))) return error.InvalidAnchorIdlArgValue;
+                return .{ .is_some = false, .payload = null };
+            }
+            if (findAnchorJsonObjectField(value.object, "null")) |null_value| {
+                if (!(try parseAnchorIdlBoolValue(null_value))) return error.InvalidAnchorIdlArgValue;
+                return .{ .is_some = false, .payload = null };
+            }
+            if (findAnchorJsonObjectField(value.object, "some")) |some_value| {
+                return .{ .is_some = true, .payload = some_value };
+            }
+            if (findAnchorJsonObjectField(value.object, "value")) |some_value| {
+                return .{ .is_some = true, .payload = some_value };
+            }
+            if (findAnchorJsonObjectField(value.object, "data")) |some_value| {
+                return .{ .is_some = true, .payload = some_value };
+            }
+            if (findAnchorJsonObjectField(value.object, "payload")) |some_value| {
+                return .{ .is_some = true, .payload = some_value };
+            }
+            return .{ .is_some = true, .payload = value };
+        },
+        else => .{ .is_some = true, .payload = value },
+    };
+}
+
+const AnchorEnumInput = struct {
+    name: []const u8,
+    payload: ?std.json.Value,
+};
+
+fn parseAnchorIdlEnumInput(value: std.json.Value) !AnchorEnumInput {
+    return switch (value) {
+        .string => .{ .name = value.string, .payload = null },
+        .object => blk: {
+            inline for (.{ "variant", "kind", "tag", "name" }) |field_name| {
+                if (findAnchorJsonObjectField(value.object, field_name)) |variant_value| {
+                    if (variant_value != .string) return error.InvalidAnchorIdlArgValue;
+                    break :blk .{
+                        .name = variant_value.string,
+                        .payload = findAnchorJsonObjectField(value.object, "value") orelse
+                            findAnchorJsonObjectField(value.object, "data") orelse
+                            findAnchorJsonObjectField(value.object, "payload") orelse
+                            findAnchorJsonObjectField(value.object, "fields"),
+                    };
+                }
+            }
+
+            var iterator = value.object.iterator();
+            const entry = iterator.next() orelse return error.InvalidAnchorIdlArgValue;
+            if (iterator.next() != null) return error.InvalidAnchorIdlArgValue;
+            break :blk .{
+                .name = entry.key_ptr.*,
+                .payload = entry.value_ptr.*,
+            };
+        },
+        else => error.InvalidAnchorIdlArgValue,
+    };
+}
+
 fn encodeArgValue(
     allocator: Allocator,
     bytes: *std.ArrayListUnmanaged(u8),
@@ -227,15 +353,23 @@ fn encodeArgValue(
 ) !void {
     if (type_spec == .object) {
         if (type_spec.object.get("option")) |child_type| {
-            if (value == .null) {
+            const option_input = try parseAnchorIdlOptionInput(value);
+            if (!option_input.is_some) {
                 try bytes.append(allocator, 0);
                 return;
             }
             try bytes.append(allocator, 1);
-            try encodeArgValue(allocator, bytes, idl, child_type, value);
+            try encodeArgValue(allocator, bytes, idl, child_type, option_input.payload.?);
             return;
         }
         if (type_spec.object.get("vec")) |child_type| {
+            if (try maybeDecodeAnchorIdlByteSequence(allocator, child_type, value)) |decoded| {
+                defer allocator.free(decoded);
+                if (decoded.len > std.math.maxInt(u32)) return error.InvalidAnchorIdlArgValue;
+                try appendIntLittle(u32, bytes, allocator, @intCast(decoded.len));
+                try bytes.appendSlice(allocator, decoded);
+                return;
+            }
             if (value != .array) return error.InvalidAnchorIdlArgValue;
             if (value.array.items.len > std.math.maxInt(u32)) return error.InvalidAnchorIdlArgValue;
             try appendIntLittle(u32, bytes, allocator, @intCast(value.array.items.len));
@@ -306,25 +440,13 @@ fn encodeArgValue(
                 const variants_value = type_def.type.object.get("variants") orelse return error.UnsupportedAnchorIdlType;
                 if (variants_value != .array) return error.UnsupportedAnchorIdlType;
 
-                var selected_variant_name: []const u8 = undefined;
-                var selected_variant_payload: ?std.json.Value = null;
-                switch (value) {
-                    .string => selected_variant_name = value.string,
-                    .object => {
-                        var iterator = value.object.iterator();
-                        const entry = iterator.next() orelse return error.InvalidAnchorIdlArgValue;
-                        if (iterator.next() != null) return error.InvalidAnchorIdlArgValue;
-                        selected_variant_name = entry.key_ptr.*;
-                        selected_variant_payload = entry.value_ptr.*;
-                    },
-                    else => return error.InvalidAnchorIdlArgValue,
-                }
+                const selected_variant = try parseAnchorIdlEnumInput(value);
 
                 for (variants_value.array.items, 0..) |variant_value, index| {
                     if (variant_value != .object) return error.UnsupportedAnchorIdlType;
                     const variant_name = variant_value.object.get("name") orelse return error.UnsupportedAnchorIdlType;
                     if (variant_name != .string) return error.UnsupportedAnchorIdlType;
-                    if (!anchorEnumVariantNameMatches(variant_name.string, selected_variant_name)) continue;
+                    if (!anchorEnumVariantNameMatches(variant_name.string, selected_variant.name)) continue;
 
                     if (index > std.math.maxInt(u8)) return error.UnsupportedAnchorIdlType;
                     try bytes.append(allocator, @intCast(index));
@@ -333,7 +455,7 @@ fn encodeArgValue(
                     if (fields_value == .null) return;
                     if (fields_value != .array) return error.UnsupportedAnchorIdlType;
 
-                    const payload = selected_variant_payload orelse return error.InvalidAnchorIdlArgValue;
+                    const payload = selected_variant.payload orelse return error.InvalidAnchorIdlArgValue;
                     if (fields_value.array.items.len == 0) return;
 
                     const first_field = fields_value.array.items[0];
@@ -396,6 +518,12 @@ fn encodeArgValue(
                 else => return error.UnsupportedAnchorIdlType,
             };
 
+            if (try maybeDecodeAnchorIdlByteSequence(allocator, element_type, value)) |decoded| {
+                defer allocator.free(decoded);
+                if (decoded.len != expected_len) return error.InvalidAnchorIdlArgValue;
+                try bytes.appendSlice(allocator, decoded);
+                return;
+            }
             if (value != .array) return error.InvalidAnchorIdlArgValue;
             if (value.array.items.len != expected_len) return error.InvalidAnchorIdlArgValue;
 
@@ -409,8 +537,7 @@ fn encodeArgValue(
     if (type_spec != .string) return error.UnsupportedAnchorIdlType;
 
     if (std.mem.eql(u8, type_spec.string, "bool")) {
-        if (value != .bool) return error.InvalidAnchorIdlArgValue;
-        try bytes.append(allocator, if (value.bool) 1 else 0);
+        try bytes.append(allocator, if (try parseAnchorIdlBoolValue(value)) 1 else 0);
         return;
     }
     if (std.mem.eql(u8, type_spec.string, "u8")) {
@@ -480,20 +607,8 @@ fn encodeArgValue(
     }
     if (std.mem.eql(u8, type_spec.string, "bytes")) {
         switch (value) {
-            .string => {
-                if (try decodeAnchorIdlBytesValue(allocator, value)) |decoded| {
-                    defer allocator.free(decoded);
-                    if (decoded.len > std.math.maxInt(u32)) return error.InvalidAnchorIdlArgValue;
-                    try appendIntLittle(u32, bytes, allocator, @intCast(decoded.len));
-                    try bytes.appendSlice(allocator, decoded);
-                    return;
-                }
-                if (value.string.len > std.math.maxInt(u32)) return error.InvalidAnchorIdlArgValue;
-                try appendIntLittle(u32, bytes, allocator, @intCast(value.string.len));
-                try bytes.appendSlice(allocator, value.string);
-            },
-            .object => {
-                const decoded = try decodeAnchorIdlBytesValue(allocator, value) orelse return error.InvalidAnchorIdlArgValue;
+            .string, .object => {
+                const decoded = try decodeAnchorIdlByteSequenceValue(allocator, value) orelse return error.InvalidAnchorIdlArgValue;
                 defer allocator.free(decoded);
                 if (decoded.len > std.math.maxInt(u32)) return error.InvalidAnchorIdlArgValue;
                 try appendIntLittle(u32, bytes, allocator, @intCast(decoded.len));
@@ -1277,4 +1392,102 @@ test "anchor idl encodeInstructionData accepts public_key object wrapper" {
     try expected.appendSlice(allocator, &authority.bytes);
 
     try std.testing.expectEqualSlices(u8, expected.items, encoded);
+}
+
+test "anchor idl encodeInstructionData accepts ergonomic scalar and option inputs" {
+    const allocator = std.testing.allocator;
+
+    const option_string = try std.json.parseFromSlice(std.json.Value, allocator, "{\"option\":\"string\"}", .{});
+    defer option_string.deinit();
+    const option_bool = try std.json.parseFromSlice(std.json.Value, allocator, "{\"option\":\"bool\"}", .{});
+    defer option_bool.deinit();
+
+    const instruction = idl_types.Instruction{
+        .name = "setConfig",
+        .discriminator = &.{ 22, 22, 22, 22, 22, 22, 22, 22 },
+        .args = &.{
+            .{ .name = "enabled", .type = .{ .string = "bool" } },
+            .{ .name = "count", .type = .{ .string = "u16" } },
+            .{ .name = "delta", .type = .{ .string = "i32" } },
+            .{ .name = "memo", .type = option_string.value },
+            .{ .name = "flag", .type = option_bool.value },
+        },
+    };
+    const idl = idl_types.Idl{
+        .instructions = &.{instruction},
+    };
+
+    const encoded = try encodeInstructionData(
+        allocator,
+        &idl,
+        &instruction,
+        "{\"enabled\":\"true\",\"count\":\"0x0201\",\"delta\":\"-0x2\",\"memo\":{\"some\":\"ok\"},\"flag\":{\"none\":true}}",
+    );
+    defer allocator.free(encoded);
+
+    const expected = [_]u8{
+        22,   22,   22,   22,   22,   22,   22,   22,
+        0x01, 0x01, 0x02, 0xfe, 0xff, 0xff, 0xff, 0x01,
+        0x02, 0x00, 0x00, 0x00, 'o',  'k',  0x00,
+    };
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "anchor idl encodeInstructionData accepts enum wrapper aliases" {
+    const allocator = std.testing.allocator;
+    const parsed_idl = try std.json.parseFromSlice(
+        idl_types.Idl,
+        allocator,
+        \\{"instructions":[{"name":"setMode","discriminator":[24,24,24,24,24,24,24,24],"args":[{"name":"mode","type":{"defined":{"name":"Mode"}}}]}],"types":[{"name":"Mode","type":{"kind":"enum","variants":[{"name":"FixedValue","fields":[{"name":"value","type":"u16"}]},{"name":"OpenValue"}]}}]}
+    ,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_idl.deinit();
+
+    const instruction = idl_types.findInstruction(&parsed_idl.value, "setMode").?;
+    const encoded = try encodeInstructionData(
+        allocator,
+        &parsed_idl.value,
+        &instruction,
+        "{\"mode\":{\"variant\":\"fixed_value\",\"payload\":{\"value\":\"0x0201\"}}}",
+    );
+    defer allocator.free(encoded);
+
+    const expected = [_]u8{ 24, 24, 24, 24, 24, 24, 24, 24, 0x00, 0x01, 0x02 };
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
+}
+
+test "anchor idl encodeInstructionData accepts byte strings for u8 vecs and arrays" {
+    const allocator = std.testing.allocator;
+    const vec_u8 = try std.json.parseFromSlice(std.json.Value, allocator, "{\"vec\":\"u8\"}", .{});
+    defer vec_u8.deinit();
+    const array_u8 = try std.json.parseFromSlice(std.json.Value, allocator, "{\"array\":[\"u8\",4]}", .{});
+    defer array_u8.deinit();
+
+    const instruction = idl_types.Instruction{
+        .name = "setBytes",
+        .discriminator = &.{ 25, 25, 25, 25, 25, 25, 25, 25 },
+        .args = &.{
+            .{ .name = "blob_vec", .type = vec_u8.value },
+            .{ .name = "blob_array", .type = array_u8.value },
+        },
+    };
+    const idl = idl_types.Idl{
+        .instructions = &.{instruction},
+    };
+
+    const encoded = try encodeInstructionData(
+        allocator,
+        &idl,
+        &instruction,
+        "{\"blobVec\":\"hex:deadbeef\",\"blob_array\":{\"base64\":\"AQIDBA==\"}}",
+    );
+    defer allocator.free(encoded);
+
+    const expected = [_]u8{
+        25,   25,   25,   25,   25,   25,   25,   25,
+        0x04, 0x00, 0x00, 0x00, 0xde, 0xad, 0xbe, 0xef,
+        0x01, 0x02, 0x03, 0x04,
+    };
+    try std.testing.expectEqualSlices(u8, &expected, encoded);
 }
